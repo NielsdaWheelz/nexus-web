@@ -14486,3 +14486,2891 @@ class TestMigration0177GrandAtlas:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+# Migration 0179 — Lightweight Author Deduplication Hard Cutover.
+#
+# Author: M2b (fixture author). Deliberately built from the SPEC (§4/§8) + plan
+# (S2, D-7/D-12/D-17..D-20/D-32/D-33) rather than from the migration source, so a
+# defect in the migration's collapse/rewrite/DDL is caught rather than mirrored.
+#
+# Fixture coverage (plan S2 representative-fixture bullets):
+#   exact-name triplicate collapse; earliest-active survivor beats an earlier
+#   merged/tombstoned row; resolving vs non-resolving alias classification (full
+#   D-17 vocabulary); duplicate (owner, normalized_alias) dedup keeping the
+#   resolving literal; same-name/same-authority key conflict staying distinct;
+#   every authority disposition (orcid/isni/viaf/wikidata/openalex/lcnaf kept,
+#   email->email_address, youtube->youtube_channel channel-kept + ambiguous-video
+#   dropped, podcast_index/rss/gutenberg dropped); source_ref.x_user_id recovery
+#   onto the survivor; merged+tombstoned total disposition; email-as-display and
+#   URL-alias privacy cleanup; manual+machine author salvage (flag true) and
+#   machine-only media (flag false); translator/host/guest (media + podcast +
+#   gutenberg targets); >20 author slice truncated to dense 20; a no-survivor
+#   HUSK (tombstoned, unique name) whose pin/version/view-state/edge/suppression/
+#   alias/xid/scoped-memo are purged, never repointed; a NINE-deep merged chain
+#   whose deepest row still repoints to the active end; the prod-dominant
+#   machine-source display alias flipped to resolving; machine-vs-machine
+#   salvage recency (newer MAX(updated_at) wins; exact tie falls to source name
+#   ascending); a junk contributor-scoped memo (uuid never a contributor) that
+#   survives untouched; an embedded-address alias removed by privacy cleanup;
+#   collapsed edge ids inside prompt assemblies + meta events rebinding to the
+#   collision winner; reconciliation
+#   runs/candidates/identity-events/background_jobs deleted; and every §8 + D-18
+#   reference shape (pin incl. soft-deleted collision; resource_version collision;
+#   view-state surface/target/edge + collision; turn-context both pairs; edges
+#   with bare-pair collision + self-edge + citation snapshot nesting a typed
+#   contributor + handle + deep link; oracle folio required rebind; cited_edge_id
+#   rebind + null; synapse-suppression delete exemption; retrieval context/result
+#   refs + source_id + deep_link; candidate ledger; tool-call ref arrays; prompt
+#   assembly typed refs + "contributor:<uuid>" URI strings; chat_run_events meta
+#   URIs + tool_result filters handles; mutation memo response refs + a memo
+#   scoped to a losing contributor UUID (deleted); note_blocks PM object_ref /
+#   object_embed nodes). A generic scanner asserts no losing UUID/handle/deep
+#   link survives in any manifest column.
+
+_MIG_PREV = "0178"
+_MIG_REV = "0179"
+_HASH64 = "0" * 64  # satisfies ck_resource_mutations_request_hash_length (=64)
+
+# Independent copy of the reference manifest (spec §8 + D-18). Deliberately NOT
+# imported from the migration: a column missing from the migration's own manifest
+# is caught here.
+_JSONB_REF_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("message_retrievals", "context_ref"),
+    ("message_retrievals", "result_ref"),
+    ("message_retrieval_candidate_ledgers", "result_ref"),
+    ("message_tool_calls", "result_refs"),
+    ("message_tool_calls", "selected_context_refs"),
+    ("chat_prompt_assemblies", "included_context_refs"),
+    ("chat_prompt_assemblies", "prompt_block_manifest"),
+    ("chat_prompt_assemblies", "dropped_items"),
+    ("chat_run_events", "payload"),
+    ("resource_edges", "snapshot"),
+    ("resource_mutations", "response_json"),
+    ("note_blocks", "body_pm_json"),
+)
+_SCALAR_REF_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("message_retrievals", "source_id"),
+    ("message_retrievals", "deep_link"),
+    ("message_retrieval_candidate_ledgers", "source_id"),
+    ("resource_mutations", "mutation_scope"),
+)
+# (table, discriminator_column, uuid_column) — polymorphic contributor refs.
+_POLY_UUID_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("user_pinned_objects", "object_type", "object_id"),
+    ("resource_versions", "resource_scheme", "resource_id"),
+    ("resource_view_states", "surface_scheme", "surface_id"),
+    ("resource_view_states", "target_scheme", "target_id"),
+    ("resource_edges", "source_scheme", "source_id"),
+    ("resource_edges", "target_scheme", "target_id"),
+    ("chat_run_turn_contexts", "requested_subject_scheme", "requested_subject_id"),
+    ("chat_run_turn_contexts", "subject_scheme", "subject_id"),
+)
+
+
+def _ts(year: int, month: int = 1, day: int = 1) -> datetime:
+    return datetime(year, month, day, tzinfo=UTC)
+
+
+def _dumps(obj) -> str:
+    return json.dumps(obj)
+
+
+def _insert_contributor(
+    session: Session,
+    *,
+    cid: UUID,
+    handle: str,
+    display: str,
+    created_at: datetime,
+    status: str = "unverified",
+    kind: str = "unknown",
+    merged_into: UUID | None = None,
+    with_display_alias: bool = True,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO contributors (
+                id, handle, display_name, sort_name, kind, status,
+                merged_into_contributor_id, created_at, updated_at
+            )
+            VALUES (:id, :h, :d, :s, :k, :st, :mi, :ca, :ca)
+            """
+        ),
+        {
+            "id": cid,
+            "h": handle,
+            "d": display,
+            "s": display.lower(),
+            "k": kind,
+            "st": status,
+            "mi": merged_into,
+            "ca": created_at,
+        },
+    )
+    if with_display_alias:
+        # 0071 seeds one canonical display alias per contributor; source
+        # 'migration' is a resolving source (D-17).
+        _insert_alias(
+            session,
+            cid=cid,
+            alias=display,
+            source="migration",
+            alias_kind="display",
+            created_at=created_at,
+        )
+
+
+def _insert_alias(
+    session: Session,
+    *,
+    cid: UUID,
+    alias: str,
+    source: str,
+    alias_kind: str = "credited",
+    normalized: str | None = None,
+    created_at: datetime | None = None,
+) -> None:
+    if created_at is None:
+        created_at = _ts(2020)
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_aliases (
+                contributor_id, alias, normalized_alias, alias_kind,
+                source, is_primary, created_at
+            )
+            VALUES (:cid, :a, :n, :ak, :src, false, :ca)
+            """
+        ),
+        {
+            "cid": cid,
+            "a": alias,
+            "n": normalized if normalized is not None else alias.lower(),
+            "ak": alias_kind,
+            "src": source,
+            "ca": created_at,
+        },
+    )
+
+
+def _insert_xid(
+    session: Session,
+    *,
+    cid: UUID,
+    authority: str,
+    external_key: str,
+    source: str = "manual",
+    external_url: str | None = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_external_ids (
+                contributor_id, authority, external_key, external_url, source
+            )
+            VALUES (:cid, :au, :k, :url, :src)
+            """
+        ),
+        {"cid": cid, "au": authority, "k": external_key, "url": external_url, "src": source},
+    )
+
+
+def _insert_credit(
+    session: Session,
+    *,
+    cid: UUID,
+    role: str,
+    ordinal: int,
+    source: str,
+    media: UUID | None = None,
+    podcast: UUID | None = None,
+    gutenberg: int | None = None,
+    credited_name: str | None = None,
+    source_ref: dict | None = None,
+    resolution_status: str = "unverified",
+    updated_at: datetime | None = None,
+) -> None:
+    if updated_at is None:
+        updated_at = _ts(2021)
+    name = credited_name if credited_name is not None else "Credited Name"
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_credits (
+                contributor_id, media_id, podcast_id,
+                project_gutenberg_catalog_ebook_id, credited_name,
+                normalized_credited_name, role, ordinal, source, source_ref,
+                resolution_status, created_at, updated_at
+            )
+            VALUES (
+                :cid, :m, :p, :g, :cn, :ncn, :role, :ord, :src,
+                CAST(:sref AS jsonb), :rs, :ua, :ua
+            )
+            """
+        ),
+        {
+            "cid": cid,
+            "m": media,
+            "p": podcast,
+            "g": gutenberg,
+            "cn": name,
+            "ncn": name.lower(),
+            "role": role,
+            "ord": ordinal,
+            "src": source,
+            "sref": _dumps(source_ref or {}),
+            "rs": resolution_status,
+            "ua": updated_at,
+        },
+    )
+
+
+def _insert_media(session: Session, *, mid: UUID, title: str, user_id: UUID | None = None) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO media (id, kind, title, processing_status, created_by_user_id)
+            VALUES (:id, 'web_article', :t, 'ready_for_reading', :u)
+            """
+        ),
+        {"id": mid, "t": title, "u": user_id},
+    )
+
+
+def _build_chat_parents(session: Session, ids: dict) -> None:
+    u = ids["user"]
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u})
+    session.execute(
+        text(
+            """
+            INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+            VALUES (:id, 'anthropic', 'claude-test', 200000, true)
+            """
+        ),
+        {"id": ids["model"]},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
+            VALUES (:id, :u, 'private', 3)
+            """
+        ),
+        {"id": ids["conversation"], "u": u},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO messages (id, conversation_id, seq, role, content, status)
+            VALUES (:id, :c, 1, 'user', 'seed', 'complete')
+            """
+        ),
+        {"id": ids["msg_user"], "c": ids["conversation"]},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO messages (
+                id, conversation_id, seq, role, content, status, parent_message_id
+            )
+            VALUES (:id, :c, 2, 'assistant', 'reply', 'complete', :parent)
+            """
+        ),
+        {"id": ids["msg_assistant"], "c": ids["conversation"], "parent": ids["msg_user"]},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO chat_runs (
+                id, owner_user_id, conversation_id, user_message_id,
+                assistant_message_id, idempotency_key, payload_hash, status,
+                model_id, reasoning, key_mode
+            )
+            VALUES (:id, :u, :c, :mu, :ma, :ik, 'hash', 'complete', :model, 'none', 'auto')
+            """
+        ),
+        {
+            "id": ids["chat_run"],
+            "u": u,
+            "c": ids["conversation"],
+            "mu": ids["msg_user"],
+            "ma": ids["msg_assistant"],
+            "ik": f"idem-{ids['chat_run']}",
+            "model": ids["model"],
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO oracle_readings (id, user_id, folio_number, question_text, status)
+            VALUES (:id, :u, 1, 'A question about a folio.', 'pending')
+            """
+        ),
+        {"id": ids["reading"], "u": u},
+    )
+
+
+def _build_0179_success_fixture(session: Session) -> dict:
+    """Insert the AC-31/32 representative 0178 fixture. Returns an id map."""
+    ids: dict = {}
+
+    # ---- chat/graph parents -------------------------------------------------
+    ids["user"] = uuid4()
+    ids["model"] = uuid4()
+    ids["conversation"] = uuid4()
+    ids["msg_user"] = uuid4()
+    ids["msg_assistant"] = uuid4()
+    ids["chat_run"] = uuid4()
+    ids["reading"] = uuid4()
+    _build_chat_parents(session, ids)
+
+    # Arbitrary polymorphic endpoints that need no real row (no FK on scheme/id).
+    ids["graph_media_x"] = uuid4()
+    ids["graph_media_y"] = uuid4()
+    ids["graph_media_z"] = uuid4()
+    ids["msg_cited"] = uuid4()  # E_SNAP citation source (message scheme, no FK)
+    ids["arb_edge"] = uuid4()  # arbitrary edge uuid embedded in JSON payloads
+
+    # =====================================================================
+    # 1. COLLAPSE COMPONENT "Ursula K. Le Guin" — triplicate + merged + tomb.
+    #    Survivor is the earliest ACTIVE row, not the (earlier) merged/tomb rows.
+    # =====================================================================
+    # Deterministic UUIDs: the winner deliberately has the HIGHEST uuid among the
+    # active rows and is NOT the earliest-created row overall (the merged/tomb
+    # rows are earlier), so the survivor election is only correct if it is
+    # earliest-created-among-active — not lowest-uuid and not earliest-ignoring-
+    # status. A uuid-first bug would pick loser1; a status-blind bug would pick
+    # the tombstone.
+    ids["winner"] = UUID("ffffffff-0000-4000-8000-000000000001")
+    ids["winner_h"] = "ursula-k-le-guin-w0"
+    ids["loser1"] = UUID("11111111-0000-4000-8000-000000000011")
+    ids["loser1_h"] = "ursula-k-le-guin-l1"
+    ids["loser2"] = UUID("22222222-0000-4000-8000-000000000022")
+    ids["loser2_h"] = "ursula-k-le-guin-l2"
+    ids["merged"] = UUID("00000000-0000-4000-8000-0000000000aa")
+    ids["merged_h"] = "ursula-k-le-guin-mg"
+    ids["tomb"] = UUID("00000000-0000-4000-8000-0000000000bb")
+    ids["tomb_h"] = "ursula-k-le-guin-tb"
+
+    _insert_contributor(
+        session,
+        cid=ids["winner"],
+        handle=ids["winner_h"],
+        display="Ursula K. Le Guin",
+        created_at=_ts(2020),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["loser1"],
+        handle=ids["loser1_h"],
+        display="Ursula K. Le Guin",
+        created_at=_ts(2021),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["loser2"],
+        handle=ids["loser2_h"],
+        display="Ursula K. Le Guin",
+        created_at=_ts(2022),
+    )
+    # merged/tombstoned rows are created EARLIER than the winner but are not
+    # active-retainable, so they must not win the survivor election.
+    _insert_contributor(
+        session,
+        cid=ids["merged"],
+        handle=ids["merged_h"],
+        display="Ursula K. Le Guin",
+        created_at=_ts(2018),
+        status="merged",
+        merged_into=ids["winner"],
+    )
+    _insert_contributor(
+        session,
+        cid=ids["tomb"],
+        handle=ids["tomb_h"],
+        display="Ursula K. Le Guin",
+        created_at=_ts(2017),
+        status="tombstoned",
+    )
+
+    # duplicate (owner, normalized_alias) literals on the winner: a resolving
+    # display alias and a non-resolving credited alias that CASEFOLD to the same
+    # match key -> must dedup to the resolving one before the unique index.
+    _insert_alias(
+        session,
+        cid=ids["winner"],
+        alias="URSULA K. LE GUIN",
+        source="epub_opf",
+        alias_kind="credited",
+    )
+    # a genuinely distinct searchable (non-resolving) alias on the winner
+    _insert_alias(
+        session,
+        cid=ids["winner"],
+        alias="Ursula Kroeber Le Guin",
+        source="web_article_byline",
+        alias_kind="credited",
+    )
+    # a distinct non-resolving alias on a LOSER -> must repoint to the survivor
+    _insert_alias(
+        session,
+        cid=ids["loser1"],
+        alias="U. K. Le Guin",
+        source="epub_opf",
+        alias_kind="credited",
+    )
+
+    # =====================================================================
+    # 2. CLASSIFY — full D-17 resolving/non-resolving alias vocabulary.
+    # =====================================================================
+    ids["classify"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["classify"],
+        handle="classify-test-c0",
+        display="Classify Test",
+        created_at=_ts(2020),
+    )
+    for alias, source, _resolves in [
+        ("Classify Manual", "manual", True),
+        ("Classify User", "user", True),
+        ("Classify Curated", "curated", True),
+        ("Classify Merge", "merge", True),
+        ("Classify Epub", "epub_opf", False),
+        ("Classify MigAuthors", "migration:media_authors", False),
+        ("Classify Enrich", "metadata_enrichment", False),
+        ("Classify XApi", "x_oembed_article", False),
+    ]:
+        _insert_alias(session, cid=ids["classify"], alias=alias, source=source)
+    ids["classify_resolving"] = {
+        "classify test",
+        "classify manual",
+        "classify user",
+        "classify curated",
+        "classify merge",
+    }
+    ids["classify_nonresolving"] = {
+        "classify epub",
+        "classify migauthors",
+        "classify enrich",
+        "classify xapi",
+    }
+
+    # =====================================================================
+    # 3. SAME-NAME / SAME-AUTHORITY CONFLICT — must stay DISTINCT.
+    # =====================================================================
+    ids["smith_a"] = uuid4()
+    ids["smith_b"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["smith_a"],
+        handle="john-smith-a",
+        display="John Smith",
+        created_at=_ts(2020),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["smith_b"],
+        handle="john-smith-b",
+        display="John Smith",
+        created_at=_ts(2021),
+    )
+    _insert_xid(session, cid=ids["smith_a"], authority="wikidata", external_key="Q1001")
+    _insert_xid(session, cid=ids["smith_b"], authority="wikidata", external_key="Q1002")
+
+    # =====================================================================
+    # 4. AUTHORITY DISPOSITIONS.
+    # =====================================================================
+    ids["auth_keep"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["auth_keep"],
+        handle="auth-keep-k0",
+        display="Auth Keep",
+        created_at=_ts(2020),
+    )
+    ids["orcid_keep"] = "0000-0002-1825-0097"
+    for authority, key in [
+        ("orcid", ids["orcid_keep"]),
+        ("isni", "0000000121032683"),
+        ("viaf", "102333412"),
+        ("wikidata", "Q42"),
+        ("openalex", "A5023888391"),
+        ("lcnaf", "n79021164"),
+    ]:
+        _insert_xid(session, cid=ids["auth_keep"], authority=authority, external_key=key)
+
+    ids["auth_email"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["auth_email"],
+        handle="auth-email-e0",
+        display="Alice Contributor",
+        created_at=_ts(2020),
+    )
+    # mixed-case + padded address -> canonicalized to authority email_address.
+    _insert_xid(
+        session, cid=ids["auth_email"], authority="email", external_key="  Alice@Example.COM "
+    )
+
+    ids["auth_yt"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["auth_yt"],
+        handle="auth-yt-y0",
+        display="Channel Owner",
+        created_at=_ts(2020),
+    )
+    ids["yt_channel"] = "UCxxxxxxxxxxxxxxxxxxxxxx"  # UC + 22 = 24-char channel id
+    _insert_xid(
+        session,
+        cid=ids["auth_yt"],
+        authority="youtube",
+        external_key=ids["yt_channel"],
+        source="youtube_metadata",
+        external_url=f"https://www.youtube.com/channel/{ids['yt_channel']}",
+    )
+    _insert_xid(
+        session,
+        cid=ids["auth_yt"],
+        authority="youtube",
+        external_key="dQw4w9WgXcQ",
+        source="youtube_metadata",
+        external_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    )
+
+    ids["auth_drop"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["auth_drop"],
+        handle="auth-drop-d0",
+        display="Feed Author",
+        created_at=_ts(2020),
+    )
+    _insert_xid(session, cid=ids["auth_drop"], authority="podcast_index", external_key="pi-777")
+    _insert_xid(
+        session, cid=ids["auth_drop"], authority="rss", external_key="https://feed.example/rss.xml"
+    )
+    _insert_xid(session, cid=ids["auth_drop"], authority="gutenberg", external_key="9999")
+
+    # =====================================================================
+    # 5. PRIVACY — email-as-display + URL alias.
+    # =====================================================================
+    ids["priv"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["priv"],
+        handle="priv-email-p0",
+        display="jane.doe@example.com",
+        created_at=_ts(2020),
+    )
+    _insert_alias(
+        session, cid=ids["priv"], alias="https://example.com/~jane", source="web_article_byline"
+    )
+    # an address EMBEDDED in prose (not a full-value email) must also be removed
+    _insert_alias(
+        session,
+        cid=ids["priv"],
+        alias="Jane Doe <jane.doe@example.com>",
+        source="web_article_byline",
+    )
+
+    # =====================================================================
+    # 5b. HUSK — tombstoned, unique name, NO retained survivor. Total
+    #     disposition: children dropped, clean references purged, row deleted.
+    #     (Its graph/reference rows are seeded in section 8 with the helpers.)
+    # =====================================================================
+    ids["husk"] = uuid4()
+    ids["husk_h"] = "husk-solo-h0"
+    _insert_contributor(
+        session,
+        cid=ids["husk"],
+        handle=ids["husk_h"],
+        display="Husk Solo",
+        created_at=_ts(2019),
+        status="tombstoned",
+    )
+    _insert_xid(session, cid=ids["husk"], authority="viaf", external_key="99999999")
+    _insert_alias(session, cid=ids["husk"], alias="Husk Alias", source="epub_opf")
+
+    # =====================================================================
+    # 5c. DEEP MERGED CHAIN — nine merged rows deep. The disposition walk must
+    #     reach the active end regardless of depth (no hop cap): the deepest
+    #     row maps to the survivor, never silently degrades to a husk.
+    # =====================================================================
+    ids["chain_end"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["chain_end"],
+        handle="chain-end-e0",
+        display="Chain End Person",
+        created_at=_ts(2019, 6),
+    )
+    ids["chain"] = []
+    ids["chain_handles"] = []
+    previous = ids["chain_end"]
+    for i in range(9, 0, -1):  # chain9 -> chain_end, chain8 -> chain9, ...
+        cid = uuid4()
+        handle = f"chain-hop-{i:02d}-cc"
+        _insert_contributor(
+            session,
+            cid=cid,
+            handle=handle,
+            display=f"Chain Hop {i:02d}",
+            created_at=_ts(2000 + i),
+            status="merged",
+            merged_into=previous,
+        )
+        ids["chain"].insert(0, cid)
+        ids["chain_handles"].insert(0, handle)
+        previous = cid
+    # ids["chain"][0] is the deepest row (9 hops from chain_end) and the
+    # earliest-created merged row, so its walk runs before any shortcut exists.
+
+    # =====================================================================
+    # 5d. MACHINE-SOURCE DISPLAY ALIAS (the prod-dominant shape): the ONLY
+    #     alias is a provider-observed copy of the display; the migration must
+    #     FLIP it to resolving rather than insert a duplicate row.
+    # =====================================================================
+    ids["machine_alias"] = uuid4()
+    _insert_contributor(
+        session,
+        cid=ids["machine_alias"],
+        handle="machine-alias-m0",
+        display="Machine Alias Only",
+        created_at=_ts(2020),
+        with_display_alias=False,
+    )
+    _insert_alias(
+        session,
+        cid=ids["machine_alias"],
+        alias="Machine Alias Only",
+        source="metadata_enrichment",
+        alias_kind="display",
+    )
+
+    # =====================================================================
+    # 6. CREDIT SALVAGE + MANUAL FLAG.
+    # =====================================================================
+    ids["media_manual"] = uuid4()
+    ids["cm_manual"] = uuid4()
+    ids["cm_machine"] = uuid4()
+    _insert_media(session, mid=ids["media_manual"], title="Manual Flag Work")
+    _insert_contributor(
+        session,
+        cid=ids["cm_manual"],
+        handle="manual-author-one",
+        display="Manual Author One",
+        created_at=_ts(2020),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["cm_machine"],
+        handle="machine-author-two",
+        display="Machine Author Two",
+        created_at=_ts(2020),
+    )
+    _insert_credit(
+        session,
+        cid=ids["cm_manual"],
+        role="author",
+        ordinal=0,
+        source="manual",
+        media=ids["media_manual"],
+    )
+    _insert_credit(
+        session,
+        cid=ids["cm_machine"],
+        role="author",
+        ordinal=1,
+        source="metadata_enrichment",
+        media=ids["media_manual"],
+    )
+
+    ids["media_auto"] = uuid4()
+    ids["ca_auto"] = uuid4()
+    _insert_media(session, mid=ids["media_auto"], title="Automatic Work")
+    _insert_contributor(
+        session,
+        cid=ids["ca_auto"],
+        handle="auto-author-one",
+        display="Auto Author One",
+        created_at=_ts(2020),
+    )
+    _insert_credit(
+        session,
+        cid=ids["ca_auto"],
+        role="author",
+        ordinal=0,
+        source="metadata_enrichment",
+        media=ids["media_auto"],
+    )
+
+    # collapse-dedup: two same-source author credits on one media, one via a
+    # loser -> after collapse both are (winner, author) -> dedup to one.
+    ids["media_shared"] = uuid4()
+    _insert_media(session, mid=ids["media_shared"], title="Shared Credit Work")
+    _insert_credit(
+        session,
+        cid=ids["winner"],
+        role="author",
+        ordinal=0,
+        source="metadata_enrichment",
+        media=ids["media_shared"],
+    )
+    _insert_credit(
+        session,
+        cid=ids["loser1"],
+        role="author",
+        ordinal=1,
+        source="metadata_enrichment",
+        media=ids["media_shared"],
+    )
+
+    # translator/host/guest slices on media + podcast + gutenberg targets.
+    ids["media_roles"] = uuid4()
+    ids["role_auth"] = uuid4()
+    ids["role_trans"] = uuid4()
+    _insert_media(session, mid=ids["media_roles"], title="Roles Work")
+    _insert_contributor(
+        session,
+        cid=ids["role_auth"],
+        handle="role-author-r0",
+        display="Role Author",
+        created_at=_ts(2020),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["role_trans"],
+        handle="role-translator-r0",
+        display="Role Translator",
+        created_at=_ts(2020),
+    )
+    _insert_credit(
+        session,
+        cid=ids["role_auth"],
+        role="author",
+        ordinal=0,
+        source="epub_opf",
+        media=ids["media_roles"],
+    )
+    _insert_credit(
+        session,
+        cid=ids["role_trans"],
+        role="translator",
+        ordinal=1,
+        source="epub_opf",
+        media=ids["media_roles"],
+    )
+
+    ids["podcast"] = uuid4()
+    ids["role_host"] = uuid4()
+    ids["role_guest"] = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+            VALUES (:id, 'podcast_index', 'pi-1', 'Roles Podcast', 'https://feed.example/p')
+            """
+        ),
+        {"id": ids["podcast"]},
+    )
+    _insert_contributor(
+        session,
+        cid=ids["role_host"],
+        handle="role-host-r0",
+        display="Role Host",
+        created_at=_ts(2020),
+    )
+    _insert_contributor(
+        session,
+        cid=ids["role_guest"],
+        handle="role-guest-r0",
+        display="Role Guest",
+        created_at=_ts(2020),
+    )
+    _insert_credit(
+        session,
+        cid=ids["role_host"],
+        role="host",
+        ordinal=0,
+        source="podcast_index",
+        podcast=ids["podcast"],
+    )
+    _insert_credit(
+        session,
+        cid=ids["role_guest"],
+        role="guest",
+        ordinal=1,
+        source="podcast_index",
+        podcast=ids["podcast"],
+    )
+
+    ids["ebook"] = 777001
+    ids["gut_auth"] = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO project_gutenberg_catalog (ebook_id, title)
+            VALUES (:e, 'A Public Domain Book')
+            """
+        ),
+        {"e": ids["ebook"]},
+    )
+    _insert_contributor(
+        session,
+        cid=ids["gut_auth"],
+        handle="gutenberg-author-g0",
+        display="Gutenberg Author",
+        created_at=_ts(2020),
+    )
+    _insert_credit(
+        session,
+        cid=ids["gut_auth"],
+        role="author",
+        ordinal=0,
+        source="project_gutenberg_catalog",
+        gutenberg=ids["ebook"],
+    )
+
+    # x_user recovery: a loser credit whose source_ref carries x_user_id ->
+    # mined onto the survivor before source_ref is dropped.
+    ids["media_xuser"] = uuid4()
+    ids["x_user_id"] = "1234567890"
+    _insert_media(session, mid=ids["media_xuser"], title="X User Work")
+    _insert_credit(
+        session,
+        cid=ids["loser1"],
+        role="author",
+        ordinal=0,
+        source="x_oembed_article",
+        media=ids["media_xuser"],
+        source_ref={"media_id": str(ids["media_xuser"]), "x_user_id": ids["x_user_id"]},
+    )
+
+    # >20 author slice -> truncated to dense 20.
+    ids["media_big"] = uuid4()
+    ids["big_authors"] = []
+    _insert_media(session, mid=ids["media_big"], title="Anthology Work")
+    for i in range(25):
+        cid = uuid4()
+        ids["big_authors"].append(cid)
+        _insert_contributor(
+            session,
+            cid=cid,
+            handle=f"big-author-{i:02d}-hh",
+            display=f"Big Author {i:02d}",
+            created_at=_ts(2020),
+        )
+        _insert_credit(
+            session,
+            cid=cid,
+            role="author",
+            ordinal=i,
+            source="metadata_enrichment",
+            media=ids["media_big"],
+        )
+
+    # machine-vs-machine recency: the source slice with the greatest
+    # MAX(updated_at) wins the role (web_article_byline, newer); the stale
+    # metadata_enrichment slice is deleted despite having more rows.
+    ids["media_recency"] = uuid4()
+    ids["rec_old_a"] = uuid4()
+    ids["rec_old_b"] = uuid4()
+    ids["rec_new"] = uuid4()
+    _insert_media(session, mid=ids["media_recency"], title="Recency Work")
+    for key, handle, display in (
+        ("rec_old_a", "recency-old-a0", "Recency Old A"),
+        ("rec_old_b", "recency-old-b0", "Recency Old B"),
+        ("rec_new", "recency-new-n0", "Recency New"),
+    ):
+        _insert_contributor(
+            session, cid=ids[key], handle=handle, display=display, created_at=_ts(2020)
+        )
+    _insert_credit(
+        session,
+        cid=ids["rec_old_a"],
+        role="author",
+        ordinal=0,
+        source="metadata_enrichment",
+        media=ids["media_recency"],
+        updated_at=_ts(2021),
+    )
+    _insert_credit(
+        session,
+        cid=ids["rec_old_b"],
+        role="author",
+        ordinal=1,
+        source="metadata_enrichment",
+        media=ids["media_recency"],
+        updated_at=_ts(2021, 6),
+    )
+    _insert_credit(
+        session,
+        cid=ids["rec_new"],
+        role="author",
+        ordinal=0,
+        source="web_article_byline",
+        media=ids["media_recency"],
+        updated_at=_ts(2023),
+    )
+    # exact MAX(updated_at) tie -> source name ascending (metadata_enrichment).
+    ids["media_tie"] = uuid4()
+    ids["tie_meta"] = uuid4()
+    ids["tie_web"] = uuid4()
+    _insert_media(session, mid=ids["media_tie"], title="Tie Work")
+    _insert_contributor(
+        session, cid=ids["tie_meta"], handle="tie-meta-t0", display="Tie Meta", created_at=_ts(2020)
+    )
+    _insert_contributor(
+        session, cid=ids["tie_web"], handle="tie-web-t0", display="Tie Web", created_at=_ts(2020)
+    )
+    _insert_credit(
+        session,
+        cid=ids["tie_meta"],
+        role="author",
+        ordinal=0,
+        source="metadata_enrichment",
+        media=ids["media_tie"],
+        updated_at=_ts(2022),
+    )
+    _insert_credit(
+        session,
+        cid=ids["tie_web"],
+        role="author",
+        ordinal=0,
+        source="web_article_byline",
+        media=ids["media_tie"],
+        updated_at=_ts(2022),
+    )
+
+    # =====================================================================
+    # 7. RECONCILIATION / IDENTITY-EVENT / JOB rows (all deleted).
+    # =====================================================================
+    run_id = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_reconciliation_runs (
+                id, algorithm_version, candidate_count, evaluated_pair_count
+            )
+            VALUES (:id, 'v1', 1, 1)
+            """
+        ),
+        {"id": run_id},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_reconciliation_candidates (
+                run_id, contributor_a_id, contributor_b_id,
+                proposed_source_contributor_id, proposed_target_contributor_id,
+                source_snapshot_handle, source_snapshot_display_name,
+                source_snapshot_sort_name, source_snapshot_kind,
+                source_snapshot_status, source_snapshot_work_count,
+                target_snapshot_handle, target_snapshot_display_name,
+                target_snapshot_sort_name, target_snapshot_kind,
+                target_snapshot_status, target_snapshot_work_count,
+                status, score, evidence
+            )
+            VALUES (
+                :run, :a, :b, :a, :b,
+                :ah, 'Ursula K. Le Guin', 'ursula', 'unknown', 'unverified', 1,
+                :bh, 'Ursula K. Le Guin', 'ursula', 'unknown', 'unverified', 1,
+                'pending', 90,
+                CAST(:evi AS jsonb)
+            )
+            """
+        ),
+        {
+            "run": run_id,
+            "a": ids["loser1"],
+            "b": ids["winner"],
+            "ah": ids["loser1_h"],
+            "bh": ids["winner_h"],
+            "evi": _dumps({"type": "contributor", "id": ids["loser1_h"]}),
+        },
+    )
+    for state in ("pending", "running", "succeeded", "failed"):
+        session.execute(
+            text(
+                """
+                INSERT INTO background_jobs (kind, payload, status)
+                VALUES ('contributor_reconciliation', CAST(:p AS jsonb), :st)
+                """
+            ),
+            {"p": _dumps({"scope": "media", "reason": "seed"}), "st": state},
+        )
+
+    # =====================================================================
+    # 8. REFERENCE / GRAPH ROWS (all owned by ids["user"]).
+    # =====================================================================
+    u = ids["user"]
+    loser1_uri = f"contributor:{ids['loser1']}"
+    l1h = ids["loser1_h"]
+
+    def typed_ref(handle: str) -> dict:
+        return {
+            "type": "contributor",
+            "id": handle,
+            "contributor_handle": handle,
+            "deep_link": f"/authors/{handle}",
+        }
+
+    # ---- resource_edges -----------------------------------------------------
+    ids["edge_keep"] = uuid4()
+    ids["edge_collide"] = uuid4()
+    ids["edge_self"] = uuid4()
+    ids["edge_vs"] = uuid4()
+    ids["edge_snap"] = uuid4()
+
+    def edge(eid, *, origin, kind, ss, si, tsch, ti, created, ordinal=None, snapshot=None):
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    id, user_id, kind, origin, source_scheme, source_id,
+                    target_scheme, target_id, ordinal, snapshot, created_at
+                )
+                VALUES (:id, :u, :k, :o, :ss, :si, :ts, :ti, :ord,
+                        CAST(:snap AS jsonb), :ca)
+                """
+            ),
+            {
+                "id": eid,
+                "u": u,
+                "k": kind,
+                "o": origin,
+                "ss": ss,
+                "si": si,
+                "ts": tsch,
+                "ti": ti,
+                "ord": ordinal,
+                "snap": _dumps(snapshot) if snapshot is not None else None,
+                "ca": created,
+            },
+        )
+
+    # bare-pair collision: keep the earlier edge_keep; edge_collide merges into it.
+    edge(
+        ids["edge_keep"],
+        origin="user",
+        kind="context",
+        ss="contributor",
+        si=ids["winner"],
+        tsch="media",
+        ti=ids["graph_media_x"],
+        created=_ts(2020),
+    )
+    edge(
+        ids["edge_collide"],
+        origin="user",
+        kind="context",
+        ss="contributor",
+        si=ids["loser1"],
+        tsch="media",
+        ti=ids["graph_media_x"],
+        created=_ts(2021),
+    )
+    # self-edge after repoint (loser2 -> winner) -> removed.
+    edge(
+        ids["edge_self"],
+        origin="user",
+        kind="context",
+        ss="contributor",
+        si=ids["loser2"],
+        tsch="contributor",
+        ti=ids["winner"],
+        created=_ts(2021),
+    )
+    # survives; anchors the view-state edge-occurrence collision.
+    edge(
+        ids["edge_vs"],
+        origin="user",
+        kind="context",
+        ss="contributor",
+        si=ids["winner"],
+        tsch="media",
+        ti=ids["graph_media_z"],
+        created=_ts(2020),
+    )
+    # citation edge -> contributor target with a snapshot nesting a typed ref.
+    edge(
+        ids["edge_snap"],
+        origin="citation",
+        kind="context",
+        ss="message",
+        si=ids["msg_cited"],
+        tsch="contributor",
+        ti=ids["loser1"],
+        created=_ts(2020),
+        ordinal=1,
+        snapshot={
+            "title": "Cited work",
+            "excerpt": "an excerpt",
+            "result_type": "contributor",
+            "deep_link": f"/authors/{l1h}",
+            "contributor": typed_ref(l1h),
+        },
+    )
+
+    # ---- user_pinned_objects ------------------------------------------------
+    ids["pin_a"] = uuid4()
+    ids["pin_b"] = uuid4()
+    ids["pin_c"] = uuid4()
+
+    def pin(pid, oid, surface, order, *, deleted=None):
+        session.execute(
+            text(
+                """
+                INSERT INTO user_pinned_objects (
+                    id, user_id, object_type, object_id, surface_key, order_key,
+                    created_at, updated_at, deleted_at
+                )
+                VALUES (:id, :u, 'contributor', :oid, :sk, :ok, :ca, :ca, :del)
+                """
+            ),
+            {
+                "id": pid,
+                "u": u,
+                "oid": oid,
+                "sk": surface,
+                "ok": order,
+                "ca": _ts(2020),
+                "del": deleted,
+            },
+        )
+
+    pin(ids["pin_a"], ids["loser1"], "sidebar", "a")  # simple repoint
+    pin(ids["pin_b"], ids["winner"], "home", "b")  # active winner pin
+    pin(ids["pin_c"], ids["loser1"], "home", "c", deleted=_ts(2021))  # soft-deleted collision
+
+    # ---- resource_versions --------------------------------------------------
+    ids["rv1"] = uuid4()
+    ids["rv2"] = uuid4()
+    ids["rv3"] = uuid4()
+
+    def rv(vid, rid, lane, version, updated):
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_versions (
+                    id, user_id, resource_scheme, resource_id, lane, version,
+                    created_at, updated_at
+                )
+                VALUES (:id, :u, 'contributor', :rid, :lane, :v, :ua, :ua)
+                """
+            ),
+            {"id": vid, "u": u, "rid": rid, "lane": lane, "v": version, "ua": updated},
+        )
+
+    rv(ids["rv1"], ids["loser1"], "title", 1, _ts(2020))  # simple repoint
+    rv(ids["rv2"], ids["winner"], "body", 3, _ts(2022))  # collision winner (v3)
+    rv(ids["rv3"], ids["loser1"], "body", 2, _ts(2021))  # collision loser (v2)
+
+    # ---- resource_view_states ----------------------------------------------
+    ids["vs_surf"] = uuid4()
+    ids["vs_target"] = uuid4()
+    ids["vs_edge"] = uuid4()
+    ids["vs_e1"] = uuid4()
+    ids["vs_e2"] = uuid4()
+
+    def vs(vid, *, s_scheme, s_id, edge_id=None, t_scheme=None, t_id=None, updated):
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_view_states (
+                    id, user_id, surface_scheme, surface_id, edge_id,
+                    target_scheme, target_id, state, created_at, updated_at
+                )
+                VALUES (:id, :u, :ss, :si, :eid, :ts, :ti, '{}'::jsonb, :ua, :ua)
+                """
+            ),
+            {
+                "id": vid,
+                "u": u,
+                "ss": s_scheme,
+                "si": s_id,
+                "eid": edge_id,
+                "ts": t_scheme,
+                "ti": t_id,
+                "ua": updated,
+            },
+        )
+
+    vs(ids["vs_surf"], s_scheme="contributor", s_id=ids["loser1"], updated=_ts(2020))
+    vs(
+        ids["vs_target"],
+        s_scheme="media",
+        s_id=ids["graph_media_x"],
+        t_scheme="contributor",
+        t_id=ids["loser1"],
+        updated=_ts(2020),
+    )
+    vs(
+        ids["vs_edge"],
+        s_scheme="media",
+        s_id=ids["graph_media_y"],
+        edge_id=ids["edge_collide"],
+        updated=_ts(2020),
+    )
+    vs(
+        ids["vs_e1"],
+        s_scheme="contributor",
+        s_id=ids["winner"],
+        edge_id=ids["edge_vs"],
+        updated=_ts(2022),
+    )  # collision winner (later)
+    vs(
+        ids["vs_e2"],
+        s_scheme="contributor",
+        s_id=ids["loser1"],
+        edge_id=ids["edge_vs"],
+        updated=_ts(2021),
+    )  # collision loser (earlier)
+
+    # ---- synapse_suppressions (delete exemption, both endpoints) -------------
+    session.execute(
+        text(
+            """
+            INSERT INTO synapse_suppressions (
+                user_id, source_scheme, source_id, target_scheme, target_id
+            )
+            VALUES (:u, 'media', :mx, 'contributor', :l1)
+            """
+        ),
+        {"u": u, "mx": ids["graph_media_x"], "l1": ids["loser1"]},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO synapse_suppressions (
+                user_id, source_scheme, source_id, target_scheme, target_id
+            )
+            VALUES (:u, 'contributor', :l2, 'media', :mx)
+            """
+        ),
+        {"u": u, "l2": ids["loser2"], "mx": ids["graph_media_x"]},
+    )
+
+    # ---- husk references: purged/dropped/deleted, never repointed ------------
+    ids["husk_pin"] = uuid4()
+    pin(ids["husk_pin"], ids["husk"], "sidebar", "z")
+    rv(uuid4(), ids["husk"], "title", 1, _ts(2020))
+    vs(uuid4(), s_scheme="contributor", s_id=ids["husk"], updated=_ts(2020))
+    ids["husk_edge"] = uuid4()
+    edge(
+        ids["husk_edge"],
+        origin="user",
+        kind="context",
+        ss="contributor",
+        si=ids["husk"],
+        tsch="media",
+        ti=ids["graph_media_x"],
+        created=_ts(2020),
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO synapse_suppressions (
+                user_id, source_scheme, source_id, target_scheme, target_id
+            )
+            VALUES (:u, 'contributor', :hk, 'media', :my)
+            """
+        ),
+        {"u": u, "hk": ids["husk"], "my": ids["graph_media_y"]},
+    )
+
+    # ---- deep-chain reference: must repoint to chain_end, never purge --------
+    ids["chain_pin"] = uuid4()
+    pin(ids["chain_pin"], ids["chain"][0], "sidebar", "q")  # 9 hops from chain_end
+
+    # ---- oracle_reading_folios (required edge rebind through collision) ------
+    session.execute(
+        text(
+            """
+            INSERT INTO oracle_reading_folios (
+                reading_id, phase, edge_id, source_kind, locator_label,
+                attribution_text, marginalia_text
+            )
+            VALUES (:r, 'descent', :e, 'user_media', 'loc', 'attr', 'marg')
+            """
+        ),
+        {"r": ids["reading"], "e": ids["edge_collide"]},
+    )
+
+    # ---- message_tool_calls + retrievals + candidate ledger -----------------
+    ids["tool_call"] = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO message_tool_calls (
+                id, conversation_id, user_message_id, assistant_message_id,
+                tool_name, tool_call_index, scope, status,
+                result_refs, selected_context_refs
+            )
+            VALUES (:id, :c, :mu, :ma, 'app_search', 0, 'all', 'complete',
+                    CAST(:rr AS jsonb), CAST(:sc AS jsonb))
+            """
+        ),
+        {
+            "id": ids["tool_call"],
+            "c": ids["conversation"],
+            "mu": ids["msg_user"],
+            "ma": ids["msg_assistant"],
+            "rr": _dumps([typed_ref(l1h)]),
+            "sc": _dumps([{"type": "contributor", "id": l1h}]),
+        },
+    )
+    ids["mr_contrib"] = uuid4()
+    ids["mr_media"] = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO message_retrievals (
+                id, tool_call_id, ordinal, result_type, source_id, context_ref,
+                result_ref, deep_link, cited_edge_id
+            )
+            VALUES (:id, :tc, 0, 'contributor', :sid, CAST(:ctx AS jsonb),
+                    CAST(:res AS jsonb), :dl, :ce)
+            """
+        ),
+        {
+            "id": ids["mr_contrib"],
+            "tc": ids["tool_call"],
+            "sid": l1h,
+            "ctx": _dumps({"type": "contributor", "id": l1h}),
+            "res": _dumps(typed_ref(l1h)),
+            "dl": f"/authors/{l1h}",
+            "ce": ids["edge_collide"],  # rebind to edge_keep
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO message_retrievals (
+                id, tool_call_id, ordinal, result_type, source_id, context_ref,
+                result_ref, cited_edge_id
+            )
+            VALUES (:id, :tc, 1, 'media', :sid, CAST(:ctx AS jsonb),
+                    CAST(:res AS jsonb), :ce)
+            """
+        ),
+        {
+            "id": ids["mr_media"],
+            "tc": ids["tool_call"],
+            "sid": str(ids["graph_media_x"]),
+            "ctx": _dumps({"type": "media", "id": str(ids["graph_media_x"])}),
+            "res": _dumps({"type": "media", "id": str(ids["graph_media_x"])}),
+            "ce": ids["edge_self"],  # self-edge removed -> null
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO message_retrieval_candidate_ledgers (
+                tool_call_id, ordinal, result_type, source_id, selected,
+                included_in_prompt, selection_status, selection_reason, result_ref
+            )
+            VALUES (:tc, 0, 'contributor', :sid, false, false, 'retrieved',
+                    'seed', CAST(:res AS jsonb))
+            """
+        ),
+        {"tc": ids["tool_call"], "sid": l1h, "res": _dumps(typed_ref(l1h))},
+    )
+
+    # ---- chat_prompt_assemblies (typed refs + URI strings) ------------------
+    session.execute(
+        text(
+            """
+            INSERT INTO chat_prompt_assemblies (
+                id, chat_run_id, conversation_id, assistant_message_id, model_id,
+                cacheable_input_tokens_estimate, max_context_tokens,
+                reserved_output_tokens, reserved_reasoning_tokens,
+                input_budget_tokens, estimated_input_tokens,
+                included_context_refs, prompt_block_manifest, dropped_items
+            )
+            VALUES (
+                :id, :run, :c, :ma, :model, 0, 200000, 1, 1, 100, 10,
+                CAST(:inc AS jsonb), CAST(:man AS jsonb), CAST(:drop AS jsonb)
+            )
+            """
+        ),
+        {
+            "id": uuid4(),
+            "run": ids["chat_run"],
+            "c": ids["conversation"],
+            "ma": ids["msg_assistant"],
+            "model": ids["model"],
+            "inc": _dumps(
+                [
+                    {"type": "context_ref", "id": str(ids["arb_edge"]), "resource_uri": loser1_uri},
+                    {
+                        # collapsed edge id -> must rebind to edge_keep (D-18.2)
+                        "type": "context_ref",
+                        "id": str(ids["edge_collide"]),
+                        "resource_uri": loser1_uri,
+                    },
+                    typed_ref(l1h),
+                ]
+            ),
+            "man": _dumps({"blocks": [{"source_refs": [{"resource_uri": loser1_uri}]}]}),
+            "drop": _dumps([{"resource_uri": loser1_uri, "reason": "budget"}]),
+        },
+    )
+
+    # ---- chat_run_events (meta URIs + tool_result handles/filters) ----------
+    session.execute(
+        text(
+            """
+            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+            VALUES (:run, 1, 'meta', CAST(:p AS jsonb))
+            """
+        ),
+        {
+            "run": ids["chat_run"],
+            "p": _dumps(
+                {
+                    "chat_subject": {
+                        "requested_resource_ref": loser1_uri,
+                        "resource_ref": loser1_uri,
+                    },
+                    "context_edge_id": str(ids["edge_collide"]),  # rebinds to edge_keep
+                    "unrelated_edge_id": str(ids["arb_edge"]),  # unknown ids pass through
+                    "companions": [loser1_uri],
+                }
+            ),
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO chat_run_events (run_id, seq, event_type, payload)
+            VALUES (:run, 2, 'tool_result', CAST(:p AS jsonb))
+            """
+        ),
+        {
+            "run": ids["chat_run"],
+            "p": _dumps(
+                {
+                    "results": [typed_ref(l1h)],
+                    "filters": {"authors": [l1h]},
+                }
+            ),
+        },
+    )
+
+    # ---- resource_mutations (response refs + a memo scoped to a loser) -------
+    session.execute(
+        text(
+            """
+            INSERT INTO resource_mutations (
+                user_id, mutation_scope, client_mutation_id, request_hash,
+                changed_lanes, response_json
+            )
+            VALUES (:u, :scope, 'cm-ref', :h, '{}'::jsonb, CAST(:r AS jsonb))
+            """
+        ),
+        {
+            "u": u,
+            "scope": f"resource:page:{ids['graph_media_y']}:outgoing_edges",
+            "h": _HASH64,
+            "r": _dumps(
+                {
+                    "items": [
+                        {
+                            "ref": loser1_uri,
+                            "activation": {"href": f"/authors/{l1h}"},
+                        }
+                    ]
+                }
+            ),
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO resource_mutations (
+                user_id, mutation_scope, client_mutation_id, request_hash,
+                changed_lanes, response_json
+            )
+            VALUES (:u, :scope, 'cm-del', :h, '{}'::jsonb, CAST(:r AS jsonb))
+            """
+        ),
+        {
+            "u": u,
+            "scope": f"contributor:{ids['loser1']}:display-name",  # DELETED
+            "h": _HASH64,
+            "r": _dumps({"handle": l1h, "displayName": "Ursula K. Le Guin"}),
+        },
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO resource_mutations (
+                user_id, mutation_scope, client_mutation_id, request_hash,
+                changed_lanes, response_json
+            )
+            VALUES (:u, :scope, 'cm-keep', :h, '{}'::jsonb, CAST(:r AS jsonb))
+            """
+        ),
+        {
+            "u": u,
+            "scope": f"contributor:{ids['winner']}:display-name",  # survives
+            "h": _HASH64,
+            "r": _dumps({"handle": ids["winner_h"], "displayName": "Ursula K. Le Guin"}),
+        },
+    )
+    # husk-scoped memo: deleted with the loser scope (and its own-handle
+    # response_json must NOT trip the deferred husk-residue scan afterwards)
+    session.execute(
+        text(
+            """
+            INSERT INTO resource_mutations (
+                user_id, mutation_scope, client_mutation_id, request_hash,
+                changed_lanes, response_json
+            )
+            VALUES (:u, :scope, 'cm-husk', :h, '{}'::jsonb, CAST(:r AS jsonb))
+            """
+        ),
+        {
+            "u": u,
+            "scope": f"contributor:{ids['husk']}:display-name",  # DELETED (husk-scoped)
+            "h": _HASH64,
+            "r": _dumps({"handle": ids["husk_h"], "displayName": "Husk Solo"}),
+        },
+    )
+    # pre-existing junk: a contributor scope whose uuid never keyed a
+    # contributor row — not this migration's residue; must survive untouched.
+    ids["junk_scope_uuid"] = uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO resource_mutations (
+                user_id, mutation_scope, client_mutation_id, request_hash,
+                changed_lanes, response_json
+            )
+            VALUES (:u, :scope, 'cm-junk', :h, '{}'::jsonb, CAST(:r AS jsonb))
+            """
+        ),
+        {
+            "u": u,
+            "scope": f"contributor:{ids['junk_scope_uuid']}:display-name",
+            "h": _HASH64,
+            "r": _dumps({"note": "junk scope, never a contributor"}),
+        },
+    )
+
+    # ---- note_blocks (PM object_ref / object_embed nodes) -------------------
+    session.execute(
+        text(
+            """
+            INSERT INTO note_blocks (user_id, body_pm_json, body_text)
+            VALUES (:u, CAST(:pm AS jsonb), 'mentions')
+            """
+        ),
+        {
+            "u": u,
+            "pm": _dumps(
+                {
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "object_ref",
+                            "attrs": {"objectType": "contributor", "objectId": str(ids["loser1"])},
+                        },
+                        {
+                            "type": "object_embed",
+                            "attrs": {"objectType": "contributor", "objectId": str(ids["loser2"])},
+                        },
+                    ],
+                }
+            ),
+        },
+    )
+
+    # ---- chat_run_turn_contexts (both pairs + self-edge context) ------------
+    session.execute(
+        text(
+            """
+            INSERT INTO chat_run_turn_contexts (
+                chat_run_id, requested_subject_scheme, requested_subject_id,
+                subject_scheme, subject_id, subject_context_edge_id
+            )
+            VALUES (:run, 'contributor', :l1, 'contributor', :l1, :edge)
+            """
+        ),
+        {"run": ids["chat_run"], "l1": ids["loser1"], "edge": ids["edge_self"]},
+    )
+
+    session.commit()
+
+    ids["loser_uuids"] = [
+        ids["loser1"],
+        ids["loser2"],
+        ids["merged"],
+        ids["tomb"],
+        ids["husk"],
+        *ids["chain"],
+    ]
+    ids["loser_handles"] = [
+        ids["loser1_h"],
+        ids["loser2_h"],
+        ids["merged_h"],
+        ids["tomb_h"],
+        ids["husk_h"],
+        *ids["chain_handles"],
+    ]
+    return ids
+
+
+class TestMigration0179LightweightAuthorDedup:
+    """0179 collapses exact-name duplicates, migrates authorities, salvages
+    credits, rewrites every §8/D-18 reference owner, and drops the reconciliation
+    product — on a representative 0178 fixture (AC 31-34)."""
+
+    @pytest.fixture(scope="class")
+    def migrated(self):
+        reset_test_schema()
+        assert run_alembic_command(f"upgrade {_MIG_PREV}").returncode == 0
+        engine = create_engine(get_test_database_url())
+        with Session(engine) as session:
+            ids = _build_0179_success_fixture(session)
+        result = run_alembic_command(f"upgrade {_MIG_REV}")
+        assert result.returncode == 0, f"0179 upgrade failed: {result.stderr}"
+        yield engine, ids
+        engine.dispose()
+        reset_test_schema()
+        run_alembic_command("upgrade head")
+
+    # -- helpers ------------------------------------------------------------
+    @staticmethod
+    def _scalar(session, sql, **params):
+        return session.execute(text(sql), params).scalar()
+
+    @staticmethod
+    def _rows(session, sql, **params):
+        return session.execute(text(sql), params).fetchall()
+
+    # === identity collapse ================================================
+    def test_triplicate_collapses_to_earliest_active_survivor(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s, "SELECT id, handle FROM contributors WHERE display_name = 'Ursula K. Le Guin'"
+            )
+            assert len(rows) == 1, "triplicate+merged+tomb must collapse to one"
+            assert str(rows[0][0]) == str(ids["winner"])
+            assert rows[0][1] == ids["winner_h"], "survivor keeps its own handle"
+            # every loser (incl. the earlier merged/tombstoned rows) is gone
+            for lid in ids["loser_uuids"]:
+                assert (
+                    self._scalar(s, "SELECT count(*) FROM contributors WHERE id = :id", id=lid) == 0
+                )
+
+    def test_same_name_same_authority_conflict_stays_distinct(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s, "SELECT id FROM contributors WHERE display_name = 'John Smith' ORDER BY handle"
+            )
+            assert len(rows) == 2, "conflicting same-authority keys must not merge"
+            keys = self._rows(
+                s,
+                "SELECT c.handle, x.external_key FROM contributors c"
+                " JOIN contributor_external_ids x ON x.contributor_id = c.id"
+                " WHERE c.display_name = 'John Smith' AND x.authority = 'wikidata'"
+                " ORDER BY c.handle",
+            )
+            assert {r[1] for r in keys} == {"Q1001", "Q1002"}
+
+    # === aliases ===========================================================
+    def test_duplicate_normalized_alias_deduped_keeping_resolving(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s,
+                "SELECT resolves_identity FROM contributor_aliases"
+                " WHERE contributor_id = :w AND normalized_alias = 'ursula k. le guin'",
+                w=ids["winner"],
+            )
+            assert len(rows) == 1, "duplicate (owner, normalized_alias) must dedup to one"
+            assert rows[0][0] is True, "the resolving literal wins the collision"
+            # a distinct non-resolving searchable alias survives
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT resolves_identity FROM contributor_aliases WHERE contributor_id = :w"
+                    " AND normalized_alias = 'ursula kroeber le guin'",
+                    w=ids["winner"],
+                )
+                is False
+            )
+            # a loser's distinct alias repointed onto the survivor
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_aliases WHERE contributor_id = :w"
+                    " AND normalized_alias = 'u. k. le guin'",
+                    w=ids["winner"],
+                )
+                == 1
+            )
+
+    def test_alias_source_resolution_classification(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s,
+                "SELECT normalized_alias, resolves_identity FROM contributor_aliases"
+                " WHERE contributor_id = :c",
+                c=ids["classify"],
+            )
+            by_norm = {r[0]: r[1] for r in rows}
+            for norm in ids["classify_resolving"]:
+                assert by_norm.get(norm) is True, f"{norm} should resolve"
+            for norm in ids["classify_nonresolving"]:
+                assert by_norm.get(norm) is False, f"{norm} should be searchable-only"
+
+    def test_every_display_has_resolving_alias(self, migrated):
+        engine, _ = migrated
+        with Session(engine) as s:
+            orphaned = self._scalar(
+                s,
+                "SELECT count(*) FROM contributors c WHERE NOT EXISTS ("
+                " SELECT 1 FROM contributor_aliases a"
+                " WHERE a.contributor_id = c.id AND a.resolves_identity)",
+            )
+            assert orphaned == 0
+
+    # === authorities =======================================================
+    def test_authority_dispositions(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            keep = self._rows(
+                s,
+                "SELECT authority, external_key FROM contributor_external_ids"
+                " WHERE contributor_id = :c ORDER BY authority",
+                c=ids["auth_keep"],
+            )
+            assert {r[0] for r in keep} == {
+                "orcid",
+                "isni",
+                "viaf",
+                "wikidata",
+                "openalex",
+                "lcnaf",
+            }
+            assert dict(keep)["orcid"] == ids["orcid_keep"], "canonical orcid preserved"
+
+            email = self._rows(
+                s,
+                "SELECT authority, external_key FROM contributor_external_ids WHERE contributor_id = :c",
+                c=ids["auth_email"],
+            )
+            assert email == [("email_address", "alice@example.com")]
+
+            yt = self._rows(
+                s,
+                "SELECT authority, external_key FROM contributor_external_ids WHERE contributor_id = :c",
+                c=ids["auth_yt"],
+            )
+            assert yt == [("youtube_channel", ids["yt_channel"])], "channel kept, video dropped"
+
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_external_ids WHERE contributor_id = :c",
+                    c=ids["auth_drop"],
+                )
+                == 0
+            ), "podcast_index/rss/gutenberg all dropped"
+
+            # global: no legacy authority survives anywhere
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_external_ids"
+                    " WHERE authority IN ('email','youtube','podcast_index','rss','gutenberg')",
+                )
+                == 0
+            )
+
+    def test_x_user_id_recovered_onto_survivor(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_external_ids"
+                    " WHERE contributor_id = :w AND authority = 'x_user' AND external_key = :k",
+                    w=ids["winner"],
+                    k=ids["x_user_id"],
+                )
+                == 1
+            )
+
+    # === privacy ===========================================================
+    def test_privacy_cleanup(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            display = self._scalar(
+                s, "SELECT display_name FROM contributors WHERE id = :c", c=ids["priv"]
+            )
+            assert "@" not in display and display.strip() != ""
+            # no email/URL survives in any display or alias, globally
+            assert (
+                self._scalar(s, "SELECT count(*) FROM contributors WHERE display_name LIKE '%@%'")
+                == 0
+            )
+            assert (
+                self._scalar(s, "SELECT count(*) FROM contributor_aliases WHERE alias LIKE '%@%'")
+                == 0
+            )
+            assert (
+                self._scalar(s, "SELECT count(*) FROM contributor_aliases WHERE alias LIKE 'http%'")
+                == 0
+            )
+            # still has a resolving alias
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_aliases"
+                    " WHERE contributor_id = :c AND resolves_identity",
+                    c=ids["priv"],
+                )
+                >= 1
+            )
+
+    # === credit salvage ====================================================
+    def test_manual_salvage_sets_flag_and_drops_machine(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT authors_manually_managed FROM media WHERE id = :m",
+                    m=ids["media_manual"],
+                )
+                is True
+            )
+            rows = self._rows(
+                s,
+                "SELECT contributor_id FROM contributor_credits WHERE media_id = :m AND role = 'author'",
+                m=ids["media_manual"],
+            )
+            assert len(rows) == 1 and str(rows[0][0]) == str(ids["cm_manual"])
+
+    def test_machine_only_media_stays_automatic(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT authors_manually_managed FROM media WHERE id = :m",
+                    m=ids["media_auto"],
+                )
+                is False
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_credits WHERE media_id = :m",
+                    m=ids["media_auto"],
+                )
+                == 1
+            )
+
+    def test_credit_dedup_after_collapse(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s,
+                "SELECT contributor_id, ordinal FROM contributor_credits"
+                " WHERE media_id = :m AND role = 'author'",
+                m=ids["media_shared"],
+            )
+            assert len(rows) == 1, "two same-role credits on one target dedup after collapse"
+            assert str(rows[0][0]) == str(ids["winner"])
+            assert rows[0][1] == 0, "dense renumber"
+
+    def test_non_author_roles_preserved(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            media = dict(
+                self._rows(
+                    s,
+                    "SELECT role, ordinal FROM contributor_credits WHERE media_id = :m",
+                    m=ids["media_roles"],
+                )
+            )
+            assert media == {"author": 0, "translator": 1}
+            pod = dict(
+                self._rows(
+                    s,
+                    "SELECT role, ordinal FROM contributor_credits WHERE podcast_id = :p",
+                    p=ids["podcast"],
+                )
+            )
+            assert pod == {"host": 0, "guest": 1}
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT role FROM contributor_credits WHERE project_gutenberg_catalog_ebook_id = :e",
+                    e=ids["ebook"],
+                )
+                == "author"
+            )
+
+    def test_over_limit_slice_truncated_to_dense_twenty(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            ordinals = [
+                r[0]
+                for r in self._rows(
+                    s,
+                    "SELECT ordinal FROM contributor_credits WHERE media_id = :m ORDER BY ordinal",
+                    m=ids["media_big"],
+                )
+            ]
+            assert ordinals == list(range(20)), "truncated to first 20 with dense ordinals"
+            # the tail contributors lost their only credit on this target
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM contributor_credits WHERE media_id = :m AND contributor_id = :c",
+                    m=ids["media_big"],
+                    c=ids["big_authors"][24],
+                )
+                == 0
+            )
+
+    def test_dense_ordinals_and_no_duplicate_role_per_target(self, migrated):
+        engine, _ = migrated
+        with Session(engine) as s:
+            # dense per-target ordinals (0..n-1) for every target column
+            for col in ("media_id", "podcast_id", "project_gutenberg_catalog_ebook_id"):
+                by_target: dict = {}
+                for target, ordinal in self._rows(
+                    s,
+                    f"SELECT {col}, ordinal FROM contributor_credits"
+                    f" WHERE {col} IS NOT NULL ORDER BY {col}, ordinal",
+                ):
+                    by_target.setdefault(target, []).append(ordinal)
+                for target, ordinals in by_target.items():
+                    assert ordinals == list(range(len(ordinals))), (
+                        f"non-dense ordinals for {col}={target}: {ordinals}"
+                    )
+            # no duplicate (target, contributor, role)
+            dup = self._rows(
+                s,
+                "SELECT media_id, contributor_id, role FROM contributor_credits"
+                " WHERE media_id IS NOT NULL GROUP BY media_id, contributor_id, role"
+                " HAVING count(*) > 1",
+            )
+            assert dup == []
+
+    # === reconciliation deletion ==========================================
+    def test_reconciliation_product_deleted(self, migrated):
+        engine, _ = migrated
+        with Session(engine) as s:
+            for table in (
+                "contributor_reconciliation_runs",
+                "contributor_reconciliation_candidates",
+                "contributor_identity_events",
+            ):
+                assert (
+                    self._scalar(
+                        s,
+                        "SELECT count(*) FROM information_schema.tables WHERE table_name = :t",
+                        t=table,
+                    )
+                    == 0
+                ), f"{table} must be dropped"
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM background_jobs WHERE kind = 'contributor_reconciliation'",
+                )
+                == 0
+            )
+
+    # === reference / graph rewrites =======================================
+    def test_pin_repoint_and_softdeleted_collision(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            # simple repoint
+            assert (
+                self._scalar(
+                    s, "SELECT object_id FROM user_pinned_objects WHERE id = :p", p=ids["pin_a"]
+                )
+                == ids["winner"]
+            )
+            # active winner pin survives; soft-deleted colliding pin is removed
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM user_pinned_objects WHERE id = :p", p=ids["pin_b"]
+                )
+                == 1
+            )
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM user_pinned_objects WHERE id = :p", p=ids["pin_c"]
+                )
+                == 0
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM user_pinned_objects"
+                    " WHERE surface_key = 'home' AND object_type = 'contributor' AND object_id = :w",
+                    w=ids["winner"],
+                )
+                == 1
+            )
+
+    def test_resource_version_collision(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s, "SELECT resource_id FROM resource_versions WHERE id = :v", v=ids["rv1"]
+                )
+                == ids["winner"]
+            )
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_versions WHERE id = :v", v=ids["rv2"]
+                )
+                == 1
+            ), "greatest (version, updated_at, id) kept"
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_versions WHERE id = :v", v=ids["rv3"]
+                )
+                == 0
+            )
+
+    def test_view_state_surface_target_edge_and_collision(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s, "SELECT surface_id FROM resource_view_states WHERE id = :v", v=ids["vs_surf"]
+                )
+                == ids["winner"]
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT target_id FROM resource_view_states WHERE id = :v",
+                    v=ids["vs_target"],
+                )
+                == ids["winner"]
+            )
+            assert (
+                self._scalar(
+                    s, "SELECT edge_id FROM resource_view_states WHERE id = :v", v=ids["vs_edge"]
+                )
+                == ids["edge_keep"]
+            ), "edge rebound to collision winner"
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_view_states WHERE id = :v", v=ids["vs_e1"]
+                )
+                == 1
+            ), "latest (updated_at, id) kept"
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_view_states WHERE id = :v", v=ids["vs_e2"]
+                )
+                == 0
+            )
+
+    def test_turn_context_both_pairs_and_self_edge_null(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            row = self._rows(
+                s,
+                "SELECT requested_subject_id, subject_id, subject_context_edge_id"
+                " FROM chat_run_turn_contexts WHERE chat_run_id = :r",
+                r=ids["chat_run"],
+            )[0]
+            assert row[0] == ids["winner"]
+            assert row[1] == ids["winner"]
+            assert row[2] is None, "removed self-edge nulls the context edge"
+
+    def test_edges_collision_self_and_snapshot(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_edges WHERE id = :e", e=ids["edge_keep"]
+                )
+                == 1
+            )
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_edges WHERE id = :e", e=ids["edge_collide"]
+                )
+                == 0
+            ), "bare-pair collision collapsed"
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_edges WHERE id = :e", e=ids["edge_self"]
+                )
+                == 0
+            ), "self-edge removed"
+            snap_target, snap = self._rows(
+                s,
+                "SELECT target_id, snapshot::text FROM resource_edges WHERE id = :e",
+                e=ids["edge_snap"],
+            )[0]
+            assert snap_target == ids["winner"], "citation target endpoint repointed"
+            assert ids["winner_h"] in snap and ids["loser1_h"] not in snap
+
+    def test_folio_required_rebind_and_cited_edge(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT edge_id FROM oracle_reading_folios WHERE reading_id = :r",
+                    r=ids["reading"],
+                )
+                == ids["edge_keep"]
+            ), "required folio edge rebound to collision winner"
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT cited_edge_id FROM message_retrievals WHERE id = :m",
+                    m=ids["mr_contrib"],
+                )
+                == ids["edge_keep"]
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT cited_edge_id FROM message_retrievals WHERE id = :m",
+                    m=ids["mr_media"],
+                )
+                is None
+            ), "cited edge to a removed self-edge is nulled"
+
+    def test_synapse_suppression_delete_exemption(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            # both contributor-endpoint suppressions deleted, not repointed
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM synapse_suppressions"
+                    " WHERE source_scheme = 'contributor' OR target_scheme = 'contributor'",
+                )
+                == 0
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM synapse_suppressions"
+                    " WHERE source_id = :w OR target_id = :w",
+                    w=ids["winner"],
+                )
+                == 0
+            ), "survivor did not inherit a negative pair"
+
+    def test_retrieval_scalar_and_json_refs_rewritten(self, migrated):
+        engine, ids = migrated
+        wh = ids["winner_h"]
+        with Session(engine) as s:
+            row = self._rows(
+                s,
+                "SELECT source_id, deep_link, context_ref::text, result_ref::text"
+                " FROM message_retrievals WHERE id = :m",
+                m=ids["mr_contrib"],
+            )[0]
+            assert row[0] == wh
+            assert row[1] == f"/authors/{wh}"
+            assert wh in row[2] and wh in row[3]
+
+    def test_chat_json_refs_rewritten_to_winner(self, migrated):
+        # loser-absence is covered by the generic scanner; here we prove the
+        # refs were REWRITTEN to the survivor rather than merely deleted.
+        engine, ids = migrated
+        wh, wuri = ids["winner_h"], f"contributor:{ids['winner']}"
+        with Session(engine) as s:
+            tc = self._rows(
+                s,
+                "SELECT result_refs::text, selected_context_refs::text"
+                " FROM message_tool_calls WHERE id = :t",
+                t=ids["tool_call"],
+            )[0]
+            assert wh in tc[0] and wh in tc[1]
+            ledger = self._scalar(
+                s,
+                "SELECT result_ref::text FROM message_retrieval_candidate_ledgers"
+                " WHERE tool_call_id = :t",
+                t=ids["tool_call"],
+            )
+            assert wh in ledger
+            pa = self._rows(
+                s,
+                "SELECT included_context_refs::text, prompt_block_manifest::text,"
+                " dropped_items::text FROM chat_prompt_assemblies WHERE chat_run_id = :r",
+                r=ids["chat_run"],
+            )[0]
+            assert wuri in pa[0] and wh in pa[0]  # URI string + typed object
+            assert wuri in pa[1] and wuri in pa[2]
+            # collapsed edge id rebinds to the collision winner (D-18.2);
+            # non-collapsed edge ids pass through untouched
+            assert str(ids["edge_keep"]) in pa[0]
+            assert str(ids["edge_collide"]) not in pa[0]
+            assert str(ids["arb_edge"]) in pa[0]
+            meta = self._scalar(
+                s,
+                "SELECT payload::text FROM chat_run_events"
+                " WHERE run_id = :r AND event_type = 'meta'",
+                r=ids["chat_run"],
+            )
+            assert wuri in meta
+            assert str(ids["edge_keep"]) in meta
+            assert str(ids["edge_collide"]) not in meta
+            assert str(ids["arb_edge"]) in meta
+            tool = self._scalar(
+                s,
+                "SELECT payload::text FROM chat_run_events"
+                " WHERE run_id = :r AND event_type = 'tool_result'",
+                r=ids["chat_run"],
+            )
+            assert wh in tool  # results handles + filters authors
+
+    def test_note_body_pm_nodes_rewritten(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            body = self._scalar(
+                s, "SELECT body_pm_json::text FROM note_blocks WHERE user_id = :u", u=ids["user"]
+            )
+            assert str(ids["winner"]) in body
+            assert str(ids["loser1"]) not in body and str(ids["loser2"]) not in body
+
+    def test_mutation_memos(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            # memo scoped to a losing contributor UUID is deleted
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM resource_mutations WHERE mutation_scope = :sc",
+                    sc=f"contributor:{ids['loser1']}:display-name",
+                )
+                == 0
+            )
+            # the winner-scoped memo survives
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM resource_mutations WHERE mutation_scope = :sc",
+                    sc=f"contributor:{ids['winner']}:display-name",
+                )
+                == 1
+            )
+            # response-ref memo survives with rewritten refs
+            body = self._scalar(
+                s,
+                "SELECT response_json::text FROM resource_mutations WHERE client_mutation_id = 'cm-ref'",
+            )
+            assert str(ids["winner"]) in body and ids["winner_h"] in body
+            # the husk-scoped memo is deleted with the loser scope
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM resource_mutations WHERE mutation_scope = :sc",
+                    sc=f"contributor:{ids['husk']}:display-name",
+                )
+                == 0
+            )
+            # pre-existing junk contributor scope (uuid never keyed a
+            # contributor) survives untouched and does not abort postconditions
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM resource_mutations WHERE mutation_scope = :sc",
+                    sc=f"contributor:{ids['junk_scope_uuid']}:display-name",
+                )
+                == 1
+            )
+
+    # === husk / chain / alias-flip / salvage-recency ======================
+    def test_husk_no_survivor_references_purged(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            assert (
+                self._scalar(s, "SELECT count(*) FROM contributors WHERE id = :c", c=ids["husk"])
+                == 0
+            )
+            assert (
+                self._scalar(
+                    s,
+                    "SELECT count(*) FROM user_pinned_objects WHERE id = :p",
+                    p=ids["husk_pin"],
+                )
+                == 0
+            ), "husk pin must be purged, never repointed"
+            assert (
+                self._scalar(
+                    s, "SELECT count(*) FROM resource_edges WHERE id = :e", e=ids["husk_edge"]
+                )
+                == 0
+            ), "husk-endpoint edge dropped with no winner"
+            for table, col in (
+                ("resource_versions", "resource_id"),
+                ("resource_view_states", "surface_id"),
+                ("synapse_suppressions", "source_id"),
+                ("contributor_aliases", "contributor_id"),
+                ("contributor_external_ids", "contributor_id"),
+            ):
+                assert (
+                    self._scalar(s, f"SELECT count(*) FROM {table} WHERE {col} = :c", c=ids["husk"])
+                    == 0
+                ), f"{table} still references the husk"
+
+    def test_deep_merged_chain_maps_to_survivor(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            for cid in ids["chain"]:
+                assert (
+                    self._scalar(s, "SELECT count(*) FROM contributors WHERE id = :c", c=cid) == 0
+                )
+            assert str(
+                self._scalar(
+                    s,
+                    "SELECT object_id FROM user_pinned_objects WHERE id = :p",
+                    p=ids["chain_pin"],
+                )
+            ) == str(ids["chain_end"]), (
+                "a nine-deep merged chain must still repoint to the active end"
+                " (never silently degrade to a husk and delete the reference)"
+            )
+
+    def test_machine_display_alias_force_flipped_resolving(self, migrated):
+        # ALL prod display aliases are machine-source copies (S0 preflight);
+        # this flip is what satisfies "every display owns a resolving alias".
+        engine, ids = migrated
+        with Session(engine) as s:
+            rows = self._rows(
+                s,
+                "SELECT alias, resolves_identity FROM contributor_aliases"
+                " WHERE contributor_id = :c",
+                c=ids["machine_alias"],
+            )
+            assert rows == [("Machine Alias Only", True)], (
+                "the provider display copy must FLIP to resolving (no duplicate row)"
+            )
+
+    def test_machine_slice_recency_and_tie_salvage(self, migrated):
+        engine, ids = migrated
+        with Session(engine) as s:
+            recency = self._rows(
+                s,
+                "SELECT contributor_id FROM contributor_credits WHERE media_id = :m",
+                m=ids["media_recency"],
+            )
+            assert [str(r[0]) for r in recency] == [str(ids["rec_new"])], (
+                "the newer web_article_byline slice beats the stale metadata_enrichment slice"
+            )
+            tie = self._rows(
+                s,
+                "SELECT contributor_id FROM contributor_credits WHERE media_id = :m",
+                m=ids["media_tie"],
+            )
+            assert [str(r[0]) for r in tie] == [str(ids["tie_meta"])], (
+                "an exact MAX(updated_at) tie falls to source name ascending"
+            )
+
+    # === the generic no-losing-ref scanner (AC 32) ========================
+    def test_no_losing_reference_survives_anywhere(self, migrated):
+        engine, ids = migrated
+        needles = [str(x) for x in ids["loser_uuids"]] + list(ids["loser_handles"])
+        with Session(engine) as s:
+            hits: list[str] = []
+            for table, col in _JSONB_REF_COLUMNS + _SCALAR_REF_COLUMNS:
+                cast = f"{col}::text" if (table, col) in _JSONB_REF_COLUMNS else col
+                for needle in needles:
+                    n = self._scalar(
+                        s,
+                        f"SELECT count(*) FROM {table} WHERE {cast} LIKE :pat",
+                        pat=f"%{needle}%",
+                    )
+                    if n:
+                        hits.append(f"{table}.{col} contains {needle} ({n} rows)")
+            for table, disc, idcol in _POLY_UUID_COLUMNS:
+                for lid in ids["loser_uuids"]:
+                    n = self._scalar(
+                        s,
+                        f"SELECT count(*) FROM {table} WHERE {disc} = 'contributor' AND {idcol} = :id",
+                        id=lid,
+                    )
+                    if n:
+                        hits.append(f"{table}.{idcol} points at loser {lid} ({n} rows)")
+            assert hits == [], f"losing references survived: {hits}"
+
+    # === preflight failures — abort + no partial state (AC 33) ============
+    def _assert_no_partial_state(self, engine, before):
+        with Session(engine) as s:
+            assert self._scalar(s, "SELECT version_num FROM alembic_version") == _MIG_PREV
+            for table, expected in before.items():
+                assert self._scalar(s, f"SELECT count(*) FROM {table}") == expected, table
+
+    def _snapshot_counts(self, engine):
+        with Session(engine) as s:
+            return {
+                t: self._scalar(s, f"SELECT count(*) FROM {t}")
+                for t in (
+                    "contributors",
+                    "contributor_aliases",
+                    "contributor_external_ids",
+                    "contributor_credits",
+                )
+            }
+
+    def _run_failure_case(self, seed):
+        reset_test_schema()
+        assert run_alembic_command(f"upgrade {_MIG_PREV}").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as s:
+                seed(s)
+                s.commit()
+            before = self._snapshot_counts(engine)
+            result = run_alembic_command(f"upgrade {_MIG_REV}")
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert result.returncode != 0, f"expected abort; got success: {combined}"
+            assert "0179" in combined
+            self._assert_no_partial_state(engine, before)
+            return combined
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_preflight_rejects_unknown_alias_source(self):
+        def seed(s):
+            cid = uuid4()
+            _insert_contributor(
+                s, cid=cid, handle="unknown-src-x0", display="Unknown Source", created_at=_ts(2020)
+            )
+            _insert_alias(s, cid=cid, alias="Other Spelling", source="totally_unknown_source")
+
+        combined = self._run_failure_case(seed)
+        assert "preflight" in combined
+
+    def test_preflight_rejects_unknown_authority(self):
+        def seed(s):
+            cid = uuid4()
+            _insert_contributor(
+                s,
+                cid=cid,
+                handle="unknown-auth-x0",
+                display="Unknown Authority",
+                created_at=_ts(2020),
+            )
+            # drop the 0178 CHECK so an authority the migration doesn't classify
+            # can exist; the migration must not blindly trust the old constraint.
+            s.execute(
+                text(
+                    "ALTER TABLE contributor_external_ids"
+                    " DROP CONSTRAINT ck_contributor_external_ids_authority"
+                )
+            )
+            _insert_xid(s, cid=cid, authority="mystery_authority", external_key="k1")
+
+        self._run_failure_case(seed)
+
+    def test_preflight_rejects_unknown_ref_shape_in_unlisted_column(self):
+        # Three rows in an unlisted jsonb column, one per structural needle
+        # class: a typed object, a credit-blob contributor_handle key, and a
+        # '/authors/' deep-link value. The diagnostic must count all three (a
+        # needle regression would report fewer).
+        def seed(s):
+            for payload in (
+                {"type": "contributor", "id": "ghost-handle"},
+                {"result": {"contributor_handle": "ghost-handle"}},
+                {"nav": {"href": "/authors/ghost-handle"}},
+            ):
+                s.execute(
+                    text(
+                        "INSERT INTO background_jobs (kind, payload, status)"
+                        " VALUES ('media_ingest', CAST(:p AS jsonb), 'pending')"
+                    ),
+                    {"p": _dumps(payload)},
+                )
+
+        combined = self._run_failure_case(seed)
+        assert "preflight" in combined
+        assert "('background_jobs', 'payload', 3)" in combined
+
+    def test_preflight_rejects_unknown_role(self):
+        def seed(s):
+            cid, mid = uuid4(), uuid4()
+            _insert_contributor(
+                s, cid=cid, handle="unknown-role-x0", display="Unknown Role", created_at=_ts(2020)
+            )
+            _insert_media(s, mid=mid, title="Unknown Role Work")
+            # drop the 0178 CHECK so a role the migration doesn't classify can
+            # exist; the migration must diagnose the value, not KeyError on it.
+            s.execute(
+                text("ALTER TABLE contributor_credits DROP CONSTRAINT ck_contributor_credits_role")
+            )
+            _insert_credit(s, cid=cid, role="illustrator", ordinal=0, source="epub_opf", media=mid)
+
+        combined = self._run_failure_case(seed)
+        assert "preflight" in combined
+        assert "illustrator" in combined
+
+    def test_preflight_rejects_provider_key_display(self):
+        # A display equal to the RAW (undashed) form of a stored ORCID: not an
+        # email (no re-derivation rule) and invisible to canonical-only or
+        # alias-side checks — must fail preflight, never survive as a
+        # key-leaking display.
+        def seed(s):
+            cid = uuid4()
+            _insert_contributor(
+                s,
+                cid=cid,
+                handle="key-display-k0",
+                display="0000000218250097",
+                created_at=_ts(2020),
+            )
+            _insert_xid(s, cid=cid, authority="orcid", external_key="0000000218250097")
+
+        combined = self._run_failure_case(seed)
+        assert "preflight" in combined
+        assert "re-derivation rule" in combined
+
+    def test_husk_foreign_references_block_before_destructive_ddl(self):
+        # A no-survivor husk referenced by a FOREIGN-scoped memo and by the
+        # snapshot of an edge whose endpoints are NOT the husk: neither can be
+        # repointed (no survivor) nor safely deleted (foreign owners), so
+        # phase 5 must abort with both owners named — before destructive DDL,
+        # with no partial state.
+        def seed(s):
+            u, husk, page = uuid4(), uuid4(), uuid4()
+            s.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u})
+            _insert_contributor(
+                s,
+                cid=husk,
+                handle="husk-foreign-f0",
+                display="Husk Foreign",
+                created_at=_ts(2020),
+                status="tombstoned",
+            )
+            s.execute(
+                text(
+                    """
+                    INSERT INTO resource_mutations (
+                        user_id, mutation_scope, client_mutation_id, request_hash,
+                        changed_lanes, response_json
+                    )
+                    VALUES (:u, :scope, 'cm-foreign', :h, '{}'::jsonb, CAST(:r AS jsonb))
+                    """
+                ),
+                {
+                    "u": u,
+                    "scope": f"resource:page:{page}:outgoing_edges",
+                    "h": _HASH64,
+                    "r": _dumps({"items": [{"ref": f"contributor:{husk}"}]}),
+                },
+            )
+            s.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        id, user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, ordinal, snapshot, created_at
+                    )
+                    VALUES (:id, :u, 'context', 'citation', 'message', :m,
+                            'media', :md, 1, CAST(:snap AS jsonb), :ca)
+                    """
+                ),
+                {
+                    "id": uuid4(),
+                    "u": u,
+                    "m": uuid4(),
+                    "md": uuid4(),
+                    "snap": _dumps({"title": "x", "contributor_handle": "husk-foreign-f0"}),
+                    "ca": _ts(2020),
+                },
+            )
+
+        combined = self._run_failure_case(seed)
+        # the DEFERRED phase-5 husk scan must fire (failing before phase 6's
+        # destructive DDL), not the late phase-7 postcondition re-scan
+        assert "cannot be repointed or safely deleted" in combined
+        assert "response_json" in combined and "snapshot" in combined
+        assert "postcondition" not in combined
+
+    def test_bare_scalar_source_id_only_reference_rewritten(self):
+        # A loser whose ONLY stored reference is the BARE handle in a scalar
+        # source_id column (handle-free result_ref): quoted / deep-link needles
+        # are provably blind here, so the rewrite gate and the phase-7 re-scan
+        # must probe scalars by exact equality — phase 5 must run and rewrite.
+        reset_test_schema()
+        assert run_alembic_command(f"upgrade {_MIG_PREV}").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            ids: dict = {
+                "user": uuid4(),
+                "model": uuid4(),
+                "conversation": uuid4(),
+                "msg_user": uuid4(),
+                "msg_assistant": uuid4(),
+                "chat_run": uuid4(),
+                "reading": uuid4(),
+            }
+            winner, loser, tool_call = uuid4(), uuid4(), uuid4()
+            with Session(engine) as s:
+                _build_chat_parents(s, ids)
+                _insert_contributor(
+                    s,
+                    cid=winner,
+                    handle="scal-winner-w1",
+                    display="Scalar Person",
+                    created_at=_ts(2020),
+                )
+                _insert_contributor(
+                    s,
+                    cid=loser,
+                    handle="scal-loser-l2",
+                    display="Scalar Person",
+                    created_at=_ts(2021),
+                )
+                s.execute(
+                    text(
+                        """
+                        INSERT INTO message_tool_calls (
+                            id, conversation_id, user_message_id, assistant_message_id,
+                            tool_name, tool_call_index, scope, status,
+                            result_refs, selected_context_refs
+                        )
+                        VALUES (:id, :c, :mu, :ma, 'app_search', 0, 'all', 'complete',
+                                '[]'::jsonb, '[]'::jsonb)
+                        """
+                    ),
+                    {
+                        "id": tool_call,
+                        "c": ids["conversation"],
+                        "mu": ids["msg_user"],
+                        "ma": ids["msg_assistant"],
+                    },
+                )
+                s.execute(
+                    text(
+                        """
+                        INSERT INTO message_retrieval_candidate_ledgers (
+                            tool_call_id, ordinal, result_type, source_id, selected,
+                            included_in_prompt, selection_status, selection_reason, result_ref
+                        )
+                        VALUES (:tc, 0, 'contributor', 'scal-loser-l2', false, false,
+                                'retrieved', 'seed', CAST(:res AS jsonb))
+                        """
+                    ),
+                    {"tc": tool_call, "res": _dumps({"note": "handle-free result ref"})},
+                )
+                s.commit()
+            result = run_alembic_command(f"upgrade {_MIG_REV}")
+            assert result.returncode == 0, f"0179 upgrade failed: {result.stderr}"
+            with Session(engine) as s:
+                assert (
+                    self._scalar(
+                        s,
+                        "SELECT source_id FROM message_retrieval_candidate_ledgers"
+                        " WHERE tool_call_id = :t",
+                        t=tool_call,
+                    )
+                    == "scal-winner-w1"
+                ), "bare source_id must be rewritten to the survivor handle"
+                assert self._scalar(s, "SELECT count(*) FROM contributors") == 1
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_abort_on_folio_edge_without_winner(self):
+        # Exercises the phase-5 reference-rewrite abort (the deep rebind check
+        # is deliberately NOT phase-1 preflight); the load-bearing assertions
+        # are rc != 0 plus no-partial-state.
+        def seed(s):
+            u = uuid4()
+            winner, loser = uuid4(), uuid4()
+            reading, edge = uuid4(), uuid4()
+            s.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": u})
+            _insert_contributor(
+                s,
+                cid=winner,
+                handle="folio-winner-w0",
+                display="Folio Person",
+                created_at=_ts(2020),
+            )
+            _insert_contributor(
+                s, cid=loser, handle="folio-loser-l0", display="Folio Person", created_at=_ts(2021)
+            )
+            s.execute(
+                text(
+                    """
+                    INSERT INTO oracle_readings (id, user_id, folio_number, question_text, status)
+                    VALUES (:id, :u, 1, 'A question.', 'pending')
+                    """
+                ),
+                {"id": reading, "u": u},
+            )
+            # edge collapses to a self-edge (loser->winner becomes winner->winner)
+            s.execute(
+                text(
+                    """
+                    INSERT INTO resource_edges (
+                        id, user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id, created_at
+                    )
+                    VALUES (:id, :u, 'context', 'user', 'contributor', :l,
+                            'contributor', :w, :ca)
+                    """
+                ),
+                {"id": edge, "u": u, "l": loser, "w": winner, "ca": _ts(2021)},
+            )
+            s.execute(
+                text(
+                    """
+                    INSERT INTO oracle_reading_folios (
+                        reading_id, phase, edge_id, source_kind, locator_label,
+                        attribution_text, marginalia_text
+                    )
+                    VALUES (:r, 'descent', :e, 'user_media', 'l', 'a', 'm')
+                    """
+                ),
+                {"r": reading, "e": edge},
+            )
+
+        combined = self._run_failure_case(seed)
+        assert "oracle_reading_folios" in combined
+
+    def test_preflight_rejects_reserved_handle(self):
+        def seed(s):
+            _insert_contributor(
+                s, cid=uuid4(), handle="directory", display="Reserved One", created_at=_ts(2020)
+            )
+
+        combined = self._run_failure_case(seed)
+        assert "preflight" in combined
+
+    # === downgrade blocked + fresh-DB head shape ==========================
+    def test_0179_downgrade_is_blocked(self):
+        reset_test_schema()
+        try:
+            assert run_alembic_command(f"upgrade {_MIG_REV}").returncode == 0
+            result = run_alembic_command(f"downgrade {_MIG_PREV}")
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "Hard cutover" in combined
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_fresh_db_head_shape(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            assert run_alembic_command("upgrade head").returncode == 0
+            with Session(engine) as s:
+
+                def cols(t):
+                    return {
+                        r[0]
+                        for r in self._rows(
+                            s,
+                            "SELECT column_name FROM information_schema.columns WHERE table_name = :t",
+                            t=t,
+                        )
+                    }
+
+                def idx(t):
+                    return {
+                        r[0]: r[1]
+                        for r in self._rows(
+                            s,
+                            "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = :t",
+                            t=t,
+                        )
+                    }
+
+                assert cols("contributors") == {
+                    "id",
+                    "handle",
+                    "display_name",
+                    "created_at",
+                    "updated_at",
+                }
+                assert cols("contributor_aliases") == {
+                    "id",
+                    "contributor_id",
+                    "alias",
+                    "normalized_alias",
+                    "resolves_identity",
+                    "created_at",
+                }
+                assert "external_url" not in cols("contributor_external_ids")
+                assert "source" not in cols("contributor_external_ids")
+                credit_cols = cols("contributor_credits")
+                for dead in ("source_ref", "resolution_status", "confidence"):
+                    assert dead not in credit_cols
+
+                # media flag default
+                default = self._scalar(
+                    s,
+                    "SELECT column_default FROM information_schema.columns"
+                    " WHERE table_name = 'media' AND column_name = 'authors_manually_managed'",
+                )
+                assert default is not None and "false" in default
+
+                # no CHECK constraints remain on contributor tables
+                assert (
+                    self._scalar(
+                        s,
+                        "SELECT count(*) FROM pg_constraint WHERE contype = 'c' AND conrelid::regclass::text IN"
+                        " ('contributors','contributor_aliases','contributor_external_ids','contributor_credits')",
+                    )
+                    == 0
+                )
+
+                alias_idx = idx("contributor_aliases")
+                assert "uq_contributor_aliases_owner_normalized" in alias_idx
+                assert "ix_contributor_aliases_resolution" in alias_idx
+                assert "ix_contributor_aliases_normalized_alias" not in alias_idx
+
+                credit_idx = idx("contributor_credits")
+                assert "ix_contributor_credits_contributor_id" in credit_idx
+                for dead in (
+                    "ix_contributor_credits_media_id",
+                    "ix_contributor_credits_podcast_id",
+                    "ix_contributor_credits_gutenberg_ebook_id",
+                ):
+                    assert dead not in credit_idx
+                # the six partial-unique indexes with their exact predicates
+                expected_predicates = {
+                    "uq_contributor_credits_media_ordinal": "(media_id IS NOT NULL)",
+                    "uq_contributor_credits_media_contributor_role": "(media_id IS NOT NULL)",
+                    "uq_contributor_credits_podcast_ordinal": "(podcast_id IS NOT NULL)",
+                    "uq_contributor_credits_podcast_contributor_role": "(podcast_id IS NOT NULL)",
+                    "uq_contributor_credits_gutenberg_ordinal": "(project_gutenberg_catalog_ebook_id IS NOT NULL)",
+                    "uq_contributor_credits_gutenberg_contributor_role": "(project_gutenberg_catalog_ebook_id IS NOT NULL)",
+                }
+                for name, predicate in expected_predicates.items():
+                    assert name in credit_idx, f"missing {name}"
+                    assert "UNIQUE" in credit_idx[name]
+                    assert predicate in credit_idx[name], f"{name} predicate: {credit_idx[name]}"
+
+                assert "ix_contributors_sort_name" not in idx("contributors")
+        finally:
+            engine.dispose()
+            reset_test_schema()

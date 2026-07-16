@@ -27,7 +27,6 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "oracle_reading_generate",
         "synapse_scan",
         "dawn_write_job",
-        "contributor_reconciliation",
         "conversation_distill",
         "conversation_distill_sweep",
         "atlas_project_job",

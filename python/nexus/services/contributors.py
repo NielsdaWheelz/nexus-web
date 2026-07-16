@@ -27,7 +27,6 @@ from nexus.db.models import (
     ContributorAlias,
     ContributorCredit,
     ContributorExternalId,
-    ContributorIdentityEvent,
     ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
@@ -634,14 +633,12 @@ def split_contributor(
             )
         )
 
-        moved_credit_count = _move_selected_credits(selected_credits, new_contributor.id)
-        moved_alias_count = _move_selected_aliases(selected_aliases, new_contributor.id)
-        moved_external_id_count = _move_selected_external_ids(
-            selected_external_ids, new_contributor.id
-        )
+        _move_selected_credits(selected_credits, new_contributor.id)
+        _move_selected_aliases(selected_aliases, new_contributor.id)
+        _move_selected_external_ids(selected_external_ids, new_contributor.id)
         # All of the actor's graph edges follow the new identity (AC11);
         # ordinals and snapshots ride along untouched.
-        moved_link_count = repoint_edges(
+        repoint_edges(
             db,
             viewer_id=actor_user_id,
             from_ref=ResourceRef(scheme="contributor", id=source.id),
@@ -654,22 +651,6 @@ def split_contributor(
         )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
         source.updated_at = db_now
         new_contributor.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="split",
-                actor_user_id=actor_user_id,
-                source_contributor_id=source.id,
-                target_contributor_id=new_contributor.id,
-                payload={
-                    "source_handle": source.handle,
-                    "target_handle": new_contributor.handle,
-                    "moved_credit_count": moved_credit_count,
-                    "moved_alias_count": moved_alias_count,
-                    "moved_external_id_count": moved_external_id_count,
-                    "moved_link_count": moved_link_count,
-                },
-            )
-        )
         db.commit()
         db.refresh(new_contributor)
         return _contributor_out(db, new_contributor)
@@ -700,15 +681,6 @@ def tombstone_contributor(
         )  # justify-service-invariant-check: PostgreSQL now() always yields a row.
         contributor.status = "tombstoned"
         contributor.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="tombstone",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={"handle": contributor.handle},
-            )
-        )
         db.commit()
         db.refresh(contributor)
         return _contributor_out(db, contributor)
@@ -754,20 +726,6 @@ def add_contributor_alias(
         )
         db.add(alias)
         db.flush()
-        db.add(
-            ContributorIdentityEvent(
-                event_type="alias_add",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={
-                    "contributor_handle": contributor.handle,
-                    "alias_id": str(alias.id),
-                    "alias": alias.alias,
-                    "alias_kind": alias.alias_kind,
-                },
-            )
-        )
         db.commit()
         db.refresh(contributor)
         return _contributor_out(db, contributor)
@@ -795,22 +753,7 @@ def delete_contributor_alias(
         )
         if alias is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor alias not found")
-        payload = {
-            "contributor_handle": contributor.handle,
-            "alias_id": str(alias.id),
-            "alias": alias.alias,
-            "alias_kind": alias.alias_kind,
-        }
         db.delete(alias)
-        db.add(
-            ContributorIdentityEvent(
-                event_type="alias_remove",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload=payload,
-            )
-        )
         db.commit()
         db.refresh(contributor)
         return _contributor_out(db, contributor)
@@ -855,20 +798,6 @@ def add_contributor_external_id(
         )
         db.add(external_id)
         db.flush()
-        db.add(
-            ContributorIdentityEvent(
-                event_type="external_id_add",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload={
-                    "contributor_handle": contributor.handle,
-                    "external_id_id": str(external_id.id),
-                    "authority": external_id.authority,
-                    "external_key": external_id.external_key,
-                },
-            )
-        )
         db.commit()
         db.refresh(contributor)
         return _contributor_out(db, contributor)
@@ -896,22 +825,7 @@ def delete_contributor_external_id(
         )
         if external_id is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Contributor external ID not found")
-        payload = {
-            "contributor_handle": contributor.handle,
-            "external_id_id": str(external_id.id),
-            "authority": external_id.authority,
-            "external_key": external_id.external_key,
-        }
         db.delete(external_id)
-        db.add(
-            ContributorIdentityEvent(
-                event_type="external_id_remove",
-                actor_user_id=actor_user_id,
-                source_contributor_id=contributor.id,
-                target_contributor_id=None,
-                payload=payload,
-            )
-        )
         db.commit()
         db.refresh(contributor)
         return _contributor_out(db, contributor)
@@ -949,10 +863,9 @@ def merge_contributor(
             on_merge_transaction(db, source, target)
 
         ids = {"source_id": source.id, "target_id": target.id}
-        merged_duplicate_credits = len(
-            db.execute(
-                text(
-                    """
+        db.execute(
+            text(
+                """
                     DELETE FROM contributor_credits src
                     WHERE src.contributor_id = :source_id
                       AND EXISTS (
@@ -967,21 +880,18 @@ def merge_contributor(
                       )
                     RETURNING src.id
                     """
-                ),
-                ids,
-            ).fetchall()
+            ),
+            ids,
         )
-        repointed_credits = len(
-            db.execute(
-                text(
-                    """
-                    UPDATE contributor_credits SET contributor_id = :target_id, updated_at = now()
-                    WHERE contributor_id = :source_id
-                    RETURNING id
-                    """
-                ),
-                ids,
-            ).fetchall()
+        db.execute(
+            text(
+                """
+                UPDATE contributor_credits SET contributor_id = :target_id, updated_at = now()
+                WHERE contributor_id = :source_id
+                RETURNING id
+                """
+            ),
+            ids,
         )
 
         db.execute(
@@ -1043,7 +953,7 @@ def merge_contributor(
         )
         # Every graph edge follows the survivor — bare links (dropping bare-pair
         # duplicates) and citations with ordinals/snapshots intact (§9.6, AC11).
-        repointed_edges = repoint_edges(
+        repoint_edges(
             db,
             viewer_id=actor_user_id,
             from_ref=ResourceRef(scheme="contributor", id=source.id),
@@ -1067,21 +977,6 @@ def merge_contributor(
         source.merged_at = db_now
         source.updated_at = db_now
         target.updated_at = db_now
-        db.add(
-            ContributorIdentityEvent(
-                event_type="merge",
-                actor_user_id=actor_user_id,
-                source_contributor_id=source.id,
-                target_contributor_id=target.id,
-                payload={
-                    "source_handle": source.handle,
-                    "target_handle": target.handle,
-                    "merged_duplicate_credits": merged_duplicate_credits,
-                    "repointed_credits": repointed_credits,
-                    "repointed_edges": repointed_edges,
-                },
-            )
-        )
         db.commit()
         db.refresh(target)
         return _contributor_out(db, target)

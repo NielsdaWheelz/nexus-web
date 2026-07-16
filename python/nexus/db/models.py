@@ -1187,6 +1187,14 @@ class Media(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # Author-pin: when true, automatic lanes never replace the media author slice
+    # (including an intentionally empty one). Non-author roles stay machine-owned.
+    authors_manually_managed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -1508,7 +1516,12 @@ class ProjectGutenbergCatalogEntry(Base):
 
 
 class Contributor(Base):
-    """Canonical person, organization, group, or local creator identity."""
+    """Canonical person, organization, group, or local creator identity.
+
+    Every final contributor is active; there is no kind/status/sort_name/
+    disambiguation/merged_into. Duplicate identities are collapsed once in
+    migration 0179 and never tombstoned or merged at runtime.
+    """
 
     __tablename__ = "contributors"
 
@@ -1519,16 +1532,6 @@ class Contributor(Base):
     )
     handle: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    sort_name: Mapped[str] = mapped_column(Text, nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unverified")
-    disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
-    merged_into_contributor_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=True,
-    )
-    merged_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1540,22 +1543,15 @@ class Contributor(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "kind IN ('person', 'organization', 'group', 'unknown')",
-            name="ck_contributors_kind",
-        ),
-        CheckConstraint(
-            "status IN ('unverified', 'verified', 'tombstoned', 'merged')",
-            name="ck_contributors_status",
-        ),
-        UniqueConstraint("handle", name="uq_contributors_handle"),
-    )
+    __table_args__ = (UniqueConstraint("handle", name="uq_contributors_handle"),)
 
     aliases: Mapped[list["ContributorAlias"]] = relationship(
         "ContributorAlias",
         back_populates="contributor",
-        order_by=lambda: [ContributorAlias.is_primary.desc(), ContributorAlias.alias.asc()],
+        order_by=lambda: [
+            ContributorAlias.resolves_identity.desc(),
+            ContributorAlias.alias.asc(),
+        ],
     )
     external_ids: Mapped[list["ContributorExternalId"]] = relationship(
         "ContributorExternalId",
@@ -1569,10 +1565,6 @@ class Contributor(Base):
         "ContributorCredit",
         back_populates="contributor",
         order_by=lambda: ContributorCredit.ordinal,
-    )
-    merged_into_contributor: Mapped["Contributor | None"] = relationship(
-        "Contributor",
-        remote_side=lambda: Contributor.id,
     )
 
 
@@ -1593,13 +1585,7 @@ class ContributorAlias(Base):
     )
     alias: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_alias: Mapped[str] = mapped_column(Text, nullable=False)
-    sort_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    alias_kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="credited")
-    locale: Mapped[str | None] = mapped_column(Text, nullable=True)
-    script: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
-    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    resolves_identity: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1607,12 +1593,18 @@ class ContributorAlias(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "alias_kind IN ('display', 'credited', 'legal', 'pseudonym', 'transliteration', 'search')",
-            name="ck_contributor_aliases_kind",
+        UniqueConstraint(
+            "contributor_id",
+            "normalized_alias",
+            name="uq_contributor_aliases_owner_normalized",
         ),
         Index("ix_contributor_aliases_contributor_id", "contributor_id"),
-        Index("ix_contributor_aliases_normalized_alias", "normalized_alias"),
+        Index(
+            "ix_contributor_aliases_resolution",
+            "normalized_alias",
+            "resolves_identity",
+            "contributor_id",
+        ),
     )
 
     contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="aliases")
@@ -1635,8 +1627,6 @@ class ContributorExternalId(Base):
     )
     authority: Mapped[str] = mapped_column(Text, nullable=False)
     external_key: Mapped[str] = mapped_column(Text, nullable=False)
-    external_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1644,11 +1634,6 @@ class ContributorExternalId(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "authority IN ('orcid', 'isni', 'viaf', 'wikidata', 'openalex', 'lcnaf', "
-            "'podcast_index', 'rss', 'youtube', 'gutenberg', 'email')",
-            name="ck_contributor_external_ids_authority",
-        ),
         UniqueConstraint(
             "authority",
             "external_key",
@@ -1699,13 +1684,6 @@ class ContributorCredit(Base):
     raw_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    resolution_status: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1717,31 +1695,56 @@ class ContributorCredit(Base):
         nullable=False,
     )
 
+    # One-target, dense-ordinal, role-vocabulary, and bounded-value invariants are
+    # enforced in application code (services), not CHECK constraints. The six
+    # partial unique indexes below own per-target ordinal and (contributor, role)
+    # uniqueness; the whole-operation retry owner names them (services/contributors).
     __table_args__ = (
-        CheckConstraint(
-            "num_nonnulls(media_id, podcast_id, project_gutenberg_catalog_ebook_id) = 1",
-            name="ck_contributor_credits_one_target",
-        ),
-        CheckConstraint(
-            "role IN ('author', 'editor', 'translator', 'host', 'guest', 'narrator', "
-            "'creator', 'producer', 'publisher', 'channel', 'organization', 'unknown')",
-            name="ck_contributor_credits_role",
-        ),
-        CheckConstraint(
-            "resolution_status IN ('external_id', 'manual', 'confirmed_alias', 'unverified')",
-            name="ck_contributor_credits_resolution_status",
-        ),
-        CheckConstraint("ordinal >= 0", name="ck_contributor_credits_ordinal"),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_contributor_credits_source_ref",
-        ),
         Index("ix_contributor_credits_contributor_id", "contributor_id"),
-        Index("ix_contributor_credits_media_id", "media_id"),
-        Index("ix_contributor_credits_podcast_id", "podcast_id"),
         Index(
-            "ix_contributor_credits_gutenberg_ebook_id",
+            "uq_contributor_credits_media_ordinal",
+            "media_id",
+            "ordinal",
+            unique=True,
+            postgresql_where=text("media_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributor_credits_media_contributor_role",
+            "media_id",
+            "contributor_id",
+            "role",
+            unique=True,
+            postgresql_where=text("media_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributor_credits_podcast_ordinal",
+            "podcast_id",
+            "ordinal",
+            unique=True,
+            postgresql_where=text("podcast_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributor_credits_podcast_contributor_role",
+            "podcast_id",
+            "contributor_id",
+            "role",
+            unique=True,
+            postgresql_where=text("podcast_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributor_credits_gutenberg_ordinal",
             "project_gutenberg_catalog_ebook_id",
+            "ordinal",
+            unique=True,
+            postgresql_where=text("project_gutenberg_catalog_ebook_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_contributor_credits_gutenberg_contributor_role",
+            "project_gutenberg_catalog_ebook_id",
+            "contributor_id",
+            "role",
+            unique=True,
+            postgresql_where=text("project_gutenberg_catalog_ebook_id IS NOT NULL"),
         ),
     )
 
@@ -1754,212 +1757,6 @@ class ContributorCredit(Base):
     project_gutenberg_catalog_entry: Mapped["ProjectGutenbergCatalogEntry | None"] = relationship(
         "ProjectGutenbergCatalogEntry",
         back_populates="contributor_credits",
-    )
-
-
-class ContributorIdentityEvent(Base):
-    """Audit trail for contributor identity changes."""
-
-    __tablename__ = "contributor_identity_events"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    actor_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    source_contributor_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=True,
-    )
-    target_contributor_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=True,
-    )
-    payload: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "event_type IN ('create', 'alias_add', 'alias_remove', 'external_id_add', "
-            "'external_id_remove', 'merge', 'split', 'tombstone')",
-            name="ck_contributor_identity_events_type",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(payload) = 'object'",
-            name="ck_contributor_identity_events_payload",
-        ),
-    )
-
-
-class ContributorReconciliationRun(Base):
-    """One deterministic contributor-dedupe candidate generation pass."""
-
-    __tablename__ = "contributor_reconciliation_runs"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    actor_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    algorithm_version: Mapped[str] = mapped_column(Text, nullable=False)
-    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    evaluated_pair_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    candidates: Mapped[list["ContributorReconciliationCandidate"]] = relationship(
-        "ContributorReconciliationCandidate",
-        back_populates="run",
-        order_by=lambda: [
-            ContributorReconciliationCandidate.score.desc(),
-            ContributorReconciliationCandidate.id.asc(),
-        ],
-    )
-
-
-class ContributorReconciliationCandidate(Base):
-    """A suggested duplicate pair for manual contributor reconciliation."""
-
-    __tablename__ = "contributor_reconciliation_candidates"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributor_reconciliation_runs.id"),
-        nullable=False,
-    )
-    contributor_a_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    contributor_b_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    proposed_source_contributor_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    proposed_target_contributor_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("contributors.id"),
-        nullable=False,
-    )
-    source_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    target_snapshot_handle: Mapped[str] = mapped_column(Text, nullable=False)
-    target_snapshot_display_name: Mapped[str] = mapped_column(Text, nullable=False)
-    target_snapshot_sort_name: Mapped[str] = mapped_column(Text, nullable=False)
-    target_snapshot_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_snapshot_status: Mapped[str] = mapped_column(Text, nullable=False)
-    target_snapshot_disambiguation: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_snapshot_work_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    score: Mapped[int] = mapped_column(Integer, nullable=False)
-    evidence: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    decided_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "run_id",
-            "contributor_a_id",
-            "contributor_b_id",
-            name="uq_contributor_reconciliation_candidates_run_pair",
-        ),
-        Index(
-            "ix_contributor_reconciliation_candidates_run_status_score",
-            "run_id",
-            "status",
-            "score",
-        ),
-        Index(
-            "ix_contributor_reconciliation_candidates_a_status_score",
-            "contributor_a_id",
-            "status",
-            "score",
-        ),
-        Index(
-            "ix_contributor_reconciliation_candidates_b_status_score",
-            "contributor_b_id",
-            "status",
-            "score",
-        ),
-    )
-
-    run: Mapped["ContributorReconciliationRun"] = relationship(
-        "ContributorReconciliationRun",
-        back_populates="candidates",
-    )
-    contributor_a: Mapped["Contributor"] = relationship(
-        "Contributor",
-        foreign_keys=[contributor_a_id],
-    )
-    contributor_b: Mapped["Contributor"] = relationship(
-        "Contributor",
-        foreign_keys=[contributor_b_id],
-    )
-    proposed_source_contributor: Mapped["Contributor"] = relationship(
-        "Contributor",
-        foreign_keys=[proposed_source_contributor_id],
-    )
-    proposed_target_contributor: Mapped["Contributor"] = relationship(
-        "Contributor",
-        foreign_keys=[proposed_target_contributor_id],
     )
 
 

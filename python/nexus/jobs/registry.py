@@ -51,7 +51,6 @@ USER_FACING_JOB_KINDS = (
     "backfill_default_library_closure_job",
     "oracle_reading_generate",
     "synapse_scan",
-    "contributor_reconciliation",
     "conversation_distill",
     "atlas_project_job",
 )
@@ -270,13 +269,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 else None
             ),
         ),
-        "contributor_reconciliation": JobDefinition(
-            kind="contributor_reconciliation",
-            handler=_run_contributor_reconciliation,
-            max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=300,
-        ),
         "atlas_project_job": JobDefinition(
             kind="atlas_project_job",
             handler=_run_atlas_project,
@@ -488,18 +480,6 @@ def _run_atlas_project(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | Non
     from nexus.tasks.atlas_project import atlas_project
 
     return atlas_project(payload=payload)
-
-
-def _run_contributor_reconciliation(*, payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    from nexus.tasks.contributor_reconciliation import contributor_reconciliation
-
-    return contributor_reconciliation(
-        scope=str(payload.get("scope", "media")),
-        media_id=_optional_str(payload.get("media_id")),
-        podcast_id=_optional_str(payload.get("podcast_id")),
-        reason=str(payload.get("reason", "unspecified")),
-        request_id=_optional_str(payload.get("request_id")),
-    )
 
 
 def _optional_str(value: Any) -> str | None:
