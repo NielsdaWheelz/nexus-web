@@ -53,6 +53,33 @@ function ToastHarness() {
       >
         Show other
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          feedback.show({
+            severity: "error",
+            title: "Save failed",
+            dedupeKey: "save",
+            duration: 0,
+            action: { label: "Retry", onClick: () => {} },
+          })
+        }
+      >
+        Show failed with retry
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          feedback.show({
+            severity: "error",
+            title: "Save forbidden",
+            dedupeKey: "save",
+            duration: 0,
+          })
+        }
+      >
+        Show failed without retry
+      </button>
       <button type="button" onClick={() => feedback.dismissByDedupeKey("save")}>
         Dismiss save
       </button>
@@ -297,5 +324,40 @@ describe("feedback layer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Release lease 0" }));
     expect(screen.getByText("Saved")).toBeInTheDocument();
+  });
+
+  it("revives a toast re-shown within the exit window instead of letting the stale removal delete it", () => {
+    vi.useFakeTimers();
+    render(
+      <FeedbackProvider>
+        <ToastHarness />
+      </FeedbackProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss save" }));
+    // Re-shown mid-exit (before the 150ms removal): the record is revived.
+    act(() => vi.advanceTimersByTime(100));
+    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
+
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByText("Save failed")).toBeInTheDocument();
+  });
+
+  it("drops a stale action when a re-show of the same dedupeKey omits it", () => {
+    vi.useFakeTimers();
+    render(
+      <FeedbackProvider>
+        <ToastHarness />
+      </FeedbackProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show failed with retry" }));
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    // Forbidden replacing SaveFailed must not retain the Retry action.
+    fireEvent.click(screen.getByRole("button", { name: "Show failed without retry" }));
+    expect(screen.getByText("Save forbidden")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 });

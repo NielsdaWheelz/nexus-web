@@ -229,18 +229,25 @@ export type ReaderProfilePersistence =
   | { state: "SaveFailed"; failure: ReaderProfileRetryableFailure }
   | { state: "Forbidden"; failure: ReaderProfileForbiddenFailure };
 
+const PERSISTENCE_CLEAN: ReaderProfilePersistence = { state: "Clean" };
+const PERSISTENCE_PENDING: ReaderProfilePersistence = { state: "Pending" };
+
 export function readerProfilePersistence(state: ReaderProfileSyncState): ReaderProfilePersistence {
   switch (state.local.status) {
     case "clean":
-      return { state: "Clean" };
+      return PERSISTENCE_CLEAN;
     case "deferred":
     case "saving":
-      return { state: "Pending" };
+      return PERSISTENCE_PENDING;
     case "save_failed":
       return { state: "SaveFailed", failure: state.local.failure };
     case "forbidden":
       return { state: "Forbidden", failure: state.local.failure };
   }
+}
+
+export function readerProfilesEqual(left: ReaderProfile, right: ReaderProfile): boolean {
+  return PROFILE_FIELDS.every((field) => left[field] === right[field]);
 }
 
 /** The patch a started save would send, if a send is currently legal. */

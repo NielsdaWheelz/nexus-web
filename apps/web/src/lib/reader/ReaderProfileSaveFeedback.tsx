@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useReaderContext } from "./ReaderContext";
 import { toReaderProfileSaveErrorMessage } from "./readerProfileSync";
@@ -21,6 +21,11 @@ export function ReaderProfileSaveFeedback() {
   const { persistence, retrySave } = useReaderContext();
   const { show, dismissByDedupeKey } = useFeedback();
 
+  // A toast stays clickable through its exit animation; a Retry click landing
+  // after the state already left SaveFailed is "too late", not a defect.
+  const persistenceRef = useRef(persistence);
+  persistenceRef.current = persistence;
+
   useEffect(() => {
     if (persistence.state === "SaveFailed" || persistence.state === "Forbidden") {
       show({
@@ -28,9 +33,17 @@ export function ReaderProfileSaveFeedback() {
         ...toReaderProfileSaveErrorMessage(persistence.failure),
         dedupeKey: READER_PROFILE_SAVE_FEEDBACK_KEY,
         duration: 0,
-        ...(persistence.state === "SaveFailed"
-          ? { action: { label: "Retry", onClick: retrySave } }
-          : {}),
+        action:
+          persistence.state === "SaveFailed"
+            ? {
+                label: "Retry",
+                onClick: () => {
+                  if (persistenceRef.current.state === "SaveFailed") {
+                    retrySave();
+                  }
+                },
+              }
+            : undefined,
       });
       return;
     }

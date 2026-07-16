@@ -21,12 +21,12 @@ function repoText(relativePath: string): string {
   return readFileSync(join(REPO_ROOT, relativePath), "utf8");
 }
 
-/** The text of one python function body, sliced from `def name` to the next `def `. */
+/** The text of one python function body, sliced to the next top-level def. */
 function pythonFunction(source: string, name: string): string {
   const start = source.indexOf(`def ${name}(`);
   expect(start, `expected def ${name}( to exist`).toBeGreaterThan(-1);
   const rest = source.slice(start + 1);
-  const end = rest.search(/\ndef /);
+  const end = rest.search(/\n(?:async )?def /);
   return end === -1 ? source.slice(start) : source.slice(start, start + 1 + end);
 }
 

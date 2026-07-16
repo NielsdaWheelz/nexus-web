@@ -1035,3 +1035,12 @@
   justify-content: center;
   background: var(--overlay-scrim);
 }
+
+/* Non-interactive status row in the resource menu (e.g. the PDF source-colors
+   note): matches .menuItem rhythm but is genuinely static. */
+.readerMenuStatusRow {
+  padding: var(--space-2) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}

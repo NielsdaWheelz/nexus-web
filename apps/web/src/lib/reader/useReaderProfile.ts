@@ -25,6 +25,7 @@ import {
   parseReaderProfile,
   readerProfilePersistence,
   readerProfileWorkDueAt,
+  readerProfilesEqual,
   reduceReaderProfileSync,
   sendableReaderProfilePatch,
   type ReaderProfilePatch,
@@ -243,8 +244,33 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
     void send();
   }, [send]);
 
-  const profile = useMemo(() => desiredReaderProfile(state), [state]);
-  const persistence = useMemo(() => readerProfilePersistence(state), [state]);
+  // Value-stable projections: transitions that change no desired pixel and no
+  // persistence fact (e.g. deferred -> saving) keep both identities, so the
+  // context value memo holds and reader consumers skip the re-render.
+  const profileRef = useRef<ReaderProfile | null>(null);
+  const profile = useMemo(() => {
+    const next = desiredReaderProfile(state);
+    if (profileRef.current && readerProfilesEqual(profileRef.current, next)) {
+      return profileRef.current;
+    }
+    profileRef.current = next;
+    return next;
+  }, [state]);
+
+  const persistenceRef = useRef<ReaderProfilePersistence | null>(null);
+  const persistence = useMemo(() => {
+    const next = readerProfilePersistence(state);
+    const prev = persistenceRef.current;
+    if (
+      prev &&
+      prev.state === next.state &&
+      ("failure" in prev ? prev.failure : null) === ("failure" in next ? next.failure : null)
+    ) {
+      return prev;
+    }
+    persistenceRef.current = next;
+    return next;
+  }, [state]);
 
   return { profile, persistence, intend, retrySave };
 }

@@ -694,11 +694,13 @@ test.describe("pdf reader", () => {
     await expect(optionsTrigger).toBeVisible();
     await optionsTrigger.click();
 
-    const sourceColorsRow = page.getByRole("menuitem", {
+    // A static status row (labelled role=group via ActionMenu's render seam),
+    // not a disabled menuitem keyboard traversal would skip.
+    const sourceColorsRow = page.getByRole("group", {
       name: "PDF pages keep their source colors",
     });
     await expect(sourceColorsRow).toBeVisible();
-    await expect(sourceColorsRow).toBeDisabled();
+    await expect(sourceColorsRow).toHaveText("PDF pages keep their source colors");
 
     await expect(page.getByRole("menuitem", { name: /light theme/i })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: /dark theme/i })).toHaveCount(0);

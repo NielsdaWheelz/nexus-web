@@ -223,6 +223,8 @@ web:
 		bun run dev
 
 web-e2e:
+	@echo "web-e2e routes FASTAPI_BASE_URL through the e2e fault-injector proxy (:$(READER_PROXY_PORT))."
+	@echo "Running it standalone needs 'make reader-profile-upstream-proxy-e2e' alongside 'make api-e2e'."
 	cd apps/web && \
 		export FASTAPI_BASE_URL=http://localhost:$(READER_PROXY_PORT); \
 		export NEXUS_ENV=$${NEXUS_ENV:-test}; \

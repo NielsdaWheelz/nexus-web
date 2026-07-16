@@ -151,6 +151,10 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const toastsRef = useRef<ToastFeedback[]>([]);
   const nextId = useRef(1);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // Pending exit-animation removals, keyed by toast id, so a same-dedupeKey
+  // show() inside the exit window can revive the record instead of having the
+  // stale removal silently delete it.
+  const exitTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   // Lease counts per dedupeKey for suppressDedupeKey. Source of truth lives in
   // the ref (so acquire/release counting is synchronous and unaffected by
   // React batching); suppressTick only forces a re-render to re-evaluate it.
@@ -178,11 +182,19 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       );
       toastsRef.current = exitingToasts;
       setToasts(exitingToasts);
-      setTimeout(() => {
-        const remainingToasts = toastsRef.current.filter((toast) => toast.id !== id);
-        toastsRef.current = remainingToasts;
-        setToasts(remainingToasts);
-      }, EXIT_MS);
+      const pendingExit = exitTimers.current.get(id);
+      if (pendingExit) {
+        clearTimeout(pendingExit);
+      }
+      exitTimers.current.set(
+        id,
+        setTimeout(() => {
+          exitTimers.current.delete(id);
+          const remainingToasts = toastsRef.current.filter((toast) => toast.id !== id);
+          toastsRef.current = remainingToasts;
+          setToasts(remainingToasts);
+        }, EXIT_MS)
+      );
     },
     [clearTimer]
   );
@@ -212,9 +224,27 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           (toast) => toast.dedupeKey === feedback.dedupeKey
         );
         if (existing) {
+          // Reviving mid-exit must cancel the pending removal, or the stale
+          // timeout would silently delete the refreshed record.
+          const pendingExit = exitTimers.current.get(existing.id);
+          if (pendingExit) {
+            clearTimeout(pendingExit);
+            exitTimers.current.delete(existing.id);
+          }
+          // Optional presentation fields are overwritten, not merged: a
+          // re-show that omits action/message/requestId means they no longer
+          // apply (e.g. Forbidden replacing SaveFailed must drop Retry).
           const updatedToasts = toastsRef.current.map((toast) =>
             toast.id === existing.id
-              ? { ...toast, ...feedback, duration, exiting: false }
+              ? {
+                  ...toast,
+                  ...feedback,
+                  message: feedback.message,
+                  requestId: feedback.requestId,
+                  action: feedback.action,
+                  duration,
+                  exiting: false,
+                }
               : toast
           );
           toastsRef.current = updatedToasts;
