@@ -314,7 +314,7 @@ def create_nasa_podcast_episode(
                 {
                     "credited_name": contributor["credited_name"],
                     "role": contributor["role"],
-                    "source": contributor["source"],
+                    "raw_role": contributor.get("raw_role"),
                 }
                 for contributor in podcast["contributors"]
             ],
