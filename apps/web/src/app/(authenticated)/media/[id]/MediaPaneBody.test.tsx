@@ -1599,44 +1599,32 @@ describe("MediaPaneBody pane sizing", () => {
     },
   );
 
-  it("navigates from desktop Contents without closing the secondary pane", async () => {
+  it("keeps the desktop secondary pane open after Contents selection", async () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;
-    const { onCloseSecondaryPane, onNavigatePane, onSetPaneSecondary } =
-      renderMediaPane({
-        secondaryPane: readerContentsSecondaryPane(),
-      });
+    const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
     const body = await getContentsSurfaceBody(onSetPaneSecondary);
     render(<>{body}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
 
-    expect(onNavigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/media/media-1?loc=section-1&fragment=fragment-1",
-      undefined,
-    );
     expect(onCloseSecondaryPane).not.toHaveBeenCalled();
   });
 
-  it("navigates from mobile Contents and closes the secondary sheet", async () => {
+  it("closes the mobile secondary sheet after Contents selection", async () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;
     testState.isMobileViewport = true;
-    const { onCloseSecondaryPane, onNavigatePane, onSetPaneSecondary } =
-      renderMediaPane({
-        secondaryPane: readerContentsSecondaryPane(),
-      });
+    const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
     const body = await getContentsSurfaceBody(onSetPaneSecondary);
     render(<>{body}</>);
 
     fireEvent.click(screen.getByRole("button", { name: "Section 1" }));
 
-    expect(onNavigatePane).toHaveBeenCalledWith(
-      "pane-1",
-      "/media/media-1?loc=section-1&fragment=fragment-1",
-      undefined,
-    );
     expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
   });
 

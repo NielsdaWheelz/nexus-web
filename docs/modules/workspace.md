@@ -80,3 +80,22 @@ mobile workspace mode makes that publication inert for desktop fixed-chrome
 rendering.
 
 The reader Document Map overview rail is fixed primary chrome and remains desktop-only.
+
+## Pane History
+
+Each primary pane owns one Back/Forward history stack of hrefs. The workspace
+is the sole owner of `push`, `replace`, Back, and Forward mechanics.
+
+- `push` records the current href as a Back checkpoint, sets the new href,
+  and clears Forward.
+- `replace` changes the current href without changing either stack.
+- Back and Forward traverse the stored checkpoints.
+- A replace that consumes a target hash writes `pathname + search` — hash
+  consumption always strips the hash from the href it stores.
+- The workspace never infers push-versus-replace from URL shape or resource
+  equality. Feature owners choose the operation for every navigation they
+  perform; the workspace only executes it.
+- Per-pane history is capped at 12 entries in each direction; the workspace
+  holds at most 48 history entries across every pane combined. When a write
+  would exceed either budget, the oldest entry is trimmed; non-active panes'
+  history is trimmed before the active pane's own history is touched.

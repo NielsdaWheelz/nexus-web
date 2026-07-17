@@ -6,24 +6,25 @@ import {
 } from "./readerLocationHref";
 
 describe("buildReaderLocationHref", () => {
-  it("returns the bare stable entry without targets", () => {
-    expect(buildReaderLocationHref("media-1")).toBe("/media/media-1");
+  it("builds a loc-only href", () => {
+    expect(buildReaderLocationHref("media-1", { loc: "section-2" })).toBe(
+      "/media/media-1?loc=section-2",
+    );
   });
 
-  it("composes loc, fragment, and highlight fields", () => {
+  it("builds a fragment-only href", () => {
+    expect(buildReaderLocationHref("media-1", { fragmentId: "frag-9" })).toBe(
+      "/media/media-1?fragment=frag-9",
+    );
+  });
+
+  it("composes loc and fragment fields", () => {
     expect(
       buildReaderLocationHref("media-1", {
         loc: "section-2",
         fragmentId: "frag-9",
-        highlightId: "hl-3",
       }),
-    ).toBe("/media/media-1?loc=section-2&fragment=frag-9&highlight=hl-3");
-  });
-
-  it("omits null and empty target fields", () => {
-    expect(
-      buildReaderLocationHref("media-1", { loc: null, fragmentId: "frag-9" }),
-    ).toBe("/media/media-1?fragment=frag-9");
+    ).toBe("/media/media-1?loc=section-2&fragment=frag-9");
   });
 });
 

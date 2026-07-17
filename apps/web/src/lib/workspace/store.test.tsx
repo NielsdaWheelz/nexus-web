@@ -4,6 +4,8 @@ import {
   createDefaultWorkspaceState,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
+  MAX_PANE_HISTORY_STACK_LENGTH,
+  MAX_TOTAL_PANE_HISTORY_ENTRIES,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -303,6 +305,78 @@ describe("WorkspaceStoreProvider", () => {
         back: ["/media/11111111-1111-4111-8111-111111111111"],
         forward: [],
       });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("reader-style replace at the 48-entry boundary leaves every pane's history untouched", async () => {
+    const fullStack = (label: string): { back: string[]; forward: string[] } => ({
+      back: Array.from(
+        { length: MAX_PANE_HISTORY_STACK_LENGTH },
+        (_, index) => `/${label}-${index}`,
+      ),
+      forward: [],
+    });
+    // The active pane carries a non-empty forward stack (10 back + 2 forward,
+    // still 12 total) so the deep-equal history assertions below prove replace
+    // leaves forward untouched too. An all-back seed can't distinguish a true
+    // replace from a push-then-pop mis-implementation that clears forward.
+    const activeMediaStack = (): { back: string[]; forward: string[] } => ({
+      back: Array.from({ length: 10 }, (_, index) => `/media-${index}`),
+      forward: Array.from({ length: 2 }, (_, index) => `/media-forward-${index}`),
+    });
+    const mediaHref = "/media/11111111-1111-4111-8111-111111111111";
+    const initialState = workspaceState({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        pane("pane-libraries", "/libraries", { history: fullStack("libraries") }),
+        pane("pane-conversation", "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", {
+          history: fullStack("conversation"),
+        }),
+        pane("pane-notes", "/notes", { history: fullStack("notes") }),
+        pane("pane-media", mediaHref, { history: activeMediaStack() }),
+      ],
+    });
+    const { workspace } = renderSeeded(initialState, mediaHref);
+    const paneId = "pane-media";
+
+    // Precondition: every stack is already at its own 12-entry cap and the workspace
+    // total sits exactly at the 48-entry budget.
+    const historyByPaneId = new Map(
+      primaryPanes(workspace().state).map((item) => [item.id, item.history]),
+    );
+    const totalBefore = [...historyByPaneId.values()].reduce(
+      (count, history) => count + history.back.length + history.forward.length,
+      0,
+    );
+    expect(totalBefore).toBe(MAX_TOTAL_PANE_HISTORY_ENTRIES);
+
+    let lastHref = mediaHref;
+    act(() => {
+      for (let index = 1; index <= 20; index += 1) {
+        lastHref = `${mediaHref}?loc=chapter-${index}`;
+        workspace().navigatePane(paneId, lastHref, { replace: true });
+      }
+    });
+
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe(lastHref);
+      for (const item of primaryPanes(workspace().state)) {
+        expect(item.history).toEqual(historyByPaneId.get(item.id));
+      }
+    });
+
+    // Contrast guard: a push after the replaces DOES add a checkpoint, proving this test
+    // would catch a push-vs-replace regression.
+    act(() => {
+      workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
+    });
+    await waitFor(() => {
+      const mediaPane = primaryPanes(workspace().state).find((item) => item.id === paneId);
+      expect(mediaPane?.history.back[mediaPane.history.back.length - 1]).toBe(lastHref);
+      // Push clears forward; replace must not have — this is only a real contrast
+      // guard because the seed above gave the active pane a non-empty forward stack.
+      expect(mediaPane?.history.forward).toEqual([]);
     });
     flushWorkspaceSession();
   });

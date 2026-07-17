@@ -3,23 +3,21 @@
  *
  * URL contract: the stable entry is `/media/:id`. Query fields `loc` and
  * `fragment` are coarse navigation intent, not progress storage — the
- * canonical cursor never projects into the URL. `apparatus`, `highlight`,
- * unrelated query state, and the hash are feature-owned and always preserved
- * by repair. EPUB relative-document resolution stays format-local in
- * `epubHelpers.ts`.
+ * canonical cursor never projects into the URL. `apparatus`, other
+ * unrelated query state, and the hash are feature-owned and always
+ * preserved by repair. EPUB relative-document resolution stays
+ * format-local in `epubHelpers.ts`.
  */
 
 const PANE_HREF_BASE = "https://pane.local";
 
-export interface ReaderLocationTarget {
-  loc?: string | null;
-  fragmentId?: string | null;
-  highlightId?: string | null;
-}
+export type ReaderLocationTarget =
+  | { loc: string; fragmentId?: string }
+  | { fragmentId: string; loc?: never };
 
 export function buildReaderLocationHref(
   mediaId: string,
-  target: ReaderLocationTarget = {},
+  target: ReaderLocationTarget,
 ): string {
   const params = new URLSearchParams();
   if (target.loc) {
@@ -27,9 +25,6 @@ export function buildReaderLocationHref(
   }
   if (target.fragmentId) {
     params.set("fragment", target.fragmentId);
-  }
-  if (target.highlightId) {
-    params.set("highlight", target.highlightId);
   }
   const query = params.toString();
   return query ? `/media/${mediaId}?${query}` : `/media/${mediaId}`;
