@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.errors import ApiError, InvalidRequestError
-from nexus.services import text_quote
+from nexus.services import bootstrap, library_governance, text_quote
 from nexus.services.agent_tools import writes
 from nexus.services.resource_graph.policy import validate_edge_shape
 from nexus.services.resource_graph.refs import ResourceRef
@@ -34,6 +34,45 @@ def _seed_user(direct_db: DirectSessionManager) -> UUID:
         session.commit()
     direct_db.register_cleanup("users", "id", user_id)
     return user_id
+
+
+def _seed_user_with_default_library(direct_db: DirectSessionManager) -> tuple[UUID, UUID]:
+    user_id = uuid4()
+    with direct_db.session() as session:
+        default_library_id = bootstrap.ensure_user_and_default_library(session, user_id)
+    direct_db.register_cleanup("memberships", "library_id", default_library_id)
+    direct_db.register_cleanup("libraries", "id", default_library_id)
+    direct_db.register_cleanup("users", "id", user_id)
+    return user_id, default_library_id
+
+
+def _seed_podcast(direct_db: DirectSessionManager, *, subscriber_id: UUID | None = None) -> UUID:
+    podcast_id = uuid4()
+    with direct_db.session() as session:
+        session.execute(
+            text("""
+                INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                VALUES (:id, 'podcast_index', :provider_id, 'Agent Pod', :feed_url)
+            """),
+            {
+                "id": podcast_id,
+                "provider_id": f"agent-pod-{podcast_id.hex[:12]}",
+                "feed_url": f"https://example.com/{podcast_id.hex[:12]}.xml",
+            },
+        )
+        if subscriber_id is not None:
+            session.execute(
+                text("""
+                    INSERT INTO podcast_subscriptions (user_id, podcast_id, status)
+                    VALUES (:user_id, :podcast_id, 'active')
+                """),
+                {"user_id": subscriber_id, "podcast_id": podcast_id},
+            )
+        session.commit()
+    direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+    direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
+    direct_db.register_cleanup("podcasts", "id", podcast_id)
+    return podcast_id
 
 
 def _seed_run(direct_db: DirectSessionManager, user_id: UUID) -> SimpleNamespace:
@@ -504,6 +543,128 @@ def test_add_to_library_preexisting_entry_survives_undo(direct_db):
             {"lib": target_library, "media": media_id},
         ).scalar_one()
         assert count == 1  # the user's manual filing is preserved
+
+
+def test_add_to_library_rejects_system_library_destination(direct_db):
+    """Parity gap (spec S4.3 rule 3): the agent path must reject a system-library
+    destination exactly like REST does, even when the viewer happens to admin it."""
+    user_id = _seed_user(direct_db)
+    run = _seed_run(direct_db, user_id)
+    media_id, _ = _seed_readable_media(direct_db, user_id, title="Sys", canonical_text="content")
+    with direct_db.session() as session:
+        system_library_id = library_governance.ensure_system_library(
+            session,
+            system_key=f"test_agent_system_{uuid4().hex[:12]}",
+            name="Agent System Library",
+            owner_user_id=user_id,
+        )
+        session.commit()
+    direct_db.register_cleanup("library_entries", "library_id", system_library_id)
+    direct_db.register_cleanup("memberships", "library_id", system_library_id)
+    direct_db.register_cleanup("libraries", "id", system_library_id)
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            tool_call_index=0,
+            tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
+            args={"resource_uri": f"media:{media_id}", "library_id": str(system_library_id)},
+        )
+    assert outcome.is_error
+    assert outcome.error_code == "E_LIBRARY_FORBIDDEN"
+    with direct_db.session() as session:
+        count = session.execute(
+            text(
+                "SELECT count(*) FROM library_entries WHERE library_id = :lib AND media_id = :media"
+            ),
+            {"lib": system_library_id, "media": media_id},
+        ).scalar_one()
+    assert count == 0
+
+
+def test_add_to_library_rejects_podcast_into_default(direct_db):
+    """Parity gap (spec S4.3 rule 4): a podcast can never land in Default, even
+    filed by the agent with an active subscription."""
+    user_id, default_library_id = _seed_user_with_default_library(direct_db)
+    run = _seed_run(direct_db, user_id)
+    podcast_id = _seed_podcast(direct_db, subscriber_id=user_id)
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            tool_call_index=0,
+            tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
+            args={"resource_uri": f"podcast:{podcast_id}", "library_id": str(default_library_id)},
+        )
+    assert outcome.is_error
+    assert outcome.error_code == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+
+def test_add_to_library_rejects_podcast_without_active_subscription(direct_db):
+    """Parity gap (spec S4.3 rule 4): the agent path had no subscription check at
+    all before this fix."""
+    user_id = _seed_user(direct_db)
+    run = _seed_run(direct_db, user_id)
+    with direct_db.session() as session:
+        target_library = factories.create_test_library(session, user_id, name="Podcasts")
+    direct_db.register_cleanup("library_entries", "library_id", target_library)
+    direct_db.register_cleanup("memberships", "library_id", target_library)
+    direct_db.register_cleanup("libraries", "id", target_library)
+    podcast_id = _seed_podcast(direct_db)  # no subscriber
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            tool_call_index=0,
+            tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
+            args={"resource_uri": f"podcast:{podcast_id}", "library_id": str(target_library)},
+        )
+    assert outcome.is_error
+    assert outcome.error_code == "E_NOT_FOUND"
+
+
+def test_add_to_library_restores_tombstoned_media_and_clears_tombstone(direct_db):
+    """Parity gap (spec S4.3 rules 1+6): the agent path used full-readable
+    visibility, which 404'd re-filing a media the viewer had deleted, and never
+    cleared the tombstone. Restorable authorization ignores the viewer's own
+    tombstone; a successful file clears it."""
+    user_id = _seed_user(direct_db)
+    run = _seed_run(direct_db, user_id)
+    media_id, _ = _seed_readable_media(
+        direct_db, user_id, title="Restore", canonical_text="content"
+    )
+    with direct_db.session() as session:
+        session.execute(
+            text("INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)"),
+            {"u": user_id, "m": media_id},
+        )
+        session.commit()
+    direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+    with direct_db.session() as session:
+        target_library = factories.create_test_library(session, user_id, name="Restore Target")
+    direct_db.register_cleanup("library_entries", "library_id", target_library)
+    direct_db.register_cleanup("memberships", "library_id", target_library)
+    direct_db.register_cleanup("libraries", "id", target_library)
+
+    with direct_db.session() as session:
+        outcome = writes.execute_write_tool(
+            session,
+            run=run,
+            tool_call_index=0,
+            tool_name=writes.ADD_TO_LIBRARY_TOOL_NAME,
+            args={"resource_uri": f"media:{media_id}", "library_id": str(target_library)},
+        )
+    assert not outcome.is_error
+
+    with direct_db.session() as session:
+        tombstone = session.execute(
+            text("SELECT 1 FROM user_media_deletions WHERE user_id = :u AND media_id = :m"),
+            {"u": user_id, "m": media_id},
+        ).first()
+    assert tombstone is None
 
 
 def test_undo_reverts_highlight_and_attached_note(direct_db):

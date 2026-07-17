@@ -5,10 +5,12 @@ Tests cover:
 - Membership enforcement
 - Default library protections
 - Library-media management
-- Default library closure invariants
+- Default virtual-view invariants (spec S4.1/S4.2 keyset pagination)
 - Visibility masking
 """
 
+import base64
+import json
 import threading
 from uuid import UUID, uuid4
 
@@ -17,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from nexus.services import library_entries, library_governance
-from tests.factories import create_test_library, create_test_media
+from tests.factories import add_library_entry_only, create_test_library, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
@@ -54,6 +56,39 @@ def _library_entry_media_ids(rows: list[dict]) -> list[str]:
     return [
         row["media"]["id"] for row in rows if row["kind"] == "media" and row["media"] is not None
     ]
+
+
+def _decode_cursor_payload(cursor: str) -> dict:
+    """Decode an opaque entry cursor's base64url JSON payload for direct
+    field assertions (e.g. `resonance_as_of` pinning) that a page's observable
+    ordering alone cannot distinguish."""
+    padded = cursor + "=" * (-len(cursor) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+
+
+def _seed_reachable_media(
+    direct_db: DirectSessionManager, user_id: UUID, *, title: str = "Test Article"
+) -> UUID:
+    """Create media the given user can already reach, via a throwaway library
+    filed directly (bypassing REST) — the minimum precondition POST
+    /libraries/{id}/media now enforces (spec S4.3 rule 1, F2/F3:
+    readable-or-restorable authorization). Mirrors production, where ingest
+    always files new media into its creator's Default before it is ever
+    addressable through this endpoint; `create_test_media` alone leaves media
+    with no library_entries row anywhere, which the fixed authorization
+    correctly refuses to file. `user_id` must already exist (an earlier
+    `auth_client` call, e.g. `GET /me`) — `create_test_library`'s owner FK
+    requires it."""
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title=title)
+        seed_library_id = create_test_library(session, user_id, f"Seed {title}")
+        add_library_entry_only(session, seed_library_id, media_id)
+        session.commit()
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("memberships", "library_id", seed_library_id)
+    direct_db.register_cleanup("libraries", "id", seed_library_id)
+    return media_id
 
 
 # =============================================================================
@@ -462,7 +497,9 @@ class TestSystemLibraryMutationGuards:
     ):
         owner_id = create_test_user_id()
         invitee_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(owner_id))
+        owner_default_id = auth_client.get("/me", headers=auth_headers(owner_id)).json()["data"][
+            "default_library_id"
+        ]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
         with direct_db.session() as session:
@@ -473,9 +510,15 @@ class TestSystemLibraryMutationGuards:
                 owner_user_id=owner_id,
             )
             existing_media_id = create_test_media(session, title="System Corpus Work")
+            # Reachable via the owner's own Default (not the system library under
+            # test), so the mutation below exercises ONLY the system-library
+            # rejection, not the F2/F3 media-authorization gate.
             new_media_id = create_test_media(session, title="Unowned Addition")
             library_entries.ensure_entry(
                 session, system_id, library_entries.media_target(existing_media_id)
+            )
+            library_entries.ensure_entry(
+                session, owner_default_id, library_entries.media_target(new_media_id)
             )
             session.commit()
 
@@ -682,11 +725,9 @@ class TestDeleteLibrary:
         )
         library_id = create_resp.json()["data"]["id"]
 
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
 
         # Verify library_entries exists
         with direct_db.session() as session:
@@ -719,19 +760,12 @@ class TestAddMediaToLibrary:
     """Tests for POST /libraries/{id}/media endpoint."""
 
     def test_add_media_success(self, auth_client, direct_db: DirectSessionManager):
-        """Admin can add media to library."""
+        """Admin can add already-reachable media to another library."""
         user_id = create_test_user_id()
-
-        # Create media using direct_db (committed, visible to auth_client)
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        # Register cleanup
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
 
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
+        media_id = _seed_reachable_media(direct_db, user_id, title="Add Success")
 
         response = auth_client.post(
             f"/libraries/{library_id}/media",
@@ -748,13 +782,8 @@ class TestAddMediaToLibrary:
     def test_add_media_library_not_found(self, auth_client, direct_db: DirectSessionManager):
         """Add media to non-existent library returns 404."""
         user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("media", "id", media_id)
-
         auth_client.get("/me", headers=auth_headers(user_id))
+        media_id = _seed_reachable_media(direct_db, user_id, title="Library Not Found")
 
         response = auth_client.post(
             f"/libraries/{uuid4()}/media",
@@ -785,14 +814,9 @@ class TestAddMediaToLibrary:
         """Adding same media twice is idempotent."""
         user_id = create_test_user_id()
 
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
+        media_id = _seed_reachable_media(direct_db, user_id, title="Idempotent")
 
         # Add first time
         resp1 = auth_client.post(
@@ -812,6 +836,98 @@ class TestAddMediaToLibrary:
         assert resp2.json()["data"]["kind"] == "media"
         assert resp2.json()["data"]["media"]["id"] == str(media_id)
 
+    def test_add_media_cross_user_own_default_only_returns_not_found(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """F2/F3 (spec S4.3 rule 1, privilege-escalation blocker): a media
+        filed only in user A's own libraries is not membership-reachable for
+        user B. POST /libraries/{id}/media must not let B file an EXISTING
+        media_id into B's own library merely because the row exists — that
+        would grant B read access to media they have no membership path to."""
+        owner_id = create_test_user_id()
+        other_id = create_test_user_id()
+
+        owner_default_id = auth_client.get("/me", headers=auth_headers(owner_id)).json()["data"][
+            "default_library_id"
+        ]
+        other_default_id = auth_client.get("/me", headers=auth_headers(other_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        media_id = _seed_reachable_media(direct_db, owner_id, title="Owner-only private")
+
+        file_resp = auth_client.post(
+            f"/libraries/{owner_default_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+        assert file_resp.status_code == 201, file_resp.text
+
+        response = auth_client.post(
+            f"/libraries/{other_default_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(other_id),
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
+
+        # No physical entry was ever created for the unauthorized filer.
+        with direct_db.session() as session:
+            leaked = session.execute(
+                text(
+                    "SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"
+                ),
+                {"lib": other_default_id, "media": media_id},
+            ).first()
+        assert leaked is None
+
+    def test_add_media_restores_tombstoned_membership_reachable_media(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Restorable path (spec S4.3 rule 1): a media the viewer tombstoned
+        but still reaches through a membership stays filable — restorable
+        authorization ignores only the viewer's own tombstone, and a
+        successful re-file clears it (rule 6)."""
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        media_id = _seed_reachable_media(direct_db, user_id, title="Restorable")
+        direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201, add_resp.text
+
+        with direct_db.session() as session:
+            session.execute(
+                text("INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)"),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+
+        # Confirm the tombstone is in effect first.
+        assert str(media_id) not in _library_entry_media_ids(
+            _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        )
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 201
+
+        with direct_db.session() as session:
+            tombstone = session.execute(
+                text("SELECT 1 FROM user_media_deletions WHERE user_id = :u AND media_id = :m"),
+                {"u": user_id, "m": media_id},
+            ).first()
+        assert tombstone is None
+
 
 class TestRemoveMediaFromLibrary:
     """Tests for DELETE /media/{media_id} endpoint."""
@@ -820,21 +936,16 @@ class TestRemoveMediaFromLibrary:
         """Admin can remove media from library."""
         user_id = create_test_user_id()
 
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        # Add media
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
 
         # Remove media
         response = auth_client.delete(
@@ -902,6 +1013,8 @@ class TestRemoveMediaFromLibrary:
                 page_count=1,
                 with_page_spans=True,
             )
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
 
         storage_path = f"media/{media_id}/original.pdf"
         storage.put_object(storage_path, b"%PDF-1.4 test", "application/pdf")
@@ -910,13 +1023,6 @@ class TestRemoveMediaFromLibrary:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_resp.status_code == 201
 
         detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert detail_resp.status_code == 200
@@ -1001,6 +1107,7 @@ class TestRemoveMediaFromLibrary:
                 """),
                 {"media_id": media_id, "storage_path": resource_path},
             )
+            add_library_entry_only(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
@@ -1008,12 +1115,6 @@ class TestRemoveMediaFromLibrary:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
 
         response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -1065,13 +1166,8 @@ class TestRemoveMediaFromLibrary:
                 """),
                 {"library_id": library_id, "user_id": member_id},
             )
+            add_library_entry_only(session, UUID(library_id), media_id)
             session.commit()
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
 
         response = auth_client.delete(
             f"/media/{media_id}?library_id={library_id}",
@@ -1249,21 +1345,16 @@ class TestListLibraryMedia:
         """List media returns media in library."""
         user_id = create_test_user_id()
 
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
         me_resp = auth_client.get("/me", headers=auth_headers(user_id))
         library_id = me_resp.json()["data"]["default_library_id"]
 
-        # Add media
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
 
         # List media
         response = _list_library_entries(auth_client, user_id, library_id)
@@ -1550,6 +1641,7 @@ class TestListLibraryMedia:
                 """),
                 {"user_id": user_id, "media_id": media_id, "fraction": 12000.0 / 180000.0},
             )
+            add_library_entry_only(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1564,13 +1656,6 @@ class TestListLibraryMedia:
         # non-cascading, so they no longer disappear with the media row.
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
-
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_resp.status_code == 201
 
         response = _list_library_entries(auth_client, user_id, library_id)
 
@@ -1625,10 +1710,12 @@ class TestListLibraryMedia:
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
     def test_list_media_ordering(self, auth_client, direct_db: DirectSessionManager):
-        """Media is ordered by persistent library_entries.position ascending."""
+        """Default orders (media.created_at DESC, media.id DESC) — newest media
+        first (spec S4.2), the reverse of filing order."""
         user_id = create_test_user_id()
 
-        # Create multiple media items
+        # Create multiple media items, each its own commit so created_at strictly
+        # increases in creation order.
         media_ids = []
         for i in range(3):
             with direct_db.session() as session:
@@ -1649,14 +1736,11 @@ class TestListLibraryMedia:
         library_id = me_resp.json()["data"]["default_library_id"]
 
         # Add media in order
-        for media_id in media_ids:
-            auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
+        with direct_db.session() as session:
+            for media_id in media_ids:
+                add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
 
-        # List media (should preserve append order: first added first)
         response = _list_library_entries(auth_client, user_id, library_id)
 
         assert response.status_code == 200
@@ -1664,7 +1748,7 @@ class TestListLibraryMedia:
         assert body["page"] == {"has_more": False, "next_cursor": None}
         data = body["data"]
         assert len(data) == 3
-        assert _library_entry_media_ids(data) == [str(media_id) for media_id in media_ids]
+        assert _library_entry_media_ids(data) == [str(media_id) for media_id in reversed(media_ids)]
 
     def test_list_media_paginates_with_next_cursor(
         self, auth_client, direct_db: DirectSessionManager
@@ -1678,23 +1762,18 @@ class TestListLibraryMedia:
             for idx in range(3):
                 media_id = create_test_media(session, title=f"Paged Entry {idx}")
                 media_ids.append(media_id)
+                add_library_entry_only(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
 
-        for media_id in media_ids:
-            response = auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
-            assert response.status_code in (200, 201), response.text
-
+        # Default orders newest-media-first: page 1 is the two most recently
+        # created media, page 2 the oldest.
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
         first_body = first.json()
         assert _library_entry_media_ids(first_body["data"]) == [
-            str(media_ids[0]),
+            str(media_ids[2]),
             str(media_ids[1]),
         ]
         cursor = first_body["page"]["next_cursor"]
@@ -1704,7 +1783,7 @@ class TestListLibraryMedia:
         second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
         assert second.status_code == 200, second.text
         second_body = second.json()
-        assert _library_entry_media_ids(second_body["data"]) == [str(media_ids[2])]
+        assert _library_entry_media_ids(second_body["data"]) == [str(media_ids[0])]
         assert second_body["page"] == {"has_more": False, "next_cursor": None}
 
     def test_list_media_rejects_cursor_from_another_library(
@@ -1745,9 +1824,13 @@ class TestListLibraryMedia:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
-    def test_list_media_snapshot_survives_position_renormalization(
+    def test_list_media_default_insert_above_cursor_keyset_invariant(
         self, auth_client, direct_db: DirectSessionManager
     ):
+        """AC6: Default's stateless keyset has no frozen snapshot — an insert
+        above the cursor (newer than everything already fetched) neither
+        duplicates nor omits the pre-existing lower rows a stale cursor still
+        points at, and the new row appears on a fresh first page."""
         user_id = create_test_user_id()
         library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
             "default_library_id"
@@ -1755,21 +1838,80 @@ class TestListLibraryMedia:
         media_ids: list[UUID] = []
         with direct_db.session() as session:
             for idx in range(3):
-                media_id = create_test_media(session, title=f"Stable Position {idx}")
+                media_id = create_test_media(session, title=f"Keyset Invariant {idx}")
                 media_ids.append(media_id)
+                add_library_entry_only(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
 
-        for media_id in media_ids:
-            response = auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
-            assert response.status_code in (200, 201), response.text
-
         first = _list_library_entries(auth_client, user_id, library_id, limit=2)
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert _library_entry_media_ids(first_body["data"]) == [
+            str(media_ids[2]),
+            str(media_ids[1]),
+        ]
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        # Insert a media newer than everything already fetched — "above" the
+        # cursor in Default's (media.created_at DESC) order — after page 1 but
+        # before page 2 is fetched.
+        with direct_db.session() as session:
+            newest_media_id = create_test_media(session, title="Filed after page 1")
+            add_library_entry_only(session, UUID(library_id), newest_media_id)
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", newest_media_id)
+        direct_db.register_cleanup("media", "id", newest_media_id)
+
+        # The stale cursor's continuation is unaffected: the pre-existing lower
+        # row appears exactly once, and the new row (above the cursor) never
+        # leaks into it.
+        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
+        assert second.status_code == 200, second.text
+        assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[0])]
+        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+
+        # A fresh first page picks up the new row immediately.
+        refreshed = _list_library_entries(auth_client, user_id, library_id, limit=2)
+        assert refreshed.status_code == 200, refreshed.text
+        assert _library_entry_media_ids(refreshed.json()["data"]) == [
+            str(newest_media_id),
+            str(media_ids[2]),
+        ]
+
+    def test_list_media_non_default_position_insert_above_cursor_keyset_invariant(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC6: non-default sort=position keyset survives inserts between page
+        fetches the same way Default's does — a row landing before the
+        pagination boundary neither duplicates nor omits the pre-existing
+        higher-position rows a stale cursor still points at."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Position Keyset Invariant")
+            media_ids = [
+                create_test_media(session, title=f"Position Keyset {idx}") for idx in range(3)
+            ]
+            for position, media_id in zip((10, 20, 30), media_ids, strict=True):
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (library_id, media_id, position) "
+                        "VALUES (:library_id, :media_id, :position)"
+                    ),
+                    {"library_id": library_id, "media_id": media_id, "position": position},
+                )
+            session.commit()
+        for media_id in media_ids:
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=2)
         assert first.status_code == 200, first.text
         first_body = first.json()
         assert _library_entry_media_ids(first_body["data"]) == [
@@ -1777,17 +1919,106 @@ class TestListLibraryMedia:
             str(media_ids[1]),
         ]
         cursor = first_body["page"]["next_cursor"]
+        assert first_body["page"]["has_more"] is True
         assert cursor is not None
 
-        delete_response = auth_client.delete(
-            f"/media/{media_ids[0]}?library_id={library_id}",
-            headers=auth_headers(user_id),
-        )
-        assert delete_response.status_code == 200, delete_response.text
+        # Insert a media at position 5 — sorts before every existing entry
+        # ("above the cursor") — after page 1 is fetched but before page 2 is.
+        with direct_db.session() as session:
+            newest_media_id = create_test_media(session, title="Inserted above cursor")
+            session.execute(
+                text(
+                    "INSERT INTO library_entries (library_id, media_id, position) "
+                    "VALUES (:library_id, :media_id, 5)"
+                ),
+                {"library_id": library_id, "media_id": newest_media_id},
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", newest_media_id)
+        direct_db.register_cleanup("media", "id", newest_media_id)
 
-        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
+        # The stale cursor's continuation is unaffected: the pre-existing
+        # higher-position row appears exactly once, and the new row (above
+        # the cursor) never leaks into it.
+        second = _list_library_entries(
+            auth_client, user_id, library_id, sort="position", limit=2, cursor=cursor
+        )
         assert second.status_code == 200, second.text
         assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[2])]
+        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+
+        # A fresh first page picks up the new row immediately, at the top.
+        refreshed = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=1)
+        assert refreshed.status_code == 200, refreshed.text
+        assert _library_entry_media_ids(refreshed.json()["data"]) == [str(newest_media_id)]
+
+    def test_list_media_non_default_position_excludes_tombstoned_media_at_page_boundary(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """F4: a non-default member library's ``sort=position`` page filters to
+        visible media BEFORE computing ``has_more`` — a viewer-tombstoned entry
+        landing inside the raw ``LIMIT + 1`` fetch window must not produce a
+        short/empty page while ``has_more`` claims there is more (the
+        tombstoned row silently drops out of hydration, but the pre-fix query
+        counted it toward the page)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Tombstone Boundary")
+            media_ids = [
+                create_test_media(session, title=f"Boundary {idx}") for idx in range(4)
+            ]
+            for position, media_id in enumerate(media_ids):
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (library_id, media_id, position) "
+                        "VALUES (:library_id, :media_id, :position)"
+                    ),
+                    {"library_id": library_id, "media_id": media_id, "position": position},
+                )
+            session.commit()
+        for media_id in media_ids:
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        # Tombstone the second entry (position 1) — it sits inside page 1's
+        # raw LIMIT+1=3 fetch window for limit=2.
+        tombstoned_media_id = media_ids[1]
+        with direct_db.session() as session:
+            session.execute(
+                text("INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)"),
+                {"u": user_id, "m": tombstoned_media_id},
+            )
+            session.commit()
+        direct_db.register_cleanup("user_media_deletions", "media_id", tombstoned_media_id)
+
+        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=2)
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        # A full page of 2 VISIBLE entries — the tombstoned one is skipped
+        # entirely, not counted toward the page and then silently dropped.
+        assert _library_entry_media_ids(first_body["data"]) == [
+            str(media_ids[0]),
+            str(media_ids[2]),
+        ]
+        assert first_body["page"]["has_more"] is True
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        second = _list_library_entries(
+            auth_client, user_id, library_id, sort="position", limit=2, cursor=cursor
+        )
+        assert second.status_code == 200, second.text
+        assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[3])]
+        assert second.json()["page"] == {"has_more": False, "next_cursor": None}
+
+        # The tombstoned entry never surfaces on any page.
+        assert str(tombstoned_media_id) not in _library_entry_media_ids(
+            first_body["data"]
+        ) and str(tombstoned_media_id) not in _library_entry_media_ids(second.json()["data"])
 
     def test_list_media_rejects_invalid_cursor(self, auth_client):
         user_id = create_test_user_id()
@@ -1854,16 +2085,10 @@ class TestListLibraryMedia:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
-    def test_resonance_cursor_uses_stable_snapshot_after_score_mutation(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
+    def _seed_resonance_library(self, direct_db, user_id: UUID, name: str) -> tuple[UUID, list[UUID]]:
         with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Stable Resonance Cursor")
-            media_ids = [
-                create_test_media(session, title=f"Stable Resonance {idx}") for idx in range(3)
-            ]
+            library_id = create_test_library(session, user_id, name)
+            media_ids = [create_test_media(session, title=f"{name} {idx}") for idx in range(3)]
             for position, media_id in enumerate(media_ids):
                 session.execute(
                     text("""
@@ -1894,12 +2119,24 @@ class TestListLibraryMedia:
             direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
+        return library_id, media_ids
 
-        full_before = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=10
+    def test_resonance_cursor_stable_when_score_inputs_do_not_mutate(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC7: the resonance cursor carries the pinned `resonance_as_of` plus a
+        score/id key, and is stable when nothing underlying it changes — the
+        same cursor fetched twice returns identical pages, and the full
+        first+second page sequence matches a single unpaged fetch."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, _media_ids = self._seed_resonance_library(
+            direct_db, user_id, "Stable Resonance Cursor"
         )
-        assert full_before.status_code == 200, full_before.text
-        expected_media_ids = _library_entry_media_ids(full_before.json()["data"])
+
+        full = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=10)
+        assert full.status_code == 200, full.text
+        expected_media_ids = _library_entry_media_ids(full.json()["data"])
         assert len(expected_media_ids) == 3
 
         first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
@@ -1910,7 +2147,79 @@ class TestListLibraryMedia:
         cursor = first_body["page"]["next_cursor"]
         assert cursor is not None
 
-        media_to_promote = UUID(expected_media_ids[-1])
+        second_a = _list_library_entries(
+            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
+        )
+        second_b = _list_library_entries(
+            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
+        )
+        assert second_a.status_code == 200, second_a.text
+        assert second_b.status_code == 200, second_b.text
+        assert second_a.json()["data"] == second_b.json()["data"], (
+            "the same cursor must return the identical page when nothing mutates"
+        )
+        assert (
+            first_media_ids + _library_entry_media_ids(second_a.json()["data"])
+            == expected_media_ids
+        )
+
+    def test_resonance_as_of_pinned_across_pages_via_cursor_payload(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """F9/AC7: `resonance_as_of` is generated once and carried unchanged
+        through every later page's cursor — decode the cursor payload
+        directly to prove pinning, rather than relying on score stability
+        (the existing stability tests above pass with or without pinning
+        because the recency half-life is day-scale, so they would not catch a
+        regression that regenerates `now()` on every page)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, _media_ids = self._seed_resonance_library(
+            direct_db, user_id, "Pinned Resonance As Of"
+        )
+
+        first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
+        assert first.status_code == 200, first.text
+        first_cursor = first.json()["page"]["next_cursor"]
+        assert first_cursor is not None
+        first_resonance_as_of = _decode_cursor_payload(first_cursor)["resonance_as_of"]
+
+        second = _list_library_entries(
+            auth_client, user_id, library_id, sort="resonance", limit=1, cursor=first_cursor
+        )
+        assert second.status_code == 200, second.text
+        second_cursor = second.json()["page"]["next_cursor"]
+        assert second_cursor is not None
+        second_resonance_as_of = _decode_cursor_payload(second_cursor)["resonance_as_of"]
+
+        assert second_resonance_as_of == first_resonance_as_of
+
+    def test_resonance_cursor_reflects_live_mutation_between_pages(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Accepted 80/20 loss (spec S3): the resonance cursor pins
+        `resonance_as_of` (the recency-decay clock) but is NOT a historical
+        snapshot of the scored rows themselves — connection/engagement
+        mutations between page fetches stay live, so a promoted entry's score
+        is recomputed live on the next fetch (unlike the deleted TTL-snapshot
+        design, which would have kept serving the pre-mutation ranking)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, media_ids = self._seed_resonance_library(
+            direct_db, user_id, "Live Resonance Cursor"
+        )
+
+        first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        first_media_ids = _library_entry_media_ids(first_body["data"])
+        assert len(first_media_ids) == 1
+        cursor = first_body["page"]["next_cursor"]
+        assert cursor is not None
+
+        # Promote the oldest (lowest-scored, not-yet-fetched) entry to the
+        # freshest recency signal between page fetches.
+        oldest_media_id = media_ids[-1]
         with direct_db.session() as session:
             session.execute(
                 text("""
@@ -1918,50 +2227,323 @@ class TestListLibraryMedia:
                     SET created_at = now()
                     WHERE library_id = :library_id AND media_id = :media_id
                 """),
-                {"library_id": library_id, "media_id": media_to_promote},
+                {"library_id": library_id, "media_id": oldest_media_id},
             )
             session.commit()
 
+        # The continuation still answers (no crash on a live-changed input);
+        # a fresh unpaged fetch immediately reflects the promotion at the top —
+        # confirming the mutation is live, not served from a frozen snapshot.
         second = _list_library_entries(
-            auth_client,
-            user_id,
-            library_id,
-            sort="resonance",
-            limit=2,
-            cursor=cursor,
+            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
         )
         assert second.status_code == 200, second.text
-        assert (
-            first_media_ids + _library_entry_media_ids(second.json()["data"]) == expected_media_ids
+
+        refreshed = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
+        assert refreshed.status_code == 200, refreshed.text
+        assert _library_entry_media_ids(refreshed.json()["data"]) == [str(oldest_media_id)]
+
+
+class TestDefaultLibraryVirtualView:
+    """Default's live, deduplicated "personal All" virtual read surface (spec
+    S4.1/S4.2, AC2/AC6/AC7): direct+shared dedupe, tombstone hiding,
+    system-library exclusion, and cursor scoping. Replaces the deleted
+    closure/intrinsic materialization tests — there is no provenance table to
+    assert on anymore, only the live query's observable behavior."""
+
+    def test_direct_and_shared_media_appears_once_preferring_direct_entry(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC2: direct + shared non-system media appears once. The two-stage
+        DISTINCT ON dedupe prefers a direct default entry as the representative
+        row over an entry reached only through a shared library."""
+        owner_id = create_test_user_id()
+        viewer_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(owner_id))
+
+        media_id = _seed_reachable_media(direct_db, owner_id, title="Direct and shared")
+
+        # Share: owner files the media into a library shared with viewer.
+        lib_resp = auth_client.post(
+            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
         )
+        shared_library_id = lib_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(viewer_id))
+        invite_resp = auth_client.post(
+            f"/libraries/{shared_library_id}/invites",
+            json={"invitee_user_id": str(viewer_id), "role": "member"},
+            headers=auth_headers(owner_id),
+        )
+        invite_id = invite_resp.json()["data"]["id"]
+        accept_resp = auth_client.post(
+            f"/libraries/invites/{invite_id}/accept", headers=auth_headers(viewer_id)
+        )
+        assert accept_resp.status_code == 200
+        add_resp = auth_client.post(
+            f"/libraries/{shared_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(owner_id),
+        )
+        assert add_resp.status_code == 201
+
+        viewer_default_id = auth_client.get("/me", headers=auth_headers(viewer_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        # Sanity: shared-only membership already surfaces it once in Default.
+        shared_only = _list_library_entries(auth_client, viewer_id, viewer_default_id)
+        assert _library_entry_media_ids(shared_only.json()["data"]) == [str(media_id)]
+
+        # Direct: viewer also files it directly into their own Default.
+        direct_resp = auth_client.post(
+            f"/libraries/{viewer_default_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(viewer_id),
+        )
+        assert direct_resp.status_code == 201
+
+        response = _list_library_entries(auth_client, viewer_id, viewer_default_id)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert _library_entry_media_ids(data) == [str(media_id)]
+        # The representative entry is the direct default one, not the shared
+        # library's row.
+        assert data[0]["library_id"] == viewer_default_id
+
+    def test_viewer_tombstone_hides_media_from_default(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A viewer-scoped tombstone (`user_media_deletions`) hides otherwise-
+        accessible media from Default, per-viewer only."""
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+        media_id = _seed_reachable_media(direct_db, user_id, title="Tombstoned")
+        direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+
+        add_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert add_resp.status_code == 201
+        assert str(media_id) in _library_entry_media_ids(
+            _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO user_media_deletions (user_id, media_id) VALUES (:uid, :mid)"
+                ),
+                {"uid": user_id, "mid": media_id},
+            )
+            session.commit()
+
+        response = _list_library_entries(auth_client, user_id, library_id)
+        assert response.status_code == 200
+        assert str(media_id) not in _library_entry_media_ids(response.json()["data"])
+
+    def test_system_only_media_excluded_until_filed_personally(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC2: a system-library-only work never leaks into Default. Explicit
+        non-system filing makes it appear exactly once."""
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="System only")
+            system_library_id = uuid4()
+            session.execute(
+                text("""
+                    INSERT INTO libraries (id, name, owner_user_id, is_default, system_key)
+                    VALUES (:id, 'System Corpus', :owner_user_id, false, :system_key)
+                """),
+                {
+                    "id": system_library_id,
+                    "owner_user_id": user_id,
+                    "system_key": f"test-system-{system_library_id}",
+                },
+            )
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                """),
+                {"library_id": system_library_id, "user_id": user_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO library_entries (library_id, media_id, position)
+                    VALUES (:library_id, :media_id, 0)
+                """),
+                {"library_id": system_library_id, "media_id": media_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        before = _list_library_entries(auth_client, user_id, library_id)
+        assert before.status_code == 200
+        assert str(media_id) not in _library_entry_media_ids(before.json()["data"])
+
+        file_resp = auth_client.post(
+            f"/libraries/{library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(user_id),
+        )
+        assert file_resp.status_code == 201
+
+        after = _list_library_entries(auth_client, user_id, library_id)
+        assert after.status_code == 200
+        assert _library_entry_media_ids(after.json()["data"]).count(str(media_id)) == 1
+
+    def test_default_cursor_rejects_cross_scope_and_legacy_snapshot_cursors(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A Default cursor is bound to (viewer_id, library_id, sort="position");
+        reusing it for a different library and any pre-cutover
+        `library_entries:snapshot` cursor both fail E_INVALID_CURSOR."""
+        user_a = create_test_user_id()
+        user_b = create_test_user_id()
+
+        library_a = auth_client.get("/me", headers=auth_headers(user_a)).json()["data"][
+            "default_library_id"
+        ]
+        auth_client.get("/me", headers=auth_headers(user_b))
+        # A second library user_a is ALSO a member of, so the cross-scope
+        # check exercises the cursor's library_id binding, not membership
+        # masking.
+        other_resp = auth_client.post(
+            "/libraries", json={"name": "Other library"}, headers=auth_headers(user_a)
+        )
+        library_c = other_resp.json()["data"]["id"]
+        direct_db.register_cleanup("memberships", "library_id", UUID(library_c))
+        direct_db.register_cleanup("libraries", "id", UUID(library_c))
+
+        with direct_db.session() as session:
+            media_ids = [create_test_media(session, title=f"Scope {i}") for i in range(2)]
+            for media_id in media_ids:
+                add_library_entry_only(session, UUID(library_a), media_id)
+            session.commit()
+        for media_id in media_ids:
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+
+        first = _list_library_entries(auth_client, user_a, library_a, limit=1)
+        assert first.status_code == 200, first.text
+        cursor = first.json()["page"]["next_cursor"]
+        assert cursor is not None
+
+        # Same viewer, a DIFFERENT library they also belong to.
+        cross_library = _list_library_entries(auth_client, user_a, library_c, cursor=cursor)
+        assert cross_library.status_code == 400
+        assert cross_library.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+        # Foreign viewer, same library id is masked as not-found before the
+        # cursor is even reached (viewer_b is not a member of library_a).
+        cross_viewer = _list_library_entries(auth_client, user_b, library_a, cursor=cursor)
+        assert cross_viewer.status_code == 404
+
+        # A legacy pre-cutover snapshot cursor never decodes to any v1 kind.
+        legacy_payload = {
+            "k": "library_entries:snapshot",
+            "viewer_id": str(user_a),
+            "library_id": str(library_a),
+            "sort": "position",
+            "snapshot_id": str(uuid4()),
+            "offset": 0,
+        }
+        legacy_cursor = base64.urlsafe_b64encode(
+            json.dumps(legacy_payload).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        legacy_response = _list_library_entries(
+            auth_client, user_a, library_a, cursor=legacy_cursor
+        )
+        assert legacy_response.status_code == 400
+        assert legacy_response.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    def test_default_rejects_resonance_sort(self, auth_client):
+        """AC7: Default rejects sort=resonance outright — there is no reorder or
+        resonance surface for the virtual view."""
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+        response = _list_library_entries(auth_client, user_id, library_id, sort="resonance")
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
 
 
 class TestReorderLibraryMedia:
-    """Tests for PATCH /libraries/{id}/entries/reorder endpoint."""
+    """Tests for PATCH /libraries/{id}/entries/reorder endpoint.
+
+    Default has no physical order to reorder — it is a live virtual view (spec
+    S4.1/AC8) — so every non-rejection scenario here targets a freshly created
+    non-default library; Default-targeting reorder is covered separately by
+    ``test_reorder_library_entries_rejects_default`` below.
+    """
+
+    def _create_non_default_library(self, auth_client, user_id: UUID, name: str) -> str:
+        resp = auth_client.post("/libraries", json={"name": name}, headers=auth_headers(user_id))
+        assert resp.status_code == 201, resp.text
+        return resp.json()["data"]["id"]
+
+    def test_reorder_library_entries_rejects_default(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """PATCH .../entries/reorder against the viewer's own Default library
+        rejects E_DEFAULT_LIBRARY_FORBIDDEN before exact-set validation, and the
+        Default view is unaffected (spec AC8)."""
+        user_id = create_test_user_id()
+        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
+        library_id = me_resp.json()["data"]["default_library_id"]
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Default reorder target")
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        entry_id = next(row["id"] for row in entries)
+
+        # A malformed body (wrong set) against Default still yields the Default
+        # rejection, not the exact-set 400 — the guard runs first.
+        response = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": [entry_id, str(uuid4())]},
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+        after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        assert _library_entry_media_ids(after) == [str(media_id)]
 
     def test_reorder_library_entries_replaces_order(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
+        library_id = self._create_non_default_library(auth_client, user_id, "Reorder library")
 
         media_ids: list[UUID] = []
         with direct_db.session() as session:
             for index in range(3):
                 media_id = create_test_media(session, title=f"Reorder {index}")
                 media_ids.append(media_id)
+                add_library_entry_only(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
-
-        for media_id in media_ids:
-            add_resp = auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
-            assert add_resp.status_code in (200, 201)
 
         reordered_media_ids = [media_ids[2], media_ids[0], media_ids[1]]
         list_resp = _list_library_entries(auth_client, user_id, library_id)
@@ -1993,21 +2575,17 @@ class TestReorderLibraryMedia:
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
+        library_id = self._create_non_default_library(auth_client, user_id, "Exact set library")
 
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Order A")
             media_b = create_test_media(session, title="Order B")
+            add_library_entry_only(session, UUID(library_id), media_a)
+            add_library_entry_only(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
-            auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         existing_entries = list_resp.json()["data"]
@@ -2029,26 +2607,17 @@ class TestReorderLibraryMedia:
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
-        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-            "default_library_id"
-        ]
+        library_id = self._create_non_default_library(auth_client, user_id, "Partial page library")
 
         media_ids: list[UUID] = []
         with direct_db.session() as session:
             for idx in range(3):
                 media_id = create_test_media(session, title=f"Partial Reorder {idx}")
                 media_ids.append(media_id)
+                add_library_entry_only(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
-
-        for media_id in media_ids:
-            add_resp = auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
-            assert add_resp.status_code in (200, 201), add_resp.text
 
         first_page = _list_library_entries(auth_client, user_id, library_id, limit=2).json()
         assert first_page["page"]["next_cursor"] is not None
@@ -2080,15 +2649,12 @@ class TestReorderLibraryMedia:
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Shared A")
             media_b = create_test_media(session, title="Shared B")
+            add_library_entry_only(session, UUID(library_id), media_a)
+            add_library_entry_only(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
-            auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(owner_id),
-            )
 
         invite_resp = auth_client.post(
             f"/libraries/{library_id}/invites",
@@ -2151,6 +2717,7 @@ class TestReorderLibraryMedia:
                 """),
                 {"user_id": user_id, "podcast_id": podcast_id},
             )
+            add_library_entry_only(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2159,11 +2726,6 @@ class TestReorderLibraryMedia:
         direct_db.register_cleanup("podcast_subscriptions", "podcast_id", podcast_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
 
-        assert auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        ).status_code in (200, 201)
         assert (
             auth_client.post(
                 f"/libraries/{library_id}/podcasts",
@@ -2195,22 +2757,17 @@ class TestReorderLibraryMedia:
         """Reorder requires the exact existing set: duplicate ids (same length, wrong set)
         and foreign ids both 400 and leave the stored order untouched."""
         user_id = create_test_user_id()
-        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-            "default_library_id"
-        ]
+        library_id = self._create_non_default_library(auth_client, user_id, "Bad set library")
 
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Bad set A")
             media_b = create_test_media(session, title="Bad set B")
+            add_library_entry_only(session, UUID(library_id), media_a)
+            add_library_entry_only(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
-            auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(media_id)},
-                headers=auth_headers(user_id),
-            )
 
         entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
         entry_id_a = next(
@@ -2230,447 +2787,6 @@ class TestReorderLibraryMedia:
 
         after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
         assert _library_entry_media_ids(after) == [str(media_a), str(media_b)]
-
-
-# =============================================================================
-# Default Library Closure Tests
-# =============================================================================
-
-
-class TestDefaultLibraryClosure:
-    """Tests for default library closure invariants."""
-
-    def test_add_media_closure_to_default(self, auth_client, direct_db: DirectSessionManager):
-        """Adding media to any library adds it to user's default library."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Create a non-default library
-        create_resp = auth_client.post(
-            "/libraries", json={"name": "Other Library"}, headers=auth_headers(user_id)
-        )
-        other_library_id = create_resp.json()["data"]["id"]
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Add media to non-default library
-        auth_client.post(
-            f"/libraries/{other_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Verify media is in default library too
-        with direct_db.session() as session:
-            result = session.execute(
-                text("""
-                    SELECT 1 FROM library_entries
-                    WHERE library_id = :library_id AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            assert result.fetchone() is not None
-
-    def test_add_media_non_default_creates_closure_edges_and_default_materialization(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Adding media to non-default library creates closure edges and default rows."""
-        owner_id = create_test_user_id()
-        member_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Bootstrap member before inviting
-        auth_client.get("/me", headers=auth_headers(member_id))
-
-        # Create non-default library as owner
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "Shared Lib"}, headers=auth_headers(owner_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-
-        # Add member via invite flow
-        invite_resp = auth_client.post(
-            f"/libraries/{lib_id}/invites",
-            json={"invitee_user_id": str(member_id), "role": "member"},
-            headers=auth_headers(owner_id),
-        )
-        invite_id = invite_resp.json()["data"]["id"]
-        auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
-            headers=auth_headers(member_id),
-        )
-
-        # Get default library IDs
-        owner_me = auth_client.get("/me", headers=auth_headers(owner_id)).json()
-        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
-        owner_dl = owner_me["data"]["default_library_id"]
-        member_dl = member_me["data"]["default_library_id"]
-
-        # Add media to non-default library
-        auth_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
-
-        # Verify closure edges and materialized rows exist for both members
-        with direct_db.session() as session:
-            for dl_id in [owner_dl, member_dl]:
-                edge = session.execute(
-                    text("""
-                        SELECT 1 FROM default_library_closure_edges
-                        WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
-                    """),
-                    {"dl": dl_id, "m": media_id, "src": lib_id},
-                ).fetchone()
-                assert edge is not None, f"Missing closure edge for dl={dl_id}"
-
-                lm = session.execute(
-                    text("""
-                        SELECT 1 FROM library_entries
-                        WHERE library_id = :dl AND media_id = :m
-                    """),
-                    {"dl": dl_id, "m": media_id},
-                ).fetchone()
-                assert lm is not None, f"Missing materialized row for dl={dl_id}"
-
-    def test_remove_media_non_default_deletes_source_edges_and_gcs_default_row(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing media from non-default library deletes source edges and gcs default row."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "Non Default"}, headers=auth_headers(user_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-
-        # Add media to non-default (creates closure edges + default materialization)
-        auth_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Verify closure edge exists
-        with direct_db.session() as session:
-            edge = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_closure_edges
-                    WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
-                """),
-                {"dl": default_library_id, "m": media_id, "src": lib_id},
-            ).fetchone()
-            assert edge is not None
-
-        # Remove from non-default
-        auth_client.delete(
-            f"/media/{media_id}?library_id={lib_id}",
-            headers=auth_headers(user_id),
-        )
-
-        # Verify closure edge deleted and default row gc'd (no intrinsic)
-        with direct_db.session() as session:
-            edge = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_closure_edges
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            ).fetchone()
-            assert edge is None
-
-            lm = session.execute(
-                text("""
-                    SELECT 1 FROM library_entries
-                    WHERE library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            ).fetchone()
-            assert lm is None
-
-    def test_remove_media_from_default_removes_intrinsic_but_keeps_row_when_closure_exists(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing from default removes intrinsic but keeps row when closure edge exists."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Add media to default (creates intrinsic)
-        auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Also add to a non-default library (creates closure edge)
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "Non Default"}, headers=auth_headers(user_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-        auth_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Now remove from default
-        auth_client.delete(
-            f"/media/{media_id}?library_id={default_library_id}",
-            headers=auth_headers(user_id),
-        )
-
-        # Intrinsic should be gone
-        with direct_db.session() as session:
-            intrinsic = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            ).fetchone()
-            assert intrinsic is None
-
-            # But library_entries should still exist (closure edge remains)
-            lm = session.execute(
-                text("""
-                    SELECT 1 FROM library_entries
-                    WHERE library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            ).fetchone()
-            assert lm is not None
-
-    def test_remove_media_from_default_row_is_gc_after_closure_removed(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Default row is gc'd once closure edge is also removed."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Add to default (intrinsic) and non-default (closure)
-        auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "ND"}, headers=auth_headers(user_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-        auth_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Remove intrinsic first
-        auth_client.delete(
-            f"/media/{media_id}?library_id={default_library_id}",
-            headers=auth_headers(user_id),
-        )
-        # Row survives (closure edge)
-        with direct_db.session() as session:
-            assert (
-                session.execute(
-                    text("SELECT 1 FROM library_entries WHERE library_id = :dl AND media_id = :m"),
-                    {"dl": default_library_id, "m": media_id},
-                ).fetchone()
-                is not None
-            )
-
-        # Now remove closure source
-        auth_client.delete(
-            f"/media/{media_id}?library_id={lib_id}",
-            headers=auth_headers(user_id),
-        )
-
-        # Now default row should be gc'd
-        with direct_db.session() as session:
-            assert (
-                session.execute(
-                    text("SELECT 1 FROM library_entries WHERE library_id = :dl AND media_id = :m"),
-                    {"dl": default_library_id, "m": media_id},
-                ).fetchone()
-                is None
-            )
-
-    def test_remove_from_non_default_gcs_default_when_no_intrinsic(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing media from non-default library GCs default row when no intrinsic."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Create non-default library
-        create_resp = auth_client.post(
-            "/libraries", json={"name": "Other Library"}, headers=auth_headers(user_id)
-        )
-        other_library_id = create_resp.json()["data"]["id"]
-
-        # Add media to non-default library (creates closure edge + materialized default row)
-        auth_client.post(
-            f"/libraries/{other_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Remove from non-default library
-        auth_client.delete(
-            f"/media/{media_id}?library_id={other_library_id}",
-            headers=auth_headers(user_id),
-        )
-
-        # Default row is GC'd because no intrinsic and no remaining closure edge.
-        with direct_db.session() as session:
-            result = session.execute(
-                text("""
-                    SELECT 1 FROM library_entries
-                    WHERE library_id = :library_id AND media_id = :media_id
-                """),
-                {"library_id": default_library_id, "media_id": media_id},
-            )
-            assert result.fetchone() is None
-
-    def test_add_media_to_default_library_creates_intrinsic(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Adding media to default library creates intrinsic provenance row."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Get default library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Add media to default library
-        resp = auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert resp.status_code == 201
-
-        # Verify intrinsic row exists
-        with direct_db.session() as session:
-            result = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            )
-            assert result.fetchone() is not None
-
-    def test_remove_media_from_default_library_removes_intrinsic(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing media from default library removes intrinsic provenance row."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        default_library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Add media to default library (creates intrinsic)
-        auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        # Verify intrinsic row exists
-        with direct_db.session() as session:
-            result = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            )
-            assert result.fetchone() is not None
-
-        # Remove from default library
-        auth_client.delete(
-            f"/media/{media_id}?library_id={default_library_id}",
-            headers=auth_headers(user_id),
-        )
-
-        # Verify intrinsic row removed
-        with direct_db.session() as session:
-            result = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": default_library_id, "m": media_id},
-            )
-            assert result.fetchone() is None
 
 
 # =============================================================================
@@ -4164,14 +4280,10 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
 
         auth_client.get("/me", headers=auth_headers(invitee_id))
         invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
@@ -4245,14 +4357,10 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
+            add_library_entry_only(session, UUID(library_id), media_id)
+            session.commit()
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
 
         auth_client.get("/me", headers=auth_headers(invitee_id))
         invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
@@ -4671,374 +4779,6 @@ class TestLibraryInviteRevoke:
         assert response.json()["error"]["code"] == "E_FORBIDDEN"
 
 
-class TestRemoveMemberClosureCleanup:
-    """Tests member removal closure cleanup."""
-
-    def test_remove_library_member_deletes_member_closure_edges_and_gcs_rows(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing a member deletes their closure edges and gcs unjustified rows."""
-        owner_id = create_test_user_id()
-        member_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_backfill_jobs", "source_library_id", None)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Bootstrap member before inviting
-        auth_client.get("/me", headers=auth_headers(member_id))
-
-        # Create shared library + add member
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-
-        invite_resp = auth_client.post(
-            f"/libraries/{lib_id}/invites",
-            json={"invitee_user_id": str(member_id), "role": "admin"},
-            headers=auth_headers(owner_id),
-        )
-        invite_id = invite_resp.json()["data"]["id"]
-        auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
-            headers=auth_headers(member_id),
-        )
-
-        # Add media to shared library (creates closure edges for both)
-        auth_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
-
-        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
-        member_dl = member_me["data"]["default_library_id"]
-
-        # Verify member closure edge exists
-        with direct_db.session() as session:
-            edge = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_closure_edges
-                    WHERE default_library_id = :dl AND media_id = :m AND source_library_id = :src
-                """),
-                {"dl": member_dl, "m": media_id, "src": lib_id},
-            ).fetchone()
-            assert edge is not None
-
-        # Remove member
-        auth_client.delete(
-            f"/libraries/{lib_id}/members/{member_id}",
-            headers=auth_headers(owner_id),
-        )
-
-        # Verify member closure edges deleted and default row gc'd
-        with direct_db.session() as session:
-            edge = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_closure_edges
-                    WHERE default_library_id = :dl AND source_library_id = :src
-                """),
-                {"dl": member_dl, "src": lib_id},
-            ).fetchone()
-            assert edge is None
-
-            lm = session.execute(
-                text("""
-                    SELECT 1 FROM library_entries
-                    WHERE library_id = :dl AND media_id = :m
-                """),
-                {"dl": member_dl, "m": media_id},
-            ).fetchone()
-            assert lm is None
-
-    def test_remove_library_member_deletes_matching_backfill_job_row(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Removing member deletes matching backfill job row."""
-        owner_id = create_test_user_id()
-        member_id = create_test_user_id()
-
-        # Bootstrap member before inviting
-        auth_client.get("/me", headers=auth_headers(member_id))
-
-        # Create shared library + add member
-        lib_resp = auth_client.post(
-            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
-        )
-        lib_id = lib_resp.json()["data"]["id"]
-
-        invite_resp = auth_client.post(
-            f"/libraries/{lib_id}/invites",
-            json={"invitee_user_id": str(member_id), "role": "admin"},
-            headers=auth_headers(owner_id),
-        )
-        invite_id = invite_resp.json()["data"]["id"]
-        auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
-            headers=auth_headers(member_id),
-        )
-
-        member_me = auth_client.get("/me", headers=auth_headers(member_id)).json()
-        member_dl = member_me["data"]["default_library_id"]
-
-        # Verify backfill job was created by accept
-        with direct_db.session() as session:
-            job = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_backfill_jobs
-                    WHERE default_library_id = :dl AND source_library_id = :src AND user_id = :uid
-                """),
-                {"dl": member_dl, "src": lib_id, "uid": str(member_id)},
-            ).fetchone()
-            assert job is not None
-
-        # Remove member
-        auth_client.delete(
-            f"/libraries/{lib_id}/members/{member_id}",
-            headers=auth_headers(owner_id),
-        )
-
-        # Verify backfill job deleted
-        with direct_db.session() as session:
-            job = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_backfill_jobs
-                    WHERE default_library_id = :dl AND source_library_id = :src AND user_id = :uid
-                """),
-                {"dl": member_dl, "src": lib_id, "uid": str(member_id)},
-            ).fetchone()
-            assert job is None
-
-
-class TestVisibilityClosureScenarios:
-    """Tests for spec-defined visibility closure scenarios (V1-V6)."""
-
-    def test_v1_user_adds_media_can_read(self, auth_client, direct_db: DirectSessionManager):
-        """V1: User A adds media M to library LA → A can read M."""
-        user_a = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp.json()["data"]["default_library_id"]
-
-        # Add media
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-
-        # User A can list media
-        response = _list_library_entries(auth_client, user_a, library_a)
-
-        assert response.status_code == 200
-        media_ids = _library_entry_media_ids(response.json()["data"])
-        assert str(media_id) in media_ids
-
-    def test_v2_non_member_cannot_read_media(self, auth_client, direct_db: DirectSessionManager):
-        """V2: User B (no membership in LA) cannot read M."""
-        user_a = create_test_user_id()
-        user_b = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp.json()["data"]["default_library_id"]
-
-        # User A adds media
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-
-        # User B bootstraps
-        auth_client.get("/me", headers=auth_headers(user_b))
-
-        # User B cannot access A's library
-        response = _list_library_entries(auth_client, user_b, library_a)
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
-
-    def test_v3_media_accessible_via_closure(self, auth_client, direct_db: DirectSessionManager):
-        """V3: User A creates new library LB, does NOT add M → A can still read M (closure)."""
-        user_a = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp.json()["data"]["default_library_id"]
-
-        # Add media to default library
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-
-        # Create new library (don't add media to it)
-        auth_client.post("/libraries", json={"name": "Library B"}, headers=auth_headers(user_a))
-
-        # User A can still read media via default library
-        response = _list_library_entries(auth_client, user_a, library_a)
-
-        assert response.status_code == 200
-        media_ids = _library_entry_media_ids(response.json()["data"])
-        assert str(media_id) in media_ids
-
-    def test_v4_remove_from_default_keeps_closure_backed_row(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Remove from default removes intrinsic but closure edge keeps media materialized."""
-        user_a = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        default_library = me_resp.json()["data"]["default_library_id"]
-
-        # Create another library
-        create_resp = auth_client.post(
-            "/libraries", json={"name": "Other"}, headers=auth_headers(user_a)
-        )
-        other_library = create_resp.json()["data"]["id"]
-
-        # Add media to other library (creates closure edge + materialized default row)
-        auth_client.post(
-            f"/libraries/{other_library}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-
-        # Verify in both
-        with direct_db.session() as session:
-            result = session.execute(
-                text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            )
-            before_ids = {row[0] for row in result.fetchall()}
-            assert UUID(default_library) in before_ids
-            assert UUID(other_library) in before_ids
-
-        # Remove from default - only removes intrinsic (none existed), closure edge stays
-        auth_client.delete(
-            f"/media/{media_id}?library_id={default_library}",
-            headers=auth_headers(user_a),
-        )
-
-        # Media stays in default because closure edge from other_library justifies it.
-        # Media also stays in other_library (not affected by default removal).
-        with direct_db.session() as session:
-            result = session.execute(
-                text("SELECT library_id FROM library_entries WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            )
-            after_ids = {row[0] for row in result.fetchall()}
-            assert UUID(default_library) in after_ids, "Closure edge keeps media in default"
-            assert UUID(other_library) in after_ids, "Non-default library unaffected"
-
-    def test_v5_after_removal_cannot_read(self, auth_client, direct_db: DirectSessionManager):
-        """V5: After V4, User A tries to read M → 404 (media not in any of A's libraries)."""
-        user_a = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        default_library = me_resp.json()["data"]["default_library_id"]
-
-        # Add then remove
-        auth_client.post(
-            f"/libraries/{default_library}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-        auth_client.delete(
-            f"/media/{media_id}?library_id={default_library}",
-            headers=auth_headers(user_a),
-        )
-
-        # Now media list should be empty
-        response = auth_client.get(
-            f"/libraries/{default_library}/entries", headers=auth_headers(user_a)
-        )
-
-        assert response.status_code == 200
-        assert response.json()["data"] == []
-
-    def test_v6_different_users_independent(self, auth_client, direct_db: DirectSessionManager):
-        """V6: User B keeps their copy when User A removes their default reference."""
-        user_a = create_test_user_id()
-        user_b = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # User A adds media then removes it
-        me_resp_a = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp_a.json()["data"]["default_library_id"]
-        me_resp_b = auth_client.get("/me", headers=auth_headers(user_b))
-        library_b = me_resp_b.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-        auth_client.post(
-            f"/libraries/{library_b}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_b),
-        )
-        auth_client.delete(
-            f"/media/{media_id}?library_id={library_a}",
-            headers=auth_headers(user_a),
-        )
-
-        # User B can read
-        response_b = _list_library_entries(auth_client, user_b, library_b)
-        assert response_b.status_code == 200
-        media_ids_b = _library_entry_media_ids(response_b.json()["data"])
-        assert str(media_id) in media_ids_b
-
-        # User A cannot read (their library is empty)
-        response_a = _list_library_entries(auth_client, user_a, library_a)
-        assert response_a.status_code == 200
-        assert response_a.json()["data"] == []
-
-
 # ---------------------------------------------------------------------------
 # Library list PDF capabilities
 # ---------------------------------------------------------------------------
@@ -5118,6 +4858,9 @@ class TestLibraryListPdfCapabilities:
                 plain_text=None,
                 page_count=1,
             )
+            add_library_entry_only(session, UUID(library_id), mid_ready)
+            add_library_entry_only(session, UUID(library_id), mid_not_ready)
+            session.commit()
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_ready)
         direct_db.register_cleanup("media_file", "media_id", mid_ready)
@@ -5127,13 +4870,6 @@ class TestLibraryListPdfCapabilities:
         direct_db.register_cleanup("media_file", "media_id", mid_not_ready)
         direct_db.register_cleanup("library_entries", "media_id", mid_not_ready)
         direct_db.register_cleanup("media", "id", mid_not_ready)
-
-        for mid in [mid_ready, mid_not_ready]:
-            auth_client.post(
-                f"/libraries/{library_id}/media",
-                json={"media_id": str(mid)},
-                headers=auth_headers(user_id),
-            )
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
@@ -5166,17 +4902,13 @@ class TestLibraryListPdfCapabilities:
                 page_count=1,
                 with_page_spans=True,
             )
+            add_library_entry_only(session, UUID(library_id), mid)
+            session.commit()
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(mid)},
-            headers=auth_headers(user_id),
-        )
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         list_caps = next(

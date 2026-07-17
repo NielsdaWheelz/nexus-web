@@ -32,8 +32,25 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     return UUID(response.json()["data"]["default_library_id"])
 
 
-def _attach_media_to_default_library(auth_client, user_id: UUID, media_id: UUID) -> UUID:
+def _attach_media_to_default_library(
+    auth_client, direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> UUID:
+    """Seed media into the user's default library, then exercise the REST
+    attach as an idempotent re-file.
+
+    ``tests.factories.create_test_media`` makes a bare media row with no
+    reachable membership path. Production never has that state: ingest always
+    auto-files new media into the creator's default library before any REST
+    filing call can reach it. The actor-authorized filing command (spec S4.3
+    rule 1) now requires the target to already be membership-reachable, so
+    setup must establish that reachability directly (mirroring ingest) before
+    the REST call, which then exercises the documented idempotent
+    present/inserted outcome.
+    """
     default_library_id = _bootstrap_user(auth_client, user_id)
+    with direct_db.session() as session:
+        library_entries.ensure_media_in_default_library(session, user_id, media_id)
+        session.commit()
     response = auth_client.post(
         f"/libraries/{default_library_id}/media",
         json={"media_id": str(media_id)},
@@ -82,7 +99,7 @@ class TestPostMediaLibrariesEndpoint:
         direct_db.register_cleanup("memberships", "library_id", lib_b)
         direct_db.register_cleanup("libraries", "id", lib_b)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -127,7 +144,7 @@ class TestPostMediaLibrariesEndpoint:
         direct_db.register_cleanup("memberships", "library_id", lib_b)
         direct_db.register_cleanup("libraries", "id", lib_b)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         first = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -178,7 +195,7 @@ class TestPostMediaLibrariesEndpoint:
             direct_db.register_cleanup("memberships", "library_id", library_id)
             direct_db.register_cleanup("libraries", "id", library_id)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
         first = auth_client.post(
             f"/media/{media_id}/libraries",
             json={"library_ids": [str(existing_lib)]},
@@ -218,7 +235,7 @@ class TestPostMediaLibrariesEndpoint:
         direct_db.register_cleanup("memberships", "library_id", other_lib)
         direct_db.register_cleanup("libraries", "id", other_lib)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -264,7 +281,7 @@ class TestPostMediaLibrariesEndpoint:
             direct_db.register_cleanup("memberships", "library_id", library_id)
             direct_db.register_cleanup("libraries", "id", library_id)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -293,7 +310,7 @@ class TestPostMediaLibrariesEndpoint:
         direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -322,7 +339,7 @@ class TestPostMediaLibrariesEndpoint:
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
 
-        _attach_media_to_default_library(auth_client, viewer_id, media_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
 
         response = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -370,18 +387,21 @@ class TestSystemMediaDeletionGuards:
         assert response.json()["error"]["code"] == "E_LIBRARY_FORBIDDEN"
         assert system_library_id in _library_entry_ids_for_media(direct_db, media_id)
 
-    def test_delete_media_for_viewer_does_not_hide_system_library_media(
+    def test_delete_media_for_viewer_is_forbidden_for_system_only_media(
         self, auth_client, direct_db: DirectSessionManager
     ):
+        """Truthful viewer deletion (spec S4.3/S5): a viewer whose only path to a
+        media is a system library they don't control gets a rejection, not a
+        successful no-op — and the call mutates nothing."""
         viewer_id = create_test_user_id()
         _bootstrap_user(auth_client, viewer_id)
 
         with direct_db.session() as session:
-            media_id = create_test_media(session, title="System Hidden Media")
+            media_id = create_test_media(session, title="System Only Media")
             system_library_id = library_governance.ensure_system_library(
                 session,
-                system_key=f"test_hidden_system_{media_id.hex[:12]}",
-                name="System Hidden Library",
+                system_key=f"test_forbidden_system_{media_id.hex[:12]}",
+                name="System Forbidden Library",
                 owner_user_id=viewer_id,
             )
             library_entries.ensure_entry(
@@ -402,9 +422,9 @@ class TestSystemMediaDeletionGuards:
             headers=auth_headers(viewer_id),
         )
 
-        assert response.status_code == 200, response.text
-        # A retained system-library reference yields Removed (no viewer hide marker).
-        assert response.json()["data"]["kind"] == "Removed"
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_FORBIDDEN"
+        # No mutation: the system reference and (absent) tombstone are unchanged.
         assert system_library_id in _library_entry_ids_for_media(direct_db, media_id)
         with direct_db.session() as session:
             tombstone = session.execute(
@@ -418,3 +438,48 @@ class TestSystemMediaDeletionGuards:
                 {"viewer_id": viewer_id, "media_id": media_id},
             ).first()
         assert tombstone is None
+
+    def test_system_only_media_reports_can_delete_false(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Client-facing half of the same fix (spec S5): the UI must never offer a
+        delete affordance the endpoint would then reject."""
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="System Only Capability Media")
+            system_library_id = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_capability_system_{media_id.hex[:12]}",
+                name="System Capability Library",
+                owner_user_id=viewer_id,
+            )
+            library_entries.ensure_entry(
+                session,
+                system_library_id,
+                library_entries.media_target(media_id),
+            )
+            session.commit()
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+
+        detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id))
+        assert detail_resp.status_code == 200, detail_resp.text
+        assert detail_resp.json()["data"]["capabilities"]["can_delete"] is False
+
+        # Explicit non-system filing (own Default) makes it personally deletable.
+        default_library_id = _bootstrap_user(auth_client, viewer_id)
+        add_resp = auth_client.post(
+            f"/libraries/{default_library_id}/media",
+            json={"media_id": str(media_id)},
+            headers=auth_headers(viewer_id),
+        )
+        assert add_resp.status_code == 201, add_resp.text
+
+        detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id))
+        assert detail_resp.status_code == 200, detail_resp.text
+        assert detail_resp.json()["data"]["capabilities"]["can_delete"] is True

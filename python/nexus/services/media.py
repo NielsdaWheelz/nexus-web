@@ -13,7 +13,11 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
+from nexus.auth.permissions import (
+    can_read_media,
+    non_system_media_ref_exists_sql,
+    visible_media_ids_cte_sql,
+)
 from nexus.db.models import MediaKind
 from nexus.db.sql_patterns import escape_ilike_pattern
 from nexus.errors import (
@@ -159,9 +163,9 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "mts.transcript_coverage",
     "COALESCE(mcis.status, 'pending') AS retrieval_status",
     "mcis.status_reason AS retrieval_status_reason",
-    """EXISTS(
-        SELECT 1
-        WHERE m.kind IN ('pdf', 'epub', 'web_article')
+    f"""(
+        m.kind IN ('pdf', 'epub', 'web_article')
+        AND {non_system_media_ref_exists_sql("m.id")}
     ) AS can_delete""",
     """(
         SELECT ps.default_playback_speed

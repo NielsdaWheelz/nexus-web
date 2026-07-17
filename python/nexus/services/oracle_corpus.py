@@ -215,8 +215,12 @@ def ensure_oracle_corpus_media(
         db.flush()
         created = True
 
-    # System attach: corpus media live only in the corpus library (not the user's default).
-    library_entries.ensure_entry(db, library_id, library_entries.media_target(source.media_id))
+    # System attach: corpus media live only in the corpus library (not the user's
+    # default). Routed through the narrow trusted system command (spec S4.3) rather
+    # than the raw insertion primitive directly, so seeding is inseparable from the
+    # system-library-destination guard even if a future corpus_key stops routing
+    # through ensure_oracle_corpus_library.
+    library_entries.seed_media_into_system_library(db, library_id, source.media_id)
     if not created:
         _repair_reused_corpus_media(db, owner_user_id=owner_user_id, source=source)
 

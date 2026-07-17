@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
 from nexus.db.models import MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
@@ -42,13 +42,6 @@ from nexus.services import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.default_library_closure import (
-    count_default_references,
-    detach_media_from_default_library,
-    purge_media_default_references,
-    remove_media_from_default_intrinsic,
-    remove_media_from_non_default_closure,
-)
 from nexus.services.document_embeds import detach_document_embed_targets_for_owner
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
@@ -119,11 +112,10 @@ _DOCUMENT_KINDS = {
 
 
 def _total_reference_count(db: Session, media_id: UUID) -> int:
-    """All remaining references to a media across the two owned surfaces: non-default
-    library entries + default-library closure references."""
-    return library_entries.count_entries_for_media(db, media_id) + count_default_references(
-        db, media_id=media_id
-    )
+    """All remaining references to a media (spec S4.3/AC5): physical
+    ``library_entries`` rows are the sole reference count — no closure/intrinsic
+    count survives."""
+    return library_entries.count_entries_for_media(db, media_id)
 
 
 def _viewer_has_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
@@ -146,19 +138,43 @@ def _viewer_has_system_media_reference(db: Session, *, viewer_id: UUID, media_id
     )
 
 
+def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
+    """True iff the viewer's current memberships reach this media through at least
+    one non-system library (default or otherwise) — a path a viewer delete could
+    actually remove or hide. Its complement is "system-only media" (spec S4.3/S5):
+    when this is False the viewer's only relationship to the media is a system
+    (e.g. Oracle) library they never control and whose corpus data a viewer action
+    never deletes, so a direct delete is a rejection, not a successful no-op.
+
+    Shares the reachability predicate with ``media.py``'s ``can_delete`` column
+    via :func:`nexus.auth.permissions.non_system_media_ref_exists_sql` so the two
+    forms cannot drift."""
+    return bool(
+        db.execute(
+            text(f"SELECT 1 WHERE {non_system_media_ref_exists_sql(':media_id')}"),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        ).first()
+    )
+
+
 def delete_document_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
     storage_client: StorageClientBase | None = None,
 ) -> MediaDeleteResult:
-    """Remove a document from the viewer's whole workspace (spec §3.1).
+    """Remove a document from the viewer's whole workspace (spec §4.3).
 
-    Removes the viewer's references, preserves latent consumption/listening rows, then:
-    last reference gone -> claim (intent + job), return ``Deleting``; references
-    remain and the viewer keeps a system-library reference -> ``Removed``; otherwise
-    record the viewer hide marker and return ``Hidden``. Storage and child-state
-    teardown are owned by the ``media_teardown`` job, not this transaction.
+    Truthful viewer deletion: system-only media (the viewer's only path is a
+    system library they never control) is ``E_FORBIDDEN`` with no mutation —
+    corpus data is never deleted through a viewer action. Otherwise removes the
+    viewer's own default/administered-non-default entries, preserves latent
+    consumption/listening rows, then: last physical reference gone -> claim
+    (intent + job), return ``Deleting``; a non-system reference the viewer
+    doesn't control still reaches the media -> record the viewer hide marker and
+    return ``Hidden``; only a system-library reference remains -> ``Removed``
+    without a hide marker. Storage and child-state teardown are owned by the
+    ``media_teardown`` job, not this transaction.
     """
     removed_from_library_ids: list[UUID] = []
 
@@ -174,6 +190,8 @@ def delete_document_for_viewer(
                 ApiErrorCode.E_INVALID_KIND,
                 "Delete document only supports document media",
             )
+        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
 
         default_library = db.execute(
             text("""
@@ -187,8 +205,8 @@ def delete_document_for_viewer(
         ).fetchone()
         if default_library is not None:
             default_library_id = default_library[0]
-            if detach_media_from_default_library(
-                db, default_library_id=default_library_id, media_id=media_id
+            if library_entries.delete_entry(
+                db, default_library_id, library_entries.media_target(media_id)
             ):
                 removed_from_library_ids.append(UUID(str(default_library_id)))
                 library_entries.normalize_positions(db, default_library_id)
@@ -198,7 +216,6 @@ def delete_document_for_viewer(
         )
         for library_id in controlled_libraries:
             library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-            remove_media_from_non_default_closure(db, library_id, media_id)
             library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
@@ -269,7 +286,7 @@ def remove_document_from_library(
 
         library = db.execute(
             text("""
-                SELECT l.id, l.is_default, m.role, l.system_key
+                SELECT m.role, l.system_key
                 FROM libraries l
                 JOIN memberships m
                   ON m.library_id = l.id
@@ -281,22 +298,13 @@ def remove_document_from_library(
         ).fetchone()
         if library is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-        if library[2] != "admin":
+        if library[0] != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-        library_governance.require_not_system(library[3])
+        library_governance.require_not_system(library[1])
 
-        if bool(library[1]):
-            if not remove_media_from_default_intrinsic(
-                db, default_library_id=library_id, media_id=media_id
-            ):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-        else:
-            if not library_entries.entry_exists(
-                db, library_id, library_entries.media_target(media_id)
-            ):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-            library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-            remove_media_from_non_default_closure(db, library_id, media_id)
+        if not library_entries.entry_exists(db, library_id, library_entries.media_target(media_id)):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
+        library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
 
         library_entries.normalize_positions(db, library_id)
 
@@ -350,7 +358,6 @@ def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return []
 
-    purge_media_default_references(db, media_id)
     affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)

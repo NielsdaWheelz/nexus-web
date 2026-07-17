@@ -9,9 +9,9 @@ the table under an explicit allowlist (see the cutover spec).
 
 import base64
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time
 from typing import Any, Literal, assert_never
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
+from nexus.auth.permissions import can_read_media, can_restore_media, visible_media_ids_cte_sql
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
@@ -46,13 +46,19 @@ from nexus.services.contributor_credits import (
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
 _ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
-_ENTRY_PAGE_SNAPSHOT_TTL = timedelta(minutes=15)
-_ENTRY_PAGE_SNAPSHOT_BATCH_SIZE = 200
 
 # The orderings GET /libraries/{id}/entries supports (spec S5). "position" is the
 # default and keeps EXACTLY `_ENTRY_ORDER`; "resonance" applies the deterministic
 # score below.
 LibraryEntrySort = Literal["position", "resonance"]
+
+# Strict, discriminated opaque-cursor kinds (spec S4.2). Each binds viewer_id +
+# library_id + sort; a `k`, `viewer_id`, `library_id`, or `sort` mismatch —
+# including every pre-cutover `library_entries:snapshot` cursor — is
+# E_INVALID_CURSOR. Stateless keyset, never a stored snapshot.
+_DEFAULT_CURSOR_KIND = "library_entries:default:v1"
+_POSITION_CURSOR_KIND = "library_entries:position:v1"
+_RESONANCE_CURSOR_KIND = "library_entries:resonance:v1"
 
 # Resonance score weights (spec S5). The score is a pure SQL/arithmetic
 # combination of precomputed signals: recency-decay over the entry's most recent
@@ -270,6 +276,57 @@ _RESONANCE_ORDER = f"""
 """
 
 
+def library_media_ids_cte_sql() -> str:
+    """The sole library media-set relation (spec S4.1). Binds :viewer_id and
+    :library_id; every branch also intersects with `visible_media_ids_cte_sql`,
+    which applies viewer-tombstone and teardown-intent exclusion, so a caller
+    never has to layer those checks again on top.
+
+    - Viewer-owned Default (:library_id is the viewer's own non-system default
+      library): every media_id reachable through any of the viewer's CURRENT
+      non-system memberships — the personal "All" set. This is
+      `auth.permissions.visible_media_ids_cte_sql`'s relation further constrained
+      to non-system contributing libraries, so an Oracle work reachable only
+      through the system corpus library never leaks into a personal surface
+      (AC2); a work also explicitly filed personally stays, because that filing
+      is itself a non-system membership path.
+    - Non-default member library: that library's own physical media entries,
+      intersected with the broader global-readability relation (so an entry
+      whose media a concurrent teardown has since armed, or the viewer has since
+      tombstoned, never surfaces even though the physical row still exists).
+    - Any other (:viewer_id, :library_id) pair — non-member, someone else's
+      default, or a system-library target — contributes zero rows. This
+      relation never raises; masking a non-member as "not found" is the
+      caller's job (`library_governance.lock_library_for_member`).
+    """
+    return f"""
+        SELECT le.media_id
+        FROM library_entries le
+        JOIN libraries l ON l.id = le.library_id
+        JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+        WHERE l.id = :library_id
+          AND l.is_default = false
+          AND le.media_id IS NOT NULL
+          AND le.media_id IN ({visible_media_ids_cte_sql()})
+
+        UNION
+
+        SELECT DISTINCT le.media_id
+        FROM library_entries le
+        JOIN memberships m ON m.library_id = le.library_id AND m.user_id = :viewer_id
+        JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
+        WHERE le.media_id IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM libraries dl
+              WHERE dl.id = :library_id
+                AND dl.is_default = true
+                AND dl.system_key IS NULL
+                AND dl.owner_user_id = :viewer_id
+          )
+          AND le.media_id IN ({visible_media_ids_cte_sql()})
+    """
+
+
 @dataclass(frozen=True)
 class EntryTarget:
     """What a library entry points at — exactly one of media|podcast. A faithful model
@@ -291,6 +348,18 @@ def podcast_target(podcast_id: UUID) -> EntryTarget:
 class PodcastLibraryRemovalResult:
     removed_from_library_count: int
     retained_shared_library_count: int
+
+
+@dataclass(frozen=True)
+class LibraryFilingOutcome:
+    """The idempotent present/inserted outcome a filing command returns (spec
+    S4.3 rule 8). `inserted` is False when the physical entry already existed
+    (re-file/idempotent path) — `agent_tools.writes` reads it so Undo never
+    deletes a filing it did not itself create; REST callers project `entry`
+    unchanged into the existing response envelope."""
+
+    entry: LibraryEntryOut
+    inserted: bool
 
 
 # ---------------------------------------------------------------------------
@@ -836,33 +905,44 @@ def list_item_libraries(
 
 def add_media_to_library(
     db: Session, viewer_id: UUID, library_id: UUID, media_id: UUID
-) -> LibraryEntryOut:
-    """Add media to a library. Admin-only. Default target → intrinsic, no closure
-    edges; non-default target → entry + closure edges/materialized default rows."""
-    from nexus.services.default_library_closure import (
-        add_media_to_non_default_closure,
-        ensure_default_intrinsic,
-    )
+) -> LibraryFilingOutcome:
+    """The one actor-authorized filing command for attaching media to a library
+    (spec S4.3). Admin-only. A Default target always creates/keeps a direct
+    physical entry — there is no separate intrinsic/closure bookkeeping anymore;
+    the physical row IS the direct intent, inserted unconditionally even when the
+    media is already virtually present through another membership.
+
+    Authorizes readable-OR-restorable media (rule 1) right after the existence
+    check, before any lock is taken — REST and agent_tools both funnel through
+    this one gate, so neither surface can file a media_id the viewer has no
+    membership path to (no existence leak: unauthorized looks identical to
+    nonexistent).
+
+    Ordering is load-bearing: the media-teardown barrier must run before any
+    library lock (spec S3/S4.3), so this locks/checks the media row FIRST and
+    only then locks/revalidates the destination library.
+    """
     from nexus.services.media_deletion import clear_user_media_deletion
 
     with transaction(db):
-        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
-        governance.require_admin(ctx.role)
-        governance.require_not_system(ctx.system_key)
-
         media_exists = db.execute(
             text("SELECT 1 FROM media WHERE id = :media_id"),
             {"media_id": media_id},
         ).fetchone()
         if media_exists is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        clear_user_media_deletion(db, viewer_id, media_id)
+        if not can_restore_media(db, viewer_id, media_id):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        raise_if_media_teardown_pending(db, media_id)
 
-        if ctx.is_default:
-            ensure_default_intrinsic(db, library_id, media_id)
-        else:
-            ensure_entry(db, library_id, media_target(media_id))
-            add_media_to_non_default_closure(db, library_id, media_id)
+        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
+        governance.require_admin(ctx.role)
+        governance.require_not_system(ctx.system_key)
+
+        inserted = ensure_entry(db, library_id, media_target(media_id))
+        # Idempotent re-file clears a tombstone even when the entry already
+        # existed (spec S4.3 rule 6 / AC4).
+        clear_user_media_deletion(db, viewer_id, media_id)
 
         row = (
             db.execute(
@@ -876,14 +956,14 @@ def add_media_to_library(
             .fetchone()
         )
 
-    return _hydrate_entries(db, viewer_id, [row])[0]
+    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
 
 
 def add_podcast_to_library(
     db: Session, viewer_id: UUID, library_id: UUID, podcast_id: UUID
-) -> LibraryEntryOut:
-    """Add a podcast to a non-default library. Admin-only; default forbidden; requires
-    an ACTIVE subscription. No closure."""
+) -> LibraryFilingOutcome:
+    """Add a podcast to a non-default library. Admin-only; default forbidden
+    (spec S4.3 rule 4); requires an ACTIVE subscription. No closure."""
     with transaction(db):
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
@@ -903,7 +983,7 @@ def add_podcast_to_library(
         if podcast_row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
 
-        ensure_entry(db, library_id, podcast_target(podcast_id))
+        inserted = ensure_entry(db, library_id, podcast_target(podcast_id))
         row = (
             db.execute(
                 text(
@@ -916,7 +996,23 @@ def add_podcast_to_library(
             .fetchone()
         )
 
-    return _hydrate_entries(db, viewer_id, [row])[0]
+    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
+
+
+def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
+    """The narrow trusted system command for corpus seeding (Oracle ingest, spec
+    S4.3). No actor/membership authorization — the caller IS the trusted system
+    boundary. The destination must already be a system library. Calls the same
+    private insertion primitive (`ensure_entry`) as the actor-authorized filing
+    command above, so the teardown barrier still runs before the library lock.
+    Runs in the caller's transaction, like `ensure_entry` itself."""
+    system_library = db.execute(
+        text("SELECT 1 FROM libraries WHERE id = :library_id AND system_key IS NOT NULL"),
+        {"library_id": library_id},
+    ).fetchone()
+    if system_library is None:
+        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "System library not found")
+    return ensure_entry(db, library_id, media_target(media_id))
 
 
 def remove_podcast_from_library(
@@ -983,211 +1079,342 @@ def remove_user_podcast_subscription_libraries(
     )
 
 
-def _encode_entry_cursor(
-    sort: LibraryEntrySort,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    snapshot_id: UUID,
-    offset: int,
-) -> str:
-    payload = {
-        "k": "library_entries:snapshot",
-        "viewer_id": str(viewer_id),
-        "library_id": str(library_id),
-        "sort": sort,
-        "snapshot_id": str(snapshot_id),
-        "offset": offset,
-    }
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+def _encode_entry_cursor(payload: dict[str, Any]) -> str:
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, default=str).encode("utf-8")).decode(
+        "ascii"
+    )
     return encoded.rstrip("=")
 
 
 def _decode_entry_cursor(
-    cursor: str, expected_sort: LibraryEntrySort, *, viewer_id: UUID, library_id: UUID
-) -> tuple[UUID, int]:
+    cursor: str, expected_k: str, *, viewer_id: UUID, library_id: UUID
+) -> dict[str, Any]:
+    """Strict, discriminated cursor decode (spec S4.2). Any `k`/viewer/library
+    mismatch — including every pre-cutover `library_entries:snapshot` cursor,
+    whose `k` never equals one of the three v1 kinds — is E_INVALID_CURSOR."""
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
         if (
-            payload.get("k") != "library_entries:snapshot"
-            or payload.get("sort") != expected_sort
+            payload.get("k") != expected_k
             or UUID(str(payload["viewer_id"])) != viewer_id
             or UUID(str(payload["library_id"])) != library_id
         ):
             raise ValueError
-        offset = int(payload["offset"])
-        if offset < 0:
-            raise ValueError
-        return UUID(str(payload["snapshot_id"])), offset
+        return payload
     except Exception:
         # justify-ignore-error: malformed cursor input is an expected API error path.
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
 
-def _delete_expired_entry_page_snapshots(db: Session) -> None:
-    db.execute(
-        text("""
-        WITH expired AS (
-            SELECT id
-            FROM library_entry_page_snapshots
-            WHERE expires_at <= now()
-        ),
-        deleted_items AS (
-            DELETE FROM library_entry_page_snapshot_items item
-            USING expired
-            WHERE item.snapshot_id = expired.id
-            RETURNING item.snapshot_id
-        )
-        DELETE FROM library_entry_page_snapshots snapshot
-        USING expired
-        WHERE snapshot.id = expired.id
-        """)
-    )
-
-
-def _create_entry_page_snapshot(
+def _finish_entry_page(
     db: Session,
     *,
     viewer_id: UUID,
-    library_id: UUID,
-    sort: LibraryEntrySort,
-    entry_ids: Sequence[UUID],
-) -> UUID:
-    _delete_expired_entry_page_snapshots(db)
-    snapshot_id = db.execute(
-        text("""
-        INSERT INTO library_entry_page_snapshots (
-            viewer_user_id,
-            library_id,
-            sort,
-            expires_at
-        )
-        VALUES (
-            :viewer_id,
-            :library_id,
-            :sort,
-            now() + (:ttl_seconds * interval '1 second')
-        )
-        RETURNING id
-        """),
-        {
-            "viewer_id": viewer_id,
-            "library_id": library_id,
-            "sort": sort,
-            "ttl_seconds": int(_ENTRY_PAGE_SNAPSHOT_TTL.total_seconds()),
-        },
-    ).scalar_one()
-    db.execute(
-        text("""
-        INSERT INTO library_entry_page_snapshot_items (snapshot_id, ordinal, entry_id)
-        SELECT
-            :snapshot_id,
-            ordinal::integer - 1,
-            entry_id
-        FROM unnest(CAST(:entry_ids AS uuid[])) WITH ORDINALITY AS entries(entry_id, ordinal)
-        """),
-        {"snapshot_id": snapshot_id, "entry_ids": list(entry_ids)},
-    )
-    return UUID(str(snapshot_id))
-
-
-def _assert_entry_page_snapshot(
-    db: Session,
-    *,
-    snapshot_id: UUID,
-    viewer_id: UUID,
-    library_id: UUID,
-    sort: LibraryEntrySort,
-) -> None:
-    row = db.execute(
-        text("""
-        SELECT 1
-        FROM library_entry_page_snapshots
-        WHERE id = :snapshot_id
-          AND viewer_user_id = :viewer_id
-          AND library_id = :library_id
-          AND sort = :sort
-          AND expires_at > now()
-        """),
-        {
-            "snapshot_id": snapshot_id,
-            "viewer_id": viewer_id,
-            "library_id": library_id,
-            "sort": sort,
-        },
-    ).fetchone()
-    if row is None:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
-
-
-def _page_entry_snapshot(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    snapshot_id: UUID,
-    offset: int,
+    rows: Sequence[Any],
     limit: int,
-    sort: LibraryEntrySort,
+    viewer_timezone: str,
+    build_cursor: Callable[[Any], str],
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    """Shared tail for every keyset family (spec S4.2/AC6): the caller already
+    fetched ``limit + 1`` rows in the family's own order with no write anywhere
+    on this path. Slice to `limit`, hydrate, and — only when there is a next
+    page — build its cursor from the last raw row (hydration can drop the
+    columns a cursor needs, e.g. `MediaOut` carries no `created_at`)."""
+    page_rows = list(rows[:limit])
+    has_more = len(rows) > limit
+    page_entries = _hydrate_entries(db, viewer_id, page_rows, viewer_timezone=viewer_timezone)
+    next_cursor = build_cursor(page_rows[-1]) if has_more and page_rows else None
+    return page_entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
+
+
+def _list_default_library_entries(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int,
+    cursor: str | None,
     viewer_timezone: str,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    _assert_entry_page_snapshot(
-        db,
-        snapshot_id=snapshot_id,
-        viewer_id=viewer_id,
-        library_id=library_id,
-        sort=sort,
-    )
-    collected: list[LibraryEntryOut] = []
-    ordinals_by_entry_id: dict[UUID, int] = {}
-    next_offset = offset
-    batch_size = max(_ENTRY_PAGE_SNAPSHOT_BATCH_SIZE, limit + 1)
-    while len(collected) <= limit:
-        rows = (
-            db.execute(
-                text(f"""
-                SELECT {_ENTRY_COLUMNS}, item.ordinal
-                FROM library_entry_page_snapshot_items item
-                JOIN library_entries le
-                  ON le.id = item.entry_id AND le.library_id = :library_id
-                WHERE item.snapshot_id = :snapshot_id
-                  AND item.ordinal >= :offset
-                ORDER BY item.ordinal ASC
-                LIMIT :batch_size
-                """),
-                {
-                    "snapshot_id": snapshot_id,
-                    "library_id": library_id,
-                    "offset": next_offset,
-                    "batch_size": batch_size,
-                },
+    """Default virtual read surface (spec S4.1/S4.2): accessible non-system
+    physical media entries, deduplicated by media_id via a two-stage DISTINCT ON
+    — ``candidate_entries`` gathers every qualifying physical row per media
+    across the viewer's non-system libraries, ``ranked`` picks the winner (a
+    direct default entry first, else deterministic earliest
+    (entry.created_at, id)) — then joins back for the full entry row, ordered
+    (media.created_at DESC, media.id DESC)."""
+    after_media_created_at: datetime | None = None
+    after_media_id: UUID | None = None
+    if cursor is not None:
+        payload = _decode_entry_cursor(
+            cursor, _DEFAULT_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
+        )
+        try:
+            after_media_created_at = datetime.fromisoformat(
+                str(payload["after_media_created_at"])
             )
-            .mappings()
-            .all()
-        )
-        if not rows:
-            break
-        ordinals_by_entry_id.update({UUID(str(row["id"])): int(row["ordinal"]) for row in rows})
-        collected.extend(_hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone))
-        next_offset = int(rows[-1]["ordinal"]) + 1
-        if len(rows) < batch_size:
-            break
+            after_media_id = UUID(str(payload["after_media_id"]))
+        except Exception:
+            # justify-ignore-error: malformed cursor input is an expected API error path.
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
 
-    page_entries = collected[:limit]
-    has_more = len(collected) > limit
-    next_cursor = None
-    if has_more and page_entries:
-        next_cursor = _encode_entry_cursor(
-            sort,
-            viewer_id=viewer_id,
-            library_id=library_id,
-            snapshot_id=snapshot_id,
-            offset=ordinals_by_entry_id[page_entries[-1].id] + 1,
+    params: dict[str, object] = {
+        "viewer_id": viewer_id,
+        "library_id": library_id,
+        "limit": limit + 1,
+    }
+    keyset_clause = ""
+    if after_media_id is not None:
+        keyset_clause = """
+          AND (
+            md.created_at < :after_media_created_at
+            OR (md.created_at = :after_media_created_at AND md.id < :after_media_id)
+          )
+        """
+        params["after_media_created_at"] = after_media_created_at
+        params["after_media_id"] = after_media_id
+
+    rows = (
+        db.execute(
+            text(f"""
+                WITH default_media AS (
+                    {library_media_ids_cte_sql()}
+                ),
+                candidate_entries AS (
+                    SELECT
+                        le.id AS entry_id,
+                        le.media_id AS media_id,
+                        (le.library_id = :library_id) AS is_direct_default,
+                        le.created_at AS entry_created_at
+                    FROM library_entries le
+                    JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
+                    JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+                    WHERE le.media_id IN (SELECT media_id FROM default_media)
+                ),
+                ranked AS (
+                    SELECT DISTINCT ON (media_id) entry_id
+                    FROM candidate_entries
+                    ORDER BY media_id, is_direct_default DESC, entry_created_at ASC, entry_id ASC
+                )
+                SELECT
+                    le.id, le.library_id, le.media_id, le.podcast_id, le.created_at, le.position,
+                    md.created_at AS media_created_at
+                FROM ranked r
+                JOIN library_entries le ON le.id = r.entry_id
+                JOIN media md ON md.id = le.media_id
+                WHERE 1 = 1
+                {keyset_clause}
+                ORDER BY md.created_at DESC, md.id DESC
+                LIMIT :limit
+            """),
+            params,
         )
-    return (
-        page_entries,
-        LibraryPageInfo(has_more=has_more, next_cursor=next_cursor),
+        .mappings()
+        .all()
+    )
+
+    def build_cursor(row: Any) -> str:
+        return _encode_entry_cursor({
+            "k": _DEFAULT_CURSOR_KIND,
+            "viewer_id": str(viewer_id),
+            "library_id": str(library_id),
+            "sort": "position",
+            "after_media_created_at": row["media_created_at"].isoformat(),
+            "after_media_id": str(row["media_id"]),
+        })
+
+    return _finish_entry_page(
+        db,
+        viewer_id=viewer_id,
+        rows=rows,
+        limit=limit,
+        viewer_timezone=viewer_timezone,
+        build_cursor=build_cursor,
+    )
+
+
+def _list_position_library_entries(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int,
+    cursor: str | None,
+    viewer_timezone: str,
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    """Non-default ``sort="position"``: a true keyset over the canonical
+    `_ENTRY_ORDER` (position ASC, created_at DESC, id DESC)."""
+    after_position: int | None = None
+    after_entry_created_at: datetime | None = None
+    after_entry_id: UUID | None = None
+    if cursor is not None:
+        payload = _decode_entry_cursor(
+            cursor, _POSITION_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
+        )
+        try:
+            after_position = int(payload["after_position"])
+            after_entry_created_at = datetime.fromisoformat(
+                str(payload["after_entry_created_at"])
+            )
+            after_entry_id = UUID(str(payload["after_entry_id"]))
+        except Exception:
+            # justify-ignore-error: malformed cursor input is an expected API error path.
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+    params: dict[str, object] = {
+        "library_id": library_id,
+        "viewer_id": viewer_id,
+        "limit": limit + 1,
+    }
+    keyset_clause = ""
+    if after_entry_id is not None:
+        keyset_clause = """
+          AND (
+            le.position > :after_position
+            OR (le.position = :after_position AND le.created_at < :after_entry_created_at)
+            OR (
+              le.position = :after_position
+              AND le.created_at = :after_entry_created_at
+              AND le.id < :after_entry_id
+            )
+          )
+        """
+        params["after_position"] = after_position
+        params["after_entry_created_at"] = after_entry_created_at
+        params["after_entry_id"] = after_entry_id
+
+    rows = (
+        db.execute(
+            text(f"""
+                SELECT {_ENTRY_COLUMNS} FROM library_entries le
+                WHERE le.library_id = :library_id
+                  AND (le.podcast_id IS NOT NULL OR le.media_id IN ({visible_media_ids_cte_sql()}))
+                {keyset_clause}
+                ORDER BY {_ENTRY_ORDER}
+                LIMIT :limit
+            """),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+
+    def build_cursor(row: Any) -> str:
+        return _encode_entry_cursor({
+            "k": _POSITION_CURSOR_KIND,
+            "viewer_id": str(viewer_id),
+            "library_id": str(library_id),
+            "sort": "position",
+            "after_position": int(row["position"]),
+            "after_entry_created_at": row["created_at"].isoformat(),
+            "after_entry_id": str(row["id"]),
+        })
+
+    return _finish_entry_page(
+        db,
+        viewer_id=viewer_id,
+        rows=rows,
+        limit=limit,
+        viewer_timezone=viewer_timezone,
+        build_cursor=build_cursor,
+    )
+
+
+def _list_resonance_library_entries(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int,
+    cursor: str | None,
+    viewer_timezone: str,
+) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
+    """Non-default ``sort="resonance"``: a keyset over (score DESC, id DESC).
+    `resonance_as_of` is generated once on the first page and carried unchanged
+    through the cursor on every later page (spec S4.2) — current
+    connection/engagement mutations stay live, so the recomputed score can
+    differ from an earlier page's if an underlying signal changed; AC7 only
+    promises stability when it does not."""
+    # Lazy import: connection_summaries -> resolve -> library_entries is an
+    # import cycle, so the S4 origin owner is read at call time, not import.
+    from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
+    from nexus.services.semantic_chunks import transcript_embedding_dimensions
+
+    after_score: float | None = None
+    after_entry_id: UUID | None = None
+    if cursor is None:
+        resonance_as_of = db.execute(text("SELECT now()")).scalar_one()
+    else:
+        payload = _decode_entry_cursor(
+            cursor, _RESONANCE_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
+        )
+        try:
+            resonance_as_of = datetime.fromisoformat(str(payload["resonance_as_of"]))
+            after_score = float(payload["after_score"])
+            after_entry_id = UUID(str(payload["after_entry_id"]))
+        except Exception:
+            # justify-ignore-error: malformed cursor input is an expected API error path.
+            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+    params: dict[str, object] = {
+        "library_id": library_id,
+        "viewer_id": viewer_id,
+        "resonance_origins": list(LIST_CONNECTION_ORIGINS),
+        "embedding_dims": transcript_embedding_dimensions(),
+        "resonance_as_of": resonance_as_of,
+        "limit": limit + 1,
+    }
+    keyset_clause = ""
+    if after_entry_id is not None:
+        keyset_clause = """
+          WHERE (
+            scored.resonance_score < :after_score
+            OR (scored.resonance_score = :after_score AND scored.id < :after_entry_id)
+          )
+        """
+        params["after_score"] = after_score
+        params["after_entry_id"] = after_entry_id
+
+    rows = (
+        db.execute(
+            text(f"""
+                WITH scored AS (
+                    SELECT {_ENTRY_COLUMNS}, {_RESONANCE_SCORE_SQL} AS resonance_score
+                    FROM library_entries le
+                    WHERE le.library_id = :library_id
+                      AND (le.podcast_id IS NOT NULL OR le.media_id IN ({visible_media_ids_cte_sql()}))
+                )
+                SELECT {_ENTRY_COLUMNS}, resonance_score
+                FROM scored
+                {keyset_clause}
+                ORDER BY resonance_score DESC, id DESC
+                LIMIT :limit
+            """),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+
+    def build_cursor(row: Any) -> str:
+        return _encode_entry_cursor({
+            "k": _RESONANCE_CURSOR_KIND,
+            "viewer_id": str(viewer_id),
+            "library_id": str(library_id),
+            "sort": "resonance",
+            "resonance_as_of": resonance_as_of.isoformat(),
+            "after_score": float(row["resonance_score"]),
+            "after_entry_id": str(row["id"]),
+        })
+
+    return _finish_entry_page(
+        db,
+        viewer_id=viewer_id,
+        rows=rows,
+        limit=limit,
+        viewer_timezone=viewer_timezone,
+        build_cursor=build_cursor,
     )
 
 
@@ -1203,107 +1430,57 @@ def list_library_entries(
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """List a library's ordered, hydrated entries. Member-only.
 
-    ``sort="position"`` (default) keeps EXACTLY the canonical `_ENTRY_ORDER`;
-    ``sort="resonance"`` orders by the deterministic recency+connection score
-    (`_RESONANCE_ORDER`, no request-time LLM, stable id tiebreak).
+    Default (spec S4.1/S4.2): the live, deduplicated "personal All" virtual
+    view — see :func:`_list_default_library_entries`. No reorder; `sort`
+    must not be ``"resonance"`` (AC7).
+
+    Non-default ``sort="position"`` (default) keeps EXACTLY the canonical
+    `_ENTRY_ORDER`; ``sort="resonance"`` orders by the deterministic
+    recency+connection score (no request-time LLM, stable id tiebreak).
+
+    Every family fetches ``limit + 1`` rows through a stateless keyset cursor
+    (AC6) and performs no write on this path — the snapshot machinery this
+    replaced is gone outright.
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     _start_of_today(viewer_timezone)
     limit = min(limit, 200)
 
-    member = db.execute(
-        text("SELECT 1 FROM memberships WHERE library_id = :library_id AND user_id = :viewer_id"),
-        {"library_id": library_id, "viewer_id": viewer_id},
-    ).fetchone()
-    if member is None:
-        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+    ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
 
-    if cursor is not None:
-        snapshot_id, offset = _decode_entry_cursor(
-            cursor,
-            sort,
-            viewer_id=viewer_id,
-            library_id=library_id,
-        )
-        return _page_entry_snapshot(
+    # AC7: Default rejects sort=resonance before any entries query runs.
+    if sort == "resonance":
+        governance.require_non_default(ctx.is_default)
+
+    if ctx.is_default:
+        return _list_default_library_entries(
             db,
             viewer_id=viewer_id,
             library_id=library_id,
-            snapshot_id=snapshot_id,
-            offset=offset,
             limit=limit,
-            sort=sort,
+            cursor=cursor,
             viewer_timezone=viewer_timezone,
         )
-
-    params: dict[str, object] = {"library_id": library_id}
     if sort == "resonance":
-        # Lazy import: connection_summaries -> resolve -> library_entries is an
-        # import cycle, so the S4 origin owner is read at call time, not import.
-        from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
-        from nexus.services.semantic_chunks import transcript_embedding_dimensions
-
-        params["viewer_id"] = viewer_id
-        params["resonance_origins"] = list(LIST_CONNECTION_ORIGINS)
-        params["embedding_dims"] = transcript_embedding_dimensions()
-        params["resonance_as_of"] = db.execute(text("SELECT now()")).scalar_one()
-        rows = (
-            db.execute(
-                text(f"""
-                WITH scored AS (
-                    SELECT {_ENTRY_COLUMNS}, {_RESONANCE_SCORE_SQL} AS resonance_score
-                    FROM library_entries le
-                    WHERE le.library_id = :library_id
-                )
-                SELECT {_ENTRY_COLUMNS}, resonance_score
-                FROM scored
-                ORDER BY resonance_score DESC, id DESC
-            """),
-                params,
-            )
-            .mappings()
-            .all()
-        )
-    elif sort == "position":
-        rows = (
-            db.execute(
-                text(f"""
-                SELECT {_ENTRY_COLUMNS} FROM library_entries le
-                WHERE le.library_id = :library_id
-                ORDER BY {_ENTRY_ORDER}
-            """),
-                params,
-            )
-            .mappings()
-            .all()
-        )
-    else:
-        assert_never(sort)
-
-    hydrated_entries = _hydrate_entries(db, viewer_id, rows, viewer_timezone=viewer_timezone)
-    page_entries = hydrated_entries[:limit]
-    next_cursor = None
-    if len(hydrated_entries) > limit:
-        with transaction(db):
-            snapshot_id = _create_entry_page_snapshot(
-                db,
-                viewer_id=viewer_id,
-                library_id=library_id,
-                sort=sort,
-                entry_ids=[entry.id for entry in hydrated_entries],
-            )
-        next_cursor = _encode_entry_cursor(
-            sort,
+        return _list_resonance_library_entries(
+            db,
             viewer_id=viewer_id,
             library_id=library_id,
-            snapshot_id=snapshot_id,
-            offset=limit,
+            limit=limit,
+            cursor=cursor,
+            viewer_timezone=viewer_timezone,
         )
-    return (
-        page_entries,
-        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
-    )
+    if sort == "position":
+        return _list_position_library_entries(
+            db,
+            viewer_id=viewer_id,
+            library_id=library_id,
+            limit=limit,
+            cursor=cursor,
+            viewer_timezone=viewer_timezone,
+        )
+    assert_never(sort)
 
 
 def reorder_entries(
@@ -1311,10 +1488,13 @@ def reorder_entries(
 ) -> list[LibraryEntryOut]:
     """Replace the full entry order for an admin viewer. The requested set must equal the
     existing set; the new order is applied in one set-based statement (already dense, so
-    no follow-up renormalize)."""
+    no follow-up renormalize). Default has no physical order to reorder — it is
+    a live virtual view — so it is rejected here before exact-set validation
+    (spec AC8)."""
     with transaction(db):
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
+        governance.require_non_default(ctx.is_default)
         governance.require_not_system(ctx.system_key)
 
         existing_ids = [
@@ -1363,12 +1543,11 @@ def reorder_entries(
 
 
 def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) -> None:
-    """Ensure media has intrinsic membership in the user's default library."""
-    from nexus.services.default_library_closure import ensure_default_intrinsic
+    """Ensure media has a direct physical entry in the user's default library."""
     from nexus.services.media_deletion import clear_user_media_deletion
 
     default_library_id = governance.default_library_id_for_user(db, user_id)
-    ensure_default_intrinsic(db, default_library_id, media_id)
+    ensure_entry(db, default_library_id, media_target(media_id))
     clear_user_media_deletion(db, user_id, media_id)
 
 
@@ -1390,10 +1569,13 @@ def _add_media_to_resolved_libraries(
 ) -> list[UUID]:
     if not library_ids:
         return []
-    from nexus.services.default_library_closure import add_media_to_non_default_closure
     from nexus.services.media_deletion import clear_user_media_deletion
 
     clear_user_media_deletion(db, viewer_id, media_id)
+    # The media-teardown barrier must run before any library lock (spec S4.3),
+    # so this locks/checks the media row FIRST — matching add_media_to_library's
+    # mandated media->library order and avoiding an AB-BA deadlock against it.
+    raise_if_media_teardown_pending(db, media_id)
     locked_contexts = {
         library_id: governance.lock_library_for_member(db, viewer_id, library_id)
         for library_id in sorted(library_ids)
@@ -1407,7 +1589,6 @@ def _add_media_to_resolved_libraries(
     for library_id in library_ids:
         if ensure_entry(db, library_id, media_target(media_id)):
             inserted.append(library_id)
-        add_media_to_non_default_closure(db, library_id, media_id)
     return inserted
 
 
