@@ -18326,3 +18326,329 @@ class TestMigration0182LecternPlayerLifecycle:
         finally:
             reset_test_schema()
             engine.dispose()
+
+
+class TestMigration0183DefaultLibraryVirtualization:
+    """0183 step 1 creates reader_engagement_states and backfills it from the
+    union of reader_media_state and reading_sessions, restricted to reader
+    kinds web_article/epub/pdf. last_engaged_at is the null-safe GREATEST of
+    the cursor's updated_at and the latest session's last_active_at, so
+    cursor-only and attention-only document rows both survive.
+    max_total_progression overlays the cursor's document-wide
+    locations.total_progression with the session-tracked max_progression via
+    the same null-safe GREATEST, forced to NULL for pdf (page-local, never
+    false completion)."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _insert_user(self, session: Session, user_id) -> None:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+    def _insert_media(self, session: Session, media_id, kind: str) -> None:
+        session.execute(
+            text(
+                "INSERT INTO media (id, kind, title, processing_status)"
+                " VALUES (:id, :kind, 'M', 'ready_for_reading')"
+            ),
+            {"id": media_id, "kind": kind},
+        )
+
+    def _insert_cursor(
+        self, session: Session, user_id, media_id, total_progression, updated_at
+    ) -> None:
+        locations = (
+            {} if total_progression is None else {"total_progression": total_progression}
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO reader_media_state (id, user_id, media_id, locator, updated_at)
+                VALUES (:id, :user_id, :media_id, CAST(:locator AS jsonb), :updated_at)
+                """
+            ),
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "media_id": media_id,
+                "locator": json.dumps({"kind": "web", "locations": locations}),
+                "updated_at": updated_at,
+            },
+        )
+
+    def _insert_session(
+        self, session: Session, user_id, media_id, last_active_at, max_progression
+    ) -> None:
+        session.execute(
+            text(
+                """
+                INSERT INTO reading_sessions (
+                    id, user_id, media_id, device_id,
+                    started_at, last_active_at, dwell_ms, max_progression, spans
+                )
+                VALUES (
+                    :id, :user_id, :media_id, 'device-1',
+                    :last_active_at, :last_active_at, 30000, :max_progression, '[]'::jsonb
+                )
+                """
+            ),
+            {
+                "id": uuid4(),
+                "user_id": user_id,
+                "media_id": media_id,
+                "last_active_at": last_active_at,
+                "max_progression": max_progression,
+            },
+        )
+
+    def _engagement_row(self, engine, user_id, media_id):
+        with Session(engine) as session:
+            return session.execute(
+                text(
+                    "SELECT last_engaged_at, max_total_progression"
+                    " FROM reader_engagement_states WHERE user_id = :u AND media_id = :m"
+                ),
+                {"u": user_id, "m": media_id},
+            ).fetchone()
+
+    def test_cursor_only_document_survives_with_cursor_progression(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            updated_at = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "web_article")
+                self._insert_cursor(session, user_id, media_id, 0.42, updated_at)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is not None, "cursor-only document must survive the backfill"
+            last_engaged_at, max_total_progression = row
+            assert last_engaged_at == updated_at
+            assert max_total_progression == pytest.approx(0.42)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_attention_only_document_survives_with_session_progression(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            earlier = datetime(2026, 7, 1, 9, 0, 0, tzinfo=UTC)
+            later = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "epub")
+                # Two sessions: last_engaged_at must be the MAX(last_active_at),
+                # and max_total_progression the MAX(max_progression), not the
+                # values of whichever row happens to be inserted last.
+                self._insert_session(session, user_id, media_id, earlier, 0.1)
+                self._insert_session(session, user_id, media_id, later, 0.33)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is not None, "attention-only document must survive the backfill"
+            last_engaged_at, max_total_progression = row
+            assert last_engaged_at == later
+            assert max_total_progression == pytest.approx(0.33)
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_both_present_session_progression_higher_greatest_picks_session(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            cursor_updated_at = datetime(2026, 7, 1, 9, 0, 0, tzinfo=UTC)
+            session_active_at = datetime(2026, 7, 1, 15, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "web_article")
+                self._insert_cursor(session, user_id, media_id, 0.2, cursor_updated_at)
+                self._insert_session(session, user_id, media_id, session_active_at, 0.8)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is not None
+            last_engaged_at, max_total_progression = row
+            assert last_engaged_at == session_active_at, (
+                "GREATEST must pick the later of cursor updated_at and session last_active_at"
+            )
+            assert max_total_progression == pytest.approx(0.8), (
+                "GREATEST must pick the higher session progression over the lower cursor one"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_both_present_cursor_progression_higher_greatest_picks_cursor(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            cursor_updated_at = datetime(2026, 7, 1, 15, 0, 0, tzinfo=UTC)
+            session_active_at = datetime(2026, 7, 1, 9, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "epub")
+                self._insert_cursor(session, user_id, media_id, 0.9, cursor_updated_at)
+                self._insert_session(session, user_id, media_id, session_active_at, 0.1)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is not None
+            last_engaged_at, max_total_progression = row
+            assert last_engaged_at == cursor_updated_at, (
+                "GREATEST must pick the later of cursor updated_at and session last_active_at"
+            )
+            assert max_total_progression == pytest.approx(0.9), (
+                "GREATEST must pick the higher cursor progression over the lower session one"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_pdf_with_both_sources_forces_max_total_progression_null(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            cursor_updated_at = datetime(2026, 7, 1, 9, 0, 0, tzinfo=UTC)
+            session_active_at = datetime(2026, 7, 1, 15, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "pdf")
+                # Even a stray total_progression on a pdf cursor's locator, plus
+                # a real session max_progression, must not produce a
+                # whole-document progression value: pdf progress is page-local.
+                self._insert_cursor(session, user_id, media_id, 0.99, cursor_updated_at)
+                self._insert_session(session, user_id, media_id, session_active_at, 0.77)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is not None
+            last_engaged_at, max_total_progression = row
+            assert last_engaged_at == session_active_at
+            assert max_total_progression is None, (
+                "pdf progression is page-local and must be forced to NULL, "
+                "never false whole-document completion"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_out_of_scope_kind_yields_no_engagement_row(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            now = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, "video")
+                self._insert_cursor(session, user_id, media_id, 0.5, now)
+                self._insert_session(session, user_id, media_id, now, 0.5)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            row = self._engagement_row(engine, user_id, media_id)
+            assert row is None, (
+                "the migration backfill is scoped to web_article/epub/pdf; "
+                "video/transcript media must not gain a reader_engagement_states row"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_single_source_row_has_non_null_last_engaged_at(self):
+        # Null-safety: GREATEST(rms.updated_at, NULL) and GREATEST(NULL,
+        # sess.max_last_active_at) must both resolve to the non-null side,
+        # never collapse to NULL and violate the NOT NULL column.
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            user_id = uuid4()
+            cursor_only_media_id = uuid4()
+            session_only_media_id = uuid4()
+            now = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, cursor_only_media_id, "web_article")
+                self._insert_media(session, session_only_media_id, "web_article")
+                self._insert_cursor(session, user_id, cursor_only_media_id, 0.15, now)
+                self._insert_session(session, user_id, session_only_media_id, now, 0.15)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            cursor_row = self._engagement_row(engine, user_id, cursor_only_media_id)
+            session_row = self._engagement_row(engine, user_id, session_only_media_id)
+            assert cursor_row is not None and cursor_row[0] is not None
+            assert session_row is not None and session_row[0] is not None
+        finally:
+            reset_test_schema()
+            engine.dispose()

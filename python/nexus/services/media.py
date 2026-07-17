@@ -35,7 +35,6 @@ from nexus.schemas.media import (
     PodcastEpisodeChapterOut,
 )
 from nexus.schemas.presence import absent, present
-from nexus.services import attention
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -473,9 +472,9 @@ def _apply_consumption_state(
 
     Read-state (`read_state`, `progress_fraction`) is derived by the consumption
     projection (`services.consumption`), which owns the explicit override +
-    listening-threshold + attention-aggregate model. `last_engaged_at` is a distinct
-    recency concern read through the listening owner (audio) and the attention owner
-    (documents).
+    listening-threshold + reader-engagement model. `last_engaged_at` is a distinct
+    recency concern read through the listening owner (audio) and the reader
+    engagement owner (documents).
     """
     if not media_outs:
         return
@@ -488,8 +487,9 @@ def _apply_consumption_state(
             media.read_state = state.state
             media.progress_fraction = state.progress_fraction
 
-    # Engagement recency: audio rows take their listening-state recency (consumption
-    # owner), documents their reading-session recency (attention owner).
+    # Engagement recency: audio rows take their listening-state recency
+    # (consumption owner), documents their reader-engagement recency (also the
+    # consumption owner, spec §4.4).
     audio_media_ids = [media.id for media in media_outs if media.listening_state is not None]
     doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
 
@@ -502,7 +502,7 @@ def _apply_consumption_state(
                 media.last_engaged_at = listening_updated_at_by_id.get(media.id)
 
     if doc_media_ids:
-        doc_updated_at_by_id = attention.reading_recency(
+        doc_updated_at_by_id = consumption_service.reader_engagement_recency(
             db, viewer_id=viewer_id, media_ids=doc_media_ids
         )
         for media in media_outs:

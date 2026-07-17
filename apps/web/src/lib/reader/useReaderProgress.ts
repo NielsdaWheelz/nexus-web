@@ -14,7 +14,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { AttentionTracker } from "./useAttentionTracker";
 import {
   canScheduleSave,
   initialReaderProgressState,
@@ -59,7 +58,6 @@ interface UseReaderProgressOptions {
   capability: ReaderCapability;
   /** Pane activity from the workspace host; adoption versus handoff depends on it. */
   isPaneActive: boolean;
-  attention?: AttentionTracker;
   /** Fetch boundary; injectable so tests exercise the real coordinator. */
   apiFetch?: ApiFetchFn;
   /** Synchronous freshest-position capture; null when no position is available. */
@@ -92,7 +90,7 @@ export interface ReaderProgress {
 }
 
 export function useReaderProgress(options: UseReaderProgressOptions): ReaderProgress {
-  const { capability, isPaneActive, attention, apiFetch: fetchFn = apiFetch } = options;
+  const { capability, isPaneActive, apiFetch: fetchFn = apiFetch } = options;
   const readableMediaId = capability.state === "Readable" ? capability.mediaId : null;
   const readableLocatorKind = capability.state === "Readable" ? capability.locatorKind : null;
 
@@ -117,8 +115,6 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
   const revalidateInFlightRef = useRef(false);
   const applyInFlightRef = useRef(false);
 
-  const attentionRef = useRef(attention);
-  attentionRef.current = attention;
   const captureRef = useRef(options.captureCurrentLocator);
   captureRef.current = options.captureCurrentLocator;
   const applyCursorRef = useRef(options.applyCursor);
@@ -130,42 +126,6 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
     stateRef.current = next;
     dispatch(event);
     return next;
-  }, []);
-
-  const takeAttentionBlock = useCallback((locator: ReaderResumeState | null) => {
-    const tracker = attentionRef.current;
-    if (!tracker) {
-      return null;
-    }
-    // Dwell accrues fractionally from rAF deltas; the wire contract is an
-    // integer, so round at the boundary.
-    const dwell = Math.round(tracker.dwellDeltaRef.current);
-    if (dwell === 0) {
-      return null;
-    }
-    tracker.resetDelta();
-    const progression =
-      locator === null
-        ? null
-        : locator.kind === "pdf"
-          ? (locator.page_progression ?? null)
-          : (locator.locations.total_progression ?? null);
-    return {
-      dwell: dwell,
-      block: {
-        dwell_ms_delta: dwell,
-        device_id: tracker.deviceId,
-        spans_touched: [],
-        progression,
-      },
-    };
-  }, []);
-
-  const restoreAttention = useCallback((dwell: number) => {
-    const tracker = attentionRef.current;
-    if (tracker && dwell > 0) {
-      tracker.dwellDeltaRef.current += dwell;
-    }
   }, []);
 
   /**
@@ -185,13 +145,7 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
       const generation = generationRef.current;
       requestSeqRef.current += 1;
       apply({ type: "save_started" });
-      const attentionPart = takeAttentionBlock(locator);
-      const body: Record<string, unknown> = {
-        cursor: { locator, base_revision: baseRevision },
-      };
-      if (attentionPart) {
-        body.attention = attentionPart.block;
-      }
+      const body = { locator, base_revision: baseRevision };
       try {
         const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`, {
           method: "PUT",
@@ -207,12 +161,6 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
         }
         apply({ type: "save_succeeded", snapshot });
       } catch (err) {
-        if (attentionPart) {
-          // The cursor either conflicted (attention was never attempted) or
-          // the request is ambiguous; retain the dwell for the next flush
-          // rather than double-count by retrying this envelope.
-          restoreAttention(attentionPart.dwell);
-        }
         if (generationRef.current !== generation) {
           return;
         }
@@ -235,7 +183,7 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
         apply({ type: "save_failed" });
       }
     },
-    [apply, fetchFn, readableMediaId, restoreAttention, takeAttentionBlock],
+    [apply, fetchFn, readableMediaId],
   );
 
   const load = useCallback(async (): Promise<ReaderProgressState | null> => {
@@ -360,11 +308,26 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
     [apply, applyRemote, fetchFn, load, readableMediaId],
   );
 
-  /** Lifecycle capture: promote only an already-dirty position, then flush. */
+  /**
+   * Lifecycle capture: on visibility/unmount, send the freshest known
+   * locator — even when nothing moved. A same-locator save still advances
+   * `reader_engagement_states.last_engaged_at` without changing cursor
+   * revision, so a read-only visit is never lost. No timer/polling is added;
+   * this only fires from the existing visibility/pagehide/pane-deactivation/
+   * teardown call sites.
+   */
   const lifecycleFlush = useCallback(() => {
     const current = stateRef.current;
     const mediaId = readableMediaId;
     if (mediaId === null) {
+      return;
+    }
+    if (current.authority.status !== "ready" || current.remote.status !== "none") {
+      // No authority to save against, or an open handoff — never clobber it.
+      return;
+    }
+    if (current.local.status === "saving") {
+      // A save is already in flight; its own response settles engagement.
       return;
     }
     if (current.local.status === "dirty" || current.local.status === "save_failed") {
@@ -372,25 +335,18 @@ export function useReaderProgress(options: UseReaderProgressOptions): ReaderProg
       if (captured !== null && !readerResumeStatesEqual(captured, current.local.locator)) {
         apply({ type: "moved", locator: captured });
       }
-      if (current.authority.status === "ready" && current.remote.status === "none") {
-        void sendCursor(saveBaseRevision(current), true);
-        return;
-      }
+      void sendCursor(saveBaseRevision(current), true);
+      return;
     }
-    // No promotable cursor: flush attention alone so dwell is not lost.
-    const attentionPart = takeAttentionBlock(pendingLocator(current.local));
-    if (attentionPart) {
-      void fetchFn(`/api/media/${mediaId}/reader-state`, {
-        method: "PUT",
-        body: JSON.stringify({ attention: attentionPart.block }),
-        keepalive: true,
-      }).catch((err) => {
-        if (!handleUnauthenticatedApiError(err)) {
-          restoreAttention(attentionPart.dwell);
-        }
-      });
+    // Clean: nothing moved. Capture and dispatch the current locator anyway
+    // so the flush still fires a same-locator cursor write.
+    const captured = captureRef.current();
+    if (captured === null) {
+      return;
     }
-  }, [apply, fetchFn, readableMediaId, restoreAttention, sendCursor, takeAttentionBlock]);
+    apply({ type: "moved", locator: captured });
+    void sendCursor(saveBaseRevision(current), true);
+  }, [apply, readableMediaId, sendCursor]);
 
   // Generation lifecycle: reset and (re)establish authority per readable
   // media/locator-kind; Unavailable performs no progress I/O.

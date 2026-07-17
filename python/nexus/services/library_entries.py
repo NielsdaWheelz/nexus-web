@@ -33,7 +33,6 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
-from nexus.services import attention
 from nexus.services import library_governance as governance
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -76,19 +75,21 @@ _RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
 
 # Per-entry most-recent engagement instant, in SQL, for ordering. Mirrors the two
 # authoritative sources `_hydrate_entries`/`services.media` read post-hoc: a direct
-# media entry's reading sessions / listening state (podcast episodes are still
+# media entry's reader engagement / listening state (podcast episodes are still
 # `media_id` library entries), and a podcast entry's MAX listening-state recency
 # across its visible episodes. NULL when the target was never engaged.
-# Engagement recency composes the attention owner's reading-session recency and the
-# consumption owner's listening recency; the raw consumption/attention table reads
-# live only in their owners (spec §3 / §8 AC-15).
+# Engagement recency composes the consumption owner's reader-engagement recency
+# and its listening recency; the raw consumption table reads live only in their
+# owner (spec §3 / §8 AC-15).
 _LAST_ENGAGED_AT_SQL = f"""
     CASE
         WHEN le.media_id IS NOT NULL THEN NULLIF(
             GREATEST(
                 COALESCE(
                     {
-    attention.reading_recency_subquery_sql(user_param=":viewer_id", media_expr="le.media_id")
+    consumption_service.reader_engagement_recency_subquery_sql(
+        user_param=":viewer_id", media_expr="le.media_id"
+    )
 }, '-infinity'::timestamptz),
                 COALESCE(
                     {

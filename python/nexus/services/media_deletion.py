@@ -6,10 +6,10 @@ claim (:func:`claim_media_teardown`) locks only the media row, checks zero
 committed references, inserts a UUIDv7 teardown intent, and enqueues one
 addressable ``media_teardown`` job in that same transaction. The job
 (:mod:`nexus.tasks.media_teardown`) owns the checkpointed physical deletion and
-storage sweep. Child-state deletion composes the consumption and attention owners
-(never direct consumption/listening DML here). Viewer-scoped removal/hide
-preserves consumption and latent Lectern rows; the visibility projection hides
-them.
+storage sweep. Child-state deletion composes through the consumption owner
+(never direct consumption/listening/engagement DML here). Viewer-scoped
+removal/hide preserves consumption and latent Lectern rows; the visibility
+projection hides them.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from nexus.schemas.media import (
     MediaRemovedResult,
 )
 from nexus.services import (
-    attention,
     contributors,
     library_entries,
     library_governance,
@@ -596,11 +595,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    # Four in-scope child families through their owners (spec §3, §8.15): all users'
-    # Lectern/override/listening rows (consumption owner) and reading-session rows
-    # (attention owner). media_deletion never writes those tables directly.
+    # Four in-scope child families through the one consumption owner (spec §3,
+    # §8.15): all users' Lectern/override/listening/reader-engagement rows.
+    # media_deletion never writes those tables directly.
     consumption_service.delete_media_consumption_state_in_txn(db, media_id=media_id)
-    attention.delete_media_state(db, media_id)
     db.execute(
         text("DELETE FROM reader_media_state WHERE media_id = :media_id"),
         {"media_id": media_id},

@@ -1,7 +1,8 @@
 """Integration tests for the consumption projection (spec §4/§5.2/§5.4):
 
 - consumption-state derivation matrix (audio 95%/is_completed/position, doc
-  session dwell, explicit override precedence for both kinds);
+  reader-engagement any-row/95% threshold, explicit override precedence for
+  both kinds);
 - chapter worst-case bounds (first 100 by ordinal, 300-char title clamp,
   empty-title skip, both `endMs` Presence variants);
 - the new `playerDescriptor` DTO field on MediaOut/the episode list (spec §6).
@@ -11,6 +12,7 @@ HTTP surface (GET/POST /lectern, /consumption/commands, /media/{id}/listening-st
 plus the internal ``consumption_service`` boundary where there is no HTTP port.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,8 +25,17 @@ from nexus.db.models import (
     PodcastEpisode,
     PodcastEpisodeChapter,
     ProcessingStatus,
-    ReadingSession,
+    ReaderEngagementState,
 )
+from nexus.ids import new_uuid7
+from nexus.schemas.reader import (
+    PdfReaderResumeState,
+    ReaderFragmentTarget,
+    ReaderQuoteContext,
+    ReaderTextLocations,
+    WebReaderResumeState,
+)
+from nexus.services.consumption import _reader_engagement_store
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -45,7 +56,7 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
+        "reader_engagement_states",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -171,8 +182,6 @@ def _heartbeat(
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
             "playbackSpeed": 1.0,
-            "dwellMsDelta": 0,
-            "deviceId": "device-1",
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),
@@ -191,22 +200,21 @@ def _consumption(auth_client, user_id, payload):
     return response.json()["data"]
 
 
-def _seed_reading_session(
+def _seed_reader_engagement(
     direct_db: DirectSessionManager,
     *,
     user_id: UUID,
     media_id: UUID,
-    dwell_ms: int,
-    max_progression: float | None = None,
+    max_total_progression: float | None = None,
 ) -> None:
     with direct_db.session() as session:
         session.add(
-            ReadingSession(
+            ReaderEngagementState(
+                id=new_uuid7(),
                 user_id=user_id,
                 media_id=media_id,
-                device_id="device-1",
-                dwell_ms=dwell_ms,
-                max_progression=max_progression,
+                last_engaged_at=datetime.now(UTC),
+                max_total_progression=max_total_progression,
             )
         )
         session.commit()
@@ -346,7 +354,9 @@ class TestConsumptionStateDerivationMatrix:
         item = _get_lectern_item(auth_client, user_id, episode)
         assert item["consumption"]["state"] == "Unread", item
 
-    def test_readable_no_session_derives_unread(self, auth_client, direct_db: DirectSessionManager):
+    def test_readable_no_engagement_derives_unread(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
@@ -356,6 +366,21 @@ class TestConsumptionStateDerivationMatrix:
         item = _get_lectern_item(auth_client, user_id, article)
         assert item["consumption"]["state"] == "Unread", item
 
+    def test_readable_any_engagement_row_derives_in_progress(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        article = _create_web_article(direct_db, title="Doc")
+        _add_to_library(direct_db, library_id, article)
+        _place(auth_client, user_id, [article])
+        # No dwell threshold left: any retained engagement row means in-progress
+        # (spec §1 80/20 loss note), even with low/absent progression.
+        _seed_reader_engagement(direct_db, user_id=user_id, media_id=article)
+
+        item = _get_lectern_item(auth_client, user_id, article)
+        assert item["consumption"]["state"] == "InProgress", item
+
     def test_readable_override_finished_beats_derived_unread(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -364,7 +389,7 @@ class TestConsumptionStateDerivationMatrix:
         article = _create_web_article(direct_db, title="Doc")
         _add_to_library(direct_db, library_id, article)
         _place(auth_client, user_id, [article])
-        # No reading session at all: derived state would be Unread.
+        # No engagement row at all: derived state would be Unread.
 
         _consumption(
             auth_client,
@@ -387,8 +412,10 @@ class TestConsumptionStateDerivationMatrix:
         article = _create_web_article(direct_db, title="Doc")
         _add_to_library(direct_db, library_id, article)
         _place(auth_client, user_id, [article])
-        # A single long session (>= 120s total dwell) derives Finished.
-        _seed_reading_session(direct_db, user_id=user_id, media_id=article, dwell_ms=150_000)
+        # max_total_progression >= 0.95 derives Finished.
+        _seed_reader_engagement(
+            direct_db, user_id=user_id, media_id=article, max_total_progression=0.97
+        )
         assert _get_lectern_item(auth_client, user_id, article)["consumption"]["state"] == (
             "Finished"
         )
@@ -401,6 +428,120 @@ class TestConsumptionStateDerivationMatrix:
 
         item = _get_lectern_item(auth_client, user_id, article)
         assert item["consumption"]["state"] == "Unread", item
+
+
+class TestReaderEngagementStore:
+    """Unit coverage for ``consumption/_reader_engagement_store.py`` directly
+    (spec §4.4): GREATEST-based progression advance, PDF's untouched-on-update
+    rule, and media-teardown delete."""
+
+    def test_record_engagement_advances_progression_and_recency_for_non_pdf(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        _bootstrap(auth_client, user_id)
+        article = _create_web_article(direct_db, title="Doc")
+
+        def _web_locator(total_progression: float) -> WebReaderResumeState:
+            return WebReaderResumeState(
+                kind="web",
+                target=ReaderFragmentTarget(fragment_id="frag-1"),
+                locations=ReaderTextLocations(
+                    text_offset=0,
+                    progression=total_progression,
+                    total_progression=total_progression,
+                    position=1,
+                ),
+                text=ReaderQuoteContext(quote=None, quote_prefix=None, quote_suffix=None),
+            )
+
+        with direct_db.session() as session:
+            _reader_engagement_store.record_engagement_in_txn(
+                session, viewer_id=user_id, media_id=article, locator=_web_locator(0.4)
+            )
+            session.commit()
+        states = None
+        with direct_db.session() as session:
+            states = _reader_engagement_store.load_states(
+                session, viewer_id=user_id, media_ids=[article]
+            )
+        assert states[article].max_total_progression == pytest.approx(0.4)
+        first_engaged_at = states[article].last_engaged_at
+
+        # A lower progression save still advances last_engaged_at but never
+        # regresses max_total_progression (GREATEST semantics).
+        with direct_db.session() as session:
+            _reader_engagement_store.record_engagement_in_txn(
+                session, viewer_id=user_id, media_id=article, locator=_web_locator(0.1)
+            )
+            session.commit()
+        with direct_db.session() as session:
+            states = _reader_engagement_store.load_states(
+                session, viewer_id=user_id, media_ids=[article]
+            )
+            recency = _reader_engagement_store.load_recency(
+                session, viewer_id=user_id, media_ids=[article]
+            )
+        assert states[article].max_total_progression == pytest.approx(0.4)
+        assert recency[article] >= first_engaged_at
+
+    def test_record_engagement_leaves_pdf_progression_untouched(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        _bootstrap(auth_client, user_id)
+        media_id = uuid4()
+        with direct_db.session() as session:
+            session.add(
+                Media(
+                    id=media_id,
+                    kind=MediaKind.pdf.value,
+                    title="A PDF",
+                    canonical_source_url=f"https://example.com/{media_id}",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                )
+            )
+            session.commit()
+        direct_db.register_cleanup("reader_engagement_states", "media_id", media_id)
+
+        pdf_locator = PdfReaderResumeState(
+            kind="pdf", page=3, page_progression=0.9, zoom=1.0, position=None
+        )
+        with direct_db.session() as session:
+            _reader_engagement_store.record_engagement_in_txn(
+                session, viewer_id=user_id, media_id=media_id, locator=pdf_locator
+            )
+            session.commit()
+        with direct_db.session() as session:
+            states = _reader_engagement_store.load_states(
+                session, viewer_id=user_id, media_ids=[media_id]
+            )
+        assert states[media_id].max_total_progression is None
+
+    def test_delete_all_users_in_txn_clears_every_viewer_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_a, user_b = create_test_user_id(), create_test_user_id()
+        _bootstrap(auth_client, user_a)
+        _bootstrap(auth_client, user_b)
+        article = _create_web_article(direct_db, title="Shared Doc")
+        for user_id in (user_a, user_b):
+            _seed_reader_engagement(
+                direct_db, user_id=user_id, media_id=article, max_total_progression=0.5
+            )
+
+        with direct_db.session() as session:
+            _reader_engagement_store.delete_all_users_in_txn(session, media_id=article)
+            session.commit()
+
+        with direct_db.session() as session:
+            states = _reader_engagement_store.load_states(
+                session, viewer_id=user_a, media_ids=[article]
+            )
+            states.update(
+                _reader_engagement_store.load_states(session, viewer_id=user_b, media_ids=[article])
+            )
+        assert states == {}
 
 
 class TestChapterBounds:

@@ -1,9 +1,9 @@
 """Listening-state routes: per-media playback position GET + heartbeat PUT.
 
 Transport-only: the consumption service facade owns the fresh session, the
-viewer lock, the revision CAS, and the piggybacked dwell write (spec §5.4). This
-router owns the static ``/media/{id}/listening-state`` path, so it stays
-registered before the ``media`` router (see ``create_api_router``).
+viewer lock, and the revision CAS. This router owns the static
+``/media/{id}/listening-state`` path, so it stays registered before the
+``media`` router (see ``create_api_router``).
 """
 
 from typing import Annotated
@@ -38,6 +38,6 @@ def put_listening_state(
     body: ListeningHeartbeatIn,
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> dict:
-    """Record one revision-fenced listening heartbeat (position + dwell)."""
+    """Record one revision-fenced listening heartbeat (position)."""
     result = consumption_service.record_listening_heartbeat(viewer.user_id, media_id, body)
     return ok(result, by_alias=True)

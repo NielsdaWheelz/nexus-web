@@ -758,15 +758,11 @@ describe("MediaPaneBody pane sizing", () => {
         if (path === "/api/media/media-1/reader-state") {
           if (init?.method === "PUT") {
             const body = init.body ? JSON.parse(String(init.body)) : {};
-            if (body.cursor) {
-              return jsonResponse({
-                state: "Positioned",
-                revision: 1,
-                locator: body.cursor.locator,
-              });
-            }
-            // Attention-only PUT: no cursor body, no content.
-            return undefined;
+            return jsonResponse({
+              state: "Positioned",
+              revision: 1,
+              locator: body.locator,
+            });
           }
           return jsonResponse({ state: "Empty", revision: 0 });
         }

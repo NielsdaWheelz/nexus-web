@@ -1,14 +1,13 @@
 """Integration tests for the revision-fenced listening heartbeat (spec §5.4).
 
 GET/PUT /media/{id}/listening-state. The PUT is the unreplayable CAS mutation:
-an exact ``(expectedWriteRevision, expectedResetEpoch)`` writes position + dwell
-and advances the revision; a mismatch writes nothing.
+an exact ``(expectedWriteRevision, expectedResetEpoch)`` writes position and
+advances the revision; a mismatch writes nothing.
 """
 
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from tests.factories import add_media_to_library
@@ -43,7 +42,6 @@ def _create_audio_media(direct_db: DirectSessionManager) -> UUID:
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -68,15 +66,12 @@ def _heartbeat_body(
     position_ms: int,
     expected_write_revision: int,
     expected_reset_epoch: int,
-    dwell: int = 0,
     duration_ms: int = 600_000,
 ) -> dict:
     return {
         "positionMs": position_ms,
         "durationMs": {"kind": "Present", "value": duration_ms},
         "playbackSpeed": 1.5,
-        "dwellMsDelta": dwell,
-        "deviceId": "device-audio",
         "expectedWriteRevision": expected_write_revision,
         "expectedResetEpoch": expected_reset_epoch,
         "heartbeatGeneration": str(uuid4()),
@@ -92,19 +87,6 @@ def _put(auth_client, user_id, media_id, body):
 
 def _get(auth_client, user_id, media_id):
     return auth_client.get(f"/media/{media_id}/listening-state", headers=auth_headers(user_id))
-
-
-def _session_dwell(direct_db: DirectSessionManager, user_id, media_id) -> int:
-    with direct_db.session() as session:
-        return int(
-            session.execute(
-                text(
-                    "SELECT COALESCE(SUM(dwell_ms), 0) FROM reading_sessions "
-                    "WHERE user_id = :u AND media_id = :m"
-                ),
-                {"u": user_id, "m": media_id},
-            ).scalar_one()
-        )
 
 
 class TestGet:
@@ -126,7 +108,7 @@ class TestGet:
 
 
 class TestPut:
-    def test_happy_path_increments_revision_and_writes_dwell(
+    def test_happy_path_increments_revision(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
@@ -139,7 +121,7 @@ class TestPut:
             user_id,
             media_id,
             _heartbeat_body(
-                position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0, dwell=15_000
+                position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0
             ),
         )
         assert response.status_code == 200, response.text
@@ -148,7 +130,6 @@ class TestPut:
         assert data["listeningState"]["positionMs"] == 60_000
         assert data["listeningState"]["playbackSpeed"] == 1.5
         assert data["heartbeatSequence"] == 7
-        assert _session_dwell(direct_db, user_id, media_id) == 15_000
 
     def test_stale_revision_writes_nothing(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
@@ -156,7 +137,7 @@ class TestPut:
         media_id = _create_audio_media(direct_db)
         _add_to_library(direct_db, library_id, media_id)
 
-        # First heartbeat creates the row at revision 1 with 5s dwell.
+        # First heartbeat creates the row at revision 1.
         assert (
             _put(
                 auth_client,
@@ -166,7 +147,6 @@ class TestPut:
                     position_ms=30_000,
                     expected_write_revision=0,
                     expected_reset_epoch=0,
-                    dwell=5_000,
                 ),
             ).status_code
             == 200
@@ -178,19 +158,16 @@ class TestPut:
             user_id,
             media_id,
             _heartbeat_body(
-                position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0, dwell=9_000
+                position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0
             ),
         )
         assert stale.status_code == 409, stale.text
         assert stale.json()["error"]["code"] == "E_STALE_LISTENING_REVISION"
 
-        # Neither position nor dwell moved.
+        # Position did not move.
         current = _get(auth_client, user_id, media_id).json()["data"]
         assert current["positionMs"] == 30_000, "stale PUT must not move position"
         assert current["writeRevision"] == 1
-        assert _session_dwell(direct_db, user_id, media_id) == 5_000, (
-            "stale PUT must not double-count dwell"
-        )
 
     def test_stale_after_setunread_reset(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()

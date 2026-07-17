@@ -35,7 +35,6 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -149,8 +148,6 @@ def _heartbeat(
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
             "playbackSpeed": 1.0,
-            "dwellMsDelta": 0,
-            "deviceId": "device-1",
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),

@@ -1,5 +1,5 @@
-"""Consumption read model: explicit override + listening state + attention
-aggregates -> per-item consumption state, progress, and capability activation.
+"""Consumption read model: explicit override + listening state + reader
+engagement -> per-item consumption state, progress, and capability activation.
 
 This is the sole projection owner (spec §8 AC-15); adopters read Lectern items
 only through the ``service`` boundary that delegates here.
@@ -31,15 +31,13 @@ from nexus.schemas.consumption import (
 )
 from nexus.schemas.media import MediaReadState
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
-from nexus.services import attention
-from nexus.services.consumption import _listening_store, _state_store
+from nexus.services.consumption import _listening_store, _reader_engagement_store, _state_store
 from nexus.services.consumption._lectern_store import LecternRow
 from nexus.services.consumption._listening_store import ListeningRow
+from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
 
 _FINISHED_PROGRESSION = 0.95
-_DOC_DWELL_FINISHED_MS = 120_000
-_SESSION_DWELL_IN_PROGRESS_MS = 30_000
 _MAX_CHAPTERS = 100
 _MAX_TITLE_CHARS = 300
 _READABLE_KINDS = frozenset(
@@ -92,7 +90,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
         for row in rows
         if not isinstance(activations[row.media_id], FooterAudioActivation)
     ]
-    aggregates = attention.session_aggregates(db, viewer_id=viewer_id, media_ids=doc_media)
+    engagement = _reader_engagement_store.load_states(db, viewer_id=viewer_id, media_ids=doc_media)
 
     items: list[LecternItemOut] = []
     for row in rows:
@@ -100,7 +98,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
         consumption = _derive_consumption(
             activation=activation,
             listening=listening.get(row.media_id),
-            aggregate=aggregates.get(row.media_id),
+            engagement=engagement.get(row.media_id),
             duration_seconds=row.duration_seconds,
             override=overrides.get(row.media_id),
         )
@@ -191,14 +189,14 @@ def _derive_consumption(
     *,
     activation: LecternActivation,
     listening: ListeningRow | None,
-    aggregate: attention.SessionAggregate | None,
+    engagement: ReaderEngagementRow | None,
     duration_seconds: int | None,
     override: _state_store.OverrideState | None,
 ) -> ConsumptionOut:
     if isinstance(activation, FooterAudioActivation):
         state, progress = _audio_state(listening, duration_seconds)
     else:
-        state, progress = _doc_state(aggregate)
+        state, progress = _doc_state(engagement)
     if override is not None:
         state = override
     return ConsumptionOut(state=state, progress=progress)
@@ -226,20 +224,24 @@ def _audio_state(
 
 
 def _doc_state(
-    aggregate: attention.SessionAggregate | None,
+    engagement: ReaderEngagementRow | None,
 ) -> tuple[ConsumptionStateValue, Absent | Present[float]]:
-    if aggregate is None:
+    """No dwell threshold: any retained engagement row means in-progress (spec
+    §4.4 precedence item 3; the 80/20 loss note in §1 — "any retained engagement
+    row now means in-progress")."""
+    if engagement is None:
         return "Unread", absent()
     progress: Absent | Present[float] = (
-        present(aggregate.max_progression) if aggregate.max_progression is not None else absent()
+        present(engagement.max_total_progression)
+        if engagement.max_total_progression is not None
+        else absent()
     )
     if (
-        aggregate.max_progression is not None and aggregate.max_progression >= _FINISHED_PROGRESSION
-    ) or aggregate.total_dwell_ms >= _DOC_DWELL_FINISHED_MS:
+        engagement.max_total_progression is not None
+        and engagement.max_total_progression >= _FINISHED_PROGRESSION
+    ):
         return "Finished", progress
-    if aggregate.max_session_dwell_ms >= _SESSION_DWELL_IN_PROGRESS_MS:
-        return "InProgress", progress
-    return "Unread", progress
+    return "InProgress", progress
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +249,7 @@ def _doc_state(
 # ---------------------------------------------------------------------------
 
 # The kinds whose read-state derives from the listening threshold rather than
-# attention document sessions. AUDIO_KINDS died with consumption_queue.py; the
+# reader engagement. AUDIO_KINDS died with consumption_queue.py; the
 # projection owns this derivation now (spec §7 delete map).
 _AUDIO_READ_STATE_KINDS = frozenset({MediaKind.podcast_episode.value})
 
@@ -261,7 +263,7 @@ _STATE_TO_READ_STATE: dict[ConsumptionStateValue, MediaReadState] = {
 @dataclass(frozen=True)
 class MediaReadStateOut:
     """Per-media collection read-state: explicit override wins, else the audio
-    listening threshold (podcast episodes) or attention document aggregates."""
+    listening threshold (podcast episodes) or reader engagement (documents)."""
 
     state: MediaReadState
     progress_fraction: float | None
@@ -274,9 +276,9 @@ def media_read_states(
 
     Explicit override is the highest-priority input; otherwise podcast episodes
     derive from the listening threshold (position/duration with the projection-only
-    95% signal, no ``is_completed`` side effect) and everything else from the
-    attention document aggregates. Override changes state only; progress stays
-    derived (spec §5.2)."""
+    95% signal, no ``is_completed`` side effect) and everything else from reader
+    engagement (any row -> in progress; ``max_total_progression >= 0.95`` ->
+    finished). Override changes state only; progress stays derived (spec §5.2)."""
     if not media_ids:
         return {}
     kinds = _media_kinds(db, media_ids)
@@ -285,14 +287,14 @@ def media_read_states(
     doc_ids = [mid for mid in media_ids if kinds.get(mid) not in _AUDIO_READ_STATE_KINDS]
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=audio_ids)
     durations = _episode_durations(db, audio_ids)
-    aggregates = attention.session_aggregates(db, viewer_id=viewer_id, media_ids=doc_ids)
+    engagement = _reader_engagement_store.load_states(db, viewer_id=viewer_id, media_ids=doc_ids)
 
     result: dict[UUID, MediaReadStateOut] = {}
     for media_id in media_ids:
         if kinds.get(media_id) in _AUDIO_READ_STATE_KINDS:
             state, progress = _audio_state(listening.get(media_id), durations.get(media_id))
         else:
-            state, progress = _doc_state(aggregates.get(media_id))
+            state, progress = _doc_state(engagement.get(media_id))
         override = overrides.get(media_id)
         if override is not None:
             state = override
@@ -308,6 +310,13 @@ def listening_recency(
 ) -> dict[UUID, datetime]:
     """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
     return _listening_store.load_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def reader_engagement_recency(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, datetime]:
+    """Per-media reader-engagement recency (owner-scoped read for MediaOut)."""
+    return _reader_engagement_store.load_recency(db, viewer_id=viewer_id, media_ids=media_ids)
 
 
 @dataclass(frozen=True)
@@ -504,6 +513,14 @@ def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
         WHERE ls_recency.user_id = {user_param}
           AND ls_recency.media_id = {media_expr}
     )"""
+
+
+def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
+    """Scalar subquery -> the viewer's reader-engagement ``last_engaged_at`` for
+    one media."""
+    return _reader_engagement_store.recency_subquery_sql(
+        user_param=user_param, media_expr=media_expr
+    )
 
 
 def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:

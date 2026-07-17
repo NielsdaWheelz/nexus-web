@@ -6942,8 +6942,6 @@ upgrade now
                 "positionMs": 900_000,
                 "durationMs": {"kind": "Present", "value": 1_800_000},
                 "playbackSpeed": 1.0,
-                "dwellMsDelta": 0,
-                "deviceId": "podcast-test",
                 "expectedWriteRevision": 0,
                 "expectedResetEpoch": 0,
                 "heartbeatGeneration": str(uuid4()),

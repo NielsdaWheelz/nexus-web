@@ -30,8 +30,6 @@ interface ParsedBody {
   positionMs: number;
   durationMs: Presence<number>;
   playbackSpeed: number;
-  dwellMsDelta: number;
-  deviceId: string;
   expectedWriteRevision: number;
   expectedResetEpoch: number;
   heartbeatGeneration: string;
@@ -119,10 +117,8 @@ function makeEngine(opts?: {
   let gen = 0;
   const engine = createListeningHeartbeat({
     mediaId: MEDIA,
-    deviceId: "device-1",
     initial: opts?.initial ?? { writeRevision: 0, resetEpoch: 0, positionMs: 0 },
     readSample: () => sample,
-    now: () => Date.now(),
     mintGeneration: () => {
       gen += 1;
       return `gen-${gen}`;
@@ -171,7 +167,6 @@ describe("listeningHeartbeat", () => {
       positionMs: 6000,
       durationMs: { kind: "Present", value: 200_000 },
       playbackSpeed: 1.5,
-      deviceId: "device-1",
       expectedWriteRevision: 4,
       expectedResetEpoch: 1,
       heartbeatSequence: 0,
@@ -242,50 +237,6 @@ describe("listeningHeartbeat", () => {
     await flush();
     expect(h.overlay.length).toBe(overlayCount);
     expect(bodies[0].heartbeatGeneration).toBe(retiredGeneration);
-  });
-
-  it("caps the dwell delta at 17000ms", async () => {
-    const bodies: ParsedBody[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
-      const body = parseBody(init);
-      bodies.push(body);
-      return Promise.resolve(echoSuccess(body));
-    });
-    const h = makeEngine();
-    await vi.advanceTimersByTimeAsync(25_000);
-    h.engine.tick();
-    await flush();
-    expect(bodies[0].dwellMsDelta).toBe(17_000);
-  });
-
-  it("discards the dwell delta of a timed-out send (at-most-once)", async () => {
-    const bodies: ParsedBody[] = [];
-    let putCount = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init = {}) => {
-      const method = (init.method ?? "GET").toUpperCase();
-      if (method === "GET") {
-        return Promise.resolve(fakeResponse(getEnvelope(stateOut({ positionMs: 1000, writeRevision: 3, resetEpoch: 0 }))));
-      }
-      bodies.push(parseBody(init));
-      putCount += 1;
-      if (putCount === 1) return abortable(init.signal);
-      return Promise.resolve(echoSuccess(bodies[bodies.length - 1]));
-    });
-
-    const h = makeEngine();
-    await vi.advanceTimersByTimeAsync(15_000);
-    h.engine.tick(); // send #1: dwell 15000, anchor -> 15000
-    await flush();
-    expect(bodies[0].dwellMsDelta).toBe(15_000);
-
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_DEADLINE_MS); // deadline -> recovery, anchor -> 35000
-    await flush();
-
-    await vi.advanceTimersByTimeAsync(10_000); // t = 45000
-    h.engine.tick(); // send #2
-    await flush();
-    expect(bodies).toHaveLength(2);
-    expect(bodies[1].dwellMsDelta).toBe(10_000); // NOT 25000 — the timed-out delta is gone
   });
 
   it("timeout recovery retains the local position when the reset epoch is unchanged", async () => {

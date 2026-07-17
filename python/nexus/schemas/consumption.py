@@ -308,8 +308,6 @@ class ListeningHeartbeatIn(BaseModel):
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
     playback_speed: float = Field(ge=0.25, le=3)
-    dwell_ms_delta: int = Field(ge=0, le=17_000)
-    device_id: str = Field(min_length=1, max_length=128)
     expected_write_revision: _NonNegInt32
     expected_reset_epoch: _NonNegInt32
     heartbeat_generation: UUID
