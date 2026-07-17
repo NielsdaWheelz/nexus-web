@@ -91,8 +91,6 @@ class TestPostMediaLibrariesEndpoint:
             lib_b = create_test_library(session, viewer_id, "Library B")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", lib_a)
         direct_db.register_cleanup("libraries", "id", lib_a)
@@ -136,8 +134,6 @@ class TestPostMediaLibrariesEndpoint:
             lib_b = create_test_library(session, viewer_id, "Idempotent Lib B")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", lib_a)
         direct_db.register_cleanup("libraries", "id", lib_a)
@@ -188,8 +184,6 @@ class TestPostMediaLibrariesEndpoint:
             new_lib = create_test_library(session, viewer_id, "New Destination")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         for library_id in (existing_lib, new_lib):
             direct_db.register_cleanup("memberships", "library_id", library_id)
@@ -227,8 +221,6 @@ class TestPostMediaLibrariesEndpoint:
             other_lib = create_test_library(session, other_owner_id, "Other Owner Lib")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", viewer_lib)
         direct_db.register_cleanup("libraries", "id", viewer_lib)
@@ -274,8 +266,6 @@ class TestPostMediaLibrariesEndpoint:
             add_library_member(session, member_only_lib, viewer_id, role="member")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         for library_id in (viewer_lib, member_only_lib):
             direct_db.register_cleanup("memberships", "library_id", library_id)
@@ -306,8 +296,6 @@ class TestPostMediaLibrariesEndpoint:
             media_id = create_test_media(session, title="Default Dedupe Media")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
@@ -333,8 +321,6 @@ class TestPostMediaLibrariesEndpoint:
             library_id = create_test_library(session, viewer_id, "Duplicate Destination")
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)

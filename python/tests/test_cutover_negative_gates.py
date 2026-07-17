@@ -2310,3 +2310,176 @@ def test_reserved_contributor_handle_segments_present_in_both_languages():
     ts = (_WEB_ROOT / "lib" / "contributors" / "handle.ts").read_text(encoding="utf-8")
     assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in py, "taxonomy dropped reserved-segment set"
     assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in ts, "handle.ts dropped reserved-segment set"
+
+
+# #############################################################################
+# Default-library virtualization & transient-state pruning — AC16 extirpation
+# gate (default-library-virtualization-and-transient-state-pruning-hard-
+# cutover.md §16).
+#
+# This is ONE broad, POSITIVE gate — additive to, not a replacement for, the
+# narrower default-library-virtualization gates declared earlier in this file
+# (test_reading_sessions_absent_from_production,
+# test_attention_dissolved_consumption_owns_reader_engagement,
+# test_consumption_projection_reads_confined_to_owners,
+# test_lifecycle_composition_callsites_enumerated,
+# test_media_deletion_removes_four_child_families_before_parent). Those stay
+# exactly as written; this gate scans a much wider surface for the FULL AC16
+# symbol list in one pass.
+#
+# Scanned roots: python/nexus, apps/web (src + scripts — node_modules,
+# bun.lock, and generated build caches are not source, so they are not
+# enumerated as roots), production-adjacent scripts (python/scripts,
+# repo-root scripts/) + the Makefile, non-historical Python tests
+# (python/tests/, minus the two files excluded below), docs/architecture.md,
+# and docs/modules/.
+#
+# Excluded, per AC16:
+#   - Immutable migrations (repo-root migrations/) and docs/cutovers/** are
+#     simply never added to the root list above, so — exactly like the
+#     migrations/python-tests exclusion documented at the top of this file —
+#     neither can ever appear in a hit; no runtime filter is needed for them.
+#     (docs/cutovers/** legitimately keeps naming these symbols: e.g.
+#     resource-provenance-graph-hard-cutover.md still describes
+#     message_retrieval_candidate_ledgers as live chat telemetry, which was
+#     true when that cutover landed and predates this cutover's 0183 drop —
+#     it is superseded history, not a live reference.)
+#   - test_migrations.py is excluded by name: it is pinned to historical
+#     revisions and is EXPECTED to keep constructing/asserting these dropped
+#     tables/columns forever (that is its entire job).
+#   - This file's OWN declarations are excluded by name too — both the
+#     token-list constants below and the narrower pre-existing gates listed
+#     above (test_reading_sessions_absent_from_production etc.) legitimately
+#     name these same dead symbols as grep patterns/comments in THIS file.
+#   - Two individual, non-historical residual lines are allowlisted by EXACT
+#     line text (not by whole file), so nothing else in either file gets a
+#     free pass: test_libraries.py asserts (by SELECT COUNT(*) == 0) that the
+#     closure-backfill job kind is never enqueued — a live absence proof, the
+#     same spirit as this gate. test_permissions.py's docstrings explain,
+#     historically, why the read invariant they test never depended on the
+#     (now-dropped) provenance tables — narrative prose, not a construction.
+# #############################################################################
+
+_AC16_WEB_SCRIPTS_ROOT = _REPO_ROOT / "apps" / "web" / "scripts"
+_AC16_MAKEFILE = _REPO_ROOT / "Makefile"
+_AC16_ARCHITECTURE_DOC = _REPO_ROOT / "docs" / "architecture.md"
+_AC16_MODULES_ROOT = _REPO_ROOT / "docs" / "modules"
+_AC16_PY_TESTS_ROOT = _REPO_ROOT / "python" / "tests"
+
+# default-library-virtualization §1 — the eight dropped tables.
+_AC16_DROPPED_TABLES = (
+    "library_entry_page_snapshot_items",
+    "library_entry_page_snapshots",
+    "reading_sessions",
+    "message_retrieval_candidate_ledgers",
+    "message_rerank_ledgers",
+    "default_library_backfill_jobs",
+    "default_library_closure_edges",
+    "default_library_intrinsics",
+)
+
+# Deleted ORM/DTO model, enum, and TS type names.
+_AC16_DROPPED_MODELS = (
+    "DefaultLibraryIntrinsic",
+    "DefaultLibraryClosureEdge",
+    "DefaultLibraryBackfillJob",
+    "DefaultLibraryBackfillJobStatus",
+    "LibraryEntryPageSnapshot",
+    "LibraryEntryPageSnapshotItem",
+    "ReadingSession",
+    "MessageRetrievalCandidateLedger",
+    "MessageRerankLedger",
+    "ReaderProgressWrite",
+    "AttentionBlock",
+)
+
+# Deleted job kinds / route modules / service helpers.
+_AC16_DROPPED_JOBS_ROUTES_HELPERS = (
+    "backfill_default_library_closure_job",
+    "internal_libraries",
+    "add_library_entry_only",
+    "record_attention",
+    "session_aggregates",
+    "reading_recency",
+)
+
+# Deleted DTO field names (candidate-selection / rerank telemetry).
+_AC16_DROPPED_DTO_FIELDS = (
+    "candidate_ledgers",
+    "rerank_ledgers",
+    "candidate_inclusion_mismatch",
+)
+
+# Attention-module path literals: no gate/allowlist anywhere may still name
+# these deleted files, not even as an *excluded* entry in someone else's
+# allowlist tuple.
+_AC16_DEAD_ATTENTION_PATH_LITERALS = (
+    "services/attention.py",
+    "schemas/attention.py",
+)
+
+_AC16_PATTERN = "|".join(
+    [rf"\b{re.escape(token)}\b" for token in (
+        *_AC16_DROPPED_TABLES,
+        *_AC16_DROPPED_MODELS,
+        *_AC16_DROPPED_JOBS_ROUTES_HELPERS,
+        *_AC16_DROPPED_DTO_FIELDS,
+    )]
+    + [re.escape(token) for token in _AC16_DEAD_ATTENTION_PATH_LITERALS]
+)
+
+# Raw Default containment SQL is subsumed by the table-name absence above
+# (AC16): a "FROM default_library_intrinsics"/"default_library_closure_edges"
+# containment query cannot exist without naming one of those two tables, both
+# already banned by _AC16_DROPPED_TABLES.
+
+_AC16_ALLOWED_TEST_LINES = {
+    "python/tests/test_libraries.py": {
+        "\"WHERE kind = 'backfill_default_library_closure_job'\"",
+    },
+    "python/tests/test_permissions.py": {
+        "- Provenance alone (the former default_library_intrinsics /",
+        "default_library_closure_edges tables, dropped in migration 0183) never",
+        "membership. (Provenance rows, e.g. the former default_library_intrinsics",
+        "default_library_closure_edges table, never granted access by themselves --",
+    },
+}
+
+
+def _ac16_allowed_residual_test_line(hit: _Hit) -> bool:
+    for suffix, allowed_lines in _AC16_ALLOWED_TEST_LINES.items():
+        if hit.path.endswith(suffix) and hit.text in allowed_lines:
+            return True
+    return False
+
+
+def test_default_library_virtualization_ac16_extirpation_gate():
+    ac16_roots = (
+        _PY_ROOT,
+        _WEB_ROOT,
+        _AC16_WEB_SCRIPTS_ROOT,
+        _SCRIPTS_ROOT,
+        _REPO_SCRIPTS_ROOT,
+        _AC16_MAKEFILE,
+        _AC16_ARCHITECTURE_DOC,
+        _AC16_MODULES_ROOT,
+        _AC16_PY_TESTS_ROOT,
+    )
+
+    # Non-vacuity guard: every root must exist, and the combined file list
+    # must be large — a typo'd/misconfigured root would otherwise silently
+    # scan nothing (or near-nothing) and this gate would pass for the wrong
+    # reason. (~2,600 files are expected across these roots at time of
+    # writing; 1,000 is a generous floor that still catches a missing root.)
+    for root in ac16_roots:
+        assert root.exists(), f"AC16 scan root does not exist: {root}"
+    scanned_files = [file for root in ac16_roots for file in _iter_scan_files(root)]
+    assert len(scanned_files) > 1000, (
+        f"AC16 scan touched only {len(scanned_files)} files across {len(ac16_roots)} "
+        "roots — a root is probably misconfigured (non-vacuity guard)."
+    )
+
+    hits = _grep(_AC16_PATTERN, *ac16_roots)
+    hits = _excluding(hits, "test_migrations.py", "test_cutover_negative_gates.py")
+    hits = [hit for hit in hits if not _ac16_allowed_residual_test_line(hit)]
+    assert not hits, f"AC16-dead symbol survives extirpation:\n{_fmt(hits)}"

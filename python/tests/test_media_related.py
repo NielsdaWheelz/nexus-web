@@ -56,7 +56,6 @@ def _seed_media(direct_db: DirectSessionManager, user_id: UUID, *, title: str, t
     direct_db.register_cleanup("content_index_states", "owner_id", media_id)
     direct_db.register_cleanup("contributor_credits", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
     return media_id
 

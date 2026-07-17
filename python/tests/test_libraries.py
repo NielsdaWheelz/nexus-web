@@ -1019,7 +1019,6 @@ class TestRemoveMediaFromLibrary:
         storage_path = f"media/{media_id}/original.pdf"
         storage.put_object(storage_path, b"%PDF-1.4 test", "application/pdf")
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1044,14 +1043,12 @@ class TestRemoveMediaFromLibrary:
                             AS file_count,
                         (SELECT count(*) FROM pdf_page_text_spans WHERE media_id = :media_id)
                             AS page_span_count,
-                        (SELECT count(*) FROM default_library_intrinsics
-                            WHERE media_id = :media_id) AS intrinsic_count,
                         (SELECT count(*) FROM library_entries WHERE media_id = :media_id)
                             AS library_entry_count
                 """),
                 {"media_id": media_id},
             ).one()
-        assert counts == (0, 0, 0, 0, 0)
+        assert counts == (0, 0, 0, 0)
 
     def test_delete_default_epub_removes_package_resources_and_storage(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -1111,7 +1108,6 @@ class TestRemoveMediaFromLibrary:
             session.commit()
 
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1147,7 +1143,6 @@ class TestRemoveMediaFromLibrary:
         with direct_db.session() as session:
             media_id = create_test_media(session)
 
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1628,19 +1623,9 @@ class TestListLibraryMedia:
                 """),
                 {"user_id": user_id, "media_id": media_id},
             )
-            # Read-state now derives from the attention ledger, not the listening
-            # table: an in-progress session (dwell >= 30s) with the same playback
-            # fraction is what the listening route would record.
-            session.execute(
-                text("""
-                    INSERT INTO reading_sessions (
-                        user_id, media_id, device_id, dwell_ms, max_progression
-                    ) VALUES (
-                        :user_id, :media_id, 'device-test', 35000, :fraction
-                    )
-                """),
-                {"user_id": user_id, "media_id": media_id, "fraction": 12000.0 / 180000.0},
-            )
+            # Read-state for podcast episodes derives purely from the listening
+            # threshold (position > 0 -> in_progress); no separate session/ledger
+            # row is needed.
             add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
@@ -1651,10 +1636,9 @@ class TestListLibraryMedia:
         direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
-        # Registered LAST so LIFO teardown deletes these BEFORE their media: migration
-        # 0182 made the reading_sessions/podcast_listening_states -> media FKs
-        # non-cascading, so they no longer disappear with the media row.
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
+        # Registered LAST so LIFO teardown deletes this BEFORE its media: migration
+        # 0182 made the podcast_listening_states -> media FK non-cascading, so it no
+        # longer disappears with the media row.
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
 
         response = _list_library_entries(auth_client, user_id, library_id)

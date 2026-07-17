@@ -35,29 +35,32 @@ split one table per store:
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/speed, completion flag, and the heartbeat fencing tokens
   `write_revision`/`reset_epoch`).
-- `_projection.py` — the combined explicit-override + attention-derived read
+- `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
+  one current-state row per (viewer, media) carrying `last_engaged_at`
+  recency and, for non-PDF locators, a monotonic `max_total_progression`
+  (`GREATEST(existing, new)` on every save). No session, device, span, dwell,
+  or event-history rows exist — a save is a plain idempotent
+  `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
+  token, composed by the reader-state route after a successful/idempotent
+  cursor write (see [reader-implementation.md](reader-implementation.md)).
+- `_projection.py` — the combined explicit-override + reader-engagement read
   model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
   `PlayerDescriptor`s for podcast-episode media, reusing
   `services/playback_source.derive_playback_source` exactly as a Lectern item
   does (listening join + chapters + artwork/title). `services/media.py`,
   `services/library_entries.py`, and `services/podcasts/{episodes,
   subscriptions_query}.py` adopt this projection; no other module reads
-  `consumption_overrides`/`podcast_listening_states` directly except the one
-  documented exception in `services/media.py` (`MediaOut.listening_state`, a
-  raw passthrough of position/duration/speed distinct from the derived
-  read-state projection).
-
-`python/nexus/services/attention.py` remains the sole writer of
-`reading_sessions` (dwell, 30-minute session continuity, `attention_on_day`)
-and no longer touches `consumption_overrides`; it exposes only derived session
-aggregates (`session_aggregates`, `reading_recency`) to the projection.
+  `consumption_overrides`/`podcast_listening_states`/`reader_engagement_states`
+  directly except the one documented exception in `services/media.py`
+  (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
+  distinct from the derived read-state projection).
 
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
-see also [storage.md](storage.md)) composes
+see also [storage.md](storage.md)) composes one consumption call,
 `consumption_service.delete_media_consumption_state_in_txn` (all users'
-Lectern/override/listening rows) and `attention.delete_media_state`
-(`reading_sessions`) inside the same deletion transaction —
-`services/media_deletion.py` never writes those tables directly.
+Lectern/override/listening/reader-engagement rows), inside the deletion
+transaction — `services/media_deletion.py` never writes those tables
+directly.
 
 `python/nexus/services/playback_source.py` resolves the playable source for a
 media item (`derive_playback_source`); it is shared by the projection, the
@@ -86,7 +89,12 @@ semantic-idempotent through a client-generated `clientMutationId`, keyed by
 `(viewerId, mutationScope, clientMutationId)` through the shared
 `services/resource_mutation_replay.py` ledger. The listening-state PUT is a
 separate, unreplayable CAS mutation fenced by `write_revision`/`reset_epoch`
-(§5.4) — it never memoizes and never reuses the command replay ledger.
+(§5.4) — it never memoizes and never reuses the command replay ledger. It
+writes only position/duration/speed; the heartbeat carries no client-supplied
+elapsed-time delta and no client-supplied device identifier, and piggybacks
+no other table's write — reading engagement is recorded on its own path (see
+[reader-implementation.md](reader-implementation.md)), independent of the
+listening heartbeat.
 
 Owned-absence fields on every wire shape use `Presence<T>` from
 `nexus/schemas/presence.py` / `apps/web/src/lib/api/presence.ts`

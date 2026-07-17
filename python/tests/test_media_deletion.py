@@ -136,8 +136,6 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
     direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
 
@@ -220,8 +218,6 @@ def test_delete_document_removes_default_and_administered_libraries(
 
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
     for library_id in (default_id, work_id):
@@ -397,7 +393,6 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
 
     direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 
@@ -493,7 +488,6 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
     add_response = auth_client.post(
@@ -1135,7 +1129,6 @@ def test_delete_document_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
@@ -1348,8 +1341,6 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
         media_id = create_test_media(session)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     direct_db.register_cleanup("resource_mutations", "user_id", user_id)
 
     keep_key = ContributorIdentityKey(

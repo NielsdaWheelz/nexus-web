@@ -44,7 +44,6 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "user_media_deletions",
         "media_teardown_intents",
         "library_entries",

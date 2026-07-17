@@ -5,6 +5,22 @@
 **Posture:** One coordinated hard cutover. No legacy payloads, fallback readers,
 dual writes, nullable reset path, feature flag, or mixed-version support.
 
+**Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+(2026-07-17):** the `{cursor?: {locator, base_revision}, attention?}` PUT
+envelope this spec introduced, its `204` attention-only response path, and its
+"document engagement recency reads `reading_sessions`" claim (§"In scope" and
+§5) are all gone. `PUT /media/{id}/reader-state` now takes the bare
+`CursorWrite` body with no sibling block; there is no longer any request
+shape that writes engagement without writing the cursor alongside it. Cursor
+success — including the idempotent equal-locator case — is followed by one
+retry-safe reader-engagement command composed by the route itself, writing a
+new narrow current-state table, `reader_engagement_states`
+(`services/consumption/_reader_engagement_store.py`), which is now the
+recency source for document engagement everywhere `reading_sessions` used to
+serve that role. This spec's cursor CAS semantics, `useReaderProgress`
+client coordinator, revalidation triggers, and URL-precedence rules are
+otherwise unchanged and remain canonical.
+
 ## 1. Executive decision
 
 There are no blocking product questions.

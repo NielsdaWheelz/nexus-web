@@ -26,9 +26,12 @@ The domain is split into three owned modules, each owning its own tables:
   `add_media_to_libraries_for_viewer`, `assign_libraries_for_media`,
   `set_subscription_libraries`, `remove_user_podcast_subscription_libraries`, …).
 - **`services/library_invitations.py`** owns the `library_invitations` table:
-  create/list/list-for-viewer/accept/decline/revoke. The accept path's durable
-  backfill upsert is delegated to
-  `default_library_closure.upsert_backfill_job_pending`.
+  create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
+  — membership upsert, then invite status update — and returns
+  `{invite, membership, idempotent}`. The membership commit alone is what
+  changes the accepting user's default-library list/count on the very next
+  read; there is no backfill job, projection worker, or provenance row to
+  catch up afterward (see [sharing.md](sharing.md)).
 
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
@@ -76,18 +79,43 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
   rather than re-implementing the intersection.
 
-## Default-library closure & media deletion
+## The default library's virtual read surface
 
-- **`services/default_library_closure.py`** routes all of its `library_entries`
-  writes through `library_entries` (`ensure_entry` / `delete_entry` /
-  `list_media_ids_in_library`) and owns the durable backfill-job and provenance
-  helpers (`upsert_backfill_job_pending`, `mark_backfill_job_terminally_failed`,
-  `detach_media_from_default_library`, `remove_media_from_default_intrinsic`,
-  `purge_media_default_references`, `count_default_references`).
-- **`services/media_deletion.py`** is now a pure orchestrator over the public
-  `library_entries` + `default_library_closure` APIs; it issues zero direct
-  `library_entries` / `default_library_intrinsics` /
-  `default_library_closure_edges` SQL.
+The default library holds no provenance, closure, or backfill machinery. Its
+read surface — "personal All" — is a live query, computed on every read, over
+`library_entries` + `memberships`: the distinct media reachable through any of
+the viewer's *current* non-system memberships, deduplicated by `media_id` (a
+direct entry in the viewer's own default library wins the tie over an
+indirect one reached through a shared library; ties within a kind resolve by
+earliest entry). There is no separate table recording *why* a work is
+visible there and nothing to keep in sync — losing a membership (leaving,
+being removed, or a shared library being deleted) removes that library's
+contribution the moment it is gone, on the very next read.
+
+- **The one actor-authorized filing command.**
+  `library_entries.add_media_to_library` is the sole path that files media
+  into any library, including the default one. Filing into the default
+  library always inserts (or idempotently keeps) a direct, physical
+  `library_entries` row there — there is no separate "intrinsic" bookkeeping
+  distinct from the row itself. A work already visible virtually through
+  another membership can still be explicitly filed; that direct row is what
+  survives a later membership loss that would otherwise have removed it from
+  view.
+- **Stateless keyset pagination, three cursor kinds.** Listing any library
+  never touches a snapshot table. The default library's own listing paginates
+  the deduplicated virtual set by media recency; a non-default library
+  paginates its physical entries either by position or by resonance order.
+  Each cursor is opaque, self-describing (`k`), and scoped to the exact
+  `(viewer_id, library_id, kind)` it was minted for — a cursor from the wrong
+  viewer, library, or kind (including any cursor minted before this cutover)
+  is a clean `400 E_INVALID_CURSOR`, never silently reinterpreted.
+- **Media deletion counts physical references only.** Whether a document
+  media has any reference left — the question that gates last-reference
+  teardown — is answered by counting physical `library_entries` rows for
+  that `media_id` and nothing else; there is no closure/intrinsic count to
+  reconcile against it. `services/media_deletion.py` is a pure orchestrator
+  over the public `library_entries` API; it issues zero direct
+  `library_entries` DML of its own.
 
 ## Writable library destinations
 
@@ -124,7 +152,8 @@ library the viewer can read.
 - Library entries never make a private media file public.
 - Public owned Oracle plates are not library resources; readings may reference
   them, but the plate asset route is owned by `oracle_plates.py`.
-- Default-library closure affects visible media rows, not object-storage keys.
+- The default library's virtual read surface affects which media rows are
+  visible, not object-storage keys.
 
 ## Library Intelligence Citations
 

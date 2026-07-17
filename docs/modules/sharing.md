@@ -45,6 +45,17 @@ already accepted source attempt is not duplicated.
 For non-URL text, `/share` quick-captures the text to today's daily note and does
 not show a library picker because libraries are media/podcast containers.
 
+## Invitation Acceptance And The Default List
+
+`library_invitations.accept_library_invite` is one transaction: membership
+upsert, then invite status update. The response is
+`{invite, membership, idempotent}`; accepting an already-accepted invite
+returns the same shape with `idempotent: true` and mutates nothing. There is
+no follow-up backfill job or projection step — the membership commit alone is
+what the accepting user's default library's list/count reflects on their
+very next read, because that list is a live query over current memberships,
+not a materialized or catch-up-able set (see [library.md](library.md)).
+
 ## Destination Contract
 
 `library_ids` on share/media ingest requests means selected non-default

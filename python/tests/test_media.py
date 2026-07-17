@@ -4501,8 +4501,6 @@ class TestFromUrlLibraryIds:
         media_id = UUID(data["media_id"])
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4697,8 +4695,6 @@ class TestFromUrlLibraryIds:
         assert first_data["idempotency_outcome"] == "created"
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         second = auth_client.post(
@@ -4767,8 +4763,6 @@ class TestCaptureLibraryIds:
         direct_db.register_cleanup("fragment_blocks", "fragment_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4814,8 +4808,6 @@ class TestCaptureLibraryIds:
         )
         empty_media_id = UUID(empty_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", empty_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", empty_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", empty_media_id)
         direct_db.register_cleanup("media_file", "media_id", empty_media_id)
         direct_db.register_cleanup("media", "id", empty_media_id)
 
@@ -4851,8 +4843,6 @@ class TestCaptureLibraryIds:
         )
         single_media_id = UUID(single_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", single_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", single_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", single_media_id)
         direct_db.register_cleanup("media_file", "media_id", single_media_id)
         direct_db.register_cleanup("media", "id", single_media_id)
 
@@ -4890,8 +4880,6 @@ class TestCaptureLibraryIds:
         )
         comma_media_id = UUID(comma_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", comma_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", comma_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", comma_media_id)
         direct_db.register_cleanup("media_file", "media_id", comma_media_id)
         direct_db.register_cleanup("media", "id", comma_media_id)
 
@@ -4934,8 +4922,6 @@ class TestCaptureLibraryIds:
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4993,8 +4979,6 @@ class TestUploadInitLibraryIds:
         )
         pdf_media_id = UUID(pdf_init.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", pdf_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", pdf_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", pdf_media_id)
         direct_db.register_cleanup("media_file", "media_id", pdf_media_id)
         direct_db.register_cleanup("media", "id", pdf_media_id)
 
@@ -5072,8 +5056,6 @@ class TestUploadInitLibraryIds:
         epub_media_id = UUID(epub_init.json()["data"]["media_id"])
         direct_db.register_cleanup("epub_toc_nodes", "media_id", epub_media_id)
         direct_db.register_cleanup("library_entries", "media_id", epub_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", epub_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", epub_media_id)
         direct_db.register_cleanup("fragments", "media_id", epub_media_id)
         direct_db.register_cleanup("media_file", "media_id", epub_media_id)
         direct_db.register_cleanup("media", "id", epub_media_id)

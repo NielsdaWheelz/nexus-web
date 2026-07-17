@@ -4710,8 +4710,18 @@ class TestS4Migration0007:
         assert intrinsics_first == intrinsics_second
 
     def test_0007_supporting_indexes_exist(self, s4_engine):
-        """All expected 0007 index names exist in pg_indexes."""
-        result = run_alembic_command("upgrade head")
+        """All expected 0007 index names exist in pg_indexes.
+
+        Pinned to 0182 (the last revision before the drops) rather than head:
+        the list mixes indexes on default_library_intrinsics/
+        default_library_closure_edges/default_library_backfill_jobs (all three
+        dropped by 0183, the default-library-virtualization cutover) with
+        idx_library_entries_media_library, a supporting index added after 0007
+        on the surviving library_entries table — so both only coexist at a
+        pre-0183 revision. Historical migration tests must target a revision
+        where their assertions hold, not chase head.
+        """
+        result = run_alembic_command("upgrade 0182")
         assert result.returncode == 0
 
         expected_indexes = [
@@ -4886,8 +4896,14 @@ class TestS4Migration0007:
             assert "ck_library_invitations_not_self" in str(exc_info.value)
 
     def test_default_library_backfill_jobs_finished_at_state_constraint(self, s4_engine):
-        """Check constraint enforces finished_at/status consistency for backfill jobs."""
-        result = run_alembic_command("upgrade head")
+        """Check constraint enforces finished_at/status consistency for backfill jobs.
+
+        Pinned to 0007 rather than head: default_library_backfill_jobs is one of
+        the eight tables 0183 (default-library-virtualization cutover) eventually
+        drops. Historical migration tests must target the revision they're
+        actually testing, not chase head.
+        """
+        result = run_alembic_command("upgrade 0007")
         assert result.returncode == 0
 
         user = uuid4()
@@ -14042,8 +14058,14 @@ class TestMigration0172AttentionLedger:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        # Pinned to 0182 rather than head: this class asserts directly on the
+        # reading_sessions table, which 0183 (default-library-virtualization
+        # cutover) eventually drops, and also on the 0182-dropped
+        # ck_consumption_overrides_status CHECK, so 0182 is the latest revision
+        # that satisfies both assertions. Historical migration tests must target
+        # the revision they're actually testing, not chase head.
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0182")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -17671,8 +17693,12 @@ class TestMigration0180ReaderProgressContinuity:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            # Pinned to 0180 rather than head: this asserts directly on
+            # reading_sessions, which 0183 (default-library-virtualization
+            # cutover) eventually drops. Historical migration tests must target
+            # the revision they're actually testing, not chase head.
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
 
             with Session(engine) as session:
                 fresh_sessions = session.execute(
@@ -17742,8 +17768,12 @@ class TestMigration0180ReaderProgressContinuity:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            # Pinned to 0180 rather than head: this asserts directly on
+            # reading_sessions, which 0183 (default-library-virtualization
+            # cutover) eventually drops. Historical migration tests must target
+            # the revision they're actually testing, not chase head.
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
 
             with Session(engine) as session:
                 pdf_sessions = session.execute(
@@ -17891,8 +17921,16 @@ class TestMigration0182LecternPlayerLifecycle:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        # Pinned to 0182 rather than head: test_four_owner_tables_user_and_media_
+        # fks_are_named_and_non_cascading below asserts directly on
+        # reading_sessions' FKs, and reading_sessions is one of the eight tables
+        # 0183 (default-library-virtualization cutover) eventually drops. Every
+        # other column/constraint this class checks is established by 0182
+        # itself, so 0182 is the revision this whole class is actually testing.
+        # Historical migration tests must target the revision they're actually
+        # testing, not chase head.
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0182")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -18657,3 +18695,253 @@ class TestMigration0183DefaultLibraryVirtualization:
         finally:
             reset_test_schema()
             engine.dispose()
+
+    # === §6 preflight + steps 2-4 (drop phase) =============================
+
+    def test_preflight_aborts_on_default_podcast_entry(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            default_library_id = uuid4()
+            podcast_id = uuid4()
+            bad_entry_id = uuid4()
+
+            with Session(engine) as session:
+                self._insert_user(session, owner_id)
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Default', true)"
+                    ),
+                    {"id": default_library_id, "owner": owner_id},
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)"
+                        " VALUES (:id, 'podcast_index', 'preflight-podcast', 'A Podcast',"
+                        " 'https://example.test/feed.xml')"
+                    ),
+                    {"id": podcast_id},
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (id, library_id, podcast_id)"
+                        " VALUES (:id, :lib, :podcast)"
+                    ),
+                    {"id": bad_entry_id, "lib": default_library_id, "podcast": podcast_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, (
+                "upgrade must abort on a podcast entry inside a default library"
+            )
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert str(bad_entry_id) in combined, (
+                "preflight failure must report the exact offending row id"
+            )
+
+            with Session(engine) as session:
+                for table in (
+                    "library_entry_page_snapshot_items",
+                    "library_entry_page_snapshots",
+                    "message_retrieval_candidate_ledgers",
+                    "message_rerank_ledgers",
+                    "reading_sessions",
+                    "default_library_backfill_jobs",
+                    "default_library_closure_edges",
+                    "default_library_intrinsics",
+                ):
+                    exists = session.execute(
+                        text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}
+                    ).scalar_one()
+                    assert exists is not None, (
+                        f"{table} must survive a preflight-aborted upgrade"
+                    )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_preflight_aborts_on_orphan_intrinsic(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            default_library_id = uuid4()
+            media_id = uuid4()
+
+            with Session(engine) as session:
+                self._insert_user(session, owner_id)
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Default', true)"
+                    ),
+                    {"id": default_library_id, "owner": owner_id},
+                )
+                self._insert_media(session, media_id, "web_article")
+                # An intrinsic with no matching physical library_entries row.
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_intrinsics (default_library_id, media_id)"
+                        " VALUES (:lib, :media)"
+                    ),
+                    {"lib": default_library_id, "media": media_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on an orphan intrinsic"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert str(default_library_id) in combined
+            assert str(media_id) in combined
+
+            with Session(engine) as session:
+                exists = session.execute(
+                    text("SELECT to_regclass('public.default_library_intrinsics')")
+                ).scalar_one()
+                assert exists is not None, (
+                    "default_library_intrinsics must survive a preflight-aborted upgrade"
+                )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_closure_only_default_entry_deleted_while_intrinsic_backed_retained(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            default_library_id = uuid4()
+            source_library_id = uuid4()
+            closure_only_entry_id = uuid4()
+            closure_only_media_id = uuid4()
+            intrinsic_backed_entry_id = uuid4()
+            intrinsic_backed_media_id = uuid4()
+
+            with Session(engine) as session:
+                self._insert_user(session, owner_id)
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Default', true)"
+                    ),
+                    {"id": default_library_id, "owner": owner_id},
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Shared', false)"
+                    ),
+                    {"id": source_library_id, "owner": owner_id},
+                )
+                self._insert_media(session, closure_only_media_id, "web_article")
+                self._insert_media(session, intrinsic_backed_media_id, "web_article")
+
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (id, library_id, media_id, position)"
+                        " VALUES (:id, :lib, :media, 0)"
+                    ),
+                    {
+                        "id": closure_only_entry_id,
+                        "lib": default_library_id,
+                        "media": closure_only_media_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_closure_edges"
+                        " (default_library_id, media_id, source_library_id)"
+                        " VALUES (:lib, :media, :source)"
+                    ),
+                    {
+                        "lib": default_library_id,
+                        "media": closure_only_media_id,
+                        "source": source_library_id,
+                    },
+                )
+
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (id, library_id, media_id, position)"
+                        " VALUES (:id, :lib, :media, 1)"
+                    ),
+                    {
+                        "id": intrinsic_backed_entry_id,
+                        "lib": default_library_id,
+                        "media": intrinsic_backed_media_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_intrinsics (default_library_id, media_id)"
+                        " VALUES (:lib, :media)"
+                    ),
+                    {"lib": default_library_id, "media": intrinsic_backed_media_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                closure_only_survives = session.execute(
+                    text("SELECT 1 FROM library_entries WHERE id = :id"),
+                    {"id": closure_only_entry_id},
+                ).scalar_one_or_none()
+                intrinsic_backed_survives = session.execute(
+                    text("SELECT 1 FROM library_entries WHERE id = :id"),
+                    {"id": intrinsic_backed_entry_id},
+                ).scalar_one_or_none()
+
+            assert closure_only_survives is None, (
+                "closure-only physical Default entry must be deleted by step 3"
+            )
+            assert intrinsic_backed_survives == 1, (
+                "intrinsic-backed physical Default entry must be retained by step 3"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_all_eight_tables_absent_after_upgrade(self, head_engine):
+        with Session(head_engine) as session:
+            for table in (
+                "library_entry_page_snapshot_items",
+                "library_entry_page_snapshots",
+                "message_retrieval_candidate_ledgers",
+                "message_rerank_ledgers",
+                "reading_sessions",
+                "default_library_backfill_jobs",
+                "default_library_closure_edges",
+                "default_library_intrinsics",
+            ):
+                assert (
+                    session.execute(
+                        text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}
+                    ).scalar_one()
+                    is None
+                ), f"{table} must be dropped by 0183"
+
+    def test_downgrade_raises_not_implemented(self):
+        reset_test_schema()
+        try:
+            assert run_alembic_command("upgrade head").returncode == 0
+            result = run_alembic_command("downgrade 0182")
+            assert result.returncode != 0, "0183 downgrade must be blocked"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "hard cutover" in combined.lower()
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")

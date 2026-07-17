@@ -17,6 +17,24 @@ and audio-while-playing dwell rule remain canonical. This document replaces the
 listening heartbeat's request encoding, write owner, fencing, and failure
 disposition while retaining that dwell behavior.
 
+**Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+(2026-07-17):** that later cutover supersedes only this document's
+`reading_sessions`/dwell ownership, the listening heartbeat's dwell-write
+composition (§5.4's `dwellMsDelta`/`deviceId` request fields and the
+piggybacked dwell write), the four-store media-teardown fold (§7 and every
+`attention.delete_media_state`/`attention.py` reference in this file), and
+the matching file/gate clauses. It remains normative for everything else here
+— Lectern ordering, the two command ports, replay, and the dock/footer
+contract are unchanged. `services/attention.py` and `reading_sessions` are
+deleted outright, not relocated: the listening heartbeat now writes only
+position/duration/speed/fencing and carries no elapsed-time delta or
+client-supplied device identifier, and media teardown composes one
+consumption call, not two. Document engagement recency moves to a fifth
+consumption store, `reader_engagement_states`
+(`services/consumption/_reader_engagement_store.py`), fed by the reader-state
+PUT rather than by any session/dwell derivation (see
+`docs/modules/{player,reader-implementation}.md`).
+
 ## 1. Target behavior
 
 - **Lectern** is the one ordered, mixed-media list of outstanding intentions.

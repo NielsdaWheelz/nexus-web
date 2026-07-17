@@ -145,14 +145,28 @@ sync hook would blur.
 - `GET /api/media/{id}/reader-state` returns exactly
   `{state:"Empty",revision:0}` or `{state:"Positioned",revision>=1,locator}`,
   never raw `null`
-- `PUT /api/media/{id}/reader-state` takes the one strict envelope
-  `{cursor?: {locator, base_revision}, attention?}` — at least one block is
-  required; old bare locators, extra fields, and a top-level `null` clear are
-  rejected with `400`
+- `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite`
+  (`{locator, base_revision}`) — no wrapping envelope and no sibling block;
+  old bare locators, extra fields, and a top-level `null` clear are rejected
+  with `400`
 - a matching `base_revision` replaces the cursor and increments `revision`; a
   stale `base_revision` returns `409` with the exact current snapshot and
-  mutates nothing; attention-only writes return `204` and never touch the
-  cursor row
+  mutates nothing and records no engagement
+- an equal desired locator is idempotent success at the current revision — the
+  cursor does not advance, but the save still records engagement, because "the
+  user opened and saved this document again" is itself the engagement-worthy
+  fact, independent of whether the position moved
+- cursor success (including the idempotent equal-locator case) is followed by
+  one retry-safe reader-engagement command in its own transaction: touch that
+  document's recency unconditionally, and for non-PDF locators advance a
+  monotonic whole-document progression high-water mark. The two writes are
+  sequential rather than combined into one transaction on purpose — the
+  cursor is the thing a stale-revision conflict must protect losslessly, while
+  engagement is a current-state fact with no such conflict shape (no fencing
+  token, `GREATEST`-merged); folding them into one atomic write would force
+  the cursor's CAS discipline onto data that does not need it. A failed
+  engagement write is surfaced, not swallowed, because both operations in the
+  pair are safe to retry from the client's perspective.
 - `useReaderProgress` is the single browser-side coordinator that serializes
   and coalesces cursor writes (single-flight, latest-only, revision-aware);
   event-driven revalidation on pane activation, visibility, focus, `pageshow`,

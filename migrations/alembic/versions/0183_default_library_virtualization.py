@@ -2,34 +2,50 @@
 docs/cutovers/default-library-virtualization-and-transient-state-pruning-hard-cutover.md).
 
 This revision is written IN PLACE across two implementation slices, S4 and S6
-(one file, one revision id, per the S4 contract's locked decision). S4 lands
-only step 1 below: create ``reader_engagement_states`` and backfill it from the
-union of ``reader_media_state``/``reading_sessions``. S6 will prepend the §6
-preflight (exact row IDs, no mutation) and append steps 2-4 plus a
-``NotImplementedError`` downgrade inside the clearly-marked block at the bottom
-of this file. Because step 1 alone neither drops nor mutates any of the eight
-tables named in §1, this revision stays fully reversible (``downgrade()`` drops
-only the new table) until S6 extends it — at which point the migration becomes
-irreversible, exactly as 0179/0180/0182 precede it in this chain.
+(one file, one revision id, per the S4 contract's locked decision). S4 landed
+step 1 only: create ``reader_engagement_states`` and backfill it from the
+union of ``reader_media_state``/``reading_sessions``. S6 (this completion)
+prepends the §6 preflight (exact row IDs, no mutation) and appends steps 2-4
+plus a ``NotImplementedError`` downgrade. This revision is now irreversible,
+exactly as 0166/0179/0180/0182 precede it in this chain.
 
-Step 1 (spec §6 "0183 transform", item 1):
+Preflight (spec §6 "Preflight"; no mutation; aborts with exact row IDs):
 
-- Create ``reader_engagement_states`` (one current row per user/media; no
-  session, device, span, dwell, or event list — spec §4.4).
-- Backfill it from the union of ``reader_media_state`` and ``reading_sessions``
-  pairs, restricted to reader-supported media kinds (``web_article`` |
-  ``epub`` | ``pdf`` — the migration backfill's narrower scope than the live
-  write, which is not kind-gated; S4 contract LOCKED DECISION M1).
-  ``last_engaged_at = GREATEST(reader_media_state.updated_at,
-  MAX(reading_sessions.last_active_at))``, null-safe (Postgres ``GREATEST``
-  ignores NULL arguments, matching 0180's own backfill idiom) so cursor-only
-  and attention-only document rows both survive. ``max_total_progression``
-  overlays the current cursor's ``locations.total_progression`` with the
-  session-tracked ``max_progression`` via the same null-safe ``GREATEST`` (the
-  same "advance to the higher value" rule the live write uses), but only for
-  document-wide kinds (``web_article``/``epub``); PDF progression is
-  page-local, not whole-document, so it is forced to ``NULL`` regardless of any
-  stored session value, never false completion.
+1. Every default library has zero podcast entries.
+2. Every ``default_library_intrinsics`` row has its matching physical Default
+   entry.
+3. Record + report counts for all eight dropped tables.
+4. Classify Default physical media rows: intrinsic-backed, closure-only, both,
+   or unclassified.
+5. Oracle/system-only media are excluded by the new Default relation.
+
+Transform (spec §6 "0183 transform"):
+
+1. Create ``reader_engagement_states`` (one current row per user/media; no
+   session, device, span, dwell, or event list — spec §4.4).
+   Backfill it from the union of ``reader_media_state`` and ``reading_sessions``
+   pairs, restricted to reader-supported media kinds (``web_article`` |
+   ``epub`` | ``pdf`` — the migration backfill's narrower scope than the live
+   write, which is not kind-gated; S4 contract LOCKED DECISION M1).
+   ``last_engaged_at = GREATEST(reader_media_state.updated_at,
+   MAX(reading_sessions.last_active_at))``, null-safe (Postgres ``GREATEST``
+   ignores NULL arguments, matching 0180's own backfill idiom) so cursor-only
+   and attention-only document rows both survive. ``max_total_progression``
+   overlays the current cursor's ``locations.total_progression`` with the
+   session-tracked ``max_progression`` via the same null-safe ``GREATEST`` (the
+   same "advance to the higher value" rule the live write uses), but only for
+   document-wide kinds (``web_article``/``epub``); PDF progression is
+   page-local, not whole-document, so it is forced to ``NULL`` regardless of any
+   stored session value, never false completion.
+2. Delete queued/running ``background_jobs`` rows of kind
+   ``backfill_default_library_closure_job``.
+3. Delete physical Default entries proven closure-only (retain intrinsic-backed,
+   both-backed, and unclassified rows — the current agent path can create
+   unclassified direct intent).
+4. Drop the eight tables in dependency order (children before parents).
+
+Downgrade is blocked: this cutover deletes data (closure-only physical Default
+entries) and drops eight tables with no reconstructable inverse.
 
 Revision ID: 0183
 Revises: 0182
@@ -54,13 +70,145 @@ depends_on: str | Sequence[str] | None = None
 # reader_media_state history for video is sparse/low-value to reconstruct).
 _BACKFILL_KINDS: tuple[str, ...] = ("web_article", "epub", "pdf")
 
+# The eight tables dropped by step 4, in dependency order: children before
+# parents (spec §1/§6 item 4). None of these are referenced by any surviving
+# FK (models audit, spec §7 "Delete"); a plain DROP TABLE suffices for each.
+_DROPPED_TABLES: tuple[str, ...] = (
+    "library_entry_page_snapshot_items",
+    "library_entry_page_snapshots",
+    "message_retrieval_candidate_ledgers",
+    "message_rerank_ledgers",
+    "reading_sessions",
+    "default_library_backfill_jobs",
+    "default_library_closure_edges",
+    "default_library_intrinsics",
+)
+
+
+def _fail(phase: str, message: str) -> None:
+    raise RuntimeError(f"0183 {phase}: {message}")
+
 
 def _report(message: str) -> None:
     print(f"0183: {message}")
 
 
+def _preflight(bind) -> None:
+    """SELECT-only validation (spec §6 "Preflight"). No mutation; every abort
+    reports the exact offending row IDs so operators can remediate through
+    existing public operations and rerun (spec §6 preflight-failure note)."""
+
+    # 1. Every default library must have zero podcast entries: 0183 makes
+    # Default a media-only virtual set (spec §4.1); a podcast entry there is a
+    # pre-existing product invariant the transform cannot repair by guessing a
+    # destination.
+    rows = bind.execute(
+        sa.text(
+            "SELECT le.id FROM library_entries le"
+            " JOIN libraries l ON l.id = le.library_id"
+            " WHERE l.is_default AND le.podcast_id IS NOT NULL"
+            " ORDER BY le.id"
+        )
+    ).fetchall()
+    if rows:
+        ids = [str(row[0]) for row in rows]
+        _fail(
+            "preflight",
+            f"{len(ids)} default library_entries row(s) carry a podcast_id"
+            f" (remediate via subscription/non-default filing, then remove the"
+            f" invalid Default entry, then rerun): {ids}",
+        )
+
+    # 2. Every default_library_intrinsics row must have its matching physical
+    # Default entry: an intrinsic with no backing row is unrepresentable once
+    # the closure/intrinsic tables are dropped.
+    rows = bind.execute(
+        sa.text(
+            "SELECT i.default_library_id, i.media_id"
+            " FROM default_library_intrinsics i"
+            " WHERE NOT EXISTS ("
+            "   SELECT 1 FROM library_entries le"
+            "   WHERE le.library_id = i.default_library_id"
+            "     AND le.media_id = i.media_id"
+            "     AND le.media_id IS NOT NULL"
+            " )"
+            " ORDER BY i.default_library_id, i.media_id"
+        )
+    ).fetchall()
+    if rows:
+        pairs = [(str(row[0]), str(row[1])) for row in rows]
+        _fail(
+            "preflight",
+            f"{len(pairs)} default_library_intrinsics row(s) lack their matching"
+            f" physical Default entry (default_library_id, media_id) — restore the"
+            f" physical row through the current provenance owner, then rerun: {pairs}",
+        )
+
+    # 3. Record + report counts for all eight dropped tables.
+    for table in _DROPPED_TABLES:
+        count = bind.execute(sa.text(f"SELECT count(*) FROM {table}")).scalar()  # noqa: S608
+        _report(f"preflight: {table} has {count} row(s) before drop")
+
+    # 4. Classify Default physical media rows: intrinsic-backed, closure-only,
+    # both, or unclassified (direct-intent rows the current agent path can
+    # create with neither provenance table involved).
+    classification_rows = bind.execute(
+        sa.text(
+            "SELECT"
+            "   CASE"
+            "     WHEN i.default_library_id IS NOT NULL AND c.default_library_id IS NOT NULL"
+            "       THEN 'both'"
+            "     WHEN i.default_library_id IS NOT NULL THEN 'intrinsic_backed'"
+            "     WHEN c.default_library_id IS NOT NULL THEN 'closure_only'"
+            "     ELSE 'unclassified'"
+            "   END AS classification,"
+            "   count(*) AS n"
+            " FROM library_entries le"
+            " JOIN libraries l ON l.id = le.library_id"
+            " LEFT JOIN default_library_intrinsics i"
+            "   ON i.default_library_id = le.library_id AND i.media_id = le.media_id"
+            " LEFT JOIN default_library_closure_edges c"
+            "   ON c.default_library_id = le.library_id AND c.media_id = le.media_id"
+            " WHERE l.is_default AND le.media_id IS NOT NULL"
+            " GROUP BY 1"
+            " ORDER BY 1"
+        )
+    ).fetchall()
+    classification = {row[0]: row[1] for row in classification_rows}
+    _report(f"preflight: Default physical media row classification: {classification}")
+
+    # 5. Oracle/system-only media must be excluded by the new Default relation:
+    # no default physical entry may reference media whose only library
+    # membership is in a system library. A clean/empty DB passes trivially —
+    # the default entry itself is always a non-system membership of its media.
+    rows = bind.execute(
+        sa.text(
+            "SELECT le.id"
+            " FROM library_entries le"
+            " JOIN libraries l ON l.id = le.library_id"
+            " WHERE l.is_default AND le.media_id IS NOT NULL"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM library_entries le2"
+            "     JOIN libraries l2 ON l2.id = le2.library_id"
+            "     WHERE le2.media_id = le.media_id AND l2.system_key IS NULL"
+            "   )"
+            " ORDER BY le.id"
+        )
+    ).fetchall()
+    if rows:
+        ids = [str(row[0]) for row in rows]
+        _fail(
+            "preflight",
+            f"{len(ids)} default physical entr{'y' if len(ids) == 1 else 'ies'} reference"
+            f" media reachable only through system libraries: {ids}",
+        )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+
+    # --- Preflight (spec §6; no mutation, aborts with exact row IDs) ------
+    _preflight(bind)
 
     # --- Step 1a: create reader_engagement_states -------------------------
     op.execute("""
@@ -141,15 +289,55 @@ def upgrade() -> None:
     )
     _report(f"backfilled {result.rowcount} reader_engagement_states row(s)")
 
+    # --- Step 2: delete non-terminal backfill_default_library_closure_job
+    # background_jobs rows. Terminal rows (succeeded/failed/dead) are inert
+    # historical audit records and are left untouched; a pending/running row
+    # left behind would be claimed by a worker after this deploy and crash
+    # against the tables step 4 is about to drop. ---------------------------
+    deleted_jobs = bind.execute(
+        sa.text(
+            "DELETE FROM background_jobs"
+            " WHERE kind = 'backfill_default_library_closure_job'"
+            "   AND status IN ('pending', 'running')"
+        )
+    ).rowcount
+    _report(
+        f"deleted {deleted_jobs} non-terminal backfill_default_library_closure_job"
+        " background_jobs row(s)"
+    )
 
-# =============================================================================
-# === S6 COMPLETES 0183 BELOW: prepend §6 preflight (exact row IDs, no
-# mutation) at the top of upgrade(); append step 2 (delete queued
-# backfill_default_library_closure_job background_jobs), step 3 (delete
-# closure-only physical Default entries), step 4 (drop the 8 tables in
-# dependency order); replace downgrade() below with NotImplementedError. ===
-# =============================================================================
+    # --- Step 3: delete physical Default entries proven closure-only. A
+    # closure edge implies a live covering non-default membership, so the
+    # media stays virtually visible after the row is gone; intrinsic-backed,
+    # both-backed, and unclassified rows are retained. -----------------------
+    deleted_entries = bind.execute(
+        sa.text(
+            "DELETE FROM library_entries le"
+            " USING libraries l"
+            " WHERE l.id = le.library_id"
+            "   AND l.is_default"
+            "   AND le.media_id IS NOT NULL"
+            "   AND EXISTS ("
+            "     SELECT 1 FROM default_library_closure_edges c"
+            "     WHERE c.default_library_id = l.id AND c.media_id = le.media_id"
+            "   )"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM default_library_intrinsics i"
+            "     WHERE i.default_library_id = l.id AND i.media_id = le.media_id"
+            "   )"
+        )
+    ).rowcount
+    _report(f"deleted {deleted_entries} closure-only physical Default library_entries row(s)")
+
+    # --- Step 4: drop the eight tables, children before parents. -----------
+    for table in _DROPPED_TABLES:
+        op.execute(f"DROP TABLE {table}")
+        _report(f"dropped table {table}")
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE reader_engagement_states")
+    raise NotImplementedError(
+        "0183 is a hard cutover migration and has no downgrade path: step 3"
+        " deletes closure-only physical Default library_entries rows and step 4"
+        " drops eight tables, neither of which is reconstructable."
+    )

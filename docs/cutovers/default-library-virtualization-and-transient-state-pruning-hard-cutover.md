@@ -1,6 +1,6 @@
 # Default Library Virtualization & Transient State Pruning — Hard Cutover
 
-**Status:** Spec · Rev 2 · 2026-07-16
+**Status:** IMPLEMENTED · Rev 2 · 2026-07-16 (implemented 2026-07-17)
 **Type:** Hard cutover — no legacy paths, fallbacks, dual reads/writes, feature flags, or backward compatibility.
 
 ## 0. Sequencing — mandatory

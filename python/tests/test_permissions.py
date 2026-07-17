@@ -16,11 +16,12 @@ Key invariants tested:
   system library — no is_default distinction), minus a viewer tombstone
   (user_media_deletions) and minus an armed teardown intent
   (media_teardown_intents).
-- default_library_intrinsics / default_library_closure_edges rows no longer
-  grant access by themselves: only a membership-reachable physical
-  library_entries row does. Their ORM models are deleted in this slice (the
-  tables themselves still exist at head until 0183); tests below insert such
-  rows via raw SQL to prove they are now inert for visibility purposes.
+- Provenance alone (the former default_library_intrinsics /
+  default_library_closure_edges tables, dropped in migration 0183) never
+  granted access by itself: only a membership-reachable physical
+  library_entries row does. Tests below assert that a media item with no
+  membership-reachable physical entry is unreadable, which proves the same
+  invariant without needing those (now-dropped) tables.
 - Strict revocation: membership/share removal flips outcome immediately
 """
 
@@ -102,47 +103,6 @@ def _add_physical_entry(db: Session, library_id, media_id) -> None:
             "VALUES (:library_id, :position, :media_id)"
         ),
         {"library_id": library_id, "position": next_position, "media_id": media_id},
-    )
-    db.flush()
-
-
-def _create_intrinsic_row(db: Session, default_library_id, media_id) -> None:
-    """Insert a default_library_intrinsics row directly (no physical entry),
-    via raw SQL since its ORM model is deleted in this slice (table itself
-    still exists at head until 0183).
-
-    Used only to prove this table no longer grants read access by itself.
-    """
-    db.execute(
-        text(
-            "INSERT INTO default_library_intrinsics (default_library_id, media_id) "
-            "VALUES (:default_library_id, :media_id) "
-            "ON CONFLICT (default_library_id, media_id) DO NOTHING"
-        ),
-        {"default_library_id": default_library_id, "media_id": media_id},
-    )
-    db.flush()
-
-
-def _create_closure_edge_row(db: Session, default_library_id, media_id, source_library_id) -> None:
-    """Insert a default_library_closure_edges row directly (no physical
-    entry), via raw SQL since its ORM model is deleted in this slice (table
-    itself still exists at head until 0183).
-
-    Used only to prove this table no longer grants read access by itself.
-    """
-    db.execute(
-        text(
-            "INSERT INTO default_library_closure_edges "
-            "(default_library_id, media_id, source_library_id) "
-            "VALUES (:default_library_id, :media_id, :source_library_id) "
-            "ON CONFLICT (default_library_id, media_id, source_library_id) DO NOTHING"
-        ),
-        {
-            "default_library_id": default_library_id,
-            "media_id": media_id,
-            "source_library_id": source_library_id,
-        },
     )
     db.flush()
 
@@ -292,27 +252,28 @@ class TestCanReadMedia:
 
         assert can_read_media(db_session, user_id, media_id) is True
 
-    def test_can_read_media_false_for_intrinsic_row_without_reachable_entry(
-        self, db_session: Session
-    ):
-        """A default_library_intrinsics row alone, with no reachable physical
-        entry, grants nothing (the intrinsic branch is dead)."""
+    def test_can_read_media_false_for_media_with_no_reachable_entry(self, db_session: Session):
+        """A media item with no membership-reachable physical library_entries
+        row grants nothing, even though the viewer has an active default-library
+        membership. (Provenance rows, e.g. the former default_library_intrinsics
+        table, never granted access by themselves -- this proves the invariant
+        without needing that now-dropped table.)"""
         user_id = uuid4()
-        default_lib = ensure_user_and_default_library(db_session, user_id)
+        ensure_user_and_default_library(db_session, user_id)
         media_id = _create_media(db_session)
 
-        # Intrinsic row only -- deliberately no library_entries row anywhere.
-        _create_intrinsic_row(db_session, default_lib, media_id)
-
+        # Deliberately no library_entries row anywhere for media_id.
         assert can_read_media(db_session, user_id, media_id) is False
 
-    def test_can_read_media_false_for_closure_edge_row_without_reachable_entry(
+    def test_can_read_media_false_for_media_reachable_only_via_unrelated_library(
         self, db_session: Session
     ):
-        """A default_library_closure_edges row alone, with no reachable physical
-        entry, grants nothing (the closure branch is dead)."""
+        """Membership in some other library, unrelated to a media's (nonexistent)
+        physical entry, grants nothing. (Provenance rows, e.g. the former
+        default_library_closure_edges table, never granted access by themselves --
+        this proves the invariant without needing that now-dropped table.)"""
         user_id = uuid4()
-        default_lib = ensure_user_and_default_library(db_session, user_id)
+        ensure_user_and_default_library(db_session, user_id)
 
         other_id = uuid4()
         ensure_user_and_default_library(db_session, other_id)
@@ -320,10 +281,8 @@ class TestCanReadMedia:
         _add_membership(db_session, source_lib, user_id)
 
         media_id = _create_media(db_session)
-        # Closure edge only -- deliberately no library_entries row in either
-        # the default library or the source library.
-        _create_closure_edge_row(db_session, default_lib, media_id, source_lib)
-
+        # Deliberately no library_entries row in either the default library or
+        # the source library.
         assert can_read_media(db_session, user_id, media_id) is False
 
     def test_can_read_media_false_for_tombstoned_media_across_visibility_paths(
@@ -411,11 +370,15 @@ class TestVisibleMediaIdsCteSql:
 
         assert media_id not in _visible_media_ids(db_session, non_member_id)
 
-    def test_excludes_intrinsic_row_without_reachable_entry(self, db_session: Session):
+    def test_excludes_media_with_no_reachable_entry(self, db_session: Session):
+        """A media item with no membership-reachable physical library_entries
+        row is excluded, even though the viewer has an active default-library
+        membership. (Provenance rows, e.g. the former default_library_intrinsics
+        table, never granted access by themselves -- this proves the invariant
+        without needing that now-dropped table.)"""
         user_id = uuid4()
-        default_lib = ensure_user_and_default_library(db_session, user_id)
+        ensure_user_and_default_library(db_session, user_id)
         media_id = _create_media(db_session)
-        _create_intrinsic_row(db_session, default_lib, media_id)
 
         assert media_id not in _visible_media_ids(db_session, user_id)
 

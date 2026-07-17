@@ -47,10 +47,11 @@ UUIDv7 via `nexus.ids.new_uuid7`, not a database default — Python 3.12 has no
 standard UUIDv7 generator), and enqueues one addressable `media_teardown` job
 in that same transaction. Intent presence excludes the media from every public
 visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
-The two actual reference owners (`library_entries.py`,
-`default_library_closure.py`) — and the nine ingest callers that create
-references — enforce the barrier via `SELECT ... FOR UPDATE` on the media row
-before insert.
+The one actual reference owner (`library_entries.py`) — and the nine ingest
+callers that create references — enforce the barrier via
+`SELECT ... FOR UPDATE` on the media row before insert. Whether any reference
+remains is a count of physical `library_entries` rows for that media, and
+nothing else.
 
 Three durable task modules own all teardown/lifecycle storage deletion
 (`python/nexus/tasks/`):
@@ -58,9 +59,9 @@ Three durable task modules own all teardown/lifecycle storage deletion
 - **`media_teardown.py`** — the claimed job. Reloads the current job row and
   transitions its checkpoint: `Unprepared` -> `PathsPrepared` (lease-fenced,
   reuses the existing path enumerator) -> `DeletionCommitted` (zero
-  references: deletes child state through owners — the consumption owner's
-  `delete_media_consumption_state_in_txn` and `attention.delete_media_state` —
-  then intent/media, all in one `retry_serializable` transaction) or `Voided`
+  references: deletes child state through owners — the one consumption call
+  `delete_media_consumption_state_in_txn` — then intent/media, all in one
+  `retry_serializable` transaction) or `Voided`
   (a reference reappeared: deletes only the intent). Absent intent + present
   media records `NoOp`; a stale (non-matching) intent records `Stale`. Every
   intent lookup/delete matches both `intentId` and `mediaId`, so an old job

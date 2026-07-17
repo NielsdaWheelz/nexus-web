@@ -27,7 +27,24 @@ corresponding files. `services/attention.py` no longer writes or reads
 position/duration/speed write with revision/epoch fencing. This spec's
 `reading_sessions` table, 30-minute session continuity, attention
 aggregation, and audio-while-playing dwell rule remain canonical and
-unchanged.
+unchanged **as of that note (2026-07-16); superseded again the next day — see
+below**.
+
+**Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+(2026-07-17):** that cutover drops the `reading_sessions` table outright and
+deletes `services/attention.py` and `schemas/attention.py` in full — this
+spec's entire One-line owner claim, session-continuity model, dwell-write
+path, and `attention_on_day`/session-aggregate read surface are gone, not
+just relocated. Document read-state recency is now served by a narrow
+current-state table, `reader_engagement_states` (one row per viewer/media:
+`last_engaged_at` plus, for non-PDF locators, a monotonic
+`max_total_progression`), owned by
+`services/consumption/_reader_engagement_store.py` and populated by a
+retry-safe command the reader-state PUT composes after every successful
+cursor write — not by any session/dwell derivation. The listening heartbeat
+no longer piggybacks a reading-dwell write of any kind. This entire document
+is retained as historical design record only; none of its session/dwell
+machinery is live.
 
 ## One-line
 
