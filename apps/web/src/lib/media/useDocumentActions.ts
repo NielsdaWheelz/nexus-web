@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
@@ -10,17 +9,8 @@ import {
   retryMediaMetadata,
 } from "@/lib/media/ingestionClient";
 import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
+import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-
-interface DocumentDeleteResponse {
-  data: {
-    status: "deleted" | "removed" | "hidden";
-    hard_deleted: boolean;
-    removed_from_library_ids?: string[];
-    hidden_for_viewer?: boolean;
-    remaining_reference_count?: number;
-  };
-}
 
 interface DocumentActionTarget {
   id: string;
@@ -80,9 +70,12 @@ export function useDocumentActions({
     }
     setDeleteBusy(true);
     try {
-      await apiFetch<DocumentDeleteResponse>(`/api/media/${media.id}`, {
-        method: "DELETE",
-      });
+      const result = await deleteMedia(media.id);
+      if (result.kind === "Deleting") {
+        // Removal-in-progress: the last reference is gone and physical deletion
+        // is scheduled server-side.
+        feedback.show({ severity: "info", title: "Deleting from your library" });
+      }
       router.push("/libraries");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;

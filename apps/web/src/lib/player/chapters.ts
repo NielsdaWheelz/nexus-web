@@ -1,99 +1,68 @@
 /**
- * Track chapter shape and helpers for the global audio player.
- *
- * Chapters are sourced from the media's transcript metadata, normalized into
- * a deterministic shape, compared structurally, and looked up by current
- * playback time.
+ * Chapter helpers for the global audio player, adapted to the canonical
+ * `ChapterOut` wire shape (spec `docs/cutovers/lectern-player-lifecycle-hard-cutover.md`
+ * §4): `{ title, startMs, endMs: Presence<int> }`. Chapters arrive already
+ * validated, clamped, and ordered by the backend projection, so these helpers do
+ * NOT re-normalize — they only look up the active chapter and place seek ticks.
  */
 
-export interface GlobalPlayerChapter {
-  chapter_idx: number;
+import { absent, present, type Presence } from "@/lib/api/presence";
+import { clamp } from "@/lib/clamp";
+import type { ChapterOut } from "@/lib/lectern/client";
+
+/** A chapter tick on the seek track, positioned by its start against duration. */
+export interface ChapterMarker {
+  /** 0-based ordinal within the descriptor's chapter list (for "Chapter N"). */
+  index: number;
   title: string;
-  t_start_ms: number;
-  t_end_ms: number | null;
-  url: string | null;
-  image_url: string | null;
+  startMs: number;
+  leftPercent: number;
 }
 
-export interface ChapterInput {
-  chapter_idx: number;
-  title: string;
-  t_start_ms: number;
-  t_end_ms?: number | null;
-  url?: string | null;
-  image_url?: string | null;
-}
-
-export function normalizeTrackChapters(
-  chapters: ReadonlyArray<ChapterInput> | null | undefined,
-): GlobalPlayerChapter[] {
-  if (!Array.isArray(chapters)) {
-    return [];
-  }
-  return chapters
-    .filter(
-      (chapter) =>
-        chapter != null &&
-        Number.isFinite(chapter.chapter_idx) &&
-        typeof chapter.title === "string" &&
-        Number.isFinite(chapter.t_start_ms) &&
-        chapter.t_start_ms >= 0,
-    )
-    .map((chapter) => ({
-      chapter_idx: Math.max(0, Math.floor(chapter.chapter_idx)),
-      title: chapter.title.trim(),
-      t_start_ms: Math.max(0, Math.floor(chapter.t_start_ms)),
-      t_end_ms:
-        typeof chapter.t_end_ms === "number" && Number.isFinite(chapter.t_end_ms)
-          ? Math.max(0, Math.floor(chapter.t_end_ms))
-          : null,
-      url: chapter.url ?? null,
-      image_url: chapter.image_url ?? null,
-    }))
-    .filter((chapter) => chapter.title.length > 0)
-    .sort((lhs, rhs) =>
-      lhs.t_start_ms === rhs.t_start_ms
-        ? lhs.chapter_idx - rhs.chapter_idx
-        : lhs.t_start_ms - rhs.t_start_ms,
-    );
-}
-
-export function areTrackChaptersEqual(
-  lhs: GlobalPlayerChapter[] | null | undefined,
-  rhs: GlobalPlayerChapter[] | null | undefined,
-): boolean {
-  const lhsNormalized = normalizeTrackChapters(lhs);
-  const rhsNormalized = normalizeTrackChapters(rhs);
-  if (lhsNormalized.length !== rhsNormalized.length) {
-    return false;
-  }
-  return lhsNormalized.every((chapter, index) => {
-    const rhsChapter = rhsNormalized[index];
-    return (
-      chapter.chapter_idx === rhsChapter.chapter_idx &&
-      chapter.title === rhsChapter.title &&
-      chapter.t_start_ms === rhsChapter.t_start_ms &&
-      chapter.t_end_ms === rhsChapter.t_end_ms &&
-      chapter.url === rhsChapter.url &&
-      chapter.image_url === rhsChapter.image_url
-    );
-  });
-}
-
-export function getTrackChapterAtSeconds(
-  chapters: GlobalPlayerChapter[] | null | undefined,
-  currentSeconds: number,
-): GlobalPlayerChapter | null {
-  if (!Array.isArray(chapters) || chapters.length === 0) {
-    return null;
-  }
-  const currentMs = Math.max(0, Math.floor(currentSeconds * 1000));
-  let activeChapter: GlobalPlayerChapter | null = null;
+/**
+ * The active chapter at a playback position (ms). Chapters are pre-sorted by
+ * `startMs`; the active one is the last whose `startMs` is at or before the
+ * position. Absent when there are no chapters or the position precedes the first.
+ */
+export function chapterAtPositionMs(
+  chapters: readonly ChapterOut[],
+  positionMs: number,
+): Presence<ChapterOut> {
+  const clamped = Math.max(0, positionMs);
+  let active: Presence<ChapterOut> = absent();
   for (const chapter of chapters) {
-    if (chapter.t_start_ms > currentMs) {
-      break;
-    }
-    activeChapter = chapter;
+    if (chapter.startMs > clamped) break;
+    active = present(chapter);
   }
-  return activeChapter;
+  return active;
+}
+
+/** 0-based ordinal of the active chapter at a position, or -1 when none. */
+export function chapterIndexAtPositionMs(
+  chapters: readonly ChapterOut[],
+  positionMs: number,
+): number {
+  const clamped = Math.max(0, positionMs);
+  let index = -1;
+  for (let i = 0; i < chapters.length; i += 1) {
+    if (chapters[i].startMs > clamped) break;
+    index = i;
+  }
+  return index;
+}
+
+/** Seek-track tick markers positioned by `startMs` against a known duration. */
+export function chapterMarkers(
+  chapters: readonly ChapterOut[],
+  durationMs: number,
+): ChapterMarker[] {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return [];
+  return chapters
+    .map((chapter, index) => ({
+      index,
+      title: chapter.title,
+      startMs: chapter.startMs,
+      leftPercent: clamp((chapter.startMs / durationMs) * 100, 0, 100),
+    }))
+    .filter((marker) => Number.isFinite(marker.leftPercent));
 }

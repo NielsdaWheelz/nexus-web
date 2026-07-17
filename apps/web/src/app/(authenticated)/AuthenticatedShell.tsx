@@ -10,6 +10,7 @@ import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
 import UnauthenticatedApiBoundary from "@/lib/auth/UnauthenticatedApiBoundary";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
@@ -88,18 +89,23 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
         initialState={initialState}
       >
         <MobileChromeProvider>
-          <Launcher />
-          <div className={styles.layout}>
-            <AppNav />
-            <main className={styles.main}>
-              <GlobalPlayerProvider>
-                <WalknoteSessionProvider>
-                  <WorkspaceHost />
-                  <GlobalPlayerFooter />
-                </WalknoteSessionProvider>
-              </GlobalPlayerProvider>
-            </main>
-          </div>
+          {/* One Lectern owner wraps the Launcher/workspace leaves and the player
+              session (spec §3 architecture): LecternProvider -> leaves ->
+              GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
+          <LecternProvider>
+            <Launcher />
+            <div className={styles.layout}>
+              <AppNav />
+              <main className={styles.main}>
+                <GlobalPlayerProvider>
+                  <WalknoteSessionProvider>
+                    <WorkspaceHost />
+                    <GlobalPlayerFooter />
+                  </WalknoteSessionProvider>
+                </GlobalPlayerProvider>
+              </main>
+            </div>
+          </LecternProvider>
         </MobileChromeProvider>
       </WorkspaceStoreProvider>
     </>

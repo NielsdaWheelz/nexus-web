@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
@@ -111,20 +113,6 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
     saving: false,
     ...testState.readerContextFns,
   }),
-}));
-
-vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
-    seekToMs: vi.fn(),
-    play: vi.fn(),
-    addToQueue: vi.fn(async () => {}),
-    queueItems: [],
-    currentTimeSeconds: 0,
-  }),
-}));
-
-vi.mock("@/lib/player/usePodcastTrackSeeding", () => ({
-  usePodcastTrackSeeding: () => {},
 }));
 
 vi.mock("@/lib/media/useLibraryMembership", () => ({
@@ -689,6 +677,8 @@ function renderMediaPane(
 
   render(
     <FeedbackProvider>
+      <LecternProvider>
+      <GlobalPlayerProvider>
       <PaneRuntimeProvider
         paneId="pane-1"
         isActive={true}
@@ -717,6 +707,8 @@ function renderMediaPane(
           </PaneFixedChromeContext.Provider>
         </PaneSecondaryTestHost>
       </PaneRuntimeProvider>
+      </GlobalPlayerProvider>
+      </LecternProvider>
     </FeedbackProvider>,
   );
 
@@ -751,6 +743,10 @@ describe("MediaPaneBody pane sizing", () => {
     testState.apiFetch.mockImplementation(
       async (input: unknown, init?: RequestInit) => {
         const path = pathOf(input);
+        if (path === "/api/lectern") {
+          // Lets the LecternProvider (consumed by the pane) settle to Ready.
+          return jsonResponse({ items: [] });
+        }
         if (path === "/api/media/media-1") {
           return jsonResponse(mediaResponse());
         }

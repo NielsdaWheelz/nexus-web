@@ -1,5 +1,12 @@
-import type { ConsumptionQueueItem } from "@/lib/player/consumptionQueueClient";
 import { vi } from "vitest";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import type {
+  ChapterOut,
+  LecternItem,
+  ListeningStateOut,
+  MediaId,
+  PlayerDescriptor,
+} from "@/lib/lectern/client";
 
 type AudioMetrics = {
   duration: number;
@@ -8,15 +15,8 @@ type AudioMetrics = {
   playbackRate?: number;
 };
 
-type PlaybackQueueItemOptions = {
-  listeningPositionMs?: number;
-  listeningState?: ConsumptionQueueItem["listening_state"];
-  subscriptionDefaultPlaybackSpeed?: number | null;
-  podcastTitle?: string | null;
-  imageUrl?: string | null;
-  durationSeconds?: number | null;
-  kind?: string;
-};
+/** The accessible name of the footer's hidden `<audio>` element. */
+export const FOOTER_AUDIO_LABEL = "Media player audio";
 
 export function setViewportWidth(width: number): void {
   vi.stubGlobal("innerWidth", width);
@@ -51,123 +51,118 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-export function buildPlaybackQueueItem(
-  itemId: string,
+type DescriptorOptions = {
+  subtitle?: string | null;
+  streamUrl?: string;
+  sourceUrl?: string;
+  positionMs?: number;
+  writeRevision?: number;
+  resetEpoch?: number;
+  playbackSpeed?: number;
+  durationMs?: number | null;
+  artworkUrl?: string | null;
+  chapters?: ChapterOut[];
+};
+
+/** Build a decoded `PlayerDescriptor` (the only `playAudio` input). */
+export function buildFooterDescriptor(
   mediaId: string,
   title: string,
-  position: number,
-  options: PlaybackQueueItemOptions = {}
-): ConsumptionQueueItem {
-  const listeningState =
-    options.listeningState === undefined
-      ? {
-          position_ms: options.listeningPositionMs ?? 0,
-          playback_speed: 1,
-        }
-      : options.listeningState;
-
+  options: DescriptorOptions = {},
+): PlayerDescriptor {
   return {
-    item_id: itemId,
-    media_id: mediaId,
-    position,
-    kind: options.kind ?? "podcast_episode",
+    mediaId: mediaId as MediaId,
     title,
-    podcast_title: options.podcastTitle ?? "Queue Podcast",
-    image_url: options.imageUrl ?? null,
-    duration_seconds: options.durationSeconds ?? 120,
-    stream_url: `https://cdn.example.com/${mediaId}.mp3`,
-    reader_href: `/media/${mediaId}`,
-    source: "manual",
-    added_at: "2026-03-22T00:00:00Z",
-    listening_state: listeningState,
-    subscription_default_playback_speed: options.subscriptionDefaultPlaybackSpeed ?? null,
+    subtitle: options.subtitle != null ? present(options.subtitle) : absent(),
+    activation: {
+      kind: "FooterAudio",
+      streamUrl: options.streamUrl ?? `https://cdn.example.com/${mediaId}.mp3`,
+      sourceUrl: options.sourceUrl ?? `https://example.com/${mediaId}`,
+      positionMs: options.positionMs ?? 0,
+      writeRevision: options.writeRevision ?? 0,
+      resetEpoch: options.resetEpoch ?? 0,
+      playbackSpeed: options.playbackSpeed ?? 1,
+      durationMs: options.durationMs != null ? present(options.durationMs) : absent(),
+      artworkUrl: options.artworkUrl != null ? present(options.artworkUrl) : absent(),
+      chapters: options.chapters ?? [],
+    },
   };
 }
 
-export function installPlaybackFetchMock(initialQueueItems: ConsumptionQueueItem[]) {
-  let queueItems = [...initialQueueItems];
-  const AUDIO_KINDS = ["podcast_episode", "video"];
+function initialListeningState(): ListeningStateOut {
+  return {
+    positionMs: 0,
+    durationMs: absent(),
+    playbackSpeed: 1,
+    writeRevision: 0,
+    resetEpoch: 0,
+  };
+}
+
+/**
+ * Fetch mock for the lectern + heartbeat wire. Handles:
+ *   GET  /api/lectern                       -> { data: { items } }
+ *   POST /api/lectern/commands              -> Ordered + current snapshot
+ *   POST /api/consumption/commands          -> StateOnly + current snapshot
+ *   GET/PUT /api/media/{id}/listening-state -> fenced heartbeat state (echoes gen/seq)
+ * Non-command reads default to `{ data: {} }`.
+ */
+export function installLecternPlayerFetchMock(options: { items?: LecternItem[] } = {}) {
+  const items = options.items ?? [];
+  const listeningStates = new Map<string, ListeningStateOut>();
+
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://localhost");
     const method = init?.method ?? "GET";
 
-    if (url.pathname === "/api/queue" && method === "GET") {
-      const kindFilter = url.searchParams.get("kind_filter");
-      const rows =
-        kindFilter === "audio"
-          ? queueItems.filter((item) => AUDIO_KINDS.includes(item.kind))
-          : kindFilter === "readable"
-            ? queueItems.filter((item) => !AUDIO_KINDS.includes(item.kind))
-            : queueItems;
-      return jsonResponse({ data: rows });
+    if (url.pathname === "/api/lectern" && method === "GET") {
+      return jsonResponse({ data: { items } });
     }
-
-    if (url.pathname === "/api/queue/next" && method === "GET") {
-      const currentMediaId = url.searchParams.get("current_media_id");
-      const kind = url.searchParams.get("kind") ?? "audio";
-      const inScope = (item: ConsumptionQueueItem) =>
-        kind === "readable"
-          ? !AUDIO_KINDS.includes(item.kind)
-          : AUDIO_KINDS.includes(item.kind);
-      const currentIndex = queueItems.findIndex((item) => item.media_id === currentMediaId);
-      const start = currentIndex >= 0 ? currentIndex + 1 : 0;
-      const nextItem = queueItems.slice(start).find(inScope) ?? null;
-      return jsonResponse({ data: nextItem });
+    if (url.pathname === "/api/lectern/commands" && method === "POST") {
+      return jsonResponse({ data: { outcome: { kind: "Ordered" }, lectern: { items } } });
     }
-
-    if (url.pathname === "/api/queue/order" && method === "PUT") {
-      const body = JSON.parse(String(init?.body ?? "{}"));
-      const rawItemIds: unknown[] = Array.isArray(body.item_ids) ? body.item_ids : [];
-      const itemIds = rawItemIds.filter((value): value is string => typeof value === "string");
-      // Mirror reorder_queue_for_viewer: the payload MUST be the exact full viewer
-      // set. Reject a subset/superset with 400 so a panel that only sends the audio
-      // rows surfaces as a failed reorder (the mixed-queue reorder contract).
-      const existingIds = new Set(queueItems.map((item) => item.item_id));
-      const requestedIds = new Set(itemIds);
-      const isExactSet =
-        itemIds.length === existingIds.size &&
-        [...existingIds].every((id) => requestedIds.has(id));
-      if (!isExactSet) {
-        return jsonResponse(
-          { error: { code: "E_INVALID_REQUEST", message: "exact full set required" } },
-          400,
-        );
+    if (url.pathname === "/api/consumption/commands" && method === "POST") {
+      return jsonResponse({
+        data: {
+          outcome: { kind: "StateOnly" },
+          lectern: { items },
+          nextItem: { kind: "Absent" },
+          listeningStates: [],
+        },
+      });
+    }
+    if (url.pathname.endsWith("/listening-state")) {
+      const mediaId = url.pathname.split("/").slice(-2, -1)[0] ?? "";
+      const state = listeningStates.get(mediaId) ?? initialListeningState();
+      if (method === "PUT") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          positionMs: number;
+          durationMs: Presence<number>;
+          playbackSpeed: number;
+          heartbeatGeneration: string;
+          heartbeatSequence: number;
+        };
+        const next: ListeningStateOut = {
+          positionMs: body.positionMs,
+          durationMs: body.durationMs,
+          playbackSpeed: body.playbackSpeed,
+          writeRevision: state.writeRevision + 1,
+          resetEpoch: state.resetEpoch,
+        };
+        listeningStates.set(mediaId, next);
+        return jsonResponse({
+          data: {
+            listeningState: next,
+            heartbeatGeneration: body.heartbeatGeneration,
+            heartbeatSequence: body.heartbeatSequence,
+          },
+        });
       }
-      const byId = new Map(queueItems.map((item) => [item.item_id, item]));
-      queueItems = itemIds
-        .map((itemId, index) => {
-          const existing = byId.get(itemId);
-          if (!existing) {
-            return null;
-          }
-          return { ...existing, position: index };
-        })
-        .filter((item): item is ConsumptionQueueItem => item != null);
-      return jsonResponse({ data: queueItems });
-    }
-
-    if (url.pathname.startsWith("/api/queue/items/") && method === "DELETE") {
-      const itemId = url.pathname.split("/").pop() ?? "";
-      queueItems = queueItems
-        .filter((item) => item.item_id !== itemId)
-        .map((item, index) => ({ ...item, position: index }));
-      return jsonResponse({ data: queueItems });
-    }
-
-    if (url.pathname === "/api/queue/clear" && method === "POST") {
-      queueItems = [];
-      return jsonResponse({ data: [] });
-    }
-
-    if (url.pathname.startsWith("/api/media/") && url.pathname.endsWith("/listening-state")) {
-      return new Response(null, { status: 204 });
+      return jsonResponse({ data: state });
     }
 
     return jsonResponse({ data: {} });
   });
 
-  return {
-    fetchMock,
-    getQueueItems: () => queueItems,
-  };
+  return { fetchMock };
 }

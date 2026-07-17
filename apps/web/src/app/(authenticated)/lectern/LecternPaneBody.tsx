@@ -1,89 +1,88 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { CollectionRowView, ReadStatus } from "@/lib/collections/types";
-import {
-  CONSUMPTION_QUEUE_UPDATED_EVENT,
-  fetchConsumptionQueue,
-  removeConsumptionQueueItem,
-  reorderConsumptionQueue,
-  type ConsumptionQueueItem,
-} from "@/lib/player/consumptionQueueClient";
+import type { LecternItem, LecternItemId, LecternSnapshot } from "@/lib/lectern/client";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { descriptorFromLecternItem } from "@/lib/player/playerSession";
+import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import styles from "./LecternPaneBody.module.css";
 
-const AUDIO_KINDS = ["podcast_episode", "video"];
-
-function itemConsumption(item: ConsumptionQueueItem): CollectionRowView["consumption"] {
-  let fraction: number | null | undefined = item.progress_fraction;
-  if (fraction == null && AUDIO_KINDS.includes(item.kind) && item.listening_state) {
-    const durationMs = (item.duration_seconds ?? 0) * 1000;
-    fraction = durationMs > 0 ? item.listening_state.position_ms / durationMs : null;
+/** Pseudo-kind for the row lead icon; the Lectern snapshot carries only an
+ * activation, not the underlying media kind. */
+function iconKindForActivation(item: LecternItem): string {
+  switch (item.activation.kind) {
+    case "FooterAudio":
+      return "podcast_episode";
+    case "Readable":
+      return "web_article";
+    case "OpenPane":
+      return "video";
   }
-  if (fraction == null) return undefined;
-  const clamped = Math.max(0, Math.min(1, fraction));
-  const status: ReadStatus = clamped >= 0.95 ? "finished" : clamped > 0 ? "in_progress" : "unread";
-  return { status, fraction: clamped };
+}
+
+function itemConsumption(item: LecternItem): CollectionRowView["consumption"] {
+  const { state, progress } = item.consumption;
+  const fraction = progress.kind === "Present" ? progress.value : undefined;
+  if (state === "Unread" && fraction === undefined) return undefined;
+  const status: ReadStatus =
+    state === "Finished" ? "finished" : state === "InProgress" ? "in_progress" : "unread";
+  return fraction === undefined ? { status } : { status, fraction };
+}
+
+function snapshotItems(
+  resourceData: LecternSnapshot | undefined,
+  pendingSnapshot: LecternSnapshot | undefined,
+): LecternItem[] {
+  if (pendingSnapshot) return pendingSnapshot.items;
+  return resourceData ? resourceData.items : [];
 }
 
 export default function LecternPaneBody() {
-  const [items, setItems] = useState<ConsumptionQueueItem[]>([]);
-  const [status, setStatus] = useState<"loading" | "error" | "ready">("loading");
+  const { resource, mutation, removeItem, setOrder } = useLectern();
+  const { playAudio } = useGlobalPlayer();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const next = await fetchConsumptionQueue();
-      setItems(next);
-      setStatus("ready");
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setStatus("error");
-      setFeedback(toFeedback(err, { fallback: "Failed to load the Lectern" }));
-    }
-  }, []);
+  // A leaf never holds a snapshot cache: it renders the provider's optimistic
+  // `presentedSnapshot` while a mutation is Pending, otherwise canonical data.
+  const pendingSnapshot =
+    mutation.kind === "Pending" ? mutation.presentedSnapshot : undefined;
+  const items = snapshotItems(
+    resource.status === "ready" ? resource.data : undefined,
+    pendingSnapshot,
+  );
+  const status: "loading" | "error" | "ready" =
+    resource.status === "ready"
+      ? "ready"
+      : resource.status === "error"
+        ? "error"
+        : "loading";
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Stay in sync when the queue changes elsewhere (player, action menus, launcher).
-  useEffect(() => {
-    const onUpdate = () => void refresh();
-    window.addEventListener(CONSUMPTION_QUEUE_UPDATED_EVENT, onUpdate);
-    return () => window.removeEventListener(CONSUMPTION_QUEUE_UPDATED_EVENT, onUpdate);
-  }, [refresh]);
-
-  const handleRemove = useCallback(async (itemId: string) => {
-    try {
-      const next = await removeConsumptionQueueItem(itemId);
-      setItems(next);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(toFeedback(err, { fallback: "Failed to remove from the Lectern" }));
-    }
-  }, []);
+  const handleRemove = useCallback(
+    (itemId: LecternItemId) => {
+      void removeItem(itemId).catch((err) => {
+        if (handleUnauthenticatedApiError(err)) return;
+        setFeedback(toFeedback(err, { fallback: "Failed to remove from the Lectern" }));
+      });
+    },
+    [removeItem],
+  );
 
   const handleReorder = useCallback(
-    async (nextItems: ConsumptionQueueItem[]) => {
-      const previous = items;
-      setItems(nextItems.map((item, index) => ({ ...item, position: index })));
-      try {
-        const confirmed = await reorderConsumptionQueue(nextItems.map((item) => item.item_id));
-        setItems(confirmed);
-      } catch (err) {
-        setItems(previous);
+    (itemIds: LecternItemId[]) => {
+      void setOrder(itemIds).catch((err) => {
         if (handleUnauthenticatedApiError(err)) return;
         setFeedback(toFeedback(err, { fallback: "Failed to reorder the Lectern" }));
-      }
+      });
     },
-    [items],
+    [setOrder],
   );
 
   usePaneChromeOverride({
@@ -91,35 +90,51 @@ export default function LecternPaneBody() {
     folioPending: status === "loading",
   });
 
-  const rows: CollectionRowView[] = items.map((item) => ({
-    id: item.item_id,
-    kind: "media",
-    primary: { kind: "link", href: item.reader_href, paneTitleHint: item.title },
-    lead: { icon: mediaKindIcon(item.kind) },
-    headline: { text: item.title },
-    signals: item.podcast_title ? [{ value: item.podcast_title }] : [],
-    consumption: itemConsumption(item),
-    relatedMediaId: item.media_id,
-    actions: [
-      {
-        id: "remove-from-lectern",
-        label: "Remove from Lectern",
-        tone: "danger",
-        onSelect: () => void handleRemove(item.item_id),
-      },
-    ],
-    swipeActions: [
-      {
-        id: "remove-from-lectern",
-        label: "Remove",
-        icon: Trash2,
-        tone: "danger",
-        onActivate: () => void handleRemove(item.item_id),
-      },
-    ],
-  }));
+  const rows: CollectionRowView[] = items.map((item) => {
+    const actions: CollectionRowView["actions"] = [];
+    if (item.activation.kind === "FooterAudio") {
+      actions.push({
+        id: "play",
+        label: "Play",
+        onSelect: () => playAudio(descriptorFromLecternItem(item)),
+      });
+    }
+    actions.push({
+      id: "remove-from-lectern",
+      label: "Remove from Lectern",
+      tone: "danger",
+      onSelect: () => handleRemove(item.itemId),
+    });
+    return {
+      id: item.itemId,
+      kind: "media",
+      primary: { kind: "link", href: item.href, paneTitleHint: item.title },
+      lead: { icon: mediaKindIcon(iconKindForActivation(item)) },
+      headline: { text: item.title },
+      signals: item.subtitle.kind === "Present" ? [{ value: item.subtitle.value }] : [],
+      consumption: itemConsumption(item),
+      relatedMediaId: item.mediaId,
+      actions,
+      swipeActions: [
+        {
+          id: "remove-from-lectern",
+          label: "Remove",
+          icon: Trash2,
+          tone: "danger",
+          onActivate: () => handleRemove(item.itemId),
+        },
+      ],
+    };
+  });
 
-  const byRowId = new Map(items.map((item) => [item.item_id, item]));
+  const byRowId = new Map(items.map((item) => [item.itemId as string, item]));
+
+  const errorNotice =
+    resource.status === "error"
+      ? <FeedbackNotice feedback={toFeedback(resource.error, { fallback: "Failed to load the Lectern" })} />
+      : feedback
+        ? <FeedbackNotice feedback={feedback} />
+        : undefined;
 
   return (
     <CollectionView
@@ -132,16 +147,16 @@ export default function LecternPaneBody() {
         rows.length > 0 ? <p className={styles.lecternKicker}>On the lectern</p> : undefined
       }
       notice={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
-      error={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}
+      error={errorNotice}
       empty={<p className={styles.emptyState}>Nothing on the lectern yet.</p>}
       sortable={{
         className: styles.lecternList,
         onReorder: (nextRows) => {
           const nextItems = nextRows
             .map((row) => byRowId.get(row.id))
-            .filter((item): item is ConsumptionQueueItem => item !== undefined);
+            .filter((item): item is LecternItem => item !== undefined);
           if (nextItems.length === items.length) {
-            void handleReorder(nextItems);
+            handleReorder(nextItems.map((item) => item.itemId));
           }
         },
         renderControls: (row, { handleProps }) => (

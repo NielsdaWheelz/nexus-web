@@ -17,13 +17,19 @@ type EpisodeTranscriptController = ReturnType<
 
 interface EpisodeControlsProps {
   episode: PodcastEpisodeMedia;
-  inQueue: boolean;
+  /** Whether this episode is audio-playable (playerDescriptor Present). */
+  isAudioEpisode: boolean;
+  /** Whether this episode is currently On Lectern. */
+  onLectern: boolean;
+  /** Disable "Play next" when it would target the active Lectern origin. */
+  playNextDisabled: boolean;
   transcriptionAllowed: boolean;
   billingDisabled: boolean;
   showNotesExpanded: boolean;
   transcript: EpisodeTranscriptController;
   onToggleShowNotes: (mediaId: string) => void;
-  onAddToQueue: (mediaId: string, position: "next" | "last") => void;
+  onPlayNext: (mediaId: string) => void;
+  onAddToLectern: (mediaId: string) => void;
 }
 
 /**
@@ -34,13 +40,16 @@ interface EpisodeControlsProps {
  */
 export default function EpisodeControls({
   episode,
-  inQueue,
+  isAudioEpisode,
+  onLectern,
+  playNextDisabled,
   transcriptionAllowed,
   billingDisabled,
   showNotesExpanded,
   transcript,
   onToggleShowNotes,
-  onAddToQueue,
+  onPlayNext,
+  onAddToLectern,
 }: EpisodeControlsProps) {
   const canRequestTranscript =
     transcriptionAllowed && canRequestTranscriptForEpisode(episode);
@@ -82,27 +91,32 @@ export default function EpisodeControls({
           </span>
         </span>
       )}
-      <Button
-        variant="secondary"
-        size="sm"
-        aria-label={`Play next for ${episode.title}`}
-        onClick={() => {
-          onAddToQueue(episode.id, "next");
-        }}
-      >
-        Play next
-      </Button>
-      <Button
-        variant="secondary"
-        size="sm"
-        aria-label={`Add ${episode.title} to queue`}
-        onClick={() => {
-          onAddToQueue(episode.id, "last");
-        }}
-      >
-        Add to queue
-      </Button>
-      {inQueue && <span className={styles.queueBadge}>In Queue</span>}
+      {isAudioEpisode && (
+        <>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label={`Play next for ${episode.title}`}
+            disabled={playNextDisabled}
+            onClick={() => {
+              onPlayNext(episode.id);
+            }}
+          >
+            Play next
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label={`Add ${episode.title} to Lectern`}
+            onClick={() => {
+              onAddToLectern(episode.id);
+            }}
+          >
+            Add to Lectern
+          </Button>
+          {onLectern && <span className={styles.queueBadge}>On Lectern</span>}
+        </>
+      )}
       {canRequestTranscript &&
         !transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
           <Button

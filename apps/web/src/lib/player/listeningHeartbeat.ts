@@ -18,6 +18,7 @@
  */
 
 import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { Presence } from "@/lib/api/presence";
 import { decodeListeningState, type ListeningStateOut, type MediaId } from "@/lib/lectern/client";
 import type { OverlayEntry } from "@/lib/player/playerSession";
@@ -149,6 +150,9 @@ function decodeHeartbeatResult(raw: unknown): HeartbeatResult {
 }
 
 function toApiError(error: unknown): ApiError {
+  // Classify unauthenticated failures to the login-redirect owner. A 401 PUT
+  // recovers via GET, which also 401s and funnels here before suspension.
+  handleUnauthenticatedApiError(error);
   if (isApiError(error)) return error;
   return new ApiError(
     0,

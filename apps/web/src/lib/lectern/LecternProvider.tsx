@@ -28,6 +28,7 @@ import {
 } from "react";
 import { ApiError, isApiError } from "@/lib/api/client";
 import type { AsyncResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
   getLectern,
@@ -77,11 +78,15 @@ export interface LecternCapability {
   placeItems(input: { mediaIds: MediaId[]; placement: Placement }): Promise<LecternResult>;
   removeItem(itemId: LecternItemId): Promise<LecternResult>;
   setOrder(itemIds: LecternItemId[]): Promise<LecternResult>;
-  ensureMediaFinished(mediaId: MediaId): Promise<ConsumptionResult>;
+  ensureMediaFinished(
+    mediaId: MediaId,
+    options?: { clientMutationId?: string },
+  ): Promise<ConsumptionResult>;
   finishLecternItem(input: {
     mediaId: MediaId;
     itemId: LecternItemId;
     nextCapability: NextCapability;
+    clientMutationId?: string;
   }): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
   setBatchState(input: {
@@ -114,6 +119,10 @@ function makeAbortError(): DOMException {
 }
 
 function toApiError(error: unknown): ApiError {
+  // Every caught failure flows through here before it is surfaced: classify
+  // unauthenticated errors so the login-redirect owner takes over (the lane
+  // still records the failure while the navigation starts).
+  handleUnauthenticatedApiError(error);
   if (isApiError(error)) return error;
   if (error instanceof DOMException && error.name === "TimeoutError") {
     return new ApiError(0, "E_TIMEOUT", "The command exceeded its deadline");
@@ -368,10 +377,12 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
       try {
         snapshot = await runWithDeadline(getLectern);
         ok = true;
-      } catch {
+      } catch (error) {
         // justify-ignore-error: revalidation is best-effort. A failed background
         // GET keeps the last good snapshot; the spec surfaces no error affordance
-        // for revalidation (never poll, no public refresh).
+        // for revalidation (never poll, no public refresh). Unauthenticated
+        // failures still classify to the login-redirect owner.
+        handleUnauthenticatedApiError(error);
         ok = false;
       }
       if (!active(gen) || !ok) return;
@@ -483,11 +494,17 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     return enqueueLecternMutation(generation, command, presented);
   }
 
-  function ensureMediaFinished(mediaId: MediaId): Promise<ConsumptionResult> {
+  // The player passes its pre-minted CompletionAttempt id so the completion FIFO
+  // freezes one logical id/body across retries (spec §6 CompletionAttempt); the
+  // provider still mints when a caller supplies none.
+  function ensureMediaFinished(
+    mediaId: MediaId,
+    options?: { clientMutationId?: string },
+  ): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
     const command: ConsumptionCommand = {
       kind: "EnsureMediaFinished",
-      clientMutationId: crypto.randomUUID(),
+      clientMutationId: options?.clientMutationId ?? crypto.randomUUID(),
       mediaId,
     };
     return enqueueConsumptionMutation(generation, command, snapshot);
@@ -497,11 +514,12 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     mediaId: MediaId;
     itemId: LecternItemId;
     nextCapability: NextCapability;
+    clientMutationId?: string;
   }): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
     const command: ConsumptionCommand = {
       kind: "FinishLecternItem",
-      clientMutationId: crypto.randomUUID(),
+      clientMutationId: input.clientMutationId ?? crypto.randomUUID(),
       mediaId: input.mediaId,
       itemId: input.itemId,
       nextCapability: input.nextCapability,

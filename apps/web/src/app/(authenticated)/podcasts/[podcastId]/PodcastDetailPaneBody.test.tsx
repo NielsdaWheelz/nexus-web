@@ -55,13 +55,6 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
   }),
 }));
 
-vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
-    addToQueue: vi.fn(async () => []),
-    queueItems: [],
-  }),
-}));
-
 vi.mock("../podcastSubscriptions", async () => {
   const actual = await vi.importActual<
     typeof import("../podcastSubscriptions")
@@ -73,6 +66,21 @@ vi.mock("../podcastSubscriptions", async () => {
 });
 
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+
+// Render the pane under the real Lectern + global-player providers (the pane
+// reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
+// answers the provider's initial GET /api/lectern.
+function Wrapped() {
+  return (
+    <LecternProvider>
+      <GlobalPlayerProvider>
+        <PodcastDetailPaneBody />
+      </GlobalPlayerProvider>
+    </LecternProvider>
+  );
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -145,6 +153,7 @@ function episodeMedia({
     failure_stage: null,
     last_error_code: null,
     playback_source: null,
+    playerDescriptor: { kind: "Absent" },
     capabilities: {
       can_read: true,
       can_highlight: true,
@@ -234,10 +243,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       if (url.pathname === "/api/media/transcript/forecasts") {
         return jsonResponse({ data: [] });
       }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastDetailPaneBody />);
+    render(<Wrapped />);
 
     const subscribeButton = await screen.findByRole("button", {
       name: "Subscribe",
@@ -282,10 +294,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({ data: [], page: { next_cursor: null } });
       }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastDetailPaneBody />);
+    render(<Wrapped />);
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Show notes for Episode 1" }),
@@ -338,16 +353,19 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       if (url.pathname === "/api/libraries/writable-destinations") {
         return jsonResponse({ data: [], page: { next_cursor: null } });
       }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    const { rerender } = render(<PodcastDetailPaneBody />);
+    const { rerender } = render(<Wrapped />);
     await waitFor(() => {
       expect(calls).toContain("/api/podcasts/podcast-1");
     });
 
     currentPodcastId = "podcast-2";
-    rerender(<PodcastDetailPaneBody />);
+    rerender(<Wrapped />);
 
     expect(await screen.findByText("Current Episode")).toBeInTheDocument();
 
@@ -396,10 +414,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         }
         return jsonResponse({ data: [transcriptForecast()] });
       }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastDetailPaneBody />);
+    render(<Wrapped />);
 
     await waitFor(() => {
       expect(forecastCalls).toBe(1);

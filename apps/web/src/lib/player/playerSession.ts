@@ -345,6 +345,35 @@ export function manualNext(
   };
 }
 
+// --- Manual-Next preview (spec §6 footer "Next on the Lectern" line) --------
+
+/**
+ * The presentation-only preview of the *actual* manual-Next target, computed by
+ * the same head/suffix rule {@link manualNext} uses so the footer never
+ * duplicates the selection logic. A pending forward entry wins ("Forward"); else
+ * the first footer audio after an exact origin ("Lectern"); else "None". Purely
+ * derived from current state — it moves nothing.
+ */
+export type NextPreview =
+  | { kind: "None" }
+  | { kind: "Forward"; descriptor: PlayerDescriptor }
+  | { kind: "Lectern"; descriptor: PlayerDescriptor };
+
+export function previewNextDescriptor(
+  state: PlayerSessionState,
+  history: PlayerHistory,
+  snapshot: LecternSnapshot,
+): NextPreview {
+  const current = sessionOf(state);
+  if (current === undefined) return { kind: "None" };
+  if (history.forward.length > 0) {
+    return { kind: "Forward", descriptor: history.forward[history.forward.length - 1] };
+  }
+  const nextItem = selectSuffixAudio(current, snapshot);
+  if (nextItem === undefined) return { kind: "None" };
+  return { kind: "Lectern", descriptor: descriptorFromLecternItem(nextItem) };
+}
+
 // --- Natural end advance (spec §1 + §6 "Natural end never consumes forward") -
 
 /**

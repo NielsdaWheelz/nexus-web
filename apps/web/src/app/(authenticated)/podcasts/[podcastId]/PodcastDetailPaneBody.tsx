@@ -20,6 +20,8 @@ import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { assumeMediaId, type Placement } from "@/lib/lectern/client";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
@@ -73,7 +75,8 @@ export default function PodcastDetailPaneBody() {
   const paneSearchParams = usePaneSearchParams();
   const isMobileViewport = useIsMobileViewport();
   const { account: billingAccount } = useBillingAccount();
-  const { addToQueue, queueItems } = useGlobalPlayer();
+  const player = useGlobalPlayer();
+  const lectern = useLectern();
   const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
   const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
   const [episodeStateFilter, setEpisodeStateFilter] =
@@ -666,19 +669,13 @@ export default function PodcastDetailPaneBody() {
         }),
       );
       try {
-        await apiFetch(`/api/media/${mediaId}/listening-state`, {
-          method: "PUT",
-          body: JSON.stringify(
-            isCompleted
-              ? {
-                  is_completed: true,
-                }
-              : {
-                  is_completed: false,
-                  position_ms: 0,
-                },
-          ),
-        });
+        // The heartbeat engine owns the listening-state route now; played/unplayed
+        // toggles flow through the Lectern consumption FIFO (spec §5.2).
+        if (isCompleted) {
+          await lectern.ensureMediaFinished(assumeMediaId(mediaId));
+        } else {
+          await lectern.setUnread(assumeMediaId(mediaId));
+        }
       } catch (markError) {
         setEpisodes(previousEpisodes);
         if (handleUnauthenticatedApiError(markError)) return;
@@ -693,7 +690,13 @@ export default function PodcastDetailPaneBody() {
         markingEpisodeIds.remove(mediaId);
       }
     },
-    [applyEpisodeCompletionState, episodeStateFilter, episodes, markingEpisodeIds],
+    [
+      applyEpisodeCompletionState,
+      episodeStateFilter,
+      episodes,
+      lectern,
+      markingEpisodeIds,
+    ],
   );
 
   const visibleUnplayedEpisodeIds = useMemo(
@@ -748,12 +751,9 @@ export default function PodcastDetailPaneBody() {
       }),
     );
     try {
-      await apiFetch("/api/media/listening-state/batch", {
-        method: "POST",
-        body: JSON.stringify({
-          media_ids: visibleUnplayedEpisodeIds,
-          is_completed: true,
-        }),
+      await lectern.setBatchState({
+        mediaIds: visibleUnplayedEpisodeIds.map(assumeMediaId),
+        state: "Finished",
       });
     } catch (markError) {
       setEpisodes(previousEpisodes);
@@ -770,12 +770,55 @@ export default function PodcastDetailPaneBody() {
     applyEpisodeCompletionState,
     episodeStateFilter,
     episodes,
+    lectern,
     visibleUnplayedEpisodeIds,
   ]);
 
-  const queueMediaIds = useMemo(() => {
-    return new Set(queueItems.map((item) => item.media_id));
-  }, [queueItems]);
+  // Which episodes are already On Lectern, from the canonical Lectern snapshot
+  // (replaces the deleted player queue). Empty until the snapshot is Ready.
+  const lecternMediaIds = useMemo<Set<string>>(() => {
+    const snapshot = lectern.resource;
+    if (snapshot.status !== "ready") {
+      return new Set<string>();
+    }
+    return new Set<string>(snapshot.data.items.map((item) => item.mediaId));
+  }, [lectern.resource]);
+
+  // "Play next" is disabled/no-op for the media that is the active Lectern
+  // origin's descriptor (spec §5.1 "targeting the current origin is disabled").
+  const playNextDisabledMediaId = useMemo<string | null>(() => {
+    const state = player.state;
+    if (state.kind === "Absent") {
+      return null;
+    }
+    const { session } = state;
+    return session.origin.kind === "Lectern" ? session.descriptor.mediaId : null;
+  }, [player.state]);
+
+  // Play next: place After the exact Lectern origin item, else at the head
+  // (spec §5.1). Add to Lectern: append Last.
+  const handlePlayNext = useCallback(
+    (mediaId: string) => {
+      const state = player.state;
+      const session = state.kind === "Absent" ? undefined : state.session;
+      const placement: Placement =
+        session && session.origin.kind === "Lectern"
+          ? { kind: "After", itemId: session.origin.itemId }
+          : { kind: "First" };
+      void lectern.placeItems({ mediaIds: [assumeMediaId(mediaId)], placement });
+    },
+    [lectern, player.state],
+  );
+
+  const handleAddToLectern = useCallback(
+    (mediaId: string) => {
+      void lectern.placeItems({
+        mediaIds: [assumeMediaId(mediaId)],
+        placement: { kind: "Last" },
+      });
+    },
+    [lectern],
+  );
   const activeSubscription = detail?.subscription ?? null;
   const podcastMembershipBusy = actions.busyLibraryMembershipKeys.ids.size > 0;
   const paneOptions = podcastResourceOptions({
@@ -834,7 +877,8 @@ export default function PodcastDetailPaneBody() {
       busyMediaIds={busyMediaIds}
       markingEpisodeIds={markingEpisodeIds}
       expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-      queueMediaIds={queueMediaIds}
+      lecternMediaIds={lecternMediaIds}
+      playNextDisabledMediaId={playNextDisabledMediaId}
       visibleUnplayedEpisodeIds={visibleUnplayedEpisodeIds}
       markAllAsPlayedBusy={markAllAsPlayedBusy}
       hasMoreEpisodes={hasMoreEpisodes}
@@ -844,9 +888,8 @@ export default function PodcastDetailPaneBody() {
       }
       onLoadMoreEpisodes={() => void handleLoadMoreEpisodes()}
       onToggleShowNotes={toggleEpisodeShowNotesExpansion}
-      onAddToQueue={(mediaId, position) => {
-        void addToQueue(mediaId, position);
-      }}
+      onPlayNext={handlePlayNext}
+      onAddToLectern={handleAddToLectern}
       onOpenChat={(episode) => {
         void handleOpenEpisodeChat(episode);
       }}

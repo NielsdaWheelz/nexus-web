@@ -23,6 +23,7 @@ import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import type { OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
@@ -66,6 +67,9 @@ function mockApi() {
       return jsonResponse({ data: null });
     }
     if (url.pathname === "/api/oracle/readings") return jsonResponse({ data: [] });
+    // The Launcher now renders inside a LecternProvider (useLectern → dispatch's
+    // queue-add owner), which fires one reconciliation GET on mount.
+    if (url.pathname === "/api/lectern") return jsonResponse({ data: { items: [] } });
     if (url.pathname === "/api/search") {
       return jsonResponse({ results: [], page: { has_more: false, next_cursor: null } });
     }
@@ -84,7 +88,9 @@ function renderLauncher() {
             workspacePrimaryMetrics={workspacePrimaryMetrics}
             initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
           >
-            <Launcher />
+            <LecternProvider>
+              <Launcher />
+            </LecternProvider>
           </WorkspaceStoreProvider>
         </FeedbackProvider>
       </KeybindingsProvider>,
@@ -103,10 +109,12 @@ function renderLauncherWithOpener() {
             workspacePrimaryMetrics={workspacePrimaryMetrics}
             initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
           >
-            <button type="button" data-testid="launcher-opener">
-              Opener
-            </button>
-            <Launcher />
+            <LecternProvider>
+              <button type="button" data-testid="launcher-opener">
+                Opener
+              </button>
+              <Launcher />
+            </LecternProvider>
           </WorkspaceStoreProvider>
         </FeedbackProvider>
       </KeybindingsProvider>,

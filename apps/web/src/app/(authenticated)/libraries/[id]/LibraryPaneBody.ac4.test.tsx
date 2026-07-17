@@ -7,6 +7,7 @@ import {
   fetchInputPath,
   stubFetch,
 } from "@/__tests__/helpers/fetch";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
@@ -105,6 +106,22 @@ function fetchInputPathWithSearch(input: unknown): string {
   return `${url.pathname}${url.search}`;
 }
 
+// LibraryPaneBody now consumes the Lectern capability (mark-finished / mark-unread /
+// add-to-lectern), so it must render under a LecternProvider. The provider issues an
+// initial GET /api/lectern on mount; `lecternGetResponse` answers it with an empty
+// snapshot envelope so the provider settles to Ready without console noise.
+const paneWithLectern = (
+  <LecternProvider>
+    <LibraryPaneBody />
+  </LecternProvider>
+);
+
+function lecternGetResponse(input: unknown): Response | null {
+  return fetchInputPath(input) === "/api/lectern"
+    ? Response.json({ data: { items: [] } })
+    : null;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -115,6 +132,8 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     // Any fetch of the library resource is a failure signal; reject it loudly
     // and resolve everything else empty so a stray call never masks the assertion.
     const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
       if (fetchInputPath(input) === `/api/libraries/${LIBRARY_ID}`) {
         throw new Error(`library resource fetched: ${String(input)}`);
       }
@@ -134,7 +153,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
-      children: <LibraryPaneBody />,
+      children: paneWithLectern,
     });
 
     // Seed consumed: the pane left the loading state and rendered the seeded
@@ -160,7 +179,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
   it("does not expose media mutation actions for system-library entries", async () => {
     const user = userEvent.setup();
-    stubFetch(async () => {
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
       return new Response("{}", {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -171,7 +192,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     renderHydratedPane({
       href,
       resources: { [LIBRARY_ID]: seededSystemLibraryWithMutableMedia() },
-      children: <LibraryPaneBody />,
+      children: paneWithLectern,
     });
 
     expect(await screen.findByText("Corpus Work")).toBeInTheDocument();
@@ -206,6 +227,8 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
   it("loads another page of library entries", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
@@ -231,7 +254,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           entriesPage: { has_more: true, next_cursor: "cursor-2" },
         },
       },
-      children: <LibraryPaneBody />,
+      children: paneWithLectern,
     });
 
     expect(await screen.findByText("First Page Work")).toBeInTheDocument();
@@ -247,6 +270,8 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
   it("loads another page of resonance-sorted library entries", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
       if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
         return Response.json({
@@ -278,7 +303,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
-      children: <LibraryPaneBody />,
+      children: paneWithLectern,
     });
 
     expect(await screen.findByText("First Resonance Work")).toBeInTheDocument();

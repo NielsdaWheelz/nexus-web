@@ -33,14 +33,14 @@ import {
 import { isMediaRetrievalLocator, isRetrievalLocator } from "@/lib/api/sse/locators";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { useCompletionUndo } from "@/lib/lectern/useCompletionUndo";
 import {
-  addToLectern,
-  fetchConsumptionQueue,
-  fetchNextConsumptionQueueItem,
-  notifyConsumptionQueueUpdated,
-  removeConsumptionQueueItem,
-  type ConsumptionQueueItem,
-} from "@/lib/player/consumptionQueueClient";
+  decodePresentPlayerDescriptor,
+  parseMediaId,
+  type LecternSnapshot,
+  type PlayerDescriptor,
+} from "@/lib/lectern/client";
 import {
   mergePdfPageHighlights,
   pdfHighlightsForActivePage,
@@ -228,7 +228,6 @@ import {
   normalizeFragments,
   resolveActiveTranscriptFragment,
 } from "@/lib/media/transcriptView";
-import { usePodcastTrackSeeding } from "@/lib/player/usePodcastTrackSeeding";
 import {
   type Highlight,
   type MediaHighlight,
@@ -306,6 +305,10 @@ export interface Media extends MediaProcessingSnapshot {
   } | null;
   subscription_default_playback_speed?: number | null;
   episode_state?: "unplayed" | "in_progress" | "played" | null;
+  // Presence<PlayerDescriptor> (camelCase key even inside this snake_case DTO;
+  // spec §4/§6). Absent for non-audio media; may be missing until the backend
+  // field lands — decoded defensively at the call site.
+  playerDescriptor?: unknown;
   description?: string | null;
   description_html?: string | null;
   description_text?: string | null;
@@ -644,60 +647,113 @@ export default function MediaPaneBody() {
   const [textRestoreSettled, setTextRestoreSettled] = useState(false);
   const [readerLayoutReady, setReaderLayoutReady] = useState(false);
   // End-of-document Lectern prompt (§7.7): mirror committed total_progression into
-  // React so a threshold effect can offer the next readable queue entry.
+  // React so a threshold derivation can offer the next Readable Lectern entry.
   const [currentTotalProgression, setCurrentTotalProgression] = useState<number | null>(null);
-  const [nextReadableItem, setNextReadableItem] = useState<ConsumptionQueueItem | null>(null);
+
+  const lectern = useLectern();
+  const offerCompletionUndo = useCompletionUndo();
+  const lecternResource = lectern.resource;
+  const lecternSnapshot = useMemo<LecternSnapshot>(
+    () => (lecternResource.status === "ready" ? lecternResource.data : { items: [] }),
+    [lecternResource],
+  );
+  // Latest snapshot for imperative completion handlers (pre-completion basis for Undo).
+  const lecternSnapshotRef = useRef<LecternSnapshot>(lecternSnapshot);
+  lecternSnapshotRef.current = lecternSnapshot;
 
   useEffect(() => {
     setCurrentTotalProgression(null);
-    setNextReadableItem(null);
   }, [id]);
 
-  // At end-of-document, offer the next readable queue entry (§7.7). Explicit tap
-  // only — never auto-advance (N-2). Below the threshold, the prompt is absent.
-  useEffect(() => {
-    if ((currentTotalProgression ?? 0) < LECTERN_PROMPT_THRESHOLD) {
-      setNextReadableItem(null);
-      return;
+  // At end-of-document, offer the first Readable item after this media's row on
+  // the Lectern (§7.7). Explicit tap only — never auto-advance (N-2). Below the
+  // threshold, or when this media has no Lectern row, the prompt is absent.
+  const nextReadableItem = useMemo(() => {
+    if ((currentTotalProgression ?? 0) < LECTERN_PROMPT_THRESHOLD) return null;
+    const index = lecternSnapshot.items.findIndex((item) => item.mediaId === id);
+    if (index < 0) return null;
+    for (let candidate = index + 1; candidate < lecternSnapshot.items.length; candidate += 1) {
+      if (lecternSnapshot.items[candidate].activation.kind === "Readable") {
+        return lecternSnapshot.items[candidate];
+      }
     }
-    let cancelled = false;
-    fetchNextConsumptionQueueItem("readable", id)
-      .then((item) => {
-        if (!cancelled) setNextReadableItem(item);
-      })
-      .catch(() => {
-        // Non-fatal: a failed lookup simply leaves the prompt hidden (R-4).
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentTotalProgression, id]);
+    return null;
+  }, [currentTotalProgression, id, lecternSnapshot]);
 
   const handleAddMediaToLectern = useCallback(async () => {
     try {
-      await addToLectern(id);
+      await lectern.placeItems({ mediaIds: [parseMediaId(id)], placement: { kind: "Last" } });
       feedback.show({ severity: "success", title: "Added to Lectern" });
     } catch (err) {
       feedback.show({ ...toFeedback(err, { fallback: "Failed to add to Lectern" }) });
     }
-  }, [feedback, id]);
+  }, [feedback, id, lectern]);
 
-  const handleOpenNextReadable = useCallback(async () => {
-    const next = nextReadableItem;
-    if (!next) return;
+  // "Done" — mark this document finished, removing its exact Lectern row when
+  // present (else state-only), then offer a 10s Undo (spec §6).
+  const handleMarkFinished = useCallback(async () => {
+    const snapshot = lecternSnapshotRef.current;
+    const row = snapshot.items.find((item) => item.mediaId === id);
     try {
-      const queue = await fetchConsumptionQueue();
-      const current = queue.find((item) => item.media_id === id);
-      if (current) {
-        await removeConsumptionQueueItem(current.item_id);
-        notifyConsumptionQueueUpdated();
+      if (row) {
+        await lectern.finishLecternItem({
+          mediaId: parseMediaId(id),
+          itemId: row.itemId,
+          nextCapability: "Stop",
+        });
+      } else {
+        await lectern.ensureMediaFinished(parseMediaId(id));
       }
-    } catch {
-      // Removal is best-effort; still open the next entry below.
+      offerCompletionUndo({
+        mediaId: parseMediaId(id),
+        preCompletionSnapshot: snapshot,
+        completedItemId: row?.itemId ?? null,
+      });
+    } catch (err) {
+      feedback.show({ ...toFeedback(err, { fallback: "Failed to mark as finished" }) });
     }
-    openInNewPane?.(next.reader_href, next.title);
-    setNextReadableItem(null);
-  }, [id, nextReadableItem, openInNewPane]);
+  }, [feedback, id, lectern, offerCompletionUndo]);
+
+  const handleMarkUnread = useCallback(async () => {
+    try {
+      await lectern.setUnread(parseMediaId(id));
+    } catch (err) {
+      feedback.show({ ...toFeedback(err, { fallback: "Failed to mark as unread" }) });
+    }
+  }, [feedback, id, lectern]);
+
+  // "Done & open next" — finish this row selecting a Readable successor, open the
+  // returned next entry, and offer Undo. No successor → no navigation.
+  const handleOpenNextReadable = useCallback(async () => {
+    const snapshot = lecternSnapshotRef.current;
+    const row = snapshot.items.find((item) => item.mediaId === id);
+    try {
+      if (row) {
+        const result = await lectern.finishLecternItem({
+          mediaId: parseMediaId(id),
+          itemId: row.itemId,
+          nextCapability: "Readable",
+        });
+        offerCompletionUndo({
+          mediaId: parseMediaId(id),
+          preCompletionSnapshot: snapshot,
+          completedItemId: row.itemId,
+        });
+        if (result.nextItem.kind === "Present") {
+          openInNewPane?.(result.nextItem.value.href, result.nextItem.value.title);
+        }
+      } else {
+        await lectern.ensureMediaFinished(parseMediaId(id));
+        offerCompletionUndo({
+          mediaId: parseMediaId(id),
+          preCompletionSnapshot: snapshot,
+          completedItemId: null,
+        });
+      }
+    } catch (err) {
+      feedback.show({ ...toFeedback(err, { fallback: "Failed to mark as finished" }) });
+    }
+  }, [feedback, id, lectern, offerCompletionUndo, openInNewPane]);
 
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
@@ -4168,7 +4224,7 @@ export default function MediaPaneBody() {
     [clearFocus, pdfDocumentHighlights],
   );
 
-  const { seekToMs, play } = useGlobalPlayer();
+  const { seekTo, resume } = useGlobalPlayer();
   const readerSurfaceStyle = buildReaderSurfaceStyle(readerProfile);
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     readerProfile.theme === "dark"
@@ -4300,7 +4356,6 @@ export default function MediaPaneBody() {
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
-  usePodcastTrackSeeding(media);
 
   const {
     libraries: libraryPickerLibraries,
@@ -4496,6 +4551,16 @@ export default function MediaPaneBody() {
 
   const isReflowableReader = canRead && !isPdf;
 
+  // Read-state verb driver: the exact Lectern row's consumption when this media
+  // is On Lectern, else Unread (so "Mark as finished"/"Done" is offered).
+  const mediaReadState: "unread" | "in_progress" | "finished" = (() => {
+    const row = lecternSnapshot.items.find((item) => item.mediaId === id);
+    if (!row) return "unread";
+    if (row.consumption.state === "Finished") return "finished";
+    if (row.consumption.state === "InProgress") return "in_progress";
+    return "unread";
+  })();
+
   const mediaHeaderOptions = useMemo(() => {
     const options = mediaResourceOptions({
       media,
@@ -4537,6 +4602,17 @@ export default function MediaPaneBody() {
       onAddToLectern: media
         ? () => {
             void handleAddMediaToLectern();
+          }
+        : undefined,
+      readState: mediaReadState,
+      onMarkFinished: media
+        ? () => {
+            void handleMarkFinished();
+          }
+        : undefined,
+      onMarkUnread: media
+        ? () => {
+            void handleMarkUnread();
           }
         : undefined,
     });
@@ -4592,6 +4668,8 @@ export default function MediaPaneBody() {
     defaultDocumentMapSurface,
     handleAddMediaToLectern,
     handleDeleteDocument,
+    handleMarkFinished,
+    handleMarkUnread,
     handleRefreshSource,
     handleRetryMetadata,
     handleRetryProcessing,
@@ -4600,6 +4678,7 @@ export default function MediaPaneBody() {
     isReflowableReader,
     loadLibraryPickerLibraries,
     media,
+    mediaReadState,
     openChatForMedia,
     openInNewPane,
     readerProfile.theme,
@@ -4942,11 +5021,22 @@ export default function MediaPaneBody() {
         return;
       }
 
-      seekToMs(timestampMs);
-      play();
+      seekTo(timestampMs ?? 0);
+      resume();
     },
-    [media?.kind, play, seekToMs],
+    [media?.kind, resume, seekTo],
   );
+
+  // Decode this media's footer descriptor (Presence<PlayerDescriptor>); absent or
+  // not-yet-landed → null, which hides the transcript Play affordance.
+  const mediaPlayerDescriptor = useMemo<PlayerDescriptor | null>(() => {
+    try {
+      const presence = decodePresentPlayerDescriptor(media?.playerDescriptor);
+      return presence.kind === "Present" ? presence.value : null;
+    } catch {
+      return null;
+    }
+  }, [media?.playerDescriptor]);
 
   // Activate a source cited in an in-secondary chat: seek/highlight this document,
   // or open a different source in a new pane.
@@ -5874,6 +5964,7 @@ export default function MediaPaneBody() {
                     playbackSource={playbackSource}
                     canonicalSourceUrl={media.canonical_source_url}
                     chapters={media.chapters ?? []}
+                    playerDescriptor={mediaPlayerDescriptor}
                     descriptionHtml={media.description_html ?? null}
                     descriptionText={media.description_text ?? null}
                     videoSeekTargetMs={

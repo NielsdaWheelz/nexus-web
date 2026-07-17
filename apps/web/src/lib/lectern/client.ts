@@ -375,6 +375,34 @@ export function decodeLecternItem(raw: unknown): LecternItem {
   };
 }
 
+/**
+ * Decode a `PlayerDescriptor` (spec §4). This is the exact shape the backend
+ * adds under the pinned camelCase key `playerDescriptor` on podcast-episode list
+ * items and `MediaOut` for podcast episodes (even inside otherwise snake_case
+ * DTOs). Its activation is `FooterAudio` by contract; any other kind throws.
+ */
+export function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
+  const rec = asRecord(raw, "PlayerDescriptor");
+  exactKeys(rec, ["mediaId", "title", "subtitle", "activation"], "PlayerDescriptor");
+  const activation = decodeActivation(rec.activation);
+  if (activation.kind !== "FooterAudio") {
+    throw new Error(
+      `Invalid PlayerDescriptor.activation: expected FooterAudio, got ${activation.kind}`,
+    );
+  }
+  return {
+    mediaId: decodeMediaId(rec.mediaId),
+    title: asString(rec.title, "PlayerDescriptor.title"),
+    subtitle: decodePresence(rec.subtitle, (v) => asString(v, "PlayerDescriptor.subtitle")),
+    activation,
+  };
+}
+
+/** Decode the `Presence<PlayerDescriptor>` a media/episode DTO exposes. */
+export function decodePresentPlayerDescriptor(raw: unknown): Presence<PlayerDescriptor> {
+  return decodePresence(raw, decodePlayerDescriptor);
+}
+
 export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
   const rec = asRecord(raw, "LecternSnapshot");
   exactKeys(rec, ["items"], "LecternSnapshot");

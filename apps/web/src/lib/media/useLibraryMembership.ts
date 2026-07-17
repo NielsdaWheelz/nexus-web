@@ -97,11 +97,10 @@ export function useLibraryMembership(
       setBusy(true);
       setError(null);
       try {
-        const { hardDeleted } = await removeMediaFromLibrary(
-          mediaId,
-          libraryId,
-        );
-        if (hardDeleted) {
+        const result = await removeMediaFromLibrary(mediaId, libraryId);
+        if (result.kind === "Deleting") {
+          // Last reference removed: the media is being deleted server-side, so
+          // this pane's subject is gone — leave it.
           router.push("/libraries");
           return;
         }
