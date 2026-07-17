@@ -18408,9 +18408,7 @@ class TestMigration0183DefaultLibraryVirtualization:
     def _insert_cursor(
         self, session: Session, user_id, media_id, total_progression, updated_at
     ) -> None:
-        locations = (
-            {} if total_progression is None else {"total_progression": total_progression}
-        )
+        locations = {} if total_progression is None else {"total_progression": total_progression}
         session.execute(
             text(
                 """
@@ -18759,9 +18757,7 @@ class TestMigration0183DefaultLibraryVirtualization:
                     exists = session.execute(
                         text("SELECT to_regclass(:t)"), {"t": f"public.{table}"}
                     ).scalar_one()
-                    assert exists is not None, (
-                        f"{table} must survive a preflight-aborted upgrade"
-                    )
+                    assert exists is not None, f"{table} must survive a preflight-aborted upgrade"
         finally:
             reset_test_schema()
             engine.dispose()

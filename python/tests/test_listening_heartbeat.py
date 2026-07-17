@@ -108,9 +108,7 @@ class TestGet:
 
 
 class TestPut:
-    def test_happy_path_increments_revision(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
+    def test_happy_path_increments_revision(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
@@ -120,9 +118,7 @@ class TestPut:
             auth_client,
             user_id,
             media_id,
-            _heartbeat_body(
-                position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0
-            ),
+            _heartbeat_body(position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0),
         )
         assert response.status_code == 200, response.text
         data = response.json()["data"]
@@ -157,9 +153,7 @@ class TestPut:
             auth_client,
             user_id,
             media_id,
-            _heartbeat_body(
-                position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0
-            ),
+            _heartbeat_body(position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0),
         )
         assert stale.status_code == 409, stale.text
         assert stale.json()["error"]["code"] == "E_STALE_LISTENING_REVISION"

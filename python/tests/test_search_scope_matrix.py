@@ -255,9 +255,7 @@ UNCHANGED_LIBRARY_ENTITIES = {"podcast", "message", "conversation", "web_result"
 # squashed for a whitespace-insensitive substring check against the live matrix
 # cell text. This proves actual delegation to the SUT rather than a hand-copied
 # SQL string.
-_LIBRARY_MEDIA_IDS_SQL_SQUASHED = _squash(
-    library_media_ids_cte_sql(library_param=":scope_id")
-)
+_LIBRARY_MEDIA_IDS_SQL_SQUASHED = _squash(library_media_ids_cte_sql(library_param=":scope_id"))
 
 # The raw physical-containment shape every delegated cell used to emit before this
 # cutover (`FROM library_entries WHERE library_id = :scope_id`, with or without a

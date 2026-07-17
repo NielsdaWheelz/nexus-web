@@ -273,9 +273,7 @@ class TestDeduplication:
         with direct_db.session() as session:
             # Create first media via old URL
             old_url = httpserver.url_for("/old-url")
-            result1 = accept_url_source(
-                db=session, viewer_id=user_id, url=old_url, library_ids=[]
-            )
+            result1 = accept_url_source(db=session, viewer_id=user_id, url=old_url, library_ids=[])
             media_id1 = result1.media_id
             session.commit()
 
@@ -317,8 +315,7 @@ class TestDeduplication:
                 # drive that job to its terminal status.
                 teardown_status = drive_media_teardown(direct_db.session, media_id2)
                 assert teardown_status == "succeeded", (
-                    f"Expected loser media {media_id2} teardown to succeed, "
-                    f"got {teardown_status!r}"
+                    f"Expected loser media {media_id2} teardown to succeed, got {teardown_status!r}"
                 )
 
                 with direct_db.session() as session:

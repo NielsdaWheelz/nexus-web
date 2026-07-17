@@ -301,7 +301,9 @@ def upgrade() -> None:
             " WHERE kind = 'backfill_default_library_closure_job'"
         )
     ).rowcount
-    _report(f"deleted {deleted_jobs} backfill_default_library_closure_job background_jobs row(s)")
+    _report(
+        f"deleted {deleted_jobs} backfill_default_library_closure_job background_jobs row(s)"
+    )
 
     # --- Step 3: delete physical Default entries proven closure-only AND still
     # covered by a live non-default, non-system membership of the default's
@@ -342,7 +344,9 @@ def upgrade() -> None:
             "   )"
         )
     ).rowcount
-    _report(f"deleted {deleted_entries} closure-only, live-covered Default library_entries row(s)")
+    _report(
+        f"deleted {deleted_entries} closure-only, live-covered Default library_entries row(s)"
+    )
 
     # --- Step 4: drop the eight tables, children before parents. -----------
     for table in _DROPPED_TABLES:

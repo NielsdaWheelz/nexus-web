@@ -721,9 +721,7 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
         assert tool_row[0] == []
         assert tool_row[1] == []
         retrieval_count = session.execute(
-            text(
-                "SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"
-            ),
+            text("SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
             {"tool_call_id": run.tool_call_id},
         ).scalar_one()
         assert retrieval_count == 0
@@ -799,9 +797,7 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert tool_row[0] == []
         assert tool_row[1] == []
         retrieval_count = session.execute(
-            text(
-                "SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"
-            ),
+            text("SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"),
             {"tool_call_id": run.tool_call_id},
         ).scalar_one()
         assert retrieval_count == 0

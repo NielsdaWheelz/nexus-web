@@ -2076,8 +2076,7 @@ def test_media_deletion_removes_four_child_families_before_parent():
     parent_delete_idx = body.index('text("DELETE FROM media WHERE id = :media_id")')
 
     assert consumption_idx < parent_delete_idx, (
-        "consumption child-state deletion (all four families) must precede "
-        "the parent media DELETE"
+        "consumption child-state deletion (all four families) must precede the parent media DELETE"
     )
 
 
@@ -2419,12 +2418,15 @@ _AC16_DEAD_ATTENTION_PATH_LITERALS = (
 )
 
 _AC16_PATTERN = "|".join(
-    [rf"\b{re.escape(token)}\b" for token in (
-        *_AC16_DROPPED_TABLES,
-        *_AC16_DROPPED_MODELS,
-        *_AC16_DROPPED_JOBS_ROUTES_HELPERS,
-        *_AC16_DROPPED_DTO_FIELDS,
-    )]
+    [
+        rf"\b{re.escape(token)}\b"
+        for token in (
+            *_AC16_DROPPED_TABLES,
+            *_AC16_DROPPED_MODELS,
+            *_AC16_DROPPED_JOBS_ROUTES_HELPERS,
+            *_AC16_DROPPED_DTO_FIELDS,
+        )
+    ]
     + [re.escape(token) for token in _AC16_DEAD_ATTENTION_PATH_LITERALS]
 )
 

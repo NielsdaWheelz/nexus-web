@@ -1159,9 +1159,7 @@ def _list_default_library_entries(
             cursor, _DEFAULT_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
         )
         try:
-            after_media_created_at = datetime.fromisoformat(
-                str(payload["after_media_created_at"])
-            )
+            after_media_created_at = datetime.fromisoformat(str(payload["after_media_created_at"]))
             after_media_id = UUID(str(payload["after_media_id"]))
         except Exception:
             # justify-ignore-error: malformed cursor input is an expected API error path.
@@ -1223,14 +1221,16 @@ def _list_default_library_entries(
     )
 
     def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor({
-            "k": _DEFAULT_CURSOR_KIND,
-            "viewer_id": str(viewer_id),
-            "library_id": str(library_id),
-            "sort": "position",
-            "after_media_created_at": row["media_created_at"].isoformat(),
-            "after_media_id": str(row["media_id"]),
-        })
+        return _encode_entry_cursor(
+            {
+                "k": _DEFAULT_CURSOR_KIND,
+                "viewer_id": str(viewer_id),
+                "library_id": str(library_id),
+                "sort": "position",
+                "after_media_created_at": row["media_created_at"].isoformat(),
+                "after_media_id": str(row["media_id"]),
+            }
+        )
 
     return _finish_entry_page(
         db,
@@ -1262,9 +1262,7 @@ def _list_position_library_entries(
         )
         try:
             after_position = int(payload["after_position"])
-            after_entry_created_at = datetime.fromisoformat(
-                str(payload["after_entry_created_at"])
-            )
+            after_entry_created_at = datetime.fromisoformat(str(payload["after_entry_created_at"]))
             after_entry_id = UUID(str(payload["after_entry_id"]))
         except Exception:
             # justify-ignore-error: malformed cursor input is an expected API error path.
@@ -1309,15 +1307,17 @@ def _list_position_library_entries(
     )
 
     def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor({
-            "k": _POSITION_CURSOR_KIND,
-            "viewer_id": str(viewer_id),
-            "library_id": str(library_id),
-            "sort": "position",
-            "after_position": int(row["position"]),
-            "after_entry_created_at": row["created_at"].isoformat(),
-            "after_entry_id": str(row["id"]),
-        })
+        return _encode_entry_cursor(
+            {
+                "k": _POSITION_CURSOR_KIND,
+                "viewer_id": str(viewer_id),
+                "library_id": str(library_id),
+                "sort": "position",
+                "after_position": int(row["position"]),
+                "after_entry_created_at": row["created_at"].isoformat(),
+                "after_entry_id": str(row["id"]),
+            }
+        )
 
     return _finish_entry_page(
         db,
@@ -1406,15 +1406,17 @@ def _list_resonance_library_entries(
     )
 
     def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor({
-            "k": _RESONANCE_CURSOR_KIND,
-            "viewer_id": str(viewer_id),
-            "library_id": str(library_id),
-            "sort": "resonance",
-            "resonance_as_of": resonance_as_of.isoformat(),
-            "after_score": float(row["resonance_score"]),
-            "after_entry_id": str(row["id"]),
-        })
+        return _encode_entry_cursor(
+            {
+                "k": _RESONANCE_CURSOR_KIND,
+                "viewer_id": str(viewer_id),
+                "library_id": str(library_id),
+                "sort": "resonance",
+                "resonance_as_of": resonance_as_of.isoformat(),
+                "after_score": float(row["resonance_score"]),
+                "after_entry_id": str(row["id"]),
+            }
+        )
 
     return _finish_entry_page(
         db,

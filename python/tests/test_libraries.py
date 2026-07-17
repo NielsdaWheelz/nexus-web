@@ -875,9 +875,7 @@ class TestAddMediaToLibrary:
         # No physical entry was ever created for the unauthorized filer.
         with direct_db.session() as session:
             leaked = session.execute(
-                text(
-                    "SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"
-                ),
+                text("SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"),
                 {"lib": other_default_id, "media": media_id},
             ).first()
         assert leaked is None
@@ -1932,7 +1930,9 @@ class TestListLibraryMedia:
         assert second.json()["page"] == {"has_more": False, "next_cursor": None}
 
         # A fresh first page picks up the new row immediately, at the top.
-        refreshed = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=1)
+        refreshed = _list_library_entries(
+            auth_client, user_id, library_id, sort="position", limit=1
+        )
         assert refreshed.status_code == 200, refreshed.text
         assert _library_entry_media_ids(refreshed.json()["data"]) == [str(newest_media_id)]
 
@@ -1950,9 +1950,7 @@ class TestListLibraryMedia:
 
         with direct_db.session() as session:
             library_id = create_test_library(session, user_id, "Tombstone Boundary")
-            media_ids = [
-                create_test_media(session, title=f"Boundary {idx}") for idx in range(4)
-            ]
+            media_ids = [create_test_media(session, title=f"Boundary {idx}") for idx in range(4)]
             for position, media_id in enumerate(media_ids):
                 session.execute(
                     text(
@@ -2000,9 +1998,9 @@ class TestListLibraryMedia:
         assert second.json()["page"] == {"has_more": False, "next_cursor": None}
 
         # The tombstoned entry never surfaces on any page.
-        assert str(tombstoned_media_id) not in _library_entry_media_ids(
-            first_body["data"]
-        ) and str(tombstoned_media_id) not in _library_entry_media_ids(second.json()["data"])
+        assert str(tombstoned_media_id) not in _library_entry_media_ids(first_body["data"]) and str(
+            tombstoned_media_id
+        ) not in _library_entry_media_ids(second.json()["data"])
 
     def test_list_media_rejects_invalid_cursor(self, auth_client):
         user_id = create_test_user_id()
@@ -2069,7 +2067,9 @@ class TestListLibraryMedia:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
 
-    def _seed_resonance_library(self, direct_db, user_id: UUID, name: str) -> tuple[UUID, list[UUID]]:
+    def _seed_resonance_library(
+        self, direct_db, user_id: UUID, name: str
+    ) -> tuple[UUID, list[UUID]]:
         with direct_db.session() as session:
             library_id = create_test_library(session, user_id, name)
             media_ids = [create_test_media(session, title=f"{name} {idx}") for idx in range(3)]
@@ -2223,7 +2223,9 @@ class TestListLibraryMedia:
         )
         assert second.status_code == 200, second.text
 
-        refreshed = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
+        refreshed = _list_library_entries(
+            auth_client, user_id, library_id, sort="resonance", limit=1
+        )
         assert refreshed.status_code == 200, refreshed.text
         assert _library_entry_media_ids(refreshed.json()["data"]) == [str(oldest_media_id)]
 
@@ -2317,9 +2319,7 @@ class TestDefaultLibraryVirtualView:
 
         with direct_db.session() as session:
             session.execute(
-                text(
-                    "INSERT INTO user_media_deletions (user_id, media_id) VALUES (:uid, :mid)"
-                ),
+                text("INSERT INTO user_media_deletions (user_id, media_id) VALUES (:uid, :mid)"),
                 {"uid": user_id, "mid": media_id},
             )
             session.commit()
@@ -2443,9 +2443,11 @@ class TestDefaultLibraryVirtualView:
             "snapshot_id": str(uuid4()),
             "offset": 0,
         }
-        legacy_cursor = base64.urlsafe_b64encode(
-            json.dumps(legacy_payload).encode("utf-8")
-        ).decode("ascii").rstrip("=")
+        legacy_cursor = (
+            base64.urlsafe_b64encode(json.dumps(legacy_payload).encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
         legacy_response = _list_library_entries(
             auth_client, user_a, library_a, cursor=legacy_cursor
         )

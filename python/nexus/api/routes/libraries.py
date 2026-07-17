@@ -402,7 +402,9 @@ def add_podcast_to_library(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Add a subscribed podcast reference to a non-default library."""
-    outcome = library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
+    outcome = library_entries.add_podcast_to_library(
+        db, viewer.user_id, library_id, body.podcast_id
+    )
     return ok(outcome.entry)
 
 
