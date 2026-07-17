@@ -3,8 +3,11 @@
 this records the current reader model and the constraints we actively ship.
 
 Reader hash targets are one-shot focus state consumed by `useReaderTarget`.
-Pane-local reader location that belongs in Back/Forward history uses route
-state such as `?loc=`.
+Cross-section and cross-fragment reader-location writes replace the active
+pane href through one seam in `MediaPaneBody`; they address the current media
+visit and do not create Back/Forward history. See
+[workspace.md](workspace.md) for the generic push/replace/Back/Forward
+contract.
 
 ## constraints we enforce
 
@@ -92,8 +95,9 @@ The document table of contents (epub + web article) is the Document Map
   affordance. When contents exist, generic Document Map open defaults here.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
-- selecting an entry runs the existing section/anchor navigation; navigation
-  and pane-history behaviour are unchanged (see pane history).
+- selecting an entry runs the existing section/anchor navigation, which
+  replaces the pane's active href and adds no Back/Forward entry (see pane
+  history).
 - mobile reaches Contents through the same Document Map secondary sheet.
 - it has no internal scroll container: the secondary body is the single scroll
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
@@ -441,8 +445,10 @@ pure black/white to reduce halation under long sessions.
 - when the canonical cursor supersedes a cold coarse query, pane-local
   replace removes only `loc` and `fragment`, preserving `apparatus`,
   unrelated query state, and hash
-- ordinary scrolling never writes the URL; live pane Back/Forward navigates
-  the mounted reader without persisting merely because history moved it
+- ordinary scrolling never writes the URL; pane Back/Forward is workspace
+  traversal and never persists a cursor merely because history moved it — a
+  fresh media mount produced by Forward applies the cold-mount precedence
+  above
 - reader href/repair construction is centralized in
   `apps/web/src/lib/reader/readerLocationHref.ts`, including the Reader Copy
   pane link, which strips only coarse `loc`/`fragment` and preserves
@@ -457,16 +463,32 @@ pure black/white to reduce halation under long sessions.
 
 ### pane history
 
-- reader section/TOC jumps that change the active section/page are pane-local
-  push navigation. Highlight, evidence, and transcript-time targets are
-  dismissible focus state owned by `useReaderTarget`; they do not push pane
-  history.
-- reader URL repair, invalid target cleanup, and canonical target normalization
-  use pane-local replace navigation and do not add Back entries; any `replace`
-  navigation must strip the URL hash via the pane router
-  (`router.replace(pathname + search)`)
+Generic `push`/`replace`/Back/Forward mechanics are owned by the workspace
+(see [workspace.md](workspace.md)). The reader owns only which operation each
+of its location-target writes uses.
+
+- `navigateToSection`, `navigateToWebSection`, apparatus activation, highlight
+  activation, and embed activation publish cross-section/cross-fragment hrefs
+  through one non-exported seam, `replaceReaderLocation(target)`, in
+  `MediaPaneBody`; it calls
+  `paneRouter.replace(buildReaderLocationHref(id, target))`. These writes
+  update the mounted media visit and add no Back/Forward entry.
+- Focus-only branches — highlight, evidence, and transcript-time targets that
+  resolve without a cross-section/cross-fragment href — write no href at all;
+  they are dismissible focus state owned by `useReaderTarget` and do not push
+  pane history.
+- Generic same-pane note/resource activation remains a destination `push`,
+  even when it resolves to the current media; it is not reinterpreted as
+  reader-location state.
+- Coarse-query repair — stripping `loc`/`fragment` once a Positioned cursor
+  supersedes them — is a separate pane-router replace, not the
+  `replaceReaderLocation` seam; it preserves unrelated query state and the
+  hash. Target-hash consumption (`useReaderTarget`'s `markActive`) is the
+  writer that replaces with `pathname + search`, dropping the consumed hash;
+  invalid target cleanup and canonical target normalization go through that
+  same hash-consuming replace.
 - PDF page and zoom controls remain reader state only; they do not create pane
-  history entries unless they intentionally change the pane href
+  history entries unless they intentionally change the pane href.
 - once the section is open, epub restores by
   `text_offset` -> quote match -> `progression` ->
   `total_progression` -> `position` -> anchor fallback -> section top
@@ -501,8 +523,9 @@ pure black/white to reduce halation under long sessions.
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is treated as a path-encoded identifier and may contain `/`
 - one-shot reader target hashes use `#loc-{section_id}` and are consumed by
-  `useReaderTarget`; pane-local EPUB section navigation uses the `?loc=`
-  search parameter for active-section history
+  `useReaderTarget`; pane-local EPUB section navigation replaces the `?loc=`
+  search parameter as coarse in-visit address state and adds no Back/Forward
+  entry
 - removed `chapters` and `toc` reader routes stay out of the client surface
 - pane titles are driven by media metadata, not by navigation section title or
   active section content. navigation and section loading are content-level

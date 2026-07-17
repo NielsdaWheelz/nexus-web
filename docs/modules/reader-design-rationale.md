@@ -196,8 +196,8 @@ changes.
 
 - epub resolves one-shot hash targets such as `#loc-<section_id>` first,
   then saved exact target snapshots, then coarse fallback, then first section.
-  Pane-local section navigation uses `?loc={section_id}` for active-section
-  history.
+  Pane-local section navigation replaces `?loc={section_id}` as coarse
+  in-visit address state; it adds no Back/Forward entry.
 - once the section is open, epub restores by exact text offset,
   then quote context, then progression, then coarse publication fallback,
   then anchor fallback
@@ -216,8 +216,30 @@ query only when the cursor is Empty, then the default readable source. A
 copied or bookmarked coarse link should not silently override real saved
 progress; when the canonical cursor supersedes a cold query, pane-local
 replace strips only `loc`/`fragment` and preserves unrelated query state and
-hash. Ordinary scrolling never writes the URL, and live pane Back/Forward
-navigates without persisting merely because history moved it.
+hash. Ordinary scrolling never writes the URL, and pane Back/Forward is
+workspace-level traversal that never persists a cursor merely because
+history moved it.
+
+### addressability versus history
+
+reader location and pane history solve different problems and stay
+independent. reader location stays URL-addressable and durable: coarse
+`?loc`/`?fragment` state addresses the current mounted visit, and the
+canonical cursor is the durable record across visits and devices. pane
+Back/Forward is structural — a compact story of the destinations a user
+visited, not a transcript of every section, fragment, or footnote touched
+inside one visit. Treating in-reader movement as history noise would force
+Back to take many presses to leave a single document and would force the
+workspace to guess reader semantics from URL shape; instead the reader
+replaces its own address and the workspace's Back/Forward stays about panes,
+not passages.
+
+the one accepted cost: pane Back/Forward no longer returns to the passage a
+footnote, apparatus entry, highlight, or embed jump was launched from. the
+prototype accepts this loss rather than adding a reader-local return stack or
+a new affordance; Contents, section controls, Document Map/Evidence
+navigation, and canonical resume remain, but none of them restores the exact
+source passage.
 
 ### epub request surface
 
@@ -226,7 +248,8 @@ navigates without persisting merely because history moved it.
   `GET /api/media/{id}/sections/{section_id}`
 - `section_id` is path-encoded and may contain `/`
 - `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
-  remains the pane-local active-section URL state
+  is the pane-local coarse address state that replace writes — not a
+  Back/Forward checkpoint
 - the reader no longer depends on removed chapter manifests or toc fetches
 
 ## regression strategy
