@@ -32,7 +32,11 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
     "dawn_write_job,"
-    "conversation_distill,conversation_distill_sweep,atlas_project_job"
+    "conversation_distill,conversation_distill_sweep,atlas_project_job,"
+    # Media teardown + its durable storage sweeps (spec §3.1). The default worker
+    # must claim these so a user delete actually physically deletes, the Armed
+    # write-reservation deadlines fire, and the recurring orphan sweep is scheduled.
+    "media_teardown,storage_object_cleanup,storage_orphan_sweep"
 )
 
 

@@ -35,6 +35,10 @@ from nexus.storage.paths import (
     build_upload_staging_storage_path,
     get_file_extension,
 )
+from nexus.tasks.storage_object_cleanup import (
+    finalize_storage_object_write,
+    reserve_storage_object_write,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +101,14 @@ def confirm_ingest(
 
     if not media:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    # Reject a teardown intent under the media lock (spec §3.1 confirmation).
+    if db.execute(
+        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
+        {"m": media_id},
+    ).first():
+        db.rollback()
+        raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
 
     created_by_user_id = media.created_by_user_id
     if created_by_user_id is None or created_by_user_id != viewer_id:
@@ -215,6 +227,10 @@ def confirm_ingest(
 
     db.commit()
 
+    # Reserve the durable final-sweep for the destination before the staging->final
+    # copy (spec §3.1); rejects a teardown intent that raced the confirmation.
+    reserve_storage_object_write(db, media_id=media_id, storage_path=final_storage_path)
+
     try:
         storage_client.copy_object(storage_path, final_storage_path)
         final_size = _read_validated_upload_object(
@@ -314,6 +330,10 @@ def confirm_ingest(
     db.flush()
 
     db.commit()
+    # The final object now has a committed DB owner; mark the reservation Retained.
+    finalize_storage_object_write(
+        db, media_id=media_id, storage_path=final_storage_path, storage_client=storage_client
+    )
     _delete_upload_object(storage_client, storage_path, media_id, "confirmed")
 
     return {

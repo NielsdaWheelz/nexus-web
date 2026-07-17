@@ -39,9 +39,26 @@ from tests.factories import (
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
+from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _clean_teardown_state(direct_db: DirectSessionManager):
+    """Clear teardown intents + jobs after each test so media cleanup is unblocked
+    (media_teardown_intents FK media) and background_jobs stays isolated."""
+    yield
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM media_teardown_intents"))
+        db.execute(
+            text(
+                "DELETE FROM background_jobs "
+                "WHERE kind IN ('media_teardown', 'storage_object_cleanup', 'storage_orphan_sweep')"
+            )
+        )
+        db.commit()
 
 
 def test_delete_document_hides_shared_member_copy(auth_client, direct_db: DirectSessionManager):
@@ -105,6 +122,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
 
     add_response = auth_client.post(
         f"/libraries/{library_id}/media",
@@ -114,13 +132,34 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     assert add_response.status_code == 201, add_response.json()
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 200
 
+    # The member has a latent Lectern row for this media (spec §3: viewer-scoped
+    # removal/hide must preserve it, not delete it).
+    with direct_db.session() as session:
+        session.execute(
+            text("""
+                INSERT INTO consumption_queue_items (user_id, media_id, position, source)
+                VALUES (:user_id, :media_id, 0, 'manual')
+            """),
+            {"user_id": member_id, "media_id": media_id},
+        )
+        session.commit()
+
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(member_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["status"] == "hidden"
-    assert delete_response.json()["data"]["hard_deleted"] is False
-    assert delete_response.json()["data"]["hidden_for_viewer"] is True
+    assert delete_response.json()["data"]["kind"] == "Hidden"
+    assert delete_response.json()["data"]["remainingReferenceCount"] >= 1
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 404
+
+    with direct_db.session() as session:
+        latent = session.execute(
+            text("""
+                SELECT 1 FROM consumption_queue_items
+                WHERE user_id = :user_id AND media_id = :media_id
+            """),
+            {"user_id": member_id, "media_id": media_id},
+        ).fetchone()
+    assert latent is not None, "viewer-scoped hide must preserve the latent Lectern row"
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(owner_id)).status_code == 200
 
     save_response = auth_client.post(
@@ -145,8 +184,9 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
 
 
 def test_delete_document_removes_default_and_administered_libraries(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -176,13 +216,17 @@ def test_delete_document_removes_default_and_administered_libraries(
     response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert response.status_code == 200, response.json()
-    assert response.json()["data"] == {
-        "status": "deleted",
-        "hard_deleted": True,
-        "removed_from_library_ids": [default_id, work_id],
-        "hidden_for_viewer": False,
-        "remaining_reference_count": 0,
-    }
+    # Removing the last reference returns Deleting (intent + job) only after commit.
+    assert response.json()["data"] == {"kind": "Deleting"}
+
+    with direct_db.session() as session:
+        intent = session.execute(
+            text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
+            {"m": media_id},
+        ).fetchone()
+    assert intent is not None, "expected a teardown intent after the last reference removal"
+
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
 
     with direct_db.session() as session:
         row = session.execute(
@@ -201,6 +245,7 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
     ]
     storage = FakeStorageClient()
     monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+    install_fake_storage_for_teardown(monkeypatch, storage)
 
     media_id = uuid4()
     attempt_id = uuid4()
@@ -268,15 +313,19 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.text
-    assert delete_response.json()["data"]["hard_deleted"] is True
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    # The durable teardown job owns storage deletion; objects survive until it runs.
+    assert storage.get_object(original_path) is not None
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
     assert storage.get_object(original_path) is None
     assert storage.get_object(captured_source_path) is None
     assert storage.get_object(arxiv_source_path) is None
 
 
 def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -357,7 +406,8 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["status"] == "deleted"
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
 
     with direct_db.session() as session:
         counts = session.execute(
@@ -375,8 +425,9 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
 
 
 def test_delete_document_hard_deletes_owned_document_embed_rows(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -474,7 +525,8 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
     delete_response = auth_client.delete(f"/media/{parent_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["hard_deleted"] is True
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, parent_id) == "succeeded"
     with direct_db.session() as session:
         counts = session.execute(
             text(
@@ -494,8 +546,9 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
 
 
 def test_delete_document_detaches_document_embed_target_rows(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -581,7 +634,8 @@ def test_delete_document_detaches_document_embed_target_rows(
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["hard_deleted"] is True
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, child_id) == "succeeded"
     with direct_db.session() as session:
         row = session.execute(
             text(
@@ -724,8 +778,7 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["hard_deleted"] is False
-    assert delete_response.json()["data"]["hidden_for_viewer"] is True
+    assert delete_response.json()["data"]["kind"] == "Hidden"
     with direct_db.session() as session:
         row = session.execute(
             text(
@@ -853,12 +906,13 @@ def test_source_delete_gcs_orphaned_external_snapshots(
 
 
 def test_delete_document_applies_graph_cleanup_two_rules(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
     """AC12 (§9.6): deletion leaves no bare edge to any destroyed ref — media,
     highlight, content chunk — while cited edges sourced elsewhere survive with
     ordinal and snapshot intact (they render from the snapshot; the jump fails
     closed)."""
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -993,7 +1047,8 @@ def test_delete_document_applies_graph_cleanup_two_rules(
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["status"] == "deleted"
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
 
     with direct_db.session() as session:
         for ref in (
@@ -1175,10 +1230,11 @@ def test_delete_library_applies_graph_cleanup_two_rules(
 
 
 def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
-    auth_client, direct_db: DirectSessionManager
+    auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
     """Hard-delete tears down credits + author-edit memos, prunes keyless orphans,
     and retains a key-owner contributor whose last credit is gone (AC 19)."""
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -1248,7 +1304,8 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
     )
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["status"] == "deleted"
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
 
     with direct_db.session() as session:
         credit_count = session.execute(

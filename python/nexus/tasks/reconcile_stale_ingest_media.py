@@ -27,8 +27,6 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
-from nexus.storage.client import StorageError, get_storage_client
-from nexus.storage.paths import build_storage_path, get_file_extension
 
 logger = get_logger(__name__)
 
@@ -122,13 +120,11 @@ def reconcile_stale_ingest_media_job(
             .limit(_BATCH_LIMIT)
             .with_for_update(skip_locked=True)
         ).all()
-        pending_upload_storage_paths: set[str] = set()
-        for media, storage_path in pending_upload_rows:
-            pending_upload_storage_paths.add(str(storage_path))
-            pending_upload_storage_paths.add(
-                build_storage_path(media.id, get_file_extension(str(media.kind)))
-            )
-            pending_upload_storage_paths.update(delete_abandoned_document_media(db, media.id))
+        for media, _storage_path in pending_upload_rows:
+            # Claim each stale pending upload for durable teardown (intent + job). The
+            # media_teardown job owns storage deletion now; this reconciler no longer
+            # deletes objects inline (spec §3.1). Keeps its DB-row reconciliation duty.
+            delete_abandoned_document_media(db, media.id)
 
         stale_rows = (
             db.execute(
@@ -387,17 +383,6 @@ def reconcile_stale_ingest_media_job(
                     semantic_skipped += 1
 
         db.commit()
-        for storage_path in sorted(pending_upload_storage_paths):
-            try:
-                get_storage_client().delete_object(storage_path)
-            except StorageError as exc:
-                # justify-ignore-error: stale pending media rows were already
-                # removed; storage cleanup can be retried operationally.
-                logger.warning(
-                    "stale_pending_upload_storage_delete_failed storage_path=%s error=%s",
-                    storage_path,
-                    exc.message,
-                )
         logger.info(
             "stale_ingest_reconcile_complete",
             pending_upload_deleted=len(pending_upload_rows),

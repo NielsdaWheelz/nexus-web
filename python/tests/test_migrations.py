@@ -18145,3 +18145,67 @@ class TestMigration0181LecternPlayerLifecycle:
         finally:
             reset_test_schema()
             engine.dispose()
+
+    def test_out_of_range_playback_speed_is_clamped_into_new_wire_bound(self):
+        # Pre-cutover rows could carry any playback_speed > 0 (the old CHECK's
+        # only bound); the new wire contract is [0.25, 3]. An unclamped legacy
+        # row would make ListeningStateOut/FooterAudioActivation construction
+        # raise on read, 500ing that viewer's whole Lectern.
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_ids = {
+                name: uuid4() for name in ("too_fast", "too_slow", "in_range", "at_upper_bound")
+            }
+            speed_by_name = {
+                "too_fast": 5.0,
+                "too_slow": 0.1,
+                "in_range": 1.5,
+                "at_upper_bound": 3.0,
+            }
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for name, media_id in media_ids.items():
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, processing_status)"
+                            " VALUES (:id, 'podcast_episode', 'M', 'ready_for_reading')"
+                        ),
+                        {"id": media_id},
+                    )
+                    session.execute(
+                        text(
+                            "INSERT INTO podcast_listening_states"
+                            " (user_id, media_id, position_ms, playback_speed)"
+                            " VALUES (:u, :m, 0, :speed)"
+                        ),
+                        {"u": user_id, "m": media_id, "speed": speed_by_name[name]},
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                speed_after = {
+                    name: session.execute(
+                        text(
+                            "SELECT playback_speed FROM podcast_listening_states"
+                            " WHERE user_id = :u AND media_id = :m"
+                        ),
+                        {"u": user_id, "m": media_id},
+                    ).scalar_one()
+                    for name, media_id in media_ids.items()
+                }
+
+            assert speed_after["too_fast"] == 3.0, "above-bound speed must clamp down to 3.0"
+            assert speed_after["too_slow"] == 0.25, "below-bound speed must clamp up to 0.25"
+            assert speed_after["in_range"] == 1.5, "in-range speed must be left untouched"
+            assert speed_after["at_upper_bound"] == 3.0, "exact bound must be left untouched"
+        finally:
+            reset_test_schema()
+            engine.dispose()

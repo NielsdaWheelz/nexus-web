@@ -20,9 +20,26 @@ from nexus.services import library_entries, library_governance
 from tests.factories import create_test_library, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
+from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _clean_teardown_state(direct_db: DirectSessionManager):
+    """Clear teardown intents + jobs after each test so media cleanup (FK'd by
+    media_teardown_intents) is unblocked and background_jobs stays isolated."""
+    yield
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM media_teardown_intents"))
+        db.execute(
+            text(
+                "DELETE FROM background_jobs "
+                "WHERE kind IN ('media_teardown', 'storage_object_cleanup', 'storage_orphan_sweep')"
+            )
+        )
+        db.commit()
 
 
 def _list_library_entries(auth_client, user_id: UUID, library_id: str, **params):
@@ -875,6 +892,7 @@ class TestRemoveMediaFromLibrary:
         library_id = me_resp.json()["data"]["default_library_id"]
         storage = FakeStorageClient()
         monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+        install_fake_storage_for_teardown(monkeypatch, storage)
 
         with direct_db.session() as session:
             media_id = _create_pdf_media_for_library(
@@ -907,13 +925,8 @@ class TestRemoveMediaFromLibrary:
         delete_resp = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
         assert delete_resp.status_code == 200
-        assert delete_resp.json()["data"] == {
-            "status": "deleted",
-            "hard_deleted": True,
-            "removed_from_library_ids": [library_id],
-            "hidden_for_viewer": False,
-            "remaining_reference_count": 0,
-        }
+        assert delete_resp.json()["data"] == {"kind": "Deleting"}
+        assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
         assert storage.get_object(storage_path) is None
 
         with direct_db.session() as session:
@@ -942,6 +955,7 @@ class TestRemoveMediaFromLibrary:
         library_id = me_resp.json()["data"]["default_library_id"]
         storage = FakeStorageClient()
         monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+        install_fake_storage_for_teardown(monkeypatch, storage)
 
         media_id = uuid4()
         original_path = f"media/{media_id}/original.epub"
@@ -1004,7 +1018,8 @@ class TestRemoveMediaFromLibrary:
         response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
         assert response.status_code == 200
-        assert response.json()["data"]["hard_deleted"] is True
+        assert response.json()["data"]["kind"] == "Deleting"
+        assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
         assert storage.get_object(original_path) is None
         assert storage.get_object(resource_path) is None
 

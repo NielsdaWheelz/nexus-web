@@ -285,6 +285,40 @@ def _build_default_registry() -> dict[str, JobDefinition]:
                 else None
             ),
         ),
+        # Durable media teardown (spec §3.1). Dead rows are never pruned so a stuck
+        # teardown stays operator-discoverable; requeue_dead_job is its repair path.
+        # The dead-letter handler voids only the exact matching intent when the media
+        # row is still live.
+        "media_teardown": JobDefinition(
+            kind="media_teardown",
+            handler=_run_media_teardown,
+            max_attempts=5,
+            retry_delays_seconds=(60, 300, 900, 3600, 21600),
+            lease_seconds=300,
+            dead_letter_handler=_dead_letter_media_teardown,
+            never_prune_dead=True,
+        ),
+        # Durable final-sweep reservation for in-process object writes (spec §3.1).
+        # Dead rows stay unpruned; only Retained|Deleted success is prunable.
+        "storage_object_cleanup": JobDefinition(
+            kind="storage_object_cleanup",
+            handler=_run_storage_object_cleanup,
+            max_attempts=5,
+            retry_delays_seconds=(60, 300, 900, 3600, 21600),
+            lease_seconds=300,
+            never_prune_dead=True,
+        ),
+        # Singleton recurring orphan sweep (spec §3.1), scheduled by the periodic
+        # mechanism. Dead runs stay unpruned for requeue_dead_job repair.
+        "storage_orphan_sweep": JobDefinition(
+            kind="storage_orphan_sweep",
+            handler=_run_storage_orphan_sweep,
+            max_attempts=3,
+            retry_delays_seconds=(300, 900, 3600),
+            lease_seconds=300,
+            periodic_interval_seconds=int(settings.storage_orphan_sweep_interval_seconds),
+            never_prune_dead=True,
+        ),
     }
 
 
@@ -518,6 +552,36 @@ def _run_atlas_project(
     from nexus.tasks.atlas_project import atlas_project
 
     return atlas_project(payload=payload)
+
+
+def _run_media_teardown(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | RescheduleRequested | None:
+    from nexus.tasks.media_teardown import media_teardown
+
+    return media_teardown(payload=payload, context=context)
+
+
+def _dead_letter_media_teardown(db: Session, job: JobRow) -> None:
+    from nexus.tasks.media_teardown import dead_letter_media_teardown
+
+    dead_letter_media_teardown(db, job)
+
+
+def _run_storage_object_cleanup(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | RescheduleRequested | None:
+    from nexus.tasks.storage_object_cleanup import storage_object_cleanup
+
+    return storage_object_cleanup(payload=payload, context=context)
+
+
+def _run_storage_orphan_sweep(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | RescheduleRequested | None:
+    from nexus.tasks.storage_orphan_sweep import storage_orphan_sweep
+
+    return storage_orphan_sweep(payload=payload, context=context)
 
 
 def _optional_str(value: Any) -> str | None:

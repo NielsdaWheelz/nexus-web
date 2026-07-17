@@ -403,7 +403,8 @@ class TestSystemMediaDeletionGuards:
         )
 
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["hidden_for_viewer"] is False
+        # A retained system-library reference yields Removed (no viewer hide marker).
+        assert response.json()["data"]["kind"] == "Removed"
         assert system_library_id in _library_entry_ids_for_media(direct_db, media_id)
         with direct_db.session() as session:
             tombstone = session.execute(

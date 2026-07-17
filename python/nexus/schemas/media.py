@@ -9,8 +9,11 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic.alias_generators import to_camel
 
+from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.presence import Presence
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
 
@@ -226,23 +229,62 @@ class MediaOut(BaseModel):
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
+    # New field (spec `lectern-player-lifecycle-hard-cutover.md` §6: "Lectern,
+    # podcast, and media DTOs reuse the same server-derived title/subtitle +
+    # FooterAudio descriptor"). Populated by `services.media._apply_consumption_state`
+    # via the one projection owner, `services.consumption.player_descriptors`, which
+    # derives it exactly like a Lectern item. Present only when this media is a
+    # podcast episode whose derived activation is FooterAudio; Absent otherwise
+    # (including podcast episodes without playable audio, and every other kind).
+    # Unlike its snake-wire siblings (D-1 legacy), this field is new-cutover
+    # camelCase on the wire (`playerDescriptor`): routes serializing it must dump
+    # `by_alias=True`.
+    player_descriptor: Presence[PlayerDescriptor] = Field(alias="playerDescriptor")
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-DeleteDocumentStatus = Literal["deleted", "removed", "hidden"]
+# DELETE /media/{id} response: the tagged wire union (spec §3.1). Strict
+# camelCase, ``extra="forbid"``, PascalCase discriminator. ``populate_by_name``
+# lets the service construct with snake field names; routes serialize
+# ``by_alias=True``.
+_MEDIA_DELETE_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
-class DeleteDocumentResponse(BaseModel):
-    """Response for document delete and scoped library removal."""
+class MediaRemovedResult(BaseModel):
+    """A scoped/whole-workspace removal that left at least one lifetime reference."""
 
-    status: DeleteDocumentStatus
-    hard_deleted: bool
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
-    hidden_for_viewer: bool
-    remaining_reference_count: int
+    remaining_reference_count: int = Field(ge=0)
+
+
+class MediaHiddenResult(BaseModel):
+    """A whole-workspace removal that recorded the viewer's hide marker."""
+
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Hidden"] = "Hidden"
+    removed_from_library_ids: list[UUID]
+    remaining_reference_count: int = Field(ge=0)
+
+
+class MediaDeletingResult(BaseModel):
+    """The last lifetime reference was removed; teardown intent + job installed."""
+
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Deleting"] = "Deleting"
+
+
+MediaDeleteResult = Annotated[
+    MediaRemovedResult | MediaHiddenResult | MediaDeletingResult,
+    Field(discriminator="kind"),
+]
 
 
 class FragmentOut(BaseModel):

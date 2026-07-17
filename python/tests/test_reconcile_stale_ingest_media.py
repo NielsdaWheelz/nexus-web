@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaFile, ProcessingStatus, User
 from nexus.storage.paths import build_storage_path, build_upload_staging_storage_path
-from tests.support.storage import FakeStorageClient
 from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -703,13 +702,13 @@ def test_reconciler_requeues_stale_pdf_when_attempts_below_limit(db_session: Ses
     assert attempt_row.job_id is not None
 
 
-def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: Session):
-    media_id, storage_path, final_storage_path = _insert_stale_pending_upload(db_session)
+def test_reconciler_claims_stale_pending_upload_for_teardown(db_session: Session):
+    # Spec §3.1 (deliverable 6): the reconciler no longer deletes storage/media inline;
+    # it claims each stale pending upload (intent + media_teardown job) and lets the
+    # durable job own the physical deletion + storage sweep.
+    media_id, _storage_path, _final_storage_path = _insert_stale_pending_upload(db_session)
     _seed_stale_pending_upload_child_rows(db_session, media_id)
     db_session.commit()
-    storage = FakeStorageClient()
-    storage.put_object(storage_path, b"%PDF-stale", "application/pdf")
-    storage.put_object(final_storage_path, b"%PDF-final-orphan", "application/pdf")
 
     with (
         patch(
@@ -720,37 +719,42 @@ def test_reconciler_deletes_stale_pending_upload_and_storage_object(db_session: 
             "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
             return_value=task_session_factory(db_session),
         ),
-        patch(
-            "nexus.tasks.reconcile_stale_ingest_media.get_storage_client",
-            return_value=storage,
-        ),
     ):
         from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
         result = reconcile_stale_ingest_media_job()
 
     assert result["pending_upload_deleted"] >= 1
-    assert storage.get_object(storage_path) is None
-    assert storage.get_object(final_storage_path) is None
+    db_session.expire_all()
+    intent = db_session.execute(
+        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
+        {"m": media_id},
+    ).fetchone()
+    assert intent is not None, "reconciler must install a teardown intent for the stale upload"
+    job = db_session.execute(
+        text(
+            "SELECT 1 FROM background_jobs "
+            "WHERE kind = 'media_teardown' AND payload->>'mediaId' = :m"
+        ),
+        {"m": str(media_id)},
+    ).fetchone()
+    assert job is not None, "reconciler must enqueue a media_teardown job for the stale upload"
+    # The media survives until the durable job runs (it was claimed, not deleted inline).
     remaining = db_session.execute(
         text("SELECT COUNT(*) FROM media WHERE id = :media_id"),
         {"media_id": media_id},
     ).scalar_one()
-    assert remaining == 0
-    _assert_stale_pending_upload_child_rows_deleted(db_session, media_id)
+    assert remaining == 1
 
 
 def test_reconciler_keeps_pending_upload_with_active_confirmation_claim(
     db_session: Session,
 ):
-    media_id, storage_path, final_storage_path = _insert_stale_pending_upload(
+    media_id, _storage_path, _final_storage_path = _insert_stale_pending_upload(
         db_session,
         processing_started_seconds_ago=10,
     )
     db_session.commit()
-    storage = FakeStorageClient()
-    storage.put_object(storage_path, b"%PDF-stale", "application/pdf")
-    storage.put_object(final_storage_path, b"%PDF-final-in-progress", "application/pdf")
 
     with (
         patch(
@@ -761,18 +765,17 @@ def test_reconciler_keeps_pending_upload_with_active_confirmation_claim(
             "nexus.tasks.reconcile_stale_ingest_media.get_session_factory",
             return_value=task_session_factory(db_session),
         ),
-        patch(
-            "nexus.tasks.reconcile_stale_ingest_media.get_storage_client",
-            return_value=storage,
-        ),
     ):
         from nexus.tasks.reconcile_stale_ingest_media import reconcile_stale_ingest_media_job
 
         result = reconcile_stale_ingest_media_job()
 
     assert result["pending_upload_deleted"] == 0
-    assert storage.get_object(storage_path) == b"%PDF-stale"
-    assert storage.get_object(final_storage_path) == b"%PDF-final-in-progress"
+    intent = db_session.execute(
+        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
+        {"m": media_id},
+    ).fetchone()
+    assert intent is None, "an actively-confirming upload must not be claimed for teardown"
     remaining = db_session.execute(
         text("SELECT COUNT(*) FROM media WHERE id = :media_id"),
         {"media_id": media_id},

@@ -25,6 +25,7 @@ from tests.real_media.conftest import (
     run_web_article_source_fixture_with_dedupe_resolution,
     write_trace,
 )
+from tests.support.teardown import drive_media_teardown, zero_media_teardown_grace
 from tests.utils.db import DirectSessionManager
 
 pytestmark = [
@@ -150,8 +151,12 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
     auth_client,
     direct_db: DirectSessionManager,
     tmp_path,
+    monkeypatch,
 ):
     ensure_real_media_prerequisites()
+    # Physical deletion is now a durable job (spec §3.1); zero the cleanup grace so the
+    # driven teardown does not wait on cleanupNotBefore.
+    zero_media_teardown_grace(monkeypatch)
     owner_id = create_test_user_id()
     outsider_id = create_test_user_id()
     owner_headers = auth_headers(owner_id)
@@ -183,8 +188,10 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
 
     delete_response = auth_client.delete(f"/media/{media_id}", headers=owner_headers)
     assert delete_response.status_code == 200, delete_response.text
-    assert delete_response.json()["data"]["status"] == "deleted", delete_response.json()
-    assert delete_response.json()["data"]["hard_deleted"] is True, delete_response.json()
+    # Removing the last reference returns Deleting; the durable job performs the
+    # physical deletion + storage sweep.
+    assert delete_response.json()["data"] == {"kind": "Deleting"}, delete_response.json()
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
 
     owner_media = auth_client.get(f"/media/{media_id}", headers=owner_headers)
     assert owner_media.status_code == 404, owner_media.text
@@ -287,8 +294,8 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
         headers=headers,
     )
     assert remove_response.status_code == 200, remove_response.text
-    assert remove_response.json()["data"]["status"] == "removed", remove_response.json()
-    assert remove_response.json()["data"]["hard_deleted"] is False, remove_response.json()
+    # Scoped removal with references remaining returns Removed (never hard-deletes here).
+    assert remove_response.json()["data"]["kind"] == "Removed", remove_response.json()
 
     removed_scope_search = auth_client.get(
         "/search",

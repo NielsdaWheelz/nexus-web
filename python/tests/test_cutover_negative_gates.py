@@ -1852,14 +1852,13 @@ def test_lectern_old_modules_deleted():
 
 def test_lectern_queue_table_sole_writer():
     # Superseded by lectern-player-lifecycle-hard-cutover.md §8 AC-15: the Lectern
-    # membership/order table's sole owner is now services/consumption/_lectern_store.py
-    # (db/models.py is the ORM schema owner). media_deletion.py is TEMPORARILY still
-    # allowlisted as the last-reference cleaner; the media-teardown unit removes its
-    # direct write in favor of the consumption owner's all-users delete.
+    # membership/order table's sole owner is services/consumption/_lectern_store.py
+    # (db/models.py is the ORM schema owner). media_deletion.py NO LONGER writes this
+    # table — the media-teardown unit composes the consumption owner's all-users delete
+    # — so its TEMP allowlist entry is dropped and the gate is now tight.
     hits = _excluding(
         _grep(r"\bconsumption_queue_items\b", _PY_ROOT),
         "services/consumption/_lectern_store.py",
-        "services/media_deletion.py",
         "db/models.py",
     )
     assert not hits, f"consumption_queue_items written outside its owner:\n{_fmt(hits)}"
@@ -1885,14 +1884,64 @@ def test_consumption_overrides_sole_writer():
 
 def test_podcast_listening_states_sole_writer():
     # §8 AC-15: listening position/duration/speed DML lives only in the listening
-    # store. media_deletion.py is TEMPORARILY allowlisted as the last-reference
-    # cleaner; the media-teardown unit removes its direct delete.
+    # store. media_deletion.py NO LONGER deletes this table — the media-teardown unit
+    # composes the consumption owner — so its TEMP allowlist entry is dropped.
     hits = _excluding(
         _grep(_CONSUMPTION_TABLE_WRITE + r"podcast_listening_states", _PY_ROOT),
         "services/consumption/_listening_store.py",
-        "services/media_deletion.py",
     )
     assert not hits, f"podcast_listening_states written outside its owner:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Media teardown (lectern-player-lifecycle-hard-cutover.md §3.1) gates
+# =============================================================================
+
+
+def test_media_teardown_intents_sole_writers():
+    # §3.1: media_teardown_intents DML (INSERT/UPDATE/DELETE) lives ONLY in the claim
+    # owner (services/media_deletion.py) and the teardown job (tasks/media_teardown.py).
+    # Reads (the consumption projection, the reference barrier) are unrestricted.
+    dml = r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+media_teardown_intents\b"
+    hits = _excluding(
+        _grep(dml, _PY_ROOT),
+        "services/media_deletion.py",
+        "tasks/media_teardown.py",
+    )
+    assert not hits, f"media_teardown_intents written outside its owners:\n{_fmt(hits)}"
+
+
+def test_storage_object_delete_callers_enumerated():
+    # §3.1: media-teardown storage deletion is owned by the three durable task modules.
+    # Every other .delete_object( callsite is an enumerated legacy site: pre-existing
+    # error/compensation/GC cleanup that is NOT media teardown (upload error cleanup,
+    # EPUB asset compensation, library teardown, remote-file missing-media teardown,
+    # extraction-artifact requeue GC), plus the storage client's own impl. New ad-hoc
+    # teardown deletes outside the task modules fail here.
+    allowed = (
+        # The three durable teardown/sweep task modules (spec §3.1).
+        "tasks/media_teardown.py",
+        "tasks/storage_object_cleanup.py",
+        "tasks/storage_orphan_sweep.py",
+        # Enumerated legacy (non-teardown) storage-delete sites.
+        "services/upload.py",
+        "services/epub_ingest.py",
+        "services/library_governance.py",
+        "services/media_source_ingest.py",
+        "services/media_deletion.py",
+        "storage/client.py",
+    )
+    hits = _excluding(_grep(r"\.delete_object\(", _PY_ROOT), *allowed)
+    assert not hits, f".delete_object called outside enumerated owners:\n{_fmt(hits)}"
+
+
+def test_reconcile_stale_ingest_no_inline_storage_delete():
+    # §3.1 (deliverable 6): the stale-ingest reconciler dropped its post-commit
+    # best-effort object deletes in favor of the durable media_teardown job.
+    reconcile = (_PY_ROOT / "tasks" / "reconcile_stale_ingest_media.py").read_text(encoding="utf-8")
+    assert "delete_object" not in reconcile, (
+        "reconcile_stale_ingest_media.py must not delete storage objects inline"
+    )
 
 
 def test_lectern_player_deleted_modules_absent():

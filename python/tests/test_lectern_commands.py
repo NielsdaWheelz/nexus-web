@@ -6,6 +6,7 @@ library; commands run through the real service facade (fresh session + one
 serializable transaction + replay).
 """
 
+import threading
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,8 +20,10 @@ from nexus.db.models import (
     ProcessingStatus,
     UserMediaDeletion,
 )
+from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.services.consumption import _lectern_store
+from nexus.services.consumption import service as consumption_service
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -113,7 +116,12 @@ def _create_podcast_episode(
                 id=media_id,
                 kind=MediaKind.podcast_episode.value,
                 title=title,
-                canonical_source_url=f"https://example.com/{provider_episode_id}",
+                # derive_playback_source() falls back to canonical_source_url when
+                # external_playback_url is absent, so a genuinely audio-less
+                # episode (no enclosure/stream) must leave BOTH unset.
+                canonical_source_url=(
+                    f"https://example.com/{provider_episode_id}" if with_audio else None
+                ),
                 external_playback_url=(
                     f"https://cdn.example.com/{media_id}.mp3" if with_audio else None
                 ),
@@ -231,6 +239,21 @@ class TestLecternSnapshot:
         assert activation["chapters"] == []
         assert episode_item["subtitle"] == {"kind": "Present", "value": "A Show"}
 
+    def test_podcast_episode_without_audio_opens_pane(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A podcast episode with no enclosure/stream (no external_playback_url,
+        no canonical_source_url) derives OpenPane, never FooterAudio."""
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        episode = _create_podcast_episode(direct_db, title="No Audio", with_audio=False)
+        _add_to_library(auth_client, user_id, library_id, episode)
+
+        placed = _place(auth_client, user_id, [episode], {"kind": "Last"})
+        assert placed.status_code == 200, placed.text
+        item = placed.json()["data"]["lectern"]["items"][0]
+        assert item["activation"] == {"kind": "OpenPane"}, item
+
 
 class TestPlaceItems:
     def test_first_last_after_and_move_preserves_item_id(
@@ -344,6 +367,97 @@ class TestPlaceItems:
         assert over.json()["error"]["code"] == "E_LIMIT"
         # Nothing written: the third media never joined the Lectern.
         assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(b)]
+
+
+class TestPlaceItemsHiddenBoundaries:
+    """PlaceItems block adjacency against a hidden neighbor (spec §5.1: "Hidden
+    rows retain relative order... Placement uses visible boundaries without
+    exposing hidden IDs")."""
+
+    def test_first_lands_after_a_leading_hidden_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        b = _create_web_article(direct_db, title="B")
+        c = _create_web_article(direct_db, title="C")
+        for media_id in (a, b, c):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+        _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
+
+        # A (the earliest row) is hidden; B is now the first VISIBLE row.
+        _hide_media(direct_db, user_id, a)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(b), str(c)]
+
+        d = _create_web_article(direct_db, title="D")
+        _add_to_library(auth_client, user_id, library_id, d)
+        first = _place(auth_client, user_id, [d], {"kind": "First"})
+        assert first.status_code == 200, first.text
+        # First lands at the visible boundary, immediately before B.
+        assert _media_order(first.json()["data"]["lectern"]["items"]) == [str(d), str(b), str(c)]
+
+        # Un-hiding A proves the hidden row kept its own latent slot ahead of D
+        # rather than being displaced by the new block.
+        _unhide_media(direct_db, user_id, a)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(d), str(b), str(c)]
+
+    def test_last_lands_before_a_trailing_hidden_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        b = _create_web_article(direct_db, title="B")
+        c = _create_web_article(direct_db, title="C")
+        for media_id in (a, b, c):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+        _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
+
+        # C (the trailing row) is hidden; B is now the last VISIBLE row.
+        _hide_media(direct_db, user_id, c)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(b)]
+
+        d = _create_web_article(direct_db, title="D")
+        _add_to_library(auth_client, user_id, library_id, d)
+        last = _place(auth_client, user_id, [d], {"kind": "Last"})
+        assert last.status_code == 200, last.text
+        # Last lands at the visible boundary, immediately after B.
+        assert _media_order(last.json()["data"]["lectern"]["items"]) == [str(a), str(b), str(d)]
+
+        # Un-hiding C proves the hidden row kept its own latent slot behind D.
+        _unhide_media(direct_db, user_id, c)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(b), str(d), str(c)]
+
+    def test_after_anchor_preserves_relative_order_of_a_following_hidden_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        b = _create_web_article(direct_db, title="B")
+        c = _create_web_article(direct_db, title="C")
+        for media_id in (a, b, c):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+        _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
+        items = _get_lectern(auth_client, user_id)
+        a_item_id = next(i["itemId"] for i in items if i["mediaId"] == str(a))
+
+        # B sits immediately after the anchor A and is hidden.
+        _hide_media(direct_db, user_id, b)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(c)]
+
+        d = _create_web_article(direct_db, title="D")
+        _add_to_library(auth_client, user_id, library_id, d)
+        after = _place(auth_client, user_id, [d], {"kind": "After", "itemId": a_item_id})
+        assert after.status_code == 200, after.text
+        assert _media_order(after.json()["data"]["lectern"]["items"]) == [str(a), str(d), str(c)]
+
+        # Un-hiding B proves it still comes after A and before C — its relative
+        # order among existing rows is unchanged; only the new block was spliced
+        # in at the exact anchor point.
+        _unhide_media(direct_db, user_id, b)
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(d), str(b), str(c)]
 
 
 class TestSetOrder:
@@ -465,6 +579,153 @@ class TestReplay:
         cmid = str(uuid4())
         first = _place(auth_client, user_id, [a], {"kind": "Last"}, cmid=cmid)
         assert first.status_code == 200, first.text
+        row_set_before = _media_order(_get_lectern(auth_client, user_id))
+
         mismatch = _place(auth_client, user_id, [b], {"kind": "Last"}, cmid=cmid)
         assert mismatch.status_code == 409, mismatch.text
         assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
+        # The rejected mismatched replay writes nothing: same row set, B never
+        # joined the Lectern.
+        assert _media_order(_get_lectern(auth_client, user_id)) == row_set_before == [str(a)]
+
+
+class TestEnsureMissingItems:
+    """The internal trusted-ensure command (spec §5.3): not HTTP, exercised by
+    calling ``consumption_service.ensure_missing_items`` directly."""
+
+    def test_dedupes_input_appends_absent_at_last_and_never_moves_existing(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        b = _create_web_article(direct_db, title="B")
+        c = _create_web_article(direct_db, title="C")
+        for media_id in (a, b, c):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+
+        # A is already on the Lectern (manual add); B/C are absent.
+        _place(auth_client, user_id, [a], {"kind": "Last"})
+        existing_a_item_id = _get_lectern(auth_client, user_id)[0]["itemId"]
+
+        pairs = consumption_service.ensure_missing_items(user_id, [b, c, b, a], source="Assistant")
+        # Only the absent, deduped media are inserted; A (already present) is not.
+        assert {media_id for media_id, _ in pairs} == {b, c}
+
+        items = _get_lectern(auth_client, user_id)
+        assert _media_order(items) == [str(a), str(b), str(c)], "absent rows append at Last"
+        assert next(i["itemId"] for i in items if i["mediaId"] == str(a)) == existing_a_item_id, (
+            "an existing row must never move or get a new itemId"
+        )
+
+    def test_teardown_intent_rejects_whole_batch(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        deleting = _create_web_article(direct_db, title="Deleting")
+        for media_id in (a, deleting):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+        with direct_db.session() as session:
+            session.add(MediaTeardownIntent(id=new_uuid7(), media_id=deleting))
+            session.commit()
+
+        with pytest.raises(ConflictError) as excinfo:
+            consumption_service.ensure_missing_items(user_id, [a, deleting], source="Assistant")
+        assert excinfo.value.code == ApiErrorCode.E_MEDIA_DELETING
+        # Whole batch: A never joined the Lectern either.
+        assert _get_lectern(auth_client, user_id) == []
+
+    def test_limit_exceeded_rejects_whole_batch(
+        self, auth_client, direct_db: DirectSessionManager, monkeypatch
+    ):
+        monkeypatch.setattr(_lectern_store, "LECTERN_MAX_ITEMS", 2)
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        b = _create_web_article(direct_db, title="B")
+        c = _create_web_article(direct_db, title="C")
+        for media_id in (a, b, c):
+            _add_to_library(auth_client, user_id, library_id, media_id)
+        _place(auth_client, user_id, [a], {"kind": "Last"})
+
+        with pytest.raises(ConflictError) as excinfo:
+            consumption_service.ensure_missing_items(user_id, [b, c], source="Assistant")
+        assert excinfo.value.code == ApiErrorCode.E_LIMIT
+        # Whole batch: neither B nor C joined the Lectern.
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a)]
+
+    def test_recall_is_naturally_idempotent(self, auth_client, direct_db: DirectSessionManager):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        a = _create_web_article(direct_db, title="A")
+        _add_to_library(auth_client, user_id, library_id, a)
+
+        first_pairs = consumption_service.ensure_missing_items(user_id, [a], source="Assistant")
+        assert len(first_pairs) == 1
+
+        # A second, identical call has no replay memo; unique membership plus
+        # ensure semantics make it a natural no-op instead.
+        second_pairs = consumption_service.ensure_missing_items(user_id, [a], source="Assistant")
+        assert second_pairs == []
+        assert _media_order(_get_lectern(auth_client, user_id)) == [str(a)]
+
+
+class TestConcurrentPlaceEnsureRace:
+    """PlaceItems and EnsureMissingItems race on the same never-seen media (spec
+    §5.3): the ``uq_consumption_queue_items_user_media`` retry allowlist must
+    converge to exactly one row, never a 500 or a duplicate."""
+
+    @staticmethod
+    def _run_concurrently(targets: list) -> None:
+        barrier = threading.Barrier(len(targets))
+        errors: list[BaseException] = []
+        lock = threading.Lock()
+
+        def _wrap(fn):
+            try:
+                barrier.wait(timeout=10)
+                fn()
+            except BaseException as exc:  # pragma: no cover - re-raised below
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=_wrap, args=(fn,)) for fn in targets]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        for thread in threads:
+            if thread.is_alive():
+                errors.append(AssertionError(f"worker thread did not finish: {thread.name}"))
+        assert errors == [], f"concurrent workers raised: {errors!r}"
+
+    def test_place_and_ensure_converge_to_one_row(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        media_id = _create_web_article(direct_db, title="Raced")
+        _add_to_library(auth_client, user_id, library_id, media_id)
+
+        self._run_concurrently(
+            [
+                lambda: _place(auth_client, user_id, [media_id], {"kind": "Last"}),
+                lambda: consumption_service.ensure_missing_items(
+                    user_id, [media_id], source="Assistant"
+                ),
+            ]
+        )
+
+        with direct_db.session() as session:
+            from sqlalchemy import text
+
+            rows = session.execute(
+                text("SELECT id FROM consumption_queue_items WHERE user_id = :u AND media_id = :m"),
+                {"u": user_id, "m": media_id},
+            ).fetchall()
+        assert len(rows) == 1, f"expected exactly one row, no duplicate, got: {rows}"
+
+        items = _get_lectern(auth_client, user_id)
+        assert _media_order(items) == [str(media_id)]

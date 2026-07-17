@@ -686,6 +686,48 @@ def update_unclaimed_job(
     return updated is not None
 
 
+def find_nonterminal_jobs_for_payload(
+    db: Session,
+    *,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+) -> list[JobRow]:
+    """Return every not-yet-terminal job of ``kind`` whose payload contains the match.
+
+    "Nonterminal" means status is neither ``succeeded`` nor ``dead`` (i.e. still
+    ``pending``, ``running``, or ``failed``). Payload matching uses jsonb
+    containment (``@>``), so a caller matches on stable identity keys
+    (``mediaId``/``storagePath``) without decoding the checkpoint. This is the
+    queue-owned lookup that lets a media-locked caller enforce "at most one
+    nonterminal cleanup job per (mediaId, storagePath)" and lets media teardown
+    enumerate the Armed storage-cleanup writers for one media. Domain code never
+    reads ``background_jobs`` raw -- this is one of the queue's doorway functions.
+    Serialization comes from the caller's own row lock (e.g. the media row held
+    ``FOR UPDATE`` while reserving), not from this read.
+    """
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE kind = :kind
+                  AND status NOT IN ('succeeded', 'dead')
+                  AND payload @> CAST(:expected_payload_match AS jsonb)
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {
+                "kind": kind,
+                "expected_payload_match": json.dumps(dict(expected_payload_match)),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [_row_to_job(row) for row in rows]
+
+
 def complete_job(
     db: Session,
     *,

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
     ItemLibraryMembershipOut,
     LibraryEntryKind,
@@ -307,11 +307,45 @@ def _next_position(db: Session, library_id: UUID) -> int:
     return int(value or 0)
 
 
+def raise_if_media_teardown_pending(db: Session, media_id: UUID) -> None:
+    """Reference barrier (spec §3.1): lock the media row, reject a pending teardown.
+
+    Every lifetime-reference insert for a media target first locks that media row
+    ``FOR UPDATE`` and checks ``media_teardown_intents`` in the same transaction, so a
+    reference creator and the teardown claim (which locks only that media row, checks
+    zero committed references, then inserts the intent + enqueues the job) linearize on
+    the media row: creator-first makes the claim observe a reference; claim-first makes
+    the creator raise ``E_MEDIA_DELETING``. The claim never locks library rows, so this
+    introduces no cross-owner global lock order. The media lock is taken before any
+    library lock so the reference path and the delete path share one media->library
+    order.
+
+    A missing media row is left for the caller's own existence handling; a teardown
+    intent FKs ``media`` and cannot exist without the row.
+    """
+    locked = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).fetchone()
+    if locked is None:
+        return
+    intent = db.execute(
+        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if intent is not None:
+        raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+
+
 def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     """Append the target to the library at next_position if absent. The sole inserter —
     replaces the inline add inserts and the closure's per-media append.
 
-    Locks the target library row first as the single per-library append serialization
+    For a media target, first runs the teardown reference barrier
+    (:func:`raise_if_media_teardown_pending`) so a concurrent last-reference claim and
+    this insert linearize on the media row before any library lock is taken.
+
+    Locks the target library row next as the single per-library append serialization
     point. justify-concurrency: two concurrent appends would otherwise both read the
     same MAX(position)+1 — a result no sequential ordering yields — and collide on
     UNIQUE(library_id, position) at commit. concurrency.md requires locking when
@@ -321,6 +355,8 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     (library_id, podcast_id) unique constraints independently make a duplicate entry
     uncommittable regardless of isolation.
     """
+    if target.kind == "media":
+        raise_if_media_teardown_pending(db, target.id)
     db.execute(text("SELECT 1 FROM libraries WHERE id = :lib FOR UPDATE"), {"lib": library_id})
     column = _TARGET_COLUMN[target.kind]
     existing = db.execute(

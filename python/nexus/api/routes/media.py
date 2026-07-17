@@ -78,7 +78,9 @@ def list_media(
         limit=limit,
         is_admin=_ADMIN_ROLE in viewer.roles,
     )
-    return {**ok(media_list), "page": {"next_cursor": next_cursor}}
+    # by_alias=True: MediaOut.player_descriptor is the sole aliased field
+    # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
+    return {**ok(media_list, by_alias=True), "page": {"next_cursor": next_cursor}}
 
 
 @router.get("/media/{media_id}")
@@ -91,7 +93,9 @@ def get_media(
     result = media_service.get_media_for_viewer(
         db, viewer.user_id, media_id, is_admin=_ADMIN_ROLE in viewer.roles
     )
-    return ok(result)
+    # by_alias=True: MediaOut.player_descriptor is the sole aliased field
+    # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
+    return ok(result, by_alias=True)
 
 
 @router.put("/media/{media_id}/authors")
@@ -124,7 +128,7 @@ def remove_media(
         result = media_deletion_service.remove_document_from_library(
             db, viewer.user_id, media_id, library_id
         )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.get("/media/{media_id}/libraries")
