@@ -23,6 +23,8 @@ interface EpisodeControlsProps {
   onLectern: boolean;
   /** Disable "Play next" when it would target the active Lectern origin. */
   playNextDisabled: boolean;
+  /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
+  lecternReady: boolean;
   transcriptionAllowed: boolean;
   billingDisabled: boolean;
   showNotesExpanded: boolean;
@@ -43,6 +45,7 @@ export default function EpisodeControls({
   isAudioEpisode,
   onLectern,
   playNextDisabled,
+  lecternReady,
   transcriptionAllowed,
   billingDisabled,
   showNotesExpanded,
@@ -97,7 +100,7 @@ export default function EpisodeControls({
             variant="secondary"
             size="sm"
             aria-label={`Play next for ${episode.title}`}
-            disabled={playNextDisabled}
+            disabled={playNextDisabled || !lecternReady}
             onClick={() => {
               onPlayNext(episode.id);
             }}
@@ -108,6 +111,7 @@ export default function EpisodeControls({
             variant="secondary"
             size="sm"
             aria-label={`Add ${episode.title} to Lectern`}
+            disabled={!lecternReady}
             onClick={() => {
               onAddToLectern(episode.id);
             }}

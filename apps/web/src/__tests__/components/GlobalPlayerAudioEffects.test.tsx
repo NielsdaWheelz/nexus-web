@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { present } from "@/lib/api/presence";
 import type { ChapterOut } from "@/lib/lectern/client";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   FOOTER_AUDIO_LABEL,
@@ -223,8 +223,10 @@ const EPISODE_CHAPTERS: ChapterOut[] = [
 
 function Harness() {
   const { playAudio } = useGlobalPlayer();
+  const { resource } = useLectern();
   return (
     <>
+      <span data-testid="lectern-status">{resource.status}</span>
       <button
         type="button"
         onClick={() =>
@@ -241,6 +243,13 @@ function Harness() {
       <GlobalPlayerFooter />
     </>
   );
+}
+
+// playAudio defects before the Lectern snapshot is Ready (spec §6); wait for the
+// mount GET to resolve before the explicit Play.
+async function play() {
+  await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+  fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
 }
 
 function App() {
@@ -285,7 +294,7 @@ describe("GlobalPlayer audio effects", () => {
       ({ unmount } = render(<App />));
       // `playAudio` starts (and autoplays) the session, which lazily builds the
       // Web Audio graph — there is no longer a "load without play" phase.
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
 
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);
@@ -326,7 +335,7 @@ describe("GlobalPlayer audio effects", () => {
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(<App />));
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
       fireEvent.click(screen.getByRole("button", { name: "More controls" }));
       fireEvent.click(screen.getByRole("button", { name: "Audio effects" }));
 
@@ -350,7 +359,7 @@ describe("GlobalPlayer audio effects", () => {
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(<App />));
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
 
       const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
 
@@ -417,7 +426,7 @@ describe("GlobalPlayer audio effects", () => {
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(<App />));
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
 
       const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
 
@@ -451,7 +460,7 @@ describe("GlobalPlayer audio effects", () => {
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(<App />));
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
 
       await waitFor(() => {
         expect(audioContextMock.instances).toHaveLength(1);

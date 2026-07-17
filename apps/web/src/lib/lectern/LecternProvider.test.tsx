@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import { assumeLecternItemId } from "@/lib/lectern/client";
+import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/client";
 import {
   LECTERN_COMMAND_DEADLINE_MS,
   LecternProvider,
@@ -432,6 +432,59 @@ describe("LecternProvider revalidation", () => {
     });
     await drain();
     expect(mock.gets()).toHaveLength(2);
+  });
+});
+
+describe("LecternProvider setUnread pre-command drain", () => {
+  it("runs registered beforeSetUnread hooks to completion BEFORE enqueueing the command", async () => {
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => jsonResponse({ data: wireSnapshot([]) });
+
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    let releaseHook!: () => void;
+    const hookGate = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    let hookMediaId: string | null = null;
+    const unregister = result.current.registerBeforeSetUnread(async (mediaId) => {
+      hookMediaId = mediaId;
+      await hookGate;
+    });
+
+    const consumptionPosts = () =>
+      mock.calls.filter((c) => c.path === "/api/consumption/commands");
+
+    let promise!: Promise<unknown>;
+    act(() => {
+      promise = result.current.setUnread(assumeMediaId(MEDIA_A));
+    });
+    promise.catch(() => {});
+
+    // The hook is invoked with the target media; the command is NOT enqueued while
+    // the drain hook is still pending (spec §5.4: drain, then issue the command).
+    await waitFor(() => expect(hookMediaId).toBe(MEDIA_A));
+    expect(consumptionPosts()).toHaveLength(0);
+
+    // Once the drain completes, the SetUnread command finally reaches the network.
+    releaseHook();
+    await waitFor(() => expect(consumptionPosts()).toHaveLength(1));
+
+    unregister();
+  });
+});
+
+describe("LecternProvider getCanonicalSnapshot", () => {
+  it("exposes the live canonical snapshot (undefined until Ready)", async () => {
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => jsonResponse({ data: wireSnapshot(ITEMS_AB) });
+
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    const snapshot = result.current.getCanonicalSnapshot();
+    expect(snapshot?.items.map((item) => item.title)).toEqual(["Alpha", "Bravo"]);
   });
 });
 

@@ -5,6 +5,7 @@ import AppNav from "@/components/appnav/AppNav";
 import Launcher from "@/components/launcher/Launcher";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
+import LecternMutationNotice from "@/components/LecternMutationNotice";
 import { WebVitalsReporter } from "@/components/workspace/WebVitalsReporter";
 import LocalVaultAutoSync from "./LocalVaultAutoSync";
 import SessionRefresher from "@/lib/auth/SessionRefresher";
@@ -100,6 +101,7 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
                 <GlobalPlayerProvider>
                   <WalknoteSessionProvider>
                     <WorkspaceHost />
+                    <LecternMutationNotice />
                     <GlobalPlayerFooter />
                   </WalknoteSessionProvider>
                 </GlobalPlayerProvider>

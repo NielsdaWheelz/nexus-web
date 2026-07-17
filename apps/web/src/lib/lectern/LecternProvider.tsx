@@ -94,6 +94,20 @@ export interface LecternCapability {
     state: "Finished" | "Unread";
   }): Promise<ConsumptionResult>;
   onCanonicalInstall(listener: (event: CanonicalInstallEvent) => void): () => void;
+  /**
+   * Register a pre-command hook run (and awaited) BEFORE an active-media
+   * `SetUnread` is enqueued (spec §5.4: "the provider closes and drains the old
+   * generation ... then issues the command"). The player registers a drain here;
+   * each hook owns its own deadline. Returns an unsubscribe.
+   */
+  registerBeforeSetUnread(hook: (mediaId: MediaId) => Promise<void>): () => void;
+  /**
+   * Read the provider's current canonical snapshot (undefined until Ready). This
+   * is a live read of the FIFO owner, so it stays correct even when the calling
+   * leaf has unmounted (spec §6 Undo: the snapshot must survive an offering-pane
+   * unmount during the 10s toast).
+   */
+  getCanonicalSnapshot(): LecternSnapshot | undefined;
 }
 
 // --- Internal primitives -----------------------------------------------------
@@ -162,6 +176,8 @@ type LecternEngineMethods = Pick<
   | "setUnread"
   | "setBatchState"
   | "onCanonicalInstall"
+  | "registerBeforeSetUnread"
+  | "getCanonicalSnapshot"
 >;
 
 interface LecternEngine extends LecternEngineMethods {
@@ -183,6 +199,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
 
   const gates = new Set<(outcome: GateOutcome) => void>();
   const listeners = new Set<(event: CanonicalInstallEvent) => void>();
+  const beforeSetUnreadHooks = new Set<(mediaId: MediaId) => Promise<void>>();
 
   const active = (gen: number): boolean => running && gen === generation;
 
@@ -527,14 +544,29 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     return enqueueConsumptionMutation(generation, command, snapshot);
   }
 
+  // Run every registered pre-command hook to completion. Drains are best-effort:
+  // a hook that rejects (or its own deadline elapses) must not block the command
+  // (spec §5.4 "for at most that deadline, then issues the command").
+  async function runBeforeSetUnread(mediaId: MediaId): Promise<void> {
+    const hooks = [...beforeSetUnreadHooks];
+    if (hooks.length === 0) return;
+    await Promise.allSettled(hooks.map((hook) => hook(mediaId)));
+  }
+
   function setUnread(mediaId: MediaId): Promise<ConsumptionResult> {
     const snapshot = requireReadySnapshot();
+    const gen = generation;
     const command: ConsumptionCommand = {
       kind: "SetUnread",
       clientMutationId: crypto.randomUUID(),
       mediaId,
     };
-    return enqueueConsumptionMutation(generation, command, snapshot);
+    // Close + drain the old generation BEFORE issuing the command so the visible
+    // seek-to-zero is not deferred behind an in-flight heartbeat (spec §5.4).
+    return runBeforeSetUnread(mediaId).then(() => {
+      if (!active(gen)) throw makeAbortError();
+      return enqueueConsumptionMutation(gen, command, snapshot);
+    });
   }
 
   function setBatchState(input: {
@@ -556,6 +588,17 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     return () => {
       listeners.delete(listener);
     };
+  }
+
+  function registerBeforeSetUnread(hook: (mediaId: MediaId) => Promise<void>): () => void {
+    beforeSetUnreadHooks.add(hook);
+    return () => {
+      beforeSetUnreadHooks.delete(hook);
+    };
+  }
+
+  function getCanonicalSnapshot(): LecternSnapshot | undefined {
+    return resource.status === "ready" ? resource.data : undefined;
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -602,6 +645,8 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     setUnread,
     setBatchState,
     onCanonicalInstall,
+    registerBeforeSetUnread,
+    getCanonicalSnapshot,
     start,
     stop,
   };
@@ -641,6 +686,8 @@ export function LecternProvider({ children }: { children: ReactNode }) {
       setUnread: engine.setUnread,
       setBatchState: engine.setBatchState,
       onCanonicalInstall: engine.onCanonicalInstall,
+      registerBeforeSetUnread: engine.registerBeforeSetUnread,
+      getCanonicalSnapshot: engine.getCanonicalSnapshot,
     }),
     [engine, resource, mutation],
   );

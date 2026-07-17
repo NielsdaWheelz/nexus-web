@@ -154,6 +154,36 @@ describe("LecternPaneBody", () => {
     expect(screen.queryByText("On the lectern")).toBeNull();
   });
 
+  it("shows a Retry on initial-load failure and recovers when Retry succeeds", async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/lectern" && method === "GET") {
+        getCount += 1;
+        if (getCount === 1) {
+          return new Response(JSON.stringify({ error: { code: "E_UPSTREAM", message: "boom" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return jsonResponse({ data: { items: [wireItem(ITEM_A, MEDIA_A, "Recovered Read")] } });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(withProviders(<LecternPaneBody />));
+
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByText("Failed to load the Lectern")).toBeInTheDocument();
+
+    fireEvent.click(retry);
+
+    expect(await screen.findByText("Recovered Read")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load the Lectern")).toBeNull();
+  });
+
   it("removes an item via the row action menu", async () => {
     const { getItems } = installLecternMock([
       wireItem(ITEM_A, MEDIA_A, "A Long Read"),

@@ -879,6 +879,7 @@ export default function PodcastDetailPaneBody() {
       expandedShowNotesMediaIds={expandedShowNotesMediaIds}
       lecternMediaIds={lecternMediaIds}
       playNextDisabledMediaId={playNextDisabledMediaId}
+      lecternReady={lectern.resource.status === "ready"}
       visibleUnplayedEpisodeIds={visibleUnplayedEpisodeIds}
       markAllAsPlayedBusy={markAllAsPlayedBusy}
       hasMoreEpisodes={hasMoreEpisodes}

@@ -5,7 +5,7 @@
  * shapes, and the polling / can-request / progress / summary helpers.
  */
 
-import { absent, type Presence } from "@/lib/api/presence";
+import { type Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   decodePresentPlayerDescriptor,
@@ -159,15 +159,15 @@ export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
 
 /**
  * Decode this episode's `Presence<PlayerDescriptor>` at the pane transport
- * boundary. The wire always carries the field once the backend lands; a missing
- * field (pre-backend / 500) degrades to `Absent`, which the panes treat as
- * "not audio-playable" and hide the play/Lectern affordances for.
+ * boundary. The field is REQUIRED on the wire (strict `Presence` encoding), so it
+ * is decoded unconditionally: omission, `null`, or alternate casing throws rather
+ * than being silently tolerated. `Absent` means "not audio-playable" and hides
+ * the play/Lectern affordances.
  */
 export function episodePlayerDescriptor(
   episode: PodcastEpisodeMedia,
 ): Presence<PlayerDescriptor> {
-  const raw = (episode as { playerDescriptor?: unknown }).playerDescriptor;
-  return raw === undefined ? absent() : decodePresentPlayerDescriptor(raw);
+  return decodePresentPlayerDescriptor(episode.playerDescriptor);
 }
 
 export function episodeMatchesFilter(

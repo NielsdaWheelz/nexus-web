@@ -499,3 +499,17 @@ export function mintCompletionAttempt(
         };
   return Object.freeze({ exactId, fallbackStateOnlyId, body: Object.freeze(body) });
 }
+
+/**
+ * Whether a completion-command `clientMutationId` belongs to a given attempt —
+ * i.e. it is that attempt's primary `exactId` or its `fallbackStateOnlyId`. Used
+ * by the provider to derive `CompletionFailed` from a parked FIFO failure, and by
+ * the shell mutation notice to suppress its banner for a completion attempt the
+ * player dock already surfaces (spec §6 CompletionAttempt bullet).
+ */
+export function mutationMatchesAttempt(
+  clientMutationId: string,
+  attempt: CompletionAttempt,
+): boolean {
+  return clientMutationId === attempt.exactId || clientMutationId === attempt.fallbackStateOnlyId;
+}

@@ -73,6 +73,7 @@ import {
   getStartPositionMs,
   manualNext,
   mintCompletionAttempt,
+  mutationMatchesAttempt,
   naturalEndAdvance,
   playExplicit,
   previewNextDescriptor,
@@ -190,15 +191,13 @@ function getAudioContextConstructor(): typeof AudioContext | undefined {
   return window.AudioContext ?? audioWindow.webkitAudioContext;
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled player session state: ${JSON.stringify(value)}`);
+}
+
 /** The audio session a state carries, or `undefined` when Absent. */
 function sessionOfState(state: PlayerSessionState): AudioSession | undefined {
   return state.kind === "Absent" ? undefined : state.session;
-}
-
-/** A completion-command mutation whose id belongs to this attempt (for the
- * derived CompletionFailed retry). */
-function mutationMatchesAttempt(clientMutationId: string, attempt: CompletionAttempt): boolean {
-  return clientMutationId === attempt.exactId || clientMutationId === attempt.fallbackStateOnlyId;
 }
 
 export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
@@ -787,13 +786,20 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
 
   const playAudio = useCallback(
     (descriptor: PlayerDescriptor) => {
+      // Play waits for Ready (spec §6): origin resolution needs the canonical
+      // snapshot, so a pre-Ready Play would mis-resolve a Lectern origin to Direct.
+      // Affordances are gated disabled-until-Ready; reaching here regardless is a
+      // defect, mirroring the mutation lane's `requireReadySnapshot`.
+      if (lecternResource.status !== "ready") {
+        throw new Error("playAudio invoked before the Lectern snapshot is Ready (defect).");
+      }
       if (transportLocked()) return;
       pendingStartRef.current = null;
       applyTransition(
         playExplicit(sessionStateRef.current, historyRef.current, descriptor, latestSnapshot()),
       );
     },
-    [applyTransition, latestSnapshot, transportLocked],
+    [applyTransition, latestSnapshot, transportLocked, lecternResource.status],
   );
 
   const previous = useCallback(() => {
@@ -1177,8 +1183,10 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         setSessionState((prev) => applySnapshotInstall(prev, event.snapshot));
         return;
       }
-      // listeningStates: an Unread reset. Adopt each into overlay; drain + adopt
-      // the active-media engine so the retained player seeks to the reset state.
+      // listeningStates: an Unread reset. Adopt each into the overlay and adopt
+      // the (already pre-command-drained) active-media engine so the retained
+      // player seeks to the reset state. The drain itself happens BEFORE the
+      // SetUnread command via the registered pre-command hook below (spec §5.4).
       const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor.mediaId;
       for (const { mediaId, state } of event.states) {
         finishedOverridesRef.current.delete(mediaId);
@@ -1188,14 +1196,26 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
           resetEpoch: state.resetEpoch,
         });
         if (mediaId === activeMedia && heartbeatRef.current) {
-          const engine = heartbeatRef.current;
-          void engine.drainAndStop(HEARTBEAT_DEADLINE_MS).then(() => {
-            if (heartbeatRef.current === engine) engine.adoptServerState(state);
-          });
+          heartbeatRef.current.adoptServerState(state);
         }
       }
     };
-    return lectern.onCanonicalInstall(handleEvent);
+    // Pre-command drain: before an active-media SetUnread is issued, close and
+    // drain the old heartbeat generation for at most the deadline, then let the
+    // command proceed (spec §5.4). The post-result adoptServerState above revives
+    // the drained engine at the canonical reset.
+    const handleBeforeSetUnread = async (mediaId: MediaId): Promise<void> => {
+      const activeMedia = sessionOfState(sessionStateRef.current)?.descriptor.mediaId;
+      if (mediaId === activeMedia && heartbeatRef.current) {
+        await heartbeatRef.current.drainAndStop(HEARTBEAT_DEADLINE_MS);
+      }
+    };
+    const unsubscribeInstall = lectern.onCanonicalInstall(handleEvent);
+    const unsubscribeDrain = lectern.registerBeforeSetUnread(handleBeforeSetUnread);
+    return () => {
+      unsubscribeInstall();
+      unsubscribeDrain();
+    };
   }, [lectern]);
 
   // --- Keyboard shortcuts ----------------------------------------------------
@@ -1259,9 +1279,14 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
         return state;
       }
       case "CompletionFailed":
-        return { ...state, retry: retryPlayback };
+        // `CompletionFailed` is a DERIVED public state (produced by the
+        // `Completing` case above from a parked completion mutation), never a raw
+        // session state the provider sets — reaching it here is a defect.
+        throw new Error(
+          "CompletionFailed is a derived public state, never a raw session state (defect).",
+        );
       default:
-        return state;
+        return assertNever(state);
     }
   }, [sessionState, lecternMutation, retryPlayback]);
 

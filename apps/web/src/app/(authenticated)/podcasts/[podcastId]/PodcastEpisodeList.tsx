@@ -51,6 +51,8 @@ interface PodcastEpisodeListProps {
   expandedShowNotesMediaIds: StringIdSet;
   lecternMediaIds: Set<string>;
   playNextDisabledMediaId: string | null;
+  /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
+  lecternReady: boolean;
   visibleUnplayedEpisodeIds: string[];
   markAllAsPlayedBusy: boolean;
   hasMoreEpisodes: boolean;
@@ -86,6 +88,7 @@ export default function PodcastEpisodeList({
   expandedShowNotesMediaIds,
   lecternMediaIds,
   playNextDisabledMediaId,
+  lecternReady,
   visibleUnplayedEpisodeIds,
   markAllAsPlayedBusy,
   hasMoreEpisodes,
@@ -181,11 +184,12 @@ export default function PodcastEpisodeList({
         onTogglePlayed: () => {
           onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
         },
-        onAddToLectern: audioEpisodeIds.has(episode.id)
-          ? () => {
-              onAddToLectern(episode.id);
-            }
-          : undefined,
+        onAddToLectern:
+          audioEpisodeIds.has(episode.id) && lecternReady
+            ? () => {
+                onAddToLectern(episode.id);
+              }
+            : undefined,
       },
     ),
   );
@@ -198,6 +202,7 @@ export default function PodcastEpisodeList({
           isAudioEpisode={audioEpisodeIds.has(episode.id)}
           onLectern={lecternMediaIds.has(episode.id)}
           playNextDisabled={episode.id === playNextDisabledMediaId}
+          lecternReady={lecternReady}
           transcriptionAllowed={transcriptionAllowed}
           billingDisabled={billingDisabled}
           showNotesExpanded={expandedShowNotesMediaIds.ids.has(episode.id)}

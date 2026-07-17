@@ -10,8 +10,9 @@
  * never reach `<audio>` — the construction is a compile error, not a branch.
  */
 
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
@@ -269,6 +270,29 @@ describe("GlobalPlayer completion lifecycle", () => {
     const fallback = consumptionBodies.filter((b) => b.kind === "EnsureMediaFinished");
     expect(fallback.length).toBe(1);
     expect(fallback[0]).toMatchObject({ kind: "EnsureMediaFinished", mediaId: MEDIA_A });
+  });
+
+  it("playAudio defects when invoked before the Lectern snapshot is Ready (spec §6)", () => {
+    // The lectern GET never resolves, so the resource stays Loading.
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/lectern" && method === "GET") {
+        return new Promise<Response>(() => {}); // never resolves
+      }
+      return Promise.resolve(jsonResponse({ data: {} }));
+    });
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <LecternProvider>
+        <GlobalPlayerProvider>{children}</GlobalPlayerProvider>
+      </LecternProvider>
+    );
+    const { result } = renderHook(() => useGlobalPlayer(), { wrapper });
+
+    expect(() => result.current.playAudio(buildFooterDescriptor(MEDIA_A, "Too early"))).toThrow(
+      /Ready/,
+    );
   });
 
   it("failed active Remove restores the row without changing the exact origin", async () => {

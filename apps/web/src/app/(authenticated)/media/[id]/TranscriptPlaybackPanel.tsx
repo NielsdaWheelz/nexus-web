@@ -259,11 +259,17 @@ export default function TranscriptPlaybackPanel({
   const [playbackError, setPlaybackError] = useState(false);
   const currentTimeSeconds = presentation.positionMs / 1000;
 
+  // Play and Lectern mutations wait for the canonical snapshot to be Ready (spec
+  // §6): playAudio/placeItems both defect if invoked before Ready, so their
+  // affordances are disabled until then.
+  const lecternReady = resource.status === "ready";
+
   // "Play next": After the active exact Lectern origin, else First; a no-op when
   // it would target the current origin's own media.
   const activeOrigin = state.kind === "Absent" ? null : state.session.origin;
   const activeMediaId = state.kind === "Absent" ? null : state.session.descriptor.mediaId;
-  const playNextDisabled = activeOrigin?.kind === "Lectern" && activeMediaId === mediaId;
+  const playNextDisabled =
+    !lecternReady || (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
   const onLectern =
     resource.status === "ready" && resource.data.items.some((item) => item.mediaId === mediaId);
 
@@ -373,6 +379,7 @@ export default function TranscriptPlaybackPanel({
                 <Button
                   variant="secondary"
                   size="sm"
+                  disabled={!lecternReady}
                   onClick={() => playAudio(playerDescriptor)}
                 >
                   Play in footer
@@ -389,6 +396,7 @@ export default function TranscriptPlaybackPanel({
               <Button
                 variant="secondary"
                 size="sm"
+                disabled={!lecternReady}
                 onClick={handleAddToLectern}
               >
                 Add to Lectern

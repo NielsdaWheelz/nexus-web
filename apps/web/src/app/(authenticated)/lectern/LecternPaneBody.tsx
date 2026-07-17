@@ -130,11 +130,17 @@ export default function LecternPaneBody() {
   const byRowId = new Map(items.map((item) => [item.itemId as string, item]));
 
   const errorNotice =
-    resource.status === "error"
-      ? <FeedbackNotice feedback={toFeedback(resource.error, { fallback: "Failed to load the Lectern" })} />
-      : feedback
-        ? <FeedbackNotice feedback={feedback} />
-        : undefined;
+    resource.status === "error" ? (
+      <FeedbackNotice
+        feedback={toFeedback(resource.error, { fallback: "Failed to load the Lectern" })}
+      >
+        <Button variant="secondary" size="sm" onClick={resource.retry}>
+          Retry
+        </Button>
+      </FeedbackNotice>
+    ) : feedback ? (
+      <FeedbackNotice feedback={feedback} />
+    ) : undefined;
 
   return (
     <CollectionView

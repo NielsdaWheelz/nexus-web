@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
-import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { withRenderEnvironment } from "../helpers/renderEnvironment";
 import {
@@ -94,8 +94,10 @@ function installMediaSessionHarness(): MediaSessionHarness {
 
 function Harness() {
   const { playAudio } = useGlobalPlayer();
+  const { resource } = useLectern();
   return (
     <>
+      <span data-testid="lectern-status">{resource.status}</span>
       <button
         type="button"
         onClick={() =>
@@ -112,6 +114,13 @@ function Harness() {
       <GlobalPlayerFooter />
     </>
   );
+}
+
+// playAudio defects before the Lectern snapshot is Ready (spec §6); wait for the
+// mount GET to resolve before the explicit Play.
+async function play() {
+  await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+  fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
 }
 
 function App() {
@@ -149,7 +158,7 @@ describe("GlobalPlayer MediaSession integration", () => {
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(withRenderEnvironment(<App />)));
-      fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+      await play();
 
       await waitFor(() => {
         for (const action of MEDIA_SESSION_ACTIONS) {

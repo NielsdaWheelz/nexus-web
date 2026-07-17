@@ -1,0 +1,24 @@
+/* An unobtrusive banner rendered in-flow directly above the player dock. Like
+   the dock, it occupies layout space and never overlays content (spec §1). */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+  border-top: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--ink);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.title {
+  min-width: 0;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.retry {
+  flex: 0 0 auto;
+}

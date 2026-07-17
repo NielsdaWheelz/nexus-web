@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import { assumeMediaId } from "@/lib/lectern/client";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,
@@ -217,5 +218,131 @@ describe("GlobalPlayer listening heartbeat", () => {
     );
     // Playback is unaffected: the dock is still mounted.
     expect(screen.getByRole("region", { name: "Media player" })).toBeInTheDocument();
+  });
+
+  it("drains the in-flight heartbeat BEFORE issuing the active-media SetUnread command", async () => {
+    // spec §5.4: "Before active-media Unread, the provider closes and drains the
+    // old generation ... then issues the command." The fetch order must show the
+    // heartbeat PUT resolving before the SetUnread consumption POST.
+    const MEDIA = "33333333-3333-4333-8333-333333333333";
+    const order: string[] = [];
+    let releasePut!: () => void;
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/lectern" && method === "GET") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (url.pathname === "/api/consumption/commands" && method === "POST") {
+        order.push("setUnread");
+        return jsonResponse({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            listeningStates: [
+              {
+                mediaId: MEDIA,
+                state: {
+                  positionMs: 0,
+                  durationMs: { kind: "Absent" },
+                  playbackSpeed: 1,
+                  writeRevision: 5,
+                  resetEpoch: 1,
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/listening-state")) {
+        if (method === "PUT") {
+          order.push("heartbeatPut");
+          await putGate; // hang until released so the drain has something to await
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return jsonResponse({
+            data: {
+              listeningState: {
+                positionMs: body.positionMs,
+                durationMs: body.durationMs,
+                playbackSpeed: body.playbackSpeed,
+                writeRevision: 1,
+                resetEpoch: 0,
+              },
+              heartbeatGeneration: body.heartbeatGeneration,
+              heartbeatSequence: body.heartbeatSequence,
+            },
+          });
+        }
+        return jsonResponse({
+          data: { positionMs: 0, durationMs: { kind: "Absent" }, playbackSpeed: 1, writeRevision: 0, resetEpoch: 0 },
+        });
+      }
+      return jsonResponse({ data: {} });
+    });
+    const intervals = installIntervalHarness();
+
+    function DrainHarness() {
+      const { playAudio } = useGlobalPlayer();
+      const { setUnread } = useLectern();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => playAudio(buildFooterDescriptor(MEDIA, "Drainable"))}
+          >
+            Load drain
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUnread(assumeMediaId(MEDIA)).catch(() => {});
+            }}
+          >
+            Mark unread
+          </button>
+          <LecternReadyProbe />
+          <GlobalPlayerFooter />
+        </>
+      );
+    }
+
+    render(
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <DrainHarness />
+        </GlobalPlayerProvider>
+      </LecternProvider>,
+    );
+
+    await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+    fireEvent.click(screen.getByRole("button", { name: "Load drain" }));
+
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 30 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("play"));
+
+    await waitFor(() =>
+      expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),
+    );
+    intervals.run(15_000); // fire one heartbeat -> PUT in flight (hangs)
+    await waitFor(() => expect(order).toContain("heartbeatPut"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark unread" }));
+    // Give the command a chance to (wrongly) race ahead: while the heartbeat PUT
+    // hangs, the SetUnread POST must NOT be sent.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(order).toEqual(["heartbeatPut"]);
+
+    // Release the heartbeat: the drain completes, then the command is issued.
+    releasePut();
+    await waitFor(() => expect(order).toContain("setUnread"));
+    expect(order.indexOf("heartbeatPut")).toBeLessThan(order.indexOf("setUnread"));
   });
 });

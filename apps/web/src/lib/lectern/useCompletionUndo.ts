@@ -13,7 +13,7 @@
  * a definitive lost anchor offers a fresh `Restore` action. No new API.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { useFeedback } from "@/components/feedback/Feedback";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import type {
@@ -56,16 +56,16 @@ export interface CompletionUndoInput {
 }
 
 export function useCompletionUndo(): (input: CompletionUndoInput) => void {
-  const { setUnread, placeItems, resource } = useLectern();
+  const { setUnread, placeItems, getCanonicalSnapshot } = useLectern();
   const { show } = useFeedback();
 
-  // Read the freshest canonical snapshot at Undo/Restore time, not at offer time.
-  const resourceRef = useRef(resource);
-  resourceRef.current = resource;
-  const currentSnapshot = useCallback((): LecternSnapshot => {
-    const current = resourceRef.current;
-    return current.status === "ready" ? current.data : { items: [] };
-  }, []);
+  // Read the freshest canonical snapshot at Undo/Restore time, not at offer time —
+  // and source it from the provider (a live FIFO read) rather than a per-pane ref,
+  // so it stays correct even if the offering pane unmounts during the 10s toast.
+  const currentSnapshot = useCallback(
+    (): LecternSnapshot => getCanonicalSnapshot() ?? { items: [] },
+    [getCanonicalSnapshot],
+  );
 
   const runRestore = useCallback(
     async (input: CompletionUndoInput, placement: Placement) => {
