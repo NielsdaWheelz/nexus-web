@@ -427,10 +427,10 @@ function databaseHasSeededEpubTitle(dbUrl) {
 }
 
 function databaseHasSeededOpenAiKey(dbUrl, ownerUserId) {
-  const probeDatabaseUrl = dbUrl.replace(
-    /^postgresql\+psycopg:\/\//,
-    "postgresql://",
-  );
+  // This probe runs app SQLAlchemy code (create_session_factory), which needs
+  // the postgresql+psycopg dialect; stripping it would select the absent
+  // psycopg2 default driver. Only raw psycopg.connect probes strip the scheme.
+  const probeDatabaseUrl = dbUrl;
   const command =
     "uv run --project python python -c " +
     JSON.stringify(
