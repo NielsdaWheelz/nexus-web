@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReaderProvider, useReaderContext } from "./ReaderContext";
 import type { ReaderProfile } from "./types";
@@ -61,6 +61,7 @@ function ackResponse(profile: ReaderProfile): Promise<Response> {
 describe("ReaderContext", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("defects when used outside its provider", () => {
@@ -143,6 +144,29 @@ describe("ReaderContext", () => {
     expect(() => lastCapability?.retrySave()).toThrow(
       "retrySave is only available from SaveFailed",
     );
+  });
+
+  it("sends discrete intents in the same task and range intents on the 400 ms idle clock (AC-3)", async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubFetch(() => ackResponse({ ...BASE, font_size_px: 20 }));
+    renderProbe();
+
+    // Range cadence: nothing until the 400 ms idle clock elapses.
+    fireEvent.click(screen.getByRole("button", { name: "set font 20" }));
+    act(() => vi.advanceTimersByTime(399));
+    expect(fetchMock).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Settle the acknowledgement so the writer is idle again.
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByLabelText("persistence")).toHaveTextContent(/^Clean$/);
+
+    // Discrete cadence: the PATCH leaves in the same task as the intent —
+    // never parked behind a timer a navigation could beat.
+    fireEvent.click(screen.getByRole("button", { name: "set dark" }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ theme: "dark" });
   });
 
   it("flushes deferred range work on provider teardown instead of dropping it", async () => {

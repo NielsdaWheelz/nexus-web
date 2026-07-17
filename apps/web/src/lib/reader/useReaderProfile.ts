@@ -54,7 +54,6 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
   stateRef.current = state;
 
   const attemptSeqRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
   const intentGenerationRef = useRef(0);
   const revalidateInFlightRef = useRef(false);
 
@@ -73,15 +72,12 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
     }
     attemptSeqRef.current += 1;
     const attemptId = attemptSeqRef.current;
-    const controller = new AbortController();
-    abortRef.current = controller;
     apply({ type: "save_started", attemptId, now: Date.now() });
     try {
       const res = await apiFetch<{ data: unknown }>("/api/me/reader-profile", {
         method: "PATCH",
         body: JSON.stringify(patch),
         keepalive: true,
-        signal: controller.signal,
       });
       apply({ type: "save_succeeded", attemptId, profile: parseReaderProfile(res.data) });
     } catch (err) {
@@ -120,16 +116,17 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
     if (local.status !== "saving" || Date.now() < local.expiresAt) {
       return;
     }
-    // Invalidate first, then abort: the settlement guard above sees the
-    // already-expired attempt and ignores the AbortError. Restore never
-    // auto-starts a replacement PATCH.
+    // Expiry invalidates the attempt logically: the attempt-id guard ignores
+    // any late settlement, and restore never auto-starts a replacement PATCH.
+    // The wire request is deliberately NOT aborted — attaching an AbortSignal
+    // to a keepalive fetch starves delivery in Chromium under automation, and
+    // an abort proves nothing about the server transaction anyway (spec §7
+    // residual); a late-but-committed write is reconciled by last-write-wins.
     apply({
       type: "save_failed",
       attemptId: local.attemptId,
       failure: { kind: "AttemptDeadlineExceeded" },
     });
-    abortRef.current?.abort();
-    abortRef.current = null;
   }, [apply]);
 
   useEffect(() => {
@@ -232,9 +229,18 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
   const intend = useCallback(
     (patch: ReaderProfilePatch) => {
       intentGenerationRef.current += 1;
-      apply({ type: "intent", patch, now: Date.now() });
+      const next = apply({ type: "intent", patch, now: Date.now() });
+      // "Send now when idle": due Immediate work dispatches in the same task,
+      // so the keepalive PATCH is already in flight before an instant reload
+      // — never parked behind a zero-delay timer a navigation could beat.
+      if (
+        next.local.status === "deferred" &&
+        readerProfileWorkDueAt(next.local.work) <= Date.now()
+      ) {
+        void send();
+      }
     },
-    [apply],
+    [apply, send],
   );
 
   const retrySave = useCallback(() => {

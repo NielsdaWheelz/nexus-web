@@ -294,10 +294,15 @@ test.describe("youtube transcript media", () => {
       await page.getByRole("menuitem", { name: "Light theme", exact: true }).click();
       const lightRoot = documentViewport.locator('[class*="readerThemeLight"]').first();
       await expect(lightRoot).toBeVisible({ timeout: 10_000 });
-      const transitionDuration = await lightRoot.evaluate(
-        (el) => getComputedStyle(el).transitionDuration,
+      const transitionDurations = await lightRoot.evaluate((el) =>
+        getComputedStyle(el).transitionDuration.split(",").map((value) => value.trim()),
       );
-      expect(transitionDuration).toBe("0s");
+      // One entry per transitioned property (background-color, color) — every
+      // one must resolve to 0s under reduced motion.
+      expect(transitionDurations.length).toBeGreaterThan(0);
+      for (const duration of transitionDurations) {
+        expect(duration).toBe("0s");
+      }
     } finally {
       const restore = await page.request.patch("/api/me/reader-profile", {
         data: { theme: "light" },

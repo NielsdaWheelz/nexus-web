@@ -284,11 +284,14 @@ use it for both routes; client GETs also request `cache: "no-store"`.
   or `SaveFailed` work only if logically idle. Never promote `Forbidden`, start a
   second logical attempt, or use `beforeunload`/`unload`.
 - `Saving` carries an attempt ID and 35 s wall-clock watchdog deadline (the BFF's
-  30 s deadline plus margin); `useReaderProfile` owns the `AbortController` keyed
-  to that ID. Timer, `pageshow`, visible, and focus call one expiry check. Expiry
-  invalidates then aborts the attempt, merges sent and queued work into
-  `SaveFailed(AttemptDeadlineExceeded)`, and ignores late settlement. Restore
-  never auto-starts a replacement PATCH.
+  30 s deadline plus margin). Timer, `pageshow`, visible, and focus call one
+  expiry check. Expiry invalidates the attempt logically — the attempt-ID guard
+  ignores late settlement — and merges sent and queued work into
+  `SaveFailed(AttemptDeadlineExceeded)`. The wire request is deliberately not
+  aborted: attaching an `AbortSignal` to a keepalive fetch starves delivery in
+  Chromium under automation, and an abort proves nothing about the server
+  transaction (see Residual); a late-but-committed write reconciles by
+  last-write-wins. Restore never auto-starts a replacement PATCH.
 - Resume events coalesce to one GET only from `Clean`. Capture
   `intentGeneration`; on completion adopt only if state is still `Clean` and the
   generation is unchanged.
