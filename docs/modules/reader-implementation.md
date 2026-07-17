@@ -228,16 +228,107 @@ separate from source-authored apparatus.
 
 ### reader settings
 
-- `reader_profile` stores the global reader preferences for a user
+- `reader_profiles` stores the global reader preferences for a user, one row
+  per user
 - shipped fields are `theme`, `font_family`, `font_size_px`,
-  `line_height`, `column_width_ch`, `focus_mode`, and `hyphenation`
+  `line_height`, `column_width_ch`, `focus_mode`, and `hyphenation`;
+  `created_at` is database-clock creation metadata only and is never in the
+  DTO — there is no `updated_at`. Profile writes are serialization-order
+  last-write-wins, not revisioned (contrast the revisioned `reader_media_state`
+  cursor below)
 - `focus_mode` is `"off" | "distraction_free" | "paragraph" | "sentence"`
 - `hyphenation` is `"auto" | "off"`; `auto` enables `hyphens: auto`
   with `hyphenate-limit-chars: 6 3 3` and `hyphenate-limit-lines: 2`
   on viewports `<= 600px`; `off` disables on every viewport
 - the settings page and the media header quick-switch both write the same
-  global reader profile
+  global reader profile through the one capability described below
 - theme is global reader theme only; there are no per-media theme overrides
+
+### reader profile bootstrap and recovery
+
+- the authenticated workspace data root (`loadWorkspaceBootstrap`) makes
+  `GET /me/reader-profile` (`cache: "no-store"`) a **required** read on the
+  normal 30 s server-request deadline — it seeds `ReaderProvider` and
+  workspace width restoration, so a failed or malformed read rejects the
+  whole bootstrap rather than fabricating a frontend default. Saved-session
+  and pane resource seeds stay best-effort.
+- `AuthenticatedWorkspaceErrorBoundary` is the client class boundary wrapping
+  the authenticated layout's `Suspense`/`WorkspaceBootstrapGate` subtree (a
+  same-segment `error.tsx` cannot catch its own layout). On bootstrap failure
+  it replaces the shell skeleton with a `role="alert"` region that receives
+  focus on mount; Retry runs exactly
+  `startTransition(() => { router.refresh(); reset(); })` — `reset()` alone
+  would re-render the same rejected tree, so `router.refresh()` re-issues the
+  Server Component request first.
+
+### reader profile write coordinator
+
+- `readerProfileSync.ts` is the one pure reducer: strict wire decode, per-field
+  patch merge/equality, and the `acknowledged`/`local`
+  (`Clean | Deferred | Saving | SaveFailed | Forbidden`) state machine.
+  `useReaderProfile.ts` is the one impure coordinator: timers, fetches, the
+  attempt watchdog, lifecycle listeners, and revalidation generations.
+  Together they are the only client write owner — there is no other save
+  path, no frontend default, and no no-op.
+- one logical PATCH is in flight at a time, with one latest-merged queue
+  behind it. Discrete fields (`theme`, `font_family`, `focus_mode`,
+  `hyphenation`) send immediately when idle; continuous fields
+  (`font_size_px`, `line_height`, `column_width_ch`) debounce 400 ms idle
+  within a 5 s maximum, measured from the first unflushed input. Every PATCH
+  sets `keepalive: true` and is awaited.
+- a `Saving` attempt carries a 35 s wall-clock watchdog (the BFF's 30 s
+  deadline plus margin); expiry invalidates then aborts the attempt and
+  converts it to `SaveFailed(AttemptDeadlineExceeded)`, ignoring late
+  settlement. Restore never auto-starts a replacement PATCH.
+- hidden `visibilitychange`, `pagehide`, and provider teardown flush deferred
+  or `SaveFailed` work only when no logical PATCH is in flight; `Forbidden`
+  is never promoted, and `beforeunload`/`unload` are not used.
+- clean-tab resume (`visibilitychange`, `focus`, `pageshow`, `online`)
+  coalesces to one no-store GET, only from `Clean`, and adopts the response
+  only if an `intentGeneration` captured at request time is still
+  unchanged — any intervening local intent outranks the background read.
+- `ReaderProvider`/`useReaderContext` expose the public capability: `profile`
+  (the optimistic desired projection), `persistence`
+  (`Clean | Pending | SaveFailed | Forbidden`), semantic setters
+  (`setTheme`, `setFontFamily`, `setFocusMode`, `setHyphenation`,
+  `setFontSize`, `setLineHeight`, `setColumnWidth`), and `retrySave()`. There
+  is no generic `save(Partial<ReaderProfile>)`; calling `useReaderContext`
+  outside its provider throws rather than returning a no-op default.
+- controls stay interactive in `Pending` and `SaveFailed`; `Forbidden`
+  disables persistence controls and has no Retry until a fresh bootstrap.
+- one keyed Feedback presentation (`reader-profile-save`, owned by
+  `ReaderProfileSaveFeedback.tsx`) is the save-failure UX: a persistent global
+  toast with Retry for `SaveFailed`, one without for `Forbidden`. While the
+  Settings reader pane is active it holds a `suppressDedupeKey` lease on that
+  key — the global toast is hidden and `SettingsReaderPaneBody` renders the
+  same failure inline — and releases the lease on deactivation/unmount,
+  restoring the global notice if the failure remains. There is exactly one
+  visible live presentation at a time.
+
+### reader profile backend contract
+
+- `READER_PROFILE_DEFAULTS` in `python/nexus/services/reader.py` is the one
+  preference-default authority (schema-validated, frozen); the seven
+  preference columns carry no database default (migration `0181`). A
+  missing-row GET returns the defaults without inserting; the first PATCH
+  explicitly seeds all seven fields from the same value before applying the
+  patch.
+- the whole PATCH attempt runs inside `retry_serializable`
+  (SELECT → INSERT-or-UPDATE → commit); a concurrent first insert retries the
+  whole attempt against `reader_profiles_pkey` rather than upserting or
+  taking an explicit lock.
+- `ReaderProfilePatch` uses strict Pydantic input
+  (`ConfigDict(strict=True, extra="forbid")`): explicit null, unknown fields,
+  invalid values, and coercible numeric strings/non-integer numeric forms for
+  integer fields are all `400`; an empty `{}` patch is also `400`.
+- GET/PATCH accept and return exactly the seven preference fields, nothing
+  else — no `updated_at` or other metadata.
+- FastAPI's `private_reader_no_store` middleware (matching
+  `READER_PRIVATE_NO_STORE_PATH_RE`) stamps `Cache-Control: private, no-store`
+  on `/me/reader-profile` and `/media/{id}/reader-state` for
+  200/400/401/403 and middleware-caught raw 500 responses; the BFF wraps both
+  routes with the shared `privateNoStoreResponse.server.ts` helper, and the
+  client GET also requests `cache: "no-store"`.
 
 ### focus mode contract
 

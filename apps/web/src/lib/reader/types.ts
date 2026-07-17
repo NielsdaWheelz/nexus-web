@@ -1,9 +1,12 @@
 /**
  * Reader profile and persisted resume-state types.
  *
- * Backend contract assumptions:
- * - GET /api/me/reader-profile returns { data: ReaderProfile }
- * - PATCH /api/me/reader-profile accepts Partial<ReaderProfile>
+ * Backend contract assumptions (served through the BFF mirror of the FastAPI
+ * paths):
+ * - GET /me/reader-profile returns { data: ReaderProfile } (exactly seven
+ *   fields; the backend service owns the defaults — there is no frontend
+ *   default profile)
+ * - PATCH /me/reader-profile accepts any non-empty Partial<ReaderProfile>
  * - Reader cursor GET/PUT snapshots live in `readerProgress.ts`; the locator
  *   inside them is the `ReaderResumeState` decoded here.
  */
@@ -24,6 +27,10 @@ export const READER_FOCUS_MODES = [
   "paragraph",
   "sentence",
 ] as const satisfies readonly ReaderFocusMode[];
+export const READER_HYPHENATIONS = [
+  "auto",
+  "off",
+] as const satisfies readonly ReaderHyphenation[];
 
 export interface ReaderProfile {
   theme: ReaderTheme;
@@ -35,19 +42,10 @@ export interface ReaderProfile {
   hyphenation: ReaderHyphenation;
 }
 
-export const DEFAULT_READER_PROFILE: ReaderProfile = {
-  theme: "light",
-  font_family: "serif",
-  font_size_px: 16,
-  line_height: 1.5,
-  column_width_ch: 65,
-  focus_mode: "off",
-  hyphenation: "auto",
-};
-
 const READER_THEME_SET: ReadonlySet<string> = new Set(READER_THEMES);
 const READER_FONT_FAMILY_SET: ReadonlySet<string> = new Set(READER_FONT_FAMILIES);
 const READER_FOCUS_MODE_SET: ReadonlySet<string> = new Set(READER_FOCUS_MODES);
+const READER_HYPHENATION_SET: ReadonlySet<string> = new Set(READER_HYPHENATIONS);
 
 export function isReaderTheme(value: unknown): value is ReaderTheme {
   return typeof value === "string" && READER_THEME_SET.has(value);
@@ -59,6 +57,10 @@ export function isReaderFontFamily(value: unknown): value is ReaderFontFamily {
 
 export function isReaderFocusMode(value: unknown): value is ReaderFocusMode {
   return typeof value === "string" && READER_FOCUS_MODE_SET.has(value);
+}
+
+export function isReaderHyphenation(value: unknown): value is ReaderHyphenation {
+  return typeof value === "string" && READER_HYPHENATION_SET.has(value);
 }
 
 export interface ReaderResumeLocations {

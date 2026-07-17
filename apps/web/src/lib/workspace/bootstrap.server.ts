@@ -10,7 +10,8 @@ import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
-import { DEFAULT_READER_PROFILE, type ReaderProfile } from "@/lib/reader/types";
+import { parseReaderProfile } from "@/lib/reader/readerProfileSync";
+import type { ReaderProfile } from "@/lib/reader/types";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import {
   createDefaultWorkspaceState,
@@ -44,14 +45,13 @@ async function seedPane(href: string): Promise<{ cacheKey: string; data: unknown
   }
 }
 
+// Required: the profile participates in workspace width restoration, so the shell cannot
+// exist without it. It rides the normal 30 s server-request deadline (no prefetch bound) and
+// a failure or malformed payload rejects the whole bootstrap into the workspace error
+// boundary — never a fabricated default.
 async function loadReaderProfile(): Promise<ReaderProfile> {
-  try {
-    return (await callFastAPI<{ data: ReaderProfile }>("/me/reader-profile", PREFETCH_OPTS)).data;
-  } catch {
-    // justify-ignore-error: best-effort; a slow/absent profile must never gate paint — the
-    // client ReaderProvider owns save/retry.
-    return DEFAULT_READER_PROFILE;
-  }
+  const res = await callFastAPI<{ data: unknown }>("/me/reader-profile");
+  return parseReaderProfile(res.data);
 }
 
 async function loadSession(
@@ -91,9 +91,9 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     (await headers()).get(REQUEST_PATH_HEADER) ?? WORKSPACE_DEFAULT_FALLBACK_HREF;
   const deviceId = readDeviceId(await cookies());
 
-  // Wave 1 — reader profile, saved session, and the URL pane's resource: concurrent and
-  // best-effort. None gates the first byte (the shell skeleton already streamed). The URL
-  // pane is usually the active pane, so this collapses the common case to one wave (D-6).
+  // Wave 1 — reader profile, saved session, and the URL pane's resource: concurrent. The
+  // profile is required (it seeds ReaderProvider and width restoration); session and pane
+  // seeds stay best-effort. None gates the first byte — the shell skeleton already streamed.
   const [readerProfile, session, urlSeed] = await Promise.all([
     loadReaderProfile(),
     loadSession(deviceId),

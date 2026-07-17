@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callFastAPI } from "@/lib/api/server";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
-import { DEFAULT_READER_PROFILE } from "@/lib/reader/types";
+import type { ReaderProfile } from "@/lib/reader/types";
 import {
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
@@ -63,8 +63,19 @@ function respondWithFn(responder: Responder): void {
   mockCallFastAPI.mockImplementation(async (path: string) => responder(path) as never);
 }
 
+// The exact seven-field profile the strict decoder accepts; there is no frontend default.
+const READER_PROFILE: ReaderProfile = {
+  theme: "light",
+  font_family: "serif",
+  font_size_px: 16,
+  line_height: 1.5,
+  column_width_ch: 65,
+  focus_mode: "off",
+  hyphenation: "auto",
+};
+
 // A reader-profile responder shared by the resource cases that don't care about it.
-const PROFILE_OK = { data: DEFAULT_READER_PROFILE };
+const PROFILE_OK = { data: READER_PROFILE };
 const NOTE_PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const NOTE_BLOCK_ID = "22222222-2222-4222-8222-222222222222";
 
@@ -379,7 +390,7 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("returns the fetched reader profile when /me/reader-profile resolves", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
-    const profile = { ...DEFAULT_READER_PROFILE, theme: "dark" as const };
+    const profile = { ...READER_PROFILE, theme: "dark" as const };
     respondWith({
       "/me/reader-profile": { data: profile },
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
@@ -390,7 +401,7 @@ describe("loadWorkspaceBootstrap", () => {
     expect(result.readerProfile).toEqual(profile);
   });
 
-  it("falls back to the default reader profile when /me/reader-profile rejects", async () => {
+  it("rejects the whole bootstrap when the required /me/reader-profile read fails", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     respondWithFn((path) => {
       if (path === "/me/reader-profile") {
@@ -399,9 +410,17 @@ describe("loadWorkspaceBootstrap", () => {
       return { data: [], page: { has_more: false, next_cursor: null } };
     });
 
-    const result = await loadWorkspaceBootstrap(false);
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow("profile 504");
+  });
 
-    expect(result.readerProfile).toEqual(DEFAULT_READER_PROFILE);
+  it("rejects a malformed profile payload instead of seeding a default", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    respondWith({
+      "/me/reader-profile": { data: { ...READER_PROFILE, theme: "sepia" } },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
+    });
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow("Invalid reader profile");
   });
 
   it("omits the pane resource when its loader fails (D-8) without throwing", async () => {
@@ -418,17 +437,25 @@ describe("loadWorkspaceBootstrap", () => {
     expect(result.resources).toEqual({});
   });
 
-  it("bounds every prefetch fetch with the 500ms deadline (AC-10)", async () => {
+  it("bounds best-effort prefetches with the 500ms deadline; the required profile rides the normal deadline", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
     respondWith({
       "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: null }),
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
     });
 
     await loadWorkspaceBootstrap(false);
 
-    for (const [, options] of mockCallFastAPI.mock.calls) {
-      expect(options).toEqual({ timeoutMs: 500 });
+    const profileCalls = mockCallFastAPI.mock.calls.filter(
+      ([path]) => path === "/me/reader-profile",
+    );
+    expect(profileCalls).toEqual([["/me/reader-profile"]]);
+    for (const [path, options] of mockCallFastAPI.mock.calls) {
+      if (path !== "/me/reader-profile") {
+        expect(options).toEqual({ timeoutMs: 500 });
+      }
     }
   });
 

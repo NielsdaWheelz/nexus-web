@@ -89,7 +89,7 @@ touching app theme tokens.
 
 ### global reader profile
 
-- `reader_profile` stores the global reader preferences for a user
+- `reader_profiles` stores the global reader preferences for a user
 - shipped fields are `theme`, `font_family`, `font_size_px`,
   `line_height`, `column_width_ch`, `focus_mode`, and `hyphenation`
 - `focus_mode` is one of `"off" | "distraction_free" | "paragraph" | "sentence"`
@@ -97,6 +97,45 @@ touching app theme tokens.
   on viewports `<= 600px`; `off` disables on every viewport
 - all reflowable reader appearance comes from this single source of truth
   across web article, transcript, and epub readers
+
+the bootstrap read of this profile is required, not best-effort, unlike the
+rest of the workspace data root. The profile's `column_width_ch`, `font_size_px`,
+and `line_height` feed the pane-width probe that sizes every non-PDF pane
+before the workspace mounts, so a silently defaulted profile would size and
+then re-size the workspace under the user, and a frontend default (e.g.
+falling back to Light) would mask a real backend/auth problem behind a
+plausible-looking screen. Making the read required and surfacing failure
+through `AuthenticatedWorkspaceErrorBoundary` with Retry costs one blocking
+round-trip behind the already-streamed skeleton in exchange for never
+lying about server state.
+
+the profile and the reader cursor (`reader_media_state`, above) deliberately
+use different conflict models for the same reason they are different data:
+the profile is one small preference bag per user with no meaningful
+"undo my last edit" shape, so serialization-order last-write-wins is
+sufficient — distinct-field partial writes already compose, and a same-field
+race is just a timing outcome, not a lost user action. The reader cursor is a
+positional bookmark where silently overwriting a genuine "go back" intent
+from another device is a real correctness bug, which is what the
+revision/CAS protocol exists to prevent. Adding CAS to the profile would add
+protocol cost without protecting anything that can actually go wrong.
+
+the client also keeps optimistic `desired` pixels and server-acknowledged
+`acknowledged` state as two separate facts rather than one. Local intent must
+paint immediately for perceived responsiveness, but only a value the server
+has actually confirmed is safe to treat as the baseline a later clean-tab
+resume adopts from — collapsing the two would either let a background
+revalidation silently overwrite unacknowledged local intent, or force the UI
+to wait for the network before ever moving a control. This is also why the
+profile has no generic `save(Partial<ReaderProfile>)` and no React 19
+`useOptimistic`: `useOptimistic` cannot own single-flight transport ordering,
+a latest-merged queue, the attempt watchdog, lifecycle-flush promotion, or
+generation-guarded revalidation, so using it would either drop those
+guarantees or duplicate `desired` under another name. The same reasoning is
+why this coordinator is not generalized with reader progress, workspace
+session, or note autosave: a revisioned single value and an unrevisioned
+preference bag have different identity and conflict shapes that a shared
+sync hook would blur.
 
 ### per-media progress
 

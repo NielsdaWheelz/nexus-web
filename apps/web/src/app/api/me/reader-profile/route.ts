@@ -1,11 +1,12 @@
 import { proxyToFastAPI } from "@/lib/api/proxy";
+import { privateNoStoreResponse } from "@/lib/api/privateNoStoreResponse.server";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  return proxyToFastAPI(req, "/me/reader-profile");
+  return privateNoStoreResponse(await proxyToFastAPI(req, "/me/reader-profile"));
 }
 
 export async function PATCH(req: Request) {
-  return proxyToFastAPI(req, "/me/reader-profile");
+  return privateNoStoreResponse(await proxyToFastAPI(req, "/me/reader-profile"));
 }

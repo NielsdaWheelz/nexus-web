@@ -25,10 +25,11 @@ fi
 test_env_resolve_ports
 test_env_resolve_minio_port
 test_env_resolve_app_ports
+test_env_resolve_reader_proxy_port
 test_env_export_app_urls
 
 COMPOSE_PROJECT_NAME="nexus-test-$(date +%s)-$$"
-export COMPOSE_PROJECT_NAME POSTGRES_PORT MINIO_PORT API_PORT WEB_PORT TEST_RUNTIME_ACTIVE=1
+export COMPOSE_PROJECT_NAME POSTGRES_PORT MINIO_PORT API_PORT WEB_PORT READER_PROXY_PORT TEST_RUNTIME_ACTIVE=1
 
 # shellcheck disable=SC2329
 cleanup() {
@@ -38,6 +39,7 @@ cleanup() {
     test_env_wait_for_port_close "$MINIO_PORT" "MinIO"
     test_env_cleanup_owned_app_port "$API_PORT" "api"
     test_env_cleanup_owned_app_port "$WEB_PORT" "web"
+    test_env_cleanup_owned_app_port "$READER_PROXY_PORT" "reader-profile-upstream-proxy"
     if [ -n "${TEST_POSTGRES_PORT_LOCK_DIR:-}" ]; then
         rm -rf "$TEST_POSTGRES_PORT_LOCK_DIR"
     fi
@@ -49,6 +51,9 @@ cleanup() {
     fi
     if [ -n "${TEST_WEB_PORT_LOCK_DIR:-}" ]; then
         rm -rf "$TEST_WEB_PORT_LOCK_DIR"
+    fi
+    if [ -n "${TEST_READER_PROXY_PORT_LOCK_DIR:-}" ]; then
+        rm -rf "$TEST_READER_PROXY_PORT_LOCK_DIR"
     fi
 }
 trap cleanup EXIT

@@ -233,8 +233,21 @@ def _create_authenticated_test_app(engine: Engine):
         finally:
             db.close()
 
+    from nexus.auth.middleware import AuthMiddleware
+
     verifier = MockJwtVerifier()
-    app = _create_app(skip_auth_middleware=True)
+    # Installed through create_app's hook so the middleware ORDER matches
+    # production exactly: auth added after create_app would sit outermost,
+    # and (for one) private_reader_no_store would no longer stamp 401s.
+    app = _create_app(
+        install_auth_middleware=lambda asgi_app: asgi_app.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap_callback,
+        )
+    )
 
     from nexus.db.session import get_db
 
@@ -246,16 +259,6 @@ def _create_authenticated_test_app(engine: Engine):
             db.close()
 
     app.dependency_overrides[get_db] = _test_get_db
-
-    from nexus.auth.middleware import AuthMiddleware
-
-    app.add_middleware(
-        AuthMiddleware,
-        verifier=verifier,
-        requires_internal_header=False,
-        internal_secret=None,
-        bootstrap_callback=bootstrap_callback,
-    )
 
     from nexus.app import add_request_id_middleware
 
