@@ -25,6 +25,15 @@ scheduled:
 > separate hard cutover. Delete duplicated local sheet geometry after
 > migration.
 
+**Historical note (2026-07-16):** `lectern-player-lifecycle-hard-cutover.md`
+deleted the queue panel this doc's `GlobalPlayerQueuePanel` references
+describe (the "untouched desktop side panel" claims below, incl. the table
+entry, AC-13, and N2). The panel it names was later renamed
+`GlobalPlayerConsumptionPanel` and is now deleted outright — the Lectern pane
+is the sole full-list editor and the footer has no list/dialog. Those
+references describe the pre-cutover surface and are retained as historical
+record only.
+
 ## Summary
 
 The mobile chat drawer (`MobileSecondaryPaneHost`, hosting the

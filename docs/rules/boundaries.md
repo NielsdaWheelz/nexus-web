@@ -86,6 +86,13 @@ transport decoder has accepted them.
 - Do not pre-convert to lossy forms into intermediate variables. If a value has meaning beyond its primitive shape, it should have a type that reflects that meaning — not flow through code as a bare `string` or `number`.
 - When the system defines a structure and controls both its writer and reader,
   represent semantic absence with the owned absence representation.
+- The owned absence representation is `Presence<T> = { kind: "Absent" } |
+  { kind: "Present", value: T }`, the one repository-wide forward wire encoding
+  for owned semantic absence. The field is always present; `null`, omission,
+  and alternate casing are rejected. No decoder accepts both `Presence<T>` and
+  a raw-nullable or optional-key form for the same field. Existing unrelated
+  nullable APIs migrate to `Presence<T>` only inside their own owner cutover,
+  never as a side effect of an unrelated change.
 - Owned domain, service, durable-operation, replay, memoized, API, and
   same-system payload schemas use the owned absence representation for semantic
   absence. Do not use raw nullable values just because the encoding can carry

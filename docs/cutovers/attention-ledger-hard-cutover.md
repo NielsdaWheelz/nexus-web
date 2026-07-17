@@ -14,6 +14,21 @@ below describing `services/reader.py`'s bare-locator/null-clear parsing, and
 step S2's `parse_reader_state_with_attention` plan describe the superseded
 pre-cutover shape and are retained as historical implementation record only.
 
+**Lectern/player-lifecycle note (2026-07-16):**
+`lectern-player-lifecycle-hard-cutover.md` supersedes this spec's One-line
+owner claim, §2 explicit-finished actions, §3 G-3/G-5, §§4.1/4.4 consumption
+ownership/projection, §6 override route (not the listening heartbeat), §7
+consumption actions, §8 D-4, §9 listening owner claim, §11 affected
+owner/HTTP slices, §12 AC-9, §13 consumption-owner gates G-5/G-8, and §15
+corresponding files. `services/attention.py` no longer writes or reads
+`consumption_overrides`; the consumption package
+(`services/consumption/_state_store.py`) owns explicit state, and
+`services/consumption/_listening_store.py` now owns the listening heartbeat's
+position/duration/speed write with revision/epoch fencing. This spec's
+`reading_sessions` table, 30-minute session continuity, attention
+aggregation, and audio-while-playing dwell rule remain canonical and
+unchanged.
+
 ## One-line
 
 Record every contiguous reading and listening episode as a first-class `reading_sessions` row; derive read-state from sessions + one explicit override verb; make `services/attention.py` the sole writer of both tables and `consumption_state(user_id, media_ids)` the sole derivation function for collection queries.

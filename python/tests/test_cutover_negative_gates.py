@@ -1971,6 +1971,105 @@ def test_lectern_player_deleted_imports_absent():
     assert not hits, f"import of a deleted queue/listening module survives:\n{_fmt(hits)}"
 
 
+def test_reading_sessions_sole_writer():
+    # §8 AC-15: session DML (attention's dwell/continuity writes) lives only in
+    # attention.py; consumption never touches reading_sessions directly.
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"reading_sessions\b", _PY_ROOT),
+        "services/attention.py",
+    )
+    assert not hits, f"reading_sessions written outside attention.py:\n{_fmt(hits)}"
+
+
+def test_consumption_projection_reads_confined_to_owners():
+    # §3/§8 AC-15: "no direct consumption projection read remains outside
+    # _projection or attention's aggregate owner" (spec §7 adopters list). A fully
+    # general read-gate is impractical: services/media.py is a spec-named
+    # projection adopter (§7) that legitimately joins podcast_listening_states
+    # directly to hydrate MediaOut.listening_state (raw position/duration/speed
+    # passthrough, not the derived Unread/InProgress/Finished projection state),
+    # so it is allowlisted by name rather than excluded generically. Any other
+    # file selecting these three tables directly — a route, a new adopter, a
+    # reintroduced per-feature read — fails here instead of forking the read
+    # model. db/models.py never matches (it declares __tablename__, not
+    # FROM/JOIN literals), so it needs no explicit exclusion.
+    pattern = (
+        r"\b(?:FROM|JOIN)\s+(?:consumption_overrides|podcast_listening_states|reading_sessions)\b"
+    )
+    hits = _excluding(
+        _grep(pattern, _PY_ROOT),
+        "services/consumption/_state_store.py",
+        "services/consumption/_listening_store.py",
+        "services/consumption/_projection.py",
+        "services/attention.py",
+        "services/media.py",
+    )
+    assert not hits, f"consumption/attention table read outside its owner:\n{_fmt(hits)}"
+
+
+def test_lifecycle_composition_callsites_enumerated():
+    # §3/§8 AC-15: ensure_missing_items_in_txn (the auto-subscription watermark
+    # step) and delete_media_consumption_state_in_txn (media teardown) are narrow
+    # transaction-body exceptions to ordinary command ownership (spec §3). Each has
+    # exactly one composition callsite beyond its definition in
+    # services/consumption/service.py.
+    ensure_hits = _excluding(
+        _grep(r"\bensure_missing_items_in_txn\(", _PY_ROOT),
+        "services/consumption/service.py",
+        "services/podcasts/poll.py",
+    )
+    assert not ensure_hits, (
+        f"ensure_missing_items_in_txn called outside its enumerated composition "
+        f"callsite:\n{_fmt(ensure_hits)}"
+    )
+
+    delete_hits = _excluding(
+        _grep(r"\bdelete_media_consumption_state_in_txn\(", _PY_ROOT),
+        "services/consumption/service.py",
+        "services/media_deletion.py",
+    )
+    assert not delete_hits, (
+        f"delete_media_consumption_state_in_txn called outside its enumerated "
+        f"composition callsite:\n{_fmt(delete_hits)}"
+    )
+
+
+def test_media_deletion_removes_four_child_families_before_parent():
+    # §3/§8 AC-15: media deletion explicitly removes all four in-scope child
+    # families — Lectern, explicit override, and listening state (composed via
+    # the consumption owner's delete_media_consumption_state_in_txn) plus
+    # reading_sessions (attention.delete_media_state) — before the parent media
+    # row, inside delete_document_media_if_unreferenced.
+    src = (_PY_ROOT / "services" / "media_deletion.py").read_text(encoding="utf-8")
+    start = src.index("def delete_document_media_if_unreferenced(")
+    end = src.index("\ndef ", start + 1)
+    body = src[start:end]
+
+    consumption_idx = body.index("consumption_service.delete_media_consumption_state_in_txn(")
+    attention_idx = body.index("attention.delete_media_state(")
+    parent_delete_idx = body.index('text("DELETE FROM media WHERE id = :media_id")')
+
+    assert consumption_idx < parent_delete_idx, (
+        "consumption child-state deletion must precede the parent media DELETE"
+    )
+    assert attention_idx < parent_delete_idx, (
+        "attention child-state deletion must precede the parent media DELETE"
+    )
+
+
+def test_lectern_player_deleted_frontend_symbols_absent():
+    # §7 delete map: the old FIFO/queue-panel frontend surface is gone —
+    # consumptionQueueClient, usePodcastTrackSeeding, GlobalPlayerConsumptionPanel,
+    # its update event, and the override POST helper have no live caller.
+    pattern = (
+        r"\bconsumptionQueueClient\b|\busePodcastTrackSeeding\b|"
+        r"\bGlobalPlayerConsumptionPanel\b|\bCONSUMPTION_QUEUE_UPDATED_EVENT\b|"
+        r"\bpostConsumptionOverride\b"
+    )
+    hits = _filtered(pattern, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"deleted Lectern/player frontend symbol survives:\n{_fmt(hits)}"
+
+
 # ---------------------------------------------------------------------------
 # Amanuensis: assistant write tools under origin discipline
 # (amanuensis-hard-cutover.md §13, gates G1-G5)

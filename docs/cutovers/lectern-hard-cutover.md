@@ -3,6 +3,10 @@
 **Status:** Spec · Rev 2 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 
+**Superseded (2026-07-16):** `lectern-player-lifecycle-hard-cutover.md` is the
+sole runtime contract. This document's §§2–4 and 6–16 are superseded; §5 is
+retained as historical DDL provenance only.
+
 ## One-line
 
 Rename `playback_queue_items` → `consumption_queue_items` and widen it to hold any

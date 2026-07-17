@@ -13,6 +13,9 @@ This document covers structured JSON values.
 - Use the owned absence representation when an owned JSON field may be absent,
   and reserve JSON `null` for a present JSON value or an intentional public JSON
   protocol.
+- `Presence<T>` ([boundaries.md](boundaries.md#internal-representation)) is the
+  owned JSON absence wrapper. Use it, not a nullable field, wherever an owned
+  JSON value may be semantically absent.
 - Use optional-key encoding only when the boundary shape intentionally omits the
   property. Optional-key encoding is not equivalent to owned absence; do not
   convert between them mechanically.
