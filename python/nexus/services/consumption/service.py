@@ -51,6 +51,7 @@ from nexus.schemas.consumption import (
     OrderedOutcome,
     PlacedOutcome,
     PlaceItemsCommand,
+    PlayerDescriptor,
     RemovedOutcome,
     RemoveItemCommand,
     SetBatchStateCommand,
@@ -111,6 +112,15 @@ def listening_recency(
 ) -> dict[UUID, datetime]:
     """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
     return _projection.listening_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def player_descriptors(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, PlayerDescriptor]:
+    """Batch ``PlayerDescriptor`` for podcast-episode media (MediaOut/episode-list
+    adopters, spec §6). The one boundary adopters use; ``_projection`` owns the
+    Lectern-identical derivation."""
+    return _projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
 
 
 def get_lectern_item_for_media(
@@ -358,27 +368,43 @@ def _apply_set_batch_state(
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_KIND, "Batch state changes are podcast-episode only"
         )
+    # The batch already knows every media's kind (validated above); pass it
+    # through instead of re-querying it once per media inside the per-media
+    # writers below.
     reset_media_ids: list[UUID] = []
     for media_id in media_ids:
         if command.state == "Finished":
-            _write_finished_state(db, viewer_id, media_id)
+            _write_finished_state(db, viewer_id, media_id, kind=kinds.get(media_id))
         else:
-            if _write_unread_state(db, viewer_id, media_id):
+            if _write_unread_state(db, viewer_id, media_id, kind=kinds.get(media_id)):
                 reset_media_ids.append(media_id)
     return _ConsumptionEffect(kind="StateOnly", reset_media_ids=reset_media_ids)
 
 
-def _write_finished_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
+def _write_finished_state(
+    db: Session, viewer_id: UUID, media_id: UUID, *, kind: str | None = None
+) -> None:
+    """``kind`` lets an already-batch-known media kind (SetBatchState) skip the
+    single-media kind lookup below; single-media callers omit it and pay one
+    query, unchanged from before."""
     _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Finished")
-    if _media_kinds(db, [media_id]).get(media_id) == MediaKind.podcast_episode.value:
+    resolved_kind = kind if kind is not None else _media_kinds(db, [media_id]).get(media_id)
+    if resolved_kind == MediaKind.podcast_episode.value:
         _listening_store.mark_completed_in_txn(db, viewer_id=viewer_id, media_id=media_id)
 
 
-def _write_unread_state(db: Session, viewer_id: UUID, media_id: UUID) -> bool:
+def _write_unread_state(
+    db: Session, viewer_id: UUID, media_id: UUID, *, kind: str | None = None
+) -> bool:
     """Set the unread override; reset an EXISTING podcast listening row. Returns
-    whether a listening row was reset (and thus belongs in ``listeningStates``)."""
+    whether a listening row was reset (and thus belongs in ``listeningStates``).
+
+    ``kind`` lets an already-batch-known media kind (SetBatchState) skip the
+    single-media kind lookup below; single-media callers omit it and pay one
+    query, unchanged from before."""
     _state_store.set_override_in_txn(db, viewer_id=viewer_id, media_id=media_id, state="Unread")
-    if _media_kinds(db, [media_id]).get(media_id) != MediaKind.podcast_episode.value:
+    resolved_kind = kind if kind is not None else _media_kinds(db, [media_id]).get(media_id)
+    if resolved_kind != MediaKind.podcast_episode.value:
         return False
     return _listening_store.reset_for_unread_in_txn(db, viewer_id=viewer_id, media_id=media_id)
 

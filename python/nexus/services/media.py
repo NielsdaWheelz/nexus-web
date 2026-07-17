@@ -30,6 +30,7 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
+from nexus.schemas.presence import absent, present
 from nexus.services import attention
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
@@ -451,6 +452,9 @@ def _media_out_from_row(
         description_html=row["podcast_description_html"],
         description_text=row["podcast_description_text"],
         metadata_enriched_at=row["metadata_enriched_at"],
+        # Overwritten by `_apply_consumption_state` for a qualifying podcast
+        # episode; every other media stays Absent.
+        player_descriptor=absent(),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -500,6 +504,23 @@ def _apply_consumption_state(
         for media in media_outs:
             if media.listening_state is None:
                 media.last_engaged_at = doc_updated_at_by_id.get(media.id)
+
+    # Player descriptor (spec §6): server-derived FooterAudio descriptor for
+    # podcast-episode media, batched through the one projection owner to avoid
+    # N+1 across a page (spec §4 "derive exactly like Lectern items"). Every
+    # MediaOut already starts Absent (`_media_out_from_row`); only a qualifying
+    # episode (playable audio -> FooterAudio) gets overwritten to Present.
+    episode_media_ids = [
+        media.id for media in media_outs if media.kind == MediaKind.podcast_episode.value
+    ]
+    if episode_media_ids:
+        descriptors = consumption_service.player_descriptors(
+            db, viewer_id=viewer_id, media_ids=episode_media_ids
+        )
+        for media in media_outs:
+            descriptor = descriptors.get(media.id)
+            if descriptor is not None:
+                media.player_descriptor = present(descriptor)
 
 
 def refresh_source_for_viewer(

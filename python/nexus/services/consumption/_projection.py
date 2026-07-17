@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -25,6 +26,7 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
     ListeningStateOut,
     OpenPaneActivation,
+    PlayerDescriptor,
     ReadableActivation,
 )
 from nexus.schemas.media import MediaReadState
@@ -308,6 +310,119 @@ def listening_recency(
     return _listening_store.load_recency(db, viewer_id=viewer_id, media_ids=media_ids)
 
 
+@dataclass(frozen=True)
+class _PlayerDescriptorRow:
+    """Podcast-episode metadata needed to derive a ``PlayerDescriptor``."""
+
+    media_id: UUID
+    title: str
+    external_playback_url: str | None
+    canonical_source_url: str | None
+    provider: str | None
+    provider_id: str | None
+    podcast_title: str | None
+    podcast_image_url: str | None
+    duration_seconds: int | None
+
+
+def player_descriptors(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, PlayerDescriptor]:
+    """Batch ``PlayerDescriptor`` for podcast-episode media (MediaOut/episode-list
+    adopters, spec §6: "Lectern, podcast, and media DTOs reuse the same
+    server-derived title/subtitle + FooterAudio descriptor"). Derives exactly like
+    a Lectern item (``derive_playback_source`` + listening join + chapters +
+    artwork/title, spec §4), with one listening-state load and one chapters load
+    for the whole batch regardless of page size. A media absent from the returned
+    mapping is either not a podcast episode or has no playable audio (its derived
+    activation would be ``OpenPane``); callers project that into ``Presence``
+    (Absent)."""
+    rows = _load_player_descriptor_rows(db, media_ids)
+    if not rows:
+        return {}
+    row_media_ids = [row.media_id for row in rows]
+    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=row_media_ids)
+    chapters_by_media = _load_chapters_batch(db, row_media_ids)
+
+    result: dict[UUID, PlayerDescriptor] = {}
+    for row in rows:
+        playback = derive_playback_source(
+            kind=MediaKind.podcast_episode.value,
+            external_playback_url=row.external_playback_url,
+            canonical_source_url=row.canonical_source_url,
+            provider=row.provider,
+            provider_id=row.provider_id,
+        )
+        if playback is None or not playback.stream_url:
+            continue
+        listening_row = listening.get(row.media_id)
+        result[row.media_id] = PlayerDescriptor(
+            media_id=row.media_id,
+            title=row.title[:_MAX_TITLE_CHARS],
+            subtitle=present(row.podcast_title) if row.podcast_title is not None else absent(),
+            activation=FooterAudioActivation(
+                stream_url=playback.stream_url,
+                source_url=playback.source_url,
+                position_ms=listening_row.position_ms if listening_row is not None else 0,
+                write_revision=listening_row.write_revision if listening_row is not None else 0,
+                reset_epoch=listening_row.reset_epoch if listening_row is not None else 0,
+                playback_speed=listening_row.playback_speed if listening_row is not None else 1.0,
+                duration_ms=_footer_duration_ms(listening_row, row.duration_seconds),
+                artwork_url=present(row.podcast_image_url)
+                if row.podcast_image_url is not None
+                else absent(),
+                chapters=chapters_by_media.get(row.media_id, []),
+            ),
+        )
+    return result
+
+
+def _load_player_descriptor_rows(db: Session, media_ids: list[UUID]) -> list[_PlayerDescriptorRow]:
+    if not media_ids:
+        return []
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                m.id AS media_id,
+                m.title,
+                m.external_playback_url,
+                m.canonical_source_url,
+                m.provider,
+                m.provider_id,
+                p.title AS podcast_title,
+                p.image_url AS podcast_image_url,
+                pe.duration_seconds
+            FROM media m
+            JOIN podcast_episodes pe ON pe.media_id = m.id
+            LEFT JOIN podcasts p ON p.id = pe.podcast_id
+            WHERE m.id = ANY(:media_ids) AND m.kind = :kind
+            """
+        ),
+        {"media_ids": media_ids, "kind": MediaKind.podcast_episode.value},
+    ).mappings()
+    return [
+        _PlayerDescriptorRow(
+            media_id=UUID(str(row["media_id"])),
+            title=str(row["title"]),
+            external_playback_url=_opt_str(row["external_playback_url"]),
+            canonical_source_url=_opt_str(row["canonical_source_url"]),
+            provider=_opt_str(row["provider"]),
+            provider_id=_opt_str(row["provider_id"]),
+            podcast_title=_opt_str(row["podcast_title"]),
+            podcast_image_url=_opt_str(row["podcast_image_url"]),
+            duration_seconds=int(row["duration_seconds"])
+            if row["duration_seconds"] is not None
+            else None,
+        )
+        for row in rows
+    ]
+
+
+def _opt_str(value: object) -> str | None:
+    return str(value) if value is not None else None
+
+
 def _media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
     if not media_ids:
         return {}
@@ -403,24 +518,53 @@ def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) ->
     )"""
 
 
+def _chapter_out_or_none(*, title_raw: Any, start_ms: Any, end_ms: Any) -> ChapterOut | None:
+    """Build one ``ChapterOut``, or ``None`` for a malformed empty/whitespace-only
+    title. Chapters are presentation-only data sourced from third-party feeds;
+    ``ChapterOut.title`` requires ``min_length=1``, so a malformed row is excluded
+    here rather than rewritten or allowed to raise and 500 the whole snapshot."""
+    title = str(title_raw)[:_MAX_TITLE_CHARS]
+    if not title.strip():
+        return None
+    return ChapterOut(
+        title=title,
+        start_ms=int(start_ms),
+        end_ms=presence_from_nullable(int(end_ms) if end_ms is not None else None),
+    )
+
+
 def _load_chapters(db: Session, media_id: UUID) -> list[ChapterOut]:
+    return _load_chapters_batch(db, [media_id]).get(media_id, [])
+
+
+def _load_chapters_batch(db: Session, media_ids: list[UUID]) -> dict[UUID, list[ChapterOut]]:
+    """Batch chapter load for a page of media: one query regardless of page size
+    (spec §4 "first 100 by canonical ordinal"; used by both the Lectern
+    projection and :func:`player_descriptors`). The first-100 cap counts raw
+    stored rows by ordinal, matching the single-media form; a malformed row
+    inside that window is excluded, not replaced by the 101st row."""
+    if not media_ids:
+        return {}
     rows = db.execute(
         text(
             """
-            SELECT title, t_start_ms, t_end_ms
+            SELECT media_id, title, t_start_ms, t_end_ms
             FROM podcast_episode_chapters
-            WHERE media_id = :media_id
-            ORDER BY chapter_idx ASC
-            LIMIT :limit
+            WHERE media_id = ANY(:media_ids)
+            ORDER BY media_id ASC, chapter_idx ASC
             """
         ),
-        {"media_id": media_id, "limit": _MAX_CHAPTERS},
+        {"media_ids": media_ids},
     ).fetchall()
-    return [
-        ChapterOut(
-            title=str(row[0])[:_MAX_TITLE_CHARS],
-            start_ms=int(row[1]),
-            end_ms=presence_from_nullable(int(row[2]) if row[2] is not None else None),
-        )
-        for row in rows
-    ]
+    result: dict[UUID, list[ChapterOut]] = {}
+    raw_counts: dict[UUID, int] = {}
+    for row in rows:
+        media_id = UUID(str(row[0]))
+        raw_count = raw_counts.get(media_id, 0)
+        if raw_count >= _MAX_CHAPTERS:
+            continue
+        raw_counts[media_id] = raw_count + 1
+        chapter = _chapter_out_or_none(title_raw=row[1], start_ms=row[2], end_ms=row[3])
+        if chapter is not None:
+            result.setdefault(media_id, []).append(chapter)
+    return result

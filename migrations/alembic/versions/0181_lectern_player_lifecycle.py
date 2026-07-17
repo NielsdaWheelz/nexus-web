@@ -22,8 +22,12 @@ docs/cutovers/lectern-player-lifecycle-hard-cutover.md §3.1/§4/§5.3/§5.4):
    ``ck_consumption_overrides_status`` — persistence adapters alone own the
    enum vocabulary now (spec §4; docs/rules/database.md forbids
    business-invariant CHECKs);
-6. add ``podcast_listening_states.{write_revision,reset_epoch}``, non-null
-   defaulting to zero (spec §5.4);
+6. clamp any pre-cutover ``podcast_listening_states.playback_speed`` outside the
+   new wire bound ``[0.25, 3]`` (the old CHECK only enforced ``> 0``) into range,
+   then add ``podcast_listening_states.{write_revision,reset_epoch}``, non-null
+   defaulting to zero (spec §5.4). Without the clamp, a legacy out-of-range row
+   makes ``ListeningStateOut``/``FooterAudioActivation`` construction raise on
+   read, 500ing that viewer's whole Lectern;
 7. recreate the user/media foreign keys on ``consumption_queue_items``,
    ``consumption_overrides``, ``podcast_listening_states``, and
    ``reading_sessions`` under stable explicit non-cascading names, discovering
@@ -138,7 +142,19 @@ def upgrade() -> None:
     )
     op.execute("ALTER TABLE consumption_overrides DROP CONSTRAINT ck_consumption_overrides_status")
 
-    # (6) Listening heartbeat fencing tokens (spec §5.4); new rows start at zero.
+    # (6) Clamp any pre-cutover out-of-range playback_speed into the new wire
+    # bound [0.25, 3] before extending the row shape (spec §5.4). The old CHECK
+    # (ck_podcast_listening_states_playback_speed_positive) only enforced > 0, so
+    # a legacy row could carry any positive value; left unclamped, it would make
+    # ListeningStateOut/FooterAudioActivation construction raise on read and 500
+    # that viewer's whole Lectern.
+    op.execute("""
+        UPDATE podcast_listening_states
+        SET playback_speed = LEAST(3.0, GREATEST(0.25, playback_speed))
+        WHERE playback_speed < 0.25 OR playback_speed > 3.0
+    """)
+
+    # Listening heartbeat fencing tokens (spec §5.4); new rows start at zero.
     op.execute("""
         ALTER TABLE podcast_listening_states
             ADD COLUMN write_revision integer NOT NULL DEFAULT 0
