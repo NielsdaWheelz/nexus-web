@@ -5,6 +5,7 @@ import {
   type Browser,
   type BrowserContext,
   type Page,
+  type Request,
   type TestInfo,
 } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
   workspaceE2eDeviceId,
+  workspacePaneButton,
 } from "./workspace";
 import { stateChangingApiHeaders } from "./api";
 
@@ -182,6 +184,26 @@ function epubLocatorForSection(section: {
 
 function progressDeviceId(testInfo: TestInfo, suffix = ""): string {
   return workspaceE2eDeviceId(testInfo, `e2e-reader-progress${suffix}`);
+}
+
+/**
+ * A cursor-bearing PUT total is stable only once nothing is in flight and none
+ * has started for a window well past the 500 ms save debounce — otherwise a
+ * trailing debounced save could still land after the count is read.
+ */
+async function awaitCursorWriteQuiescence(tracker: {
+  inFlight: number;
+  lastStartedAt: number;
+}): Promise<void> {
+  const quietWindowMs = 900;
+  await expect
+    .poll(
+      () =>
+        tracker.inFlight === 0 &&
+        Date.now() - tracker.lastStartedAt >= quietWindowMs,
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 }
 
 function pdfControlsToolbar(page: Page) {
@@ -405,36 +427,125 @@ test.describe("reader progress continuity", () => {
     expect(await cursorRevision(page.request, mediaId)).toBe(revisionBefore);
   });
 
-  test("live pane Back navigates the reader without persisting", async ({
+  test("reader location churn stays out of pane history: one Back reaches the origin and Forward re-enters at the canonical cursor", async ({
     page,
   }, testInfo) => {
+    test.slow();
+
     const seed = readReaderResumeSeed();
     const mediaId = seed.epub_media_id;
+    const chapterOne = seed.epub_chapter_titles[0];
     const chapterTwo = seed.epub_chapter_titles[1];
     const chapterThree = seed.epub_chapter_titles[2];
+    const chapterOneSection = await findEpubSectionIdByLabel(
+      page.request,
+      mediaId,
+      chapterOne,
+    );
     const chapterThreeSection = await findEpubSectionIdByLabel(
       page.request,
       mediaId,
       chapterThree,
     );
 
+    // Acceptance starts from isolated seeded cursor state: pinning chapter one
+    // makes the fresh mount deterministic so every churn step is a real change.
+    await writeReaderCursor(
+      page.request,
+      mediaId,
+      epubLocatorForSection(chapterOneSection),
+    );
+
+    // Cursor-bearing saves are the only writes traversal must never emit; track
+    // PUT starts and in-flight count so a recorded total can be proven quiescent.
+    // The reader-state endpoint also receives attention-only lifecycle-flush PUTs
+    // on unmount (see useReaderProgress.ts's lifecycleFlush) — those carry an
+    // `attention` field but no `cursor` field, so pane Back would otherwise emit
+    // one and falsely look like traversal wrote a cursor. Filter by body shape.
+    const cursorWrites = { started: 0, inFlight: 0, lastStartedAt: 0 };
+    const isCursorWrite = (request: Request) => {
+      if (
+        request.method() !== "PUT" ||
+        new URL(request.url()).pathname !== `/api/media/${mediaId}/reader-state`
+      ) {
+        return false;
+      }
+      const body = request.postData();
+      if (!body) return false;
+      try {
+        const parsed: unknown = JSON.parse(body);
+        return (
+          typeof parsed === "object" && parsed !== null && "cursor" in parsed
+        );
+      } catch {
+        return false;
+      }
+    };
+    page.on("request", (request) => {
+      if (!isCursorWrite(request)) return;
+      cursorWrites.started += 1;
+      cursorWrites.inFlight += 1;
+      cursorWrites.lastStartedAt = Date.now();
+    });
+    const settleCursorWrite = (request: Request) => {
+      if (!isCursorWrite(request)) return;
+      cursorWrites.inFlight = Math.max(0, cursorWrites.inFlight - 1);
+    };
+    page.on("requestfinished", settleCursorWrite);
+    page.on("requestfailed", settleCursorWrite);
+
+    // The seeded non-media structural origin; reader churn must never evict it.
     await gotoSinglePaneWorkspace(
       page,
       progressDeviceId(testInfo),
       `/media/${mediaId}`,
+      { history: { back: ["/libraries"], forward: [] } },
     );
     const activePane = activeWorkspacePane(page);
     const sectionSelect = activePane.getByLabel("Select section");
-    await expect(sectionSelect).toBeVisible();
+    await expect(sectionSelect).toBeVisible({ timeout: 15_000 });
+    await expect(
+      activePane.getByRole("heading", { name: chapterOne }),
+    ).toBeVisible({ timeout: 15_000 });
 
-    await sectionSelect.selectOption({ label: chapterTwo });
-    await expect(
-      activePane.getByRole("heading", { name: chapterTwo }),
-    ).toBeVisible({ timeout: 10_000 });
-    await sectionSelect.selectOption({ label: chapterThree });
-    await expect(
-      activePane.getByRole("heading", { name: chapterThree }),
-    ).toBeVisible({ timeout: 10_000 });
+    // A reader remount would recreate the viewport and drop this token; the
+    // churn must preserve the one mounted reader instance.
+    const readerViewport = activePane.getByTestId("document-viewport").first();
+    await readerViewport.evaluate((element) => {
+      element.setAttribute("data-e2e-mount-token", "epub-churn");
+    });
+
+    // Fourteen reader-local section changes exceed the 12-entry stack budget;
+    // each replaces the mounted visit rather than pushing a checkpoint.
+    const churnTargets = Array.from({ length: 14 }, (_, index) =>
+      index % 2 === 0 ? chapterTwo : chapterThree,
+    );
+    for (const label of churnTargets) {
+      await sectionSelect.selectOption({ label });
+      await expect(
+        activePane.getByRole("heading", { name: label }),
+      ).toBeVisible({ timeout: 10_000 });
+    }
+
+    // While mounted, replace publishes the latest coarse target and never remounts.
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("loc"))
+      .toBe(chapterThreeSection.section_id);
+    await expect(readerViewport).toHaveAttribute(
+      "data-e2e-mount-token",
+      "epub-churn",
+    );
+
+    const backButton = activePane.getByRole("button", {
+      name: "Go back in this pane",
+    });
+    const forwardButton = activePane.getByRole("button", {
+      name: "Go forward in this pane",
+    });
+    await expect(backButton).toBeEnabled();
+
+    // Genuine section input becomes durable progress; let chapter three reach
+    // the server and its writes quiesce before proving traversal is silent.
     await expect
       .poll(async () => {
         const snapshot = await fetchReaderCursor(page.request, mediaId);
@@ -443,24 +554,80 @@ test.describe("reader progress continuity", () => {
           : null;
       })
       .toBe(chapterThreeSection.section_id);
+    await awaitCursorWriteQuiescence(cursorWrites);
+    const writesAfterChurn = cursorWrites.started;
     const revisionAtChapterThree = await cursorRevision(page.request, mediaId);
 
-    await activePane
+    // Guard against vacuous quiescence: the churn above must actually have
+    // produced at least one cursor-bearing write before we assert traversal
+    // adds none.
+    expect(cursorWrites.started).toBeGreaterThan(0);
+
+    // One Back reaches the origin: the churn left a single checkpoint, not a
+    // flooded stack that evicted /libraries.
+    await backButton.click();
+    await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page).toHaveURL(/\/libraries$/);
+    await expect(
+      activePane.getByRole("heading", { name: chapterThree }),
+    ).toHaveCount(0);
+    await expect(activePane.getByTestId("document-viewport")).toHaveCount(0);
+
+    // Forward remounts the media; a Positioned cursor supersedes the coarse
+    // target, so the proof is rendered chapter three, never the ?loc query.
+    await forwardButton.click();
+    await expect(
+      activeWorkspacePane(page).getByRole("heading", { name: chapterThree }),
+    ).toBeVisible({ timeout: 15_000 });
+
+    // Deterministic discriminator (AC4): after the Forward remount, normal
+    // cursor precedence and URL repair apply — the Positioned cursor must
+    // repair the URL to the bare media route. Rendered chapter three alone is
+    // ambiguous here (forward href loc === cursor === chapter three); this
+    // observably fails if precedence/repair breaks.
+    await expect
+      .poll(() => page.url())
+      .not.toMatch(/[?&](loc|fragment)=/);
+
+    // Traversal emits no new cursor-bearing write or revision.
+    await awaitCursorWriteQuiescence(cursorWrites);
+    expect(cursorWrites.started).toBe(writesAfterChurn);
+    expect(await cursorRevision(page.request, mediaId)).toBe(
+      revisionAtChapterThree,
+    );
+
+    // Exactly one checkpoint: a second Back returns straight to the origin.
+    await activeWorkspacePane(page)
       .getByRole("button", { name: "Go back in this pane" })
       .click();
+    await expect(workspacePaneButton(page, /^Libraries\b/)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page).toHaveURL(/\/libraries$/);
     await expect(
-      activePane.getByRole("heading", { name: chapterTwo }),
-    ).toBeVisible({ timeout: 10_000 });
+      activeWorkspacePane(page).getByTestId("document-viewport"),
+    ).toHaveCount(0);
 
-    // History moved the reader; only later genuine input persists.
-    await page.waitForTimeout(1_500);
-    const snapshot = await fetchReaderCursor(page.request, mediaId);
-    expect(snapshot.revision).toBe(revisionAtChapterThree);
-    expect(
-      snapshot.state === "Positioned" && snapshot.locator.kind === "epub"
-        ? snapshot.locator.target.section_id
-        : null,
-    ).toBe(chapterThreeSection.section_id);
+    // Later genuine input still persists: Forward to the media, change section
+    // once, and the canonical revision advances past the traversal-stable value.
+    await activeWorkspacePane(page)
+      .getByRole("button", { name: "Go forward in this pane" })
+      .click();
+    const resumedPane = activeWorkspacePane(page);
+    await expect(
+      resumedPane.getByRole("heading", { name: chapterThree }),
+    ).toBeVisible({ timeout: 15_000 });
+    const resumedSectionSelect = resumedPane.getByLabel("Select section");
+    await expect(resumedSectionSelect).toBeVisible({ timeout: 15_000 });
+    await resumedSectionSelect.selectOption({ label: chapterTwo });
+    await expect(
+      resumedPane.getByRole("heading", { name: chapterTwo }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(() => cursorRevision(page.request, mediaId))
+      .toBeGreaterThan(revisionAtChapterThree);
   });
 
   test("pdf resumes page and zoom after reload without remounting on page changes", async ({

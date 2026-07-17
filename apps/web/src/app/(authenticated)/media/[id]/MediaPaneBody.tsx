@@ -134,6 +134,7 @@ import {
 } from "@/lib/reader/documentMap";
 import {
   usePaneParam,
+  usePaneRouter,
   usePaneSearchParams,
   useSetPaneTitle,
   usePaneRuntime,
@@ -182,6 +183,7 @@ import {
   buildReaderLocationHref,
   hasCoarseReaderQuery,
   stripCoarseReaderQuery,
+  type ReaderLocationTarget,
 } from "@/lib/reader/readerLocationHref";
 import ReaderProgressHandoff from "./ReaderProgressHandoff";
 import { useAttentionTracker } from "@/lib/reader/useAttentionTracker";
@@ -601,13 +603,24 @@ export default function MediaPaneBody() {
 
   const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
-  const paneRouterPush = paneRuntime?.router.push;
+  const paneRouter = usePaneRouter();
   const mediaReaderViewTransition = useMediaReaderViewTransition(id);
   const openInNewPane = paneRuntime?.openInNewPane;
   const setPaneLayout = paneRuntime?.setPaneLayout;
   const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
+  // Reader-owned location-target seam: replaces the mounted media visit's
+  // href (loc/fragment) without creating a pane-history checkpoint. Pane
+  // history instead records destination activations (see the generic
+  // push sites below). Owns no reader state, progress, validation, restore,
+  // or focus behavior — those stay at each call site.
+  const replaceReaderLocation = useCallback(
+    (target: ReaderLocationTarget) => {
+      paneRouter.replace(buildReaderLocationHref(id, target));
+    },
+    [id, paneRouter],
+  );
   const paneMobileChrome = usePaneMobileChromeController();
   const {
     target,
@@ -933,9 +946,9 @@ export default function MediaPaneBody() {
   // Cold-query precedence: a Positioned canonical cursor supersedes coarse
   // `?loc`/`?fragment`; the repair strips only those fields with a pane-local
   // replace, preserving apparatus, unrelated query intent, and hash. Later
-  // query changes (live Back/Forward, in-app pushes) always navigate.
+  // query changes from workspace history traversal or destination activations
+  // always navigate.
   const paneHref = paneRuntime?.href ?? null;
-  const paneRouterReplace = paneRuntime?.router.replace;
   const [coldQueryMode, setColdQueryMode] = useState<"pending" | "open">(
     "pending",
   );
@@ -954,12 +967,12 @@ export default function MediaPaneBody() {
       paneHref !== null &&
       hasCoarseReaderQuery(paneHref)
     ) {
-      paneRouterReplace?.(stripCoarseReaderQuery(paneHref));
+      paneRouter.replace(stripCoarseReaderQuery(paneHref));
       // Stay pending until the repaired href flows back through the pane.
       return;
     }
     setColdQueryMode("open");
-  }, [coldQueryMode, paneHref, paneRouterReplace, readerProgress.initialSnapshot]);
+  }, [coldQueryMode, paneHref, paneRouter, readerProgress.initialSnapshot]);
   const requestedFragmentId =
     freshFragmentTargetId ??
     (coldQueryMode === "open" ? coldQueryFragmentId : null);
@@ -3955,7 +3968,7 @@ export default function MediaPaneBody() {
       );
       if (!section) return;
       appliedRequestedReaderLocRef.current = sectionId;
-      paneRouterPush?.(buildReaderLocationHref(id, { loc: sectionId }));
+      replaceReaderLocation({ loc: sectionId });
       beginRestoreSession("opening_target");
       setEpubRestoreRequest(
         buildManualSectionRestoreRequest(sectionId, anchorId),
@@ -3966,7 +3979,7 @@ export default function MediaPaneBody() {
       setActiveSectionId(sectionId);
       setActiveEpubSection(null);
     },
-    [activeSectionId, beginRestoreSession, epubSections, id, paneRouterPush],
+    [activeSectionId, beginRestoreSession, epubSections, replaceReaderLocation],
   );
 
   const navigateToWebSection = useCallback(
@@ -3991,20 +4004,17 @@ export default function MediaPaneBody() {
         origin: "manual",
       });
       setActiveWebSectionId(section.section_id);
-      paneRouterPush?.(
-        buildReaderLocationHref(id, {
-          loc: section.section_id,
-          fragmentId: section.fragment_id,
-        }),
-      );
+      replaceReaderLocation({
+        loc: section.section_id,
+        fragmentId: section.fragment_id,
+      });
     },
     [
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
       feedback,
-      id,
-      paneRouterPush,
+      replaceReaderLocation,
       setTarget,
       webSections,
     ],
@@ -4071,9 +4081,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      paneRouterPush?.(
-        buildReaderLocationHref(id, { fragmentId: locator.fragment_id }),
-      );
+      replaceReaderLocation({ fragmentId: locator.fragment_id });
       setTarget({
         kind: "fragment",
         value: locator.fragment_id,
@@ -4087,8 +4095,8 @@ export default function MediaPaneBody() {
       focusReaderApparatusInContent,
       id,
       navigateToSection,
-      paneRouterPush,
       readerApparatus,
+      replaceReaderLocation,
       requestSecondarySurface,
       setTarget,
     ],
@@ -4720,9 +4728,9 @@ export default function MediaPaneBody() {
   const handleOpenNoteLink = useCallback(
     (href: string, options: { newPane: boolean }) => {
       if (options.newPane) openInNewPane?.(href);
-      else paneRouterPush?.(href);
+      else paneRouter.push(href);
     },
-    [openInNewPane, paneRouterPush],
+    [openInNewPane, paneRouter],
   );
 
   const contentsSurfaceBody = useMemo(
@@ -5073,7 +5081,7 @@ export default function MediaPaneBody() {
         activateResource(activation, {
           label: target?.label ?? "Source",
           openInNewPane,
-          navigate: paneRouterPush,
+          navigate: paneRouter.push,
           newPane: true,
         });
         return;
@@ -5093,7 +5101,7 @@ export default function MediaPaneBody() {
         }
       }
     },
-    [handleTranscriptSeek, id, openInNewPane, paneRouterPush],
+    [handleTranscriptSeek, id, openInNewPane, paneRouter],
   );
 
   const handleOpenReaderConnectionSource = useCallback(
@@ -5101,11 +5109,11 @@ export default function MediaPaneBody() {
       activateResource(row.activation, {
         label: row.title,
         openInNewPane,
-        navigate: paneRouterPush,
+        navigate: paneRouter.push,
         newPane: event?.shiftKey,
       });
     },
-    [openInNewPane, paneRouterPush],
+    [openInNewPane, paneRouter],
   );
 
   const handleActivateReaderConnectionTarget = useCallback(
@@ -5524,7 +5532,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      paneRouterPush?.(buildReaderLocationHref(id, { fragmentId }));
+      replaceReaderLocation({ fragmentId });
       pendingDocumentMapPulseRef.current = { fragmentId, target };
       setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
     },
@@ -5539,7 +5547,7 @@ export default function MediaPaneBody() {
       isTranscriptMedia,
       mediaHighlights,
       navigateToSection,
-      paneRouterPush,
+      replaceReaderLocation,
       scrollRenderedHighlightIntoView,
       setTarget,
     ],
@@ -5589,7 +5597,7 @@ export default function MediaPaneBody() {
           occurrenceKey: item.occurrence_key,
         };
         setTarget({ kind: "fragment", value: fragmentId, origin: "manual" });
-        paneRouterPush?.(buildReaderLocationHref(id, { fragmentId }));
+        replaceReaderLocation({ fragmentId });
         return;
       }
       if (lensId === "citations") {
@@ -5618,15 +5626,14 @@ export default function MediaPaneBody() {
       cancelRestoreSession,
       clearFocus,
       clearRetainedSelection,
-      id,
       isEpub,
       navigateToSection,
       navigateToWebSection,
       onActivateHighlight,
-      paneRouterPush,
       readerApparatusRowByItemId,
       readerConnectionRows,
       readerDocumentMapResource,
+      replaceReaderLocation,
       requestSecondarySurface,
       scrollDocumentEmbedIntoView,
       setTarget,

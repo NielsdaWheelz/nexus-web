@@ -15,13 +15,13 @@ describe("pane route identity", () => {
     const base = resolvePaneRouteIdentity(`/media/${MEDIA_ID_1}`);
     const section = resolvePaneRouteIdentity(`/media/${MEDIA_ID_1}?loc=chapter-2`);
     const highlight = resolvePaneRouteIdentity(
-      `/media/${MEDIA_ID_1}?highlight=h1#reader`,
+      `/media/${MEDIA_ID_1}?apparatus=ap-1#highlight-h1`,
     );
 
     expect(base.routeKey).toBe(`media:/media/${MEDIA_ID_1}`);
     expect(section.routeKey).toBe(`media:/media/${MEDIA_ID_1}?loc=chapter-2`);
     expect(highlight.routeKey).toBe(
-      `media:/media/${MEDIA_ID_1}?highlight=h1`,
+      `media:/media/${MEDIA_ID_1}?apparatus=ap-1`,
     );
     expect(section.resourceLocator).toEqual(base.resourceLocator);
     expect(highlight.resourceLocator).toEqual(base.resourceLocator);

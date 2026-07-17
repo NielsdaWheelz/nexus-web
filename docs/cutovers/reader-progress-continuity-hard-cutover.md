@@ -33,7 +33,7 @@ generic synchronization framework.
 | Delayed stale tab tries to save | Server returns `409` with the current cursor; no silent overwrite |
 | Fresh feature hash/evidence target | Navigate there once without automatically making it durable progress |
 | Cold coarse `?loc`/`?fragment` plus an existing cursor | Canonical cursor wins; remove only the stale reader query fields with pane-local replace |
-| Live pane Back/Forward | Navigate the mounted reader; do not persist merely because history moved it |
+| Pane Back/Forward | Workspace traversal renders the stored destination; a fresh media mount applies normal cursor precedence and does not persist merely because history moved it |
 | Initial cursor GET fails | Show Retry; do not treat failure as empty or write a default position |
 | Media has no readable surface | Make no reader-progress request and do not gate the normal media pane |
 
@@ -375,9 +375,11 @@ Cold mount precedence:
 3. coarse cold `?loc`/`?fragment` only when the cursor is Empty;
 4. default readable source.
 
-After mount, live pane Back/Forward and fresh feature targets navigate the reader
-but do not become durable progress until later genuine reading input. Direct
-reader TOC/next/previous commands count as genuine input after resolution.
+After mount, fresh feature targets navigate the reader but do not become
+durable progress until later genuine reading input. Direct reader
+TOC/next/previous commands count as genuine input after resolution. Pane
+Back/Forward is workspace traversal, not reader-local navigation; a fresh
+media mount it produces applies the cold-mount precedence above.
 
 When canonical state supersedes a cold coarse query, pane-local replace removes
 only `loc` and `fragment`; preserve `apparatus`, unrelated query state, and hash.
@@ -468,7 +470,8 @@ touch listening/device identity, active-pane attention tracking, or audio recenc
     the remote revision; a second conflict replaces the candidate and presents
     the handoff again.
 14. Cold stale reader query loses to saved state and repair preserves unrelated
-    target fields; live Back/Forward still navigates.
+    target fields; pane Back/Forward is workspace traversal, not reader-local
+    navigation.
 15. Non-readable media produces no progress request or reader loading state.
 16. PDF later application changes page/progression/zoom without remount.
 17. Document engagement recency continues from `reading_sessions` after
@@ -491,9 +494,9 @@ Test at the owning layer:
   generations, URL precedence/repair;
 - Chromium component: handoff/focus/live-region behavior, genuine versus
   programmatic input, PDF addressable application;
-- real-stack E2E: reload resume for each format, cold query versus cursor, live
-  history, non-readable gating, and two contexts (mobile phone + desktop laptop)
-  for auto-adopt and handoff.
+- real-stack E2E: reload resume for each format, cold query versus cursor,
+  reader-location churn staying out of pane history, non-readable gating, and
+  two contexts (mobile phone + desktop laptop) for auto-adopt and handoff.
 
 Do not prove transport with internal mocks. Remove/migrate the touched
 `MediaPaneBody` tests that mock reader/API/router owners rather than renaming the
