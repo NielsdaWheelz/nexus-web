@@ -1700,32 +1700,39 @@ def test_no_reader_connections_surface():
 
 
 # =============================================================================
-# Attention ledger hard cutover: read-state derivation is consolidated into
-# services.attention; the old enrich functions are gone; attention.py holds no
-# legacy-table fallback (attention-ledger-hard-cutover.md §13)
+# Attention ledger cutover, superseded by lectern-player-lifecycle-hard-cutover.md
+# §3: read-state derivation moved OUT of attention into the consumption projection;
+# attention is now the sole writer of reading_sessions ONLY and no longer touches
+# consumption_overrides. The old enrich functions remain gone.
 # =============================================================================
 
 _ATTENTION_SERVICE = _PY_ROOT / "services" / "attention.py"
 
 
 def test_enrich_media_read_state_absent_from_production():
-    # G-1: the collection read-state owner is now consumption_state.
+    # The collection read-state owner is now the consumption projection.
     hits = _grep(r"enrich_media_read_state", _PY_ROOT, _WEB_ROOT)
     assert not hits, f"enrich_media_read_state survives in production:\n{_fmt(hits)}"
 
 
 def test_doc_and_audio_read_state_helpers_absent_from_production():
-    # G-2: the per-medium derivation helpers are replaced by consumption_state.
+    # The per-medium derivation helpers are replaced by the consumption projection.
     hits = _grep(r"_doc_read_state|_audio_read_state", _PY_ROOT, _WEB_ROOT)
     assert not hits, f"_doc_read_state/_audio_read_state survive in production:\n{_fmt(hits)}"
 
 
 def test_attention_service_has_no_legacy_table_fallback():
-    # G-8: consumption_state derives only from reading_sessions +
-    # consumption_overrides; the old tables are seeded once by the migration and
-    # never read here (hard-cutover doctrine).
+    # Attention reads only its own reading_sessions; it never touches the listening
+    # or resume tables (hard-cutover doctrine).
     hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
     assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"
+
+
+def test_attention_service_does_not_reference_consumption_overrides():
+    # lectern-player-lifecycle §3: consumption owns explicit overrides now; attention
+    # neither writes nor reads consumption_overrides.
+    hits = _grep(r"consumption_overrides", _ATTENTION_SERVICE)
+    assert not hits, f"attention.py still references consumption_overrides:\n{_fmt(hits)}"
 
 
 # =============================================================================
@@ -1844,15 +1851,223 @@ def test_lectern_old_modules_deleted():
 
 
 def test_lectern_queue_table_sole_writer():
-    # G-7: only the queue service writes the table; media_deletion.py is the
-    # allowed cascade cleaner and db/models.py is the ORM schema owner.
+    # Superseded by lectern-player-lifecycle-hard-cutover.md §8 AC-15: the Lectern
+    # membership/order table's sole owner is services/consumption/_lectern_store.py
+    # (db/models.py is the ORM schema owner). media_deletion.py NO LONGER writes this
+    # table — the media-teardown unit composes the consumption owner's all-users delete
+    # — so its TEMP allowlist entry is dropped and the gate is now tight.
     hits = _excluding(
         _grep(r"\bconsumption_queue_items\b", _PY_ROOT),
-        "services/consumption_queue.py",
-        "services/media_deletion.py",
+        "services/consumption/_lectern_store.py",
         "db/models.py",
     )
     assert not hits, f"consumption_queue_items written outside its owner:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Lectern + global player lifecycle hard cutover
+# (lectern-player-lifecycle-hard-cutover.md §7 delete map, §8 AC-15)
+# =============================================================================
+
+_CONSUMPTION_TABLE_WRITE = r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"
+
+
+def test_consumption_overrides_sole_writer():
+    # §8 AC-15: explicit-state DML lives only in the consumption state store.
+    # media_deletion.py does NOT write consumption_overrides today (verified).
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"consumption_overrides", _PY_ROOT),
+        "services/consumption/_state_store.py",
+    )
+    assert not hits, f"consumption_overrides written outside its owner:\n{_fmt(hits)}"
+
+
+def test_podcast_listening_states_sole_writer():
+    # §8 AC-15: listening position/duration/speed DML lives only in the listening
+    # store. media_deletion.py NO LONGER deletes this table — the media-teardown unit
+    # composes the consumption owner — so its TEMP allowlist entry is dropped.
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"podcast_listening_states", _PY_ROOT),
+        "services/consumption/_listening_store.py",
+    )
+    assert not hits, f"podcast_listening_states written outside its owner:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# Media teardown (lectern-player-lifecycle-hard-cutover.md §3.1) gates
+# =============================================================================
+
+
+def test_media_teardown_intents_sole_writers():
+    # §3.1: media_teardown_intents DML (INSERT/UPDATE/DELETE) lives ONLY in the claim
+    # owner (services/media_deletion.py) and the teardown job (tasks/media_teardown.py).
+    # Reads (the consumption projection, the reference barrier) are unrestricted.
+    dml = r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+media_teardown_intents\b"
+    hits = _excluding(
+        _grep(dml, _PY_ROOT),
+        "services/media_deletion.py",
+        "tasks/media_teardown.py",
+    )
+    assert not hits, f"media_teardown_intents written outside its owners:\n{_fmt(hits)}"
+
+
+def test_storage_object_delete_callers_enumerated():
+    # §3.1: media-teardown storage deletion is owned by the three durable task modules.
+    # Every other .delete_object( callsite is an enumerated legacy site: pre-existing
+    # error/compensation/GC cleanup that is NOT media teardown (upload error cleanup,
+    # EPUB asset compensation, library teardown, remote-file missing-media teardown,
+    # extraction-artifact requeue GC), plus the storage client's own impl. New ad-hoc
+    # teardown deletes outside the task modules fail here.
+    allowed = (
+        # The three durable teardown/sweep task modules (spec §3.1).
+        "tasks/media_teardown.py",
+        "tasks/storage_object_cleanup.py",
+        "tasks/storage_orphan_sweep.py",
+        # Enumerated legacy (non-teardown) storage-delete sites.
+        "services/upload.py",
+        "services/epub_ingest.py",
+        "services/library_governance.py",
+        "services/media_source_ingest.py",
+        "services/media_deletion.py",
+        "storage/client.py",
+    )
+    hits = _excluding(_grep(r"\.delete_object\(", _PY_ROOT), *allowed)
+    assert not hits, f".delete_object called outside enumerated owners:\n{_fmt(hits)}"
+
+
+def test_reconcile_stale_ingest_no_inline_storage_delete():
+    # §3.1 (deliverable 6): the stale-ingest reconciler dropped its post-commit
+    # best-effort object deletes in favor of the durable media_teardown job.
+    reconcile = (_PY_ROOT / "tasks" / "reconcile_stale_ingest_media.py").read_text(encoding="utf-8")
+    assert "delete_object" not in reconcile, (
+        "reconcile_stale_ingest_media.py must not delete storage objects inline"
+    )
+
+
+def test_lectern_player_deleted_modules_absent():
+    # §7 delete map: the pre-cutover queue/listening services, queue schema, and the
+    # queue + consumption-override routes are gone (owners extracted first).
+    for rel_path in (
+        "python/nexus/services/consumption_queue.py",
+        "python/nexus/services/listening_state.py",
+        "python/nexus/schemas/queue.py",
+        "python/nexus/api/routes/queue.py",
+        "python/nexus/api/routes/consumption.py",
+    ):
+        assert not (_REPO_ROOT / rel_path).exists(), f"{rel_path} must be deleted"
+
+
+def test_lectern_player_deleted_imports_absent():
+    # No live import path to the deleted queue/listening service or queue schema.
+    hits = _grep(
+        r"\bnexus\.services\.consumption_queue\b"
+        r"|from nexus\.services import[^\n]*\bconsumption_queue\b"
+        r"|\bnexus\.services\.listening_state\b"
+        r"|from nexus\.services import[^\n]*\blistening_state\b"
+        r"|\bnexus\.schemas\.queue\b"
+        r"|from nexus\.schemas\.queue\b",
+        _PY_ROOT,
+    )
+    assert not hits, f"import of a deleted queue/listening module survives:\n{_fmt(hits)}"
+
+
+def test_reading_sessions_sole_writer():
+    # §8 AC-15: session DML (attention's dwell/continuity writes) lives only in
+    # attention.py; consumption never touches reading_sessions directly.
+    hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"reading_sessions\b", _PY_ROOT),
+        "services/attention.py",
+    )
+    assert not hits, f"reading_sessions written outside attention.py:\n{_fmt(hits)}"
+
+
+def test_consumption_projection_reads_confined_to_owners():
+    # §3/§8 AC-15: "no direct consumption projection read remains outside
+    # _projection or attention's aggregate owner" (spec §7 adopters list). A fully
+    # general read-gate is impractical: services/media.py is a spec-named
+    # projection adopter (§7) that legitimately joins podcast_listening_states
+    # directly to hydrate MediaOut.listening_state (raw position/duration/speed
+    # passthrough, not the derived Unread/InProgress/Finished projection state),
+    # so it is allowlisted by name rather than excluded generically. Any other
+    # file selecting these three tables directly — a route, a new adopter, a
+    # reintroduced per-feature read — fails here instead of forking the read
+    # model. db/models.py never matches (it declares __tablename__, not
+    # FROM/JOIN literals), so it needs no explicit exclusion.
+    pattern = (
+        r"\b(?:FROM|JOIN)\s+(?:consumption_overrides|podcast_listening_states|reading_sessions)\b"
+    )
+    hits = _excluding(
+        _grep(pattern, _PY_ROOT),
+        "services/consumption/_state_store.py",
+        "services/consumption/_listening_store.py",
+        "services/consumption/_projection.py",
+        "services/attention.py",
+        "services/media.py",
+    )
+    assert not hits, f"consumption/attention table read outside its owner:\n{_fmt(hits)}"
+
+
+def test_lifecycle_composition_callsites_enumerated():
+    # §3/§8 AC-15: ensure_missing_items_in_txn (the auto-subscription watermark
+    # step) and delete_media_consumption_state_in_txn (media teardown) are narrow
+    # transaction-body exceptions to ordinary command ownership (spec §3). Each has
+    # exactly one composition callsite beyond its definition in
+    # services/consumption/service.py.
+    ensure_hits = _excluding(
+        _grep(r"\bensure_missing_items_in_txn\(", _PY_ROOT),
+        "services/consumption/service.py",
+        "services/podcasts/poll.py",
+    )
+    assert not ensure_hits, (
+        f"ensure_missing_items_in_txn called outside its enumerated composition "
+        f"callsite:\n{_fmt(ensure_hits)}"
+    )
+
+    delete_hits = _excluding(
+        _grep(r"\bdelete_media_consumption_state_in_txn\(", _PY_ROOT),
+        "services/consumption/service.py",
+        "services/media_deletion.py",
+    )
+    assert not delete_hits, (
+        f"delete_media_consumption_state_in_txn called outside its enumerated "
+        f"composition callsite:\n{_fmt(delete_hits)}"
+    )
+
+
+def test_media_deletion_removes_four_child_families_before_parent():
+    # §3/§8 AC-15: media deletion explicitly removes all four in-scope child
+    # families — Lectern, explicit override, and listening state (composed via
+    # the consumption owner's delete_media_consumption_state_in_txn) plus
+    # reading_sessions (attention.delete_media_state) — before the parent media
+    # row, inside delete_document_media_if_unreferenced.
+    src = (_PY_ROOT / "services" / "media_deletion.py").read_text(encoding="utf-8")
+    start = src.index("def delete_document_media_if_unreferenced(")
+    end = src.index("\ndef ", start + 1)
+    body = src[start:end]
+
+    consumption_idx = body.index("consumption_service.delete_media_consumption_state_in_txn(")
+    attention_idx = body.index("attention.delete_media_state(")
+    parent_delete_idx = body.index('text("DELETE FROM media WHERE id = :media_id")')
+
+    assert consumption_idx < parent_delete_idx, (
+        "consumption child-state deletion must precede the parent media DELETE"
+    )
+    assert attention_idx < parent_delete_idx, (
+        "attention child-state deletion must precede the parent media DELETE"
+    )
+
+
+def test_lectern_player_deleted_frontend_symbols_absent():
+    # §7 delete map: the old FIFO/queue-panel frontend surface is gone —
+    # consumptionQueueClient, usePodcastTrackSeeding, GlobalPlayerConsumptionPanel,
+    # its update event, and the override POST helper have no live caller.
+    pattern = (
+        r"\bconsumptionQueueClient\b|\busePodcastTrackSeeding\b|"
+        r"\bGlobalPlayerConsumptionPanel\b|\bCONSUMPTION_QUEUE_UPDATED_EVENT\b|"
+        r"\bpostConsumptionOverride\b"
+    )
+    hits = _filtered(pattern, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"deleted Lectern/player frontend symbol survives:\n{_fmt(hits)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1937,7 +2152,6 @@ _CONTRIBUTOR_SURFACE_ROOTS = (
     _PY_ROOT / "services" / "contributors.py",
     _PY_ROOT / "services" / "_contributor_identity.py",
     _PY_ROOT / "services" / "_contributor_credit_writes.py",
-    _PY_ROOT / "services" / "_contributor_replay.py",
     _PY_ROOT / "services" / "contributor_taxonomy.py",
     _PY_ROOT / "api" / "routes" / "contributors.py",
     _WEB_ROOT / "lib" / "contributors",
@@ -1951,7 +2165,6 @@ _AUTHOR_AGGREGATE_ROOTS = (
     _PY_ROOT / "services" / "contributors.py",
     _PY_ROOT / "services" / "_contributor_identity.py",
     _PY_ROOT / "services" / "_contributor_credit_writes.py",
-    _PY_ROOT / "services" / "_contributor_replay.py",
     _PY_ROOT / "services" / "contributor_taxonomy.py",
 )
 

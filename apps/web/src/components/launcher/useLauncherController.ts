@@ -9,6 +9,7 @@ import { usePaneWarm } from "@/lib/panes/paneWarm";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
+import { useLectern } from "@/lib/lectern/LecternProvider";
 import { buildItemActions } from "@/lib/launcher/actions";
 import {
   dispatchTarget,
@@ -108,6 +109,9 @@ export function useLauncherController(): LauncherController {
   const keybindings = useKeybindings();
   const feedback = useFeedback();
   const warmPane = usePaneWarm();
+  // The one Lectern capability (append is stable across renders); dispatch's queue-add
+  // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
+  const { placeItems } = useLectern();
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [laneOverride, setLaneOverride] = useState<LauncherLane | null>(null);
@@ -313,12 +317,13 @@ export function useLauncherController(): LauncherController {
       androidShell,
       feedback,
       defaultLibraryIds: DEFAULT_LIBRARY_IDS,
+      placeItems,
       panes,
       activatePane,
       restorePane,
       closePane,
     }),
-    [androidShell, feedback, panes, activatePane, restorePane, closePane],
+    [androidShell, feedback, placeItems, panes, activatePane, restorePane, closePane],
   );
 
   const logSelection = useCallback(

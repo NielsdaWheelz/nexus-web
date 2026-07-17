@@ -6,11 +6,13 @@ import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 export const PLAYER_SHORTCUTS_DISABLED_SELECTOR = "[data-player-shortcuts-disabled]";
 
 /**
- * Bind document keyboard shortcuts to the global player while a track is
+ * Bind document keyboard shortcuts to the global player while a session is
  * loaded:
- *   - Space      : toggle play/pause
- *   - ArrowLeft  : `onSkipBackward`
- *   - ArrowRight : `onSkipForward`
+ *   - Space            : toggle play/pause
+ *   - ArrowLeft        : `onSkipBackward`
+ *   - ArrowRight       : `onSkipForward`
+ *   - Shift+ArrowLeft  : `onPrevious` (device history / restart)
+ *   - Shift+ArrowRight : `onNext` (manual next)
  *
  * No-ops when the active element is editable (text input, textarea,
  * contenteditable) or inside a player-shortcut disabled scope. Handlers are read
@@ -23,6 +25,8 @@ export function usePlayerKeyboardShortcuts(args: {
   pause: () => void;
   onSkipBackward: () => void;
   onSkipForward: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
 }): void {
   const argsRef = useRef(args);
   argsRef.current = args;
@@ -51,12 +55,14 @@ export function usePlayerKeyboardShortcuts(args: {
       }
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        live.onSkipBackward();
+        if (event.shiftKey) live.onPrevious();
+        else live.onSkipBackward();
         return;
       }
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        live.onSkipForward();
+        if (event.shiftKey) live.onNext();
+        else live.onSkipForward();
       }
     };
     document.addEventListener("keydown", onKeyDown);

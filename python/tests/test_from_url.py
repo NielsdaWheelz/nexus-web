@@ -39,9 +39,27 @@ from nexus.storage.client import StorageError
 from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
+from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _clean_teardown_state(direct_db: DirectSessionManager):
+    """Clear teardown intents + durable teardown/cleanup jobs after each test so they
+    do not leak across the committed-data direct_db suite."""
+    yield
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM media_teardown_intents"))
+        db.execute(
+            text(
+                "DELETE FROM background_jobs "
+                "WHERE kind IN ('media_teardown', 'storage_object_cleanup', 'storage_orphan_sweep')"
+            )
+        )
+        db.commit()
+
 
 PDF_CONTENT = b"%PDF-1.4\nremote pdf bytes"
 
@@ -2904,13 +2922,12 @@ class TestFromUrlRemoteFiles:
         monkeypatch,
     ):
         user_id = create_test_user_id()
-        default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-            "default_library_id"
-        ]
+        auth_client.get("/me", headers=auth_headers(user_id))
 
         storage = _TrackingStorageClient()
         _patch_remote_storage(monkeypatch, storage)
         monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
+        install_fake_storage_for_teardown(monkeypatch, storage)
         url = "https://arxiv.org/pdf/1706.03762"
         source_url = "https://arxiv.org/e-print/1706.03762"
         source_bytes = (
@@ -2955,19 +2972,16 @@ class TestFromUrlRemoteFiles:
         delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
         assert delete_response.status_code == 200, delete_response.text
-        assert delete_response.json()["data"] == {
-            "status": "deleted",
-            "hard_deleted": True,
-            "removed_from_library_ids": [default_id],
-            "hidden_for_viewer": False,
-            "remaining_reference_count": 0,
-        }
+        # Removing the last reference returns Deleting; the durable job owns physical
+        # deletion + the storage sweep.
+        assert delete_response.json()["data"] == {"kind": "Deleting"}
+        assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
         assert storage.get_object(build_storage_path(media_id, "pdf")) is None
         assert storage.get_object(source_package_path) is None
-        assert set(storage.deleted_paths) == {
+        assert {
             build_storage_path(media_id, "pdf"),
             source_package_path,
-        }
+        } <= set(storage.deleted_paths)
         with direct_db.session() as session:
             counts = session.execute(
                 text("""

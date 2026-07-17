@@ -30,8 +30,10 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
+from nexus.schemas.presence import absent, present
 from nexus.services import attention
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
+from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
 )
@@ -450,6 +452,9 @@ def _media_out_from_row(
         description_html=row["podcast_description_html"],
         description_text=row["podcast_description_text"],
         metadata_enriched_at=row["metadata_enriched_at"],
+        # Overwritten by `_apply_consumption_state` for a qualifying podcast
+        # episode; every other media stays Absent.
+        player_descriptor=absent(),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -462,63 +467,60 @@ def _apply_consumption_state(
 ) -> None:
     """Populate per-viewer read-state + engagement recency onto MediaOuts, in place.
 
-    Read-state (`read_state`, `progress_fraction`) is derived by the single owner
-    `attention.consumption_state` (the attention-ledger tables only).
-    `last_engaged_at` is a distinct concern (most-recent activity for recency
-    display / surfaced-today) and is read from the resume/listening tables here.
+    Read-state (`read_state`, `progress_fraction`) is derived by the consumption
+    projection (`services.consumption`), which owns the explicit override +
+    listening-threshold + attention-aggregate model. `last_engaged_at` is a distinct
+    recency concern read through the listening owner (audio) and the attention owner
+    (documents).
     """
     if not media_outs:
         return
 
     media_ids = [media.id for media in media_outs]
-    states = attention.consumption_state(db, viewer_id=viewer_id, media_ids=media_ids)
+    states = consumption_service.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
     for media in media_outs:
         state = states.get(media.id)
         if state is not None:
-            media.read_state = state.status
+            media.read_state = state.state
             media.progress_fraction = state.progress_fraction
 
-    # Engagement recency: audio rows take their listening-state recency, documents
-    # their reading-session recency (one batched query per source).
+    # Engagement recency: audio rows take their listening-state recency (consumption
+    # owner), documents their reading-session recency (attention owner).
     audio_media_ids = [media.id for media in media_outs if media.listening_state is not None]
     doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
 
     if audio_media_ids:
-        listening_updated_at_by_id = {
-            UUID(str(row[0])): row[1]
-            for row in db.execute(
-                text(
-                    """
-                    SELECT media_id, updated_at
-                    FROM podcast_listening_states
-                    WHERE user_id = :viewer_id AND media_id = ANY(:ids)
-                    """
-                ),
-                {"viewer_id": viewer_id, "ids": audio_media_ids},
-            ).fetchall()
-        }
+        listening_updated_at_by_id = consumption_service.listening_recency(
+            db, viewer_id=viewer_id, media_ids=audio_media_ids
+        )
         for media in media_outs:
             if media.listening_state is not None:
                 media.last_engaged_at = listening_updated_at_by_id.get(media.id)
 
     if doc_media_ids:
-        doc_updated_at_by_id = {
-            UUID(str(row[0])): row[1]
-            for row in db.execute(
-                text(
-                    """
-                    SELECT media_id, MAX(last_active_at)
-                    FROM reading_sessions
-                    WHERE user_id = :viewer_id AND media_id = ANY(:ids)
-                    GROUP BY media_id
-                    """
-                ),
-                {"viewer_id": viewer_id, "ids": doc_media_ids},
-            ).fetchall()
-        }
+        doc_updated_at_by_id = attention.reading_recency(
+            db, viewer_id=viewer_id, media_ids=doc_media_ids
+        )
         for media in media_outs:
             if media.listening_state is None:
                 media.last_engaged_at = doc_updated_at_by_id.get(media.id)
+
+    # Player descriptor (spec §6): server-derived FooterAudio descriptor for
+    # podcast-episode media, batched through the one projection owner to avoid
+    # N+1 across a page (spec §4 "derive exactly like Lectern items"). Every
+    # MediaOut already starts Absent (`_media_out_from_row`); only a qualifying
+    # episode (playable audio -> FooterAudio) gets overwritten to Present.
+    episode_media_ids = [
+        media.id for media in media_outs if media.kind == MediaKind.podcast_episode.value
+    ]
+    if episode_media_ids:
+        descriptors = consumption_service.player_descriptors(
+            db, viewer_id=viewer_id, media_ids=episode_media_ids
+        )
+        for media in media_outs:
+            descriptor = descriptors.get(media.id)
+            if descriptor is not None:
+                media.player_descriptor = present(descriptor)
 
 
 def refresh_source_for_viewer(

@@ -5,7 +5,12 @@
  * shapes, and the polling / can-request / progress / summary helpers.
  */
 
+import { type Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import {
+  decodePresentPlayerDescriptor,
+  type PlayerDescriptor,
+} from "@/lib/lectern/client";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,
@@ -49,6 +54,13 @@ export interface PodcastEpisodeMedia {
     stream_url: string;
     source_url: string;
   } | null;
+  /**
+   * The FooterAudio play affordance for this episode (spec §4). Wire key is the
+   * pinned camelCase `playerDescriptor` even inside this snake_case DTO. It is
+   * `Present` only for audio-playable episodes; `Absent` hides the play/Lectern
+   * affordances. Decoded at the pane boundary via {@link episodePlayerDescriptor}.
+   */
+  playerDescriptor: Presence<PlayerDescriptor>;
   listening_state: {
     position_ms: number;
     duration_ms: number | null;
@@ -143,6 +155,19 @@ export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
     return "in_progress";
   }
   return "unplayed";
+}
+
+/**
+ * Decode this episode's `Presence<PlayerDescriptor>` at the pane transport
+ * boundary. The field is REQUIRED on the wire (strict `Presence` encoding), so it
+ * is decoded unconditionally: omission, `null`, or alternate casing throws rather
+ * than being silently tolerated. `Absent` means "not audio-playable" and hides
+ * the play/Lectern affordances.
+ */
+export function episodePlayerDescriptor(
+  episode: PodcastEpisodeMedia,
+): Presence<PlayerDescriptor> {
+  return decodePresentPlayerDescriptor(episode.playerDescriptor);
 }
 
 export function episodeMatchesFilter(

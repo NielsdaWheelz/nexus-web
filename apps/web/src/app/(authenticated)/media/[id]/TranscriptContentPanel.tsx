@@ -3,7 +3,7 @@
 import type { CSSProperties, MouseEvent, PointerEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { normalizeTrackChapters } from "@/lib/player/chapters";
+import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,

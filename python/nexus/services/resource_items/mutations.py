@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import NoteBlock, Page, ResourceMutation
+from nexus.db.models import NoteBlock, Page
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.resource_items import (
@@ -20,6 +18,11 @@ from nexus.services import note_bodies
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import surfaces, versions
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 
 
 def update_title(
@@ -37,9 +40,16 @@ def update_title(
         if page is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Page not found")
         scope = f"resource:{ref.uri}:title"
-        replay = _replay(db, viewer_id, scope, request.client_mutation_id, request)
+        request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+        )
         if replay is not None:
-            return ResourceTitleMutationOut.model_validate(replay.response_json)
+            return ResourceTitleMutationOut.model_validate(replay)
 
         _require_base_version(db, viewer_id=viewer_id, ref=ref, lane="title", request=request)
         if page.title != request.title:
@@ -55,8 +65,14 @@ def update_title(
             versions={ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref)},
             updated_at=updated_at,
         )
-        _record(
-            db, viewer_id, scope, request.client_mutation_id, request, response.versions, response
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=response.model_dump(mode="json", by_alias=True),
+            changed_lanes=response.versions,
         )
         db.commit()
         return response
@@ -79,9 +95,16 @@ def update_body(
         if existing is not None and existing.user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
         scope = f"resource:{ref.uri}:body"
-        replay = _replay(db, viewer_id, scope, request.client_mutation_id, request)
+        request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+        )
         if replay is not None:
-            return ResourceBodyMutationOut.model_validate(replay.response_json)
+            return ResourceBodyMutationOut.model_validate(replay)
 
         if existing is not None:
             _require_base_version(db, viewer_id=viewer_id, ref=ref, lane="body", request=request)
@@ -103,8 +126,14 @@ def update_body(
             versions={ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref)},
             updated_at=updated_at,
         )
-        _record(
-            db, viewer_id, scope, request.client_mutation_id, request, response.versions, response
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=response.model_dump(mode="json", by_alias=True),
+            changed_lanes=response.versions,
         )
         db.commit()
         return response
@@ -142,59 +171,3 @@ def _require_base_version(
                 )
             },
         )
-
-
-def _replay(
-    db: Session,
-    viewer_id: UUID,
-    scope: str,
-    client_mutation_id: str,
-    request: object,
-) -> ResourceMutation | None:
-    replay = db.scalar(
-        select(ResourceMutation).where(
-            ResourceMutation.user_id == viewer_id,
-            ResourceMutation.mutation_scope == scope,
-            ResourceMutation.client_mutation_id == client_mutation_id,
-        )
-    )
-    if replay is None:
-        return None
-    if replay.request_hash != _request_hash(request):
-        raise ConflictError(
-            ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-            "Resource mutation id was reused with a different request",
-        )
-    return replay
-
-
-def _record(
-    db: Session,
-    viewer_id: UUID,
-    scope: str,
-    client_mutation_id: str,
-    request: object,
-    changed_lanes: dict[str, dict[str, int]],
-    response: ResourceTitleMutationOut | ResourceBodyMutationOut,
-) -> None:
-    db.add(
-        ResourceMutation(
-            user_id=viewer_id,
-            mutation_scope=scope,
-            client_mutation_id=client_mutation_id,
-            request_hash=_request_hash(request),
-            changed_lanes=changed_lanes,
-            response_json=response.model_dump(mode="json", by_alias=True),
-        )
-    )
-
-
-def _request_hash(request: object) -> str:
-    encoded = json.dumps(
-        request.model_dump(mode="json", by_alias=True)
-        if hasattr(request, "model_dump")
-        else request,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()

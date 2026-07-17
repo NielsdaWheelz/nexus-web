@@ -27,8 +27,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
-import { postConsumptionOverride } from "@/lib/attention";
-import { addToLectern } from "@/lib/player/consumptionQueueClient";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { parseMediaId } from "@/lib/lectern/client";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";
@@ -37,6 +37,7 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
   addMediaToLibrary,
   fetchMediaLibraryMemberships,
+  deleteMedia,
   patchLibraryMembership,
   removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
@@ -188,6 +189,7 @@ export default function LibraryPaneBody() {
   const { displayState, setDisplayState } = useCollectionDisplayState(`/libraries/${id}`);
   const { openInNewPane } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
+  const lectern = useLectern();
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [entryCursor, setEntryCursor] = useState<string | null>(null);
@@ -616,7 +618,9 @@ export default function LibraryPaneBody() {
       }
 
       try {
-        await apiFetch(`/api/media/${entry.media.id}`, { method: "DELETE" });
+        const result = await deleteMedia(entry.media.id);
+        // The row leaves the pane whether the media was removed, hidden, or is
+        // still being deleted server-side.
         setEntries((current) =>
           current.filter(
             (candidate) =>
@@ -624,6 +628,9 @@ export default function LibraryPaneBody() {
               candidate.media.id !== entry.media.id,
           ),
         );
+        if (result.kind === "Deleting") {
+          feedback.show({ severity: "info", title: "Deleting from your library" });
+        }
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -657,7 +664,11 @@ export default function LibraryPaneBody() {
       });
 
       try {
-        await postConsumptionOverride(mediaId, status);
+        if (status === "finished") {
+          await lectern.ensureMediaFinished(parseMediaId(mediaId));
+        } else {
+          await lectern.setUnread(parseMediaId(mediaId));
+        }
       } catch (err) {
         setEntries(previousEntries);
         setResonanceEntries(previousResonance);
@@ -667,20 +678,23 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [feedback],
+    [feedback, lectern],
   );
 
   const handleAddToLectern = useCallback(
     async (mediaId: string) => {
       try {
-        await addToLectern(mediaId);
+        await lectern.placeItems({
+          mediaIds: [parseMediaId(mediaId)],
+          placement: { kind: "Last" },
+        });
         feedback.show({ severity: "success", title: "Added to Lectern" });
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({ ...toFeedback(err, { fallback: "Failed to add to Lectern" }) });
       }
     },
-    [feedback],
+    [feedback, lectern],
   );
 
   const handleDeleteLibrary = async () => {

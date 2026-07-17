@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
-from nexus.services import consumption_queue as consumption_queue_service
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
@@ -92,7 +91,6 @@ def sync_subscription_ingest(
 ) -> SubscriptionIngestResult:
     ingested_episode_count = 0
     reused_episode_count = 0
-    ingested_media_ids: list[UUID] = []
     enrichment_media_ids: set[UUID] = set()
     author_observations: list[tuple[UUID, ObservedRoleSlices]] = []
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
@@ -196,7 +194,7 @@ def sync_subscription_ingest(
                     SET
                         description_html = :description_html,
                         description_text = :description_text,
-                        published_at = :published_at,
+                        published_at = COALESCE(:published_at, published_at),
                         duration_seconds = :duration_seconds,
                         rss_transcript_url = :rss_transcript_url
                     WHERE media_id = :media_id
@@ -337,7 +335,6 @@ def sync_subscription_ingest(
                 db, viewer_id, media_id, subscription_library_ids
             )
             ingested_episode_count += 1
-            ingested_media_ids.append(media_id)
             enrichment_media_ids.add(media_id)
 
         chapter_sync_rows.append((media_id, episode.get("rss_chapters")))
@@ -444,13 +441,9 @@ def sync_subscription_ingest(
         )
         enrichment_media_ids.add(media_id)
 
-    consumption_queue_service.append_subscription_media_if_enabled(
-        db,
-        viewer_id=viewer_id,
-        podcast_id=podcast_id,
-        media_ids=ingested_media_ids,
-    )
-
+    # Auto-subscription queueing is NOT done here anymore: the fenced watermark step
+    # after ingest owns eligible-episode selection + Lectern insertion + watermark
+    # advance as one database fact (spec §5.3).
     for media_id in enrichment_media_ids:
         try:
             # Deduped by media_id: episode media is shared across a podcast's

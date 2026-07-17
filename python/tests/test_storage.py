@@ -1,6 +1,7 @@
 """Tests for storage clients and path utilities."""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from io import BytesIO
 from uuid import uuid4
 
@@ -9,10 +10,12 @@ from botocore.exceptions import ClientError
 
 from nexus.storage.client import (
     ObjectMetadata,
+    ObjectPage,
     SignedUpload,
     StorageClient,
     StorageClientBase,
     StorageError,
+    StorageObjectEntry,
     get_storage_client,
 )
 from nexus.storage.paths import (
@@ -41,6 +44,8 @@ class RecordingS3Client:
         self.put_error: ClientError | None = None
         self.copy_error: ClientError | None = None
         self.delete_error: ClientError | None = None
+        self.list_objects_error: ClientError | None = None
+        self.list_objects_response: dict = {"Contents": [], "IsTruncated": False}
 
     def generate_presigned_url(self, client_method, Params, ExpiresIn, HttpMethod):
         self.calls.append(
@@ -67,6 +72,12 @@ class RecordingS3Client:
         if self.get_error:
             raise self.get_error
         return {"Body": BytesIO(self.get_body)}
+
+    def list_objects_v2(self, **kwargs):
+        self.calls.append(("list_objects_v2", kwargs))
+        if self.list_objects_error:
+            raise self.list_objects_error
+        return self.list_objects_response
 
     def put_object(self, **kwargs):
         self.calls.append(("put_object", kwargs))
@@ -289,6 +300,20 @@ class TestFakeStorageClient:
         assert client.head_object("test/a.pdf") is None
         assert client.head_object("test/b.pdf") is None
 
+    def test_list_objects_filters_by_prefix_and_never_truncates(self, client):
+        client.put_object("media/a/original.pdf", b"aa", "application/pdf")
+        client.put_object("media/b/original.pdf", b"bbb", "application/pdf")
+        client.put_object("other/c/original.pdf", b"c", "application/pdf")
+
+        page = client.list_objects("media/")
+
+        assert [entry.path for entry in page.objects] == [
+            "media/a/original.pdf",
+            "media/b/original.pdf",
+        ]
+        assert [entry.size_bytes for entry in page.objects] == [2, 3]
+        assert page.next_continuation_token is None
+
 
 class TestStorageClient:
     def test_sign_upload_returns_presigned_put_url(self):
@@ -481,6 +506,75 @@ class TestStorageClient:
         assert exc_info.value.code == "E_STORAGE_ERROR"
         assert s3.calls == [("delete_object", {"Bucket": "media", "Key": "media/test/file.pdf"})]
 
+    def test_list_objects_returns_one_untruncated_page(self):
+        s3 = RecordingS3Client()
+        modified = datetime(2026, 7, 1, tzinfo=UTC)
+        s3.list_objects_response = {
+            "Contents": [
+                {"Key": "media/a/original.pdf", "LastModified": modified, "Size": 10},
+                {"Key": "media/b/original.pdf", "LastModified": modified, "Size": 20},
+            ],
+            "IsTruncated": False,
+        }
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        page = client.list_objects("media/")
+
+        assert page == ObjectPage(
+            objects=(
+                StorageObjectEntry(
+                    path="media/a/original.pdf", last_modified=modified, size_bytes=10
+                ),
+                StorageObjectEntry(
+                    path="media/b/original.pdf", last_modified=modified, size_bytes=20
+                ),
+            ),
+            next_continuation_token=None,
+        )
+        assert s3.calls == [
+            ("list_objects_v2", {"Bucket": "media", "Prefix": "media/"}),
+        ]
+
+    def test_list_objects_returns_continuation_token_when_truncated(self):
+        s3 = RecordingS3Client()
+        modified = datetime(2026, 7, 1, tzinfo=UTC)
+        s3.list_objects_response = {
+            "Contents": [{"Key": "media/a/original.pdf", "LastModified": modified, "Size": 10}],
+            "IsTruncated": True,
+            "NextContinuationToken": "token-1",
+        }
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        page = client.list_objects("media/")
+
+        assert page.next_continuation_token == "token-1", (
+            f"Expected truncated response to surface a continuation token. Got page={page}"
+        )
+
+    def test_list_objects_forwards_continuation_token_on_next_page(self):
+        s3 = RecordingS3Client()
+        s3.list_objects_response = {"Contents": [], "IsTruncated": False}
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        client.list_objects("media/", continuation_token="token-1")
+
+        assert s3.calls == [
+            (
+                "list_objects_v2",
+                {"Bucket": "media", "Prefix": "media/", "ContinuationToken": "token-1"},
+            )
+        ]
+
+    def test_list_objects_raises_storage_error(self):
+        s3 = RecordingS3Client()
+        s3.list_objects_error = client_error("InternalError", 500)
+        client = StorageClient("https://r2.test", "access", "secret", "media", s3_client=s3)
+
+        with pytest.raises(StorageError) as exc_info:
+            client.list_objects("media/")
+
+        assert exc_info.value.code == "E_STORAGE_ERROR"
+
 
 class TestGetStorageClient:
     @pytest.fixture(autouse=True)
@@ -573,6 +667,9 @@ class ChunkedStorageClient(StorageClientBase):
         raise NotImplementedError
 
     def delete_object(self, path: str) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def list_objects(self, *args, **kwargs) -> ObjectPage:  # pragma: no cover - unused
         raise NotImplementedError
 
 

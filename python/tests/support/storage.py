@@ -1,10 +1,18 @@
 """Test-only storage fakes."""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import BinaryIO
 from uuid import uuid4
 
-from nexus.storage.client import ObjectMetadata, SignedUpload, StorageClientBase, StorageError
+from nexus.storage.client import (
+    ObjectMetadata,
+    ObjectPage,
+    SignedUpload,
+    StorageClientBase,
+    StorageError,
+    StorageObjectEntry,
+)
 
 
 class FakeStorageClient(StorageClientBase):
@@ -12,6 +20,7 @@ class FakeStorageClient(StorageClientBase):
 
     def __init__(self):
         self._objects: dict[str, tuple[bytes, str]] = {}
+        self._last_modified: dict[str, datetime] = {}
 
     def sign_upload(
         self,
@@ -54,6 +63,7 @@ class FakeStorageClient(StorageClientBase):
         content_type: str = "application/octet-stream",
     ) -> None:
         self._objects[path] = (content, content_type)
+        self._last_modified[path] = datetime.now(UTC)
 
     def put_object_stream(
         self,
@@ -62,14 +72,35 @@ class FakeStorageClient(StorageClientBase):
         content_type: str = "application/octet-stream",
     ) -> None:
         self._objects[path] = (content.read(), content_type)
+        self._last_modified[path] = datetime.now(UTC)
 
     def copy_object(self, source_path: str, destination_path: str) -> None:
         if source_path not in self._objects:
             raise StorageError(f"Object not found: {source_path}", code="E_STORAGE_MISSING")
         self._objects[destination_path] = self._objects[source_path]
+        self._last_modified[destination_path] = datetime.now(UTC)
 
     def delete_object(self, path: str) -> None:
         self._objects.pop(path, None)
+        self._last_modified.pop(path, None)
+
+    def list_objects(
+        self,
+        prefix: str,
+        *,
+        continuation_token: str | None = None,
+    ) -> ObjectPage:
+        """Return every matching object in one page; the fake never truncates."""
+        objects = tuple(
+            StorageObjectEntry(
+                path=path,
+                last_modified=self._last_modified[path],
+                size_bytes=len(content),
+            )
+            for path, (content, _content_type) in sorted(self._objects.items())
+            if path.startswith(prefix)
+        )
+        return ObjectPage(objects=objects, next_continuation_token=None)
 
     def get_object(self, path: str) -> bytes | None:
         if path not in self._objects:
@@ -78,3 +109,4 @@ class FakeStorageClient(StorageClientBase):
 
     def clear(self) -> None:
         self._objects.clear()
+        self._last_modified.clear()

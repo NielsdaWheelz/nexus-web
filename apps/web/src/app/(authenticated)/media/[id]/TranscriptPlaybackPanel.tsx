@@ -6,10 +6,12 @@ import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
 import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
+import { useLectern } from "@/lib/lectern/LecternProvider";
+import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/client";
 import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,
-} from "@/lib/player/chapters";
+} from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
   type TranscriptChapter,
@@ -232,6 +234,8 @@ interface TranscriptPlaybackPanelProps {
   playbackSource: TranscriptPlaybackSource | null;
   canonicalSourceUrl: string | null;
   chapters: TranscriptChapter[];
+  /** Decoded footer descriptor for this media; null hides the Play affordance. */
+  playerDescriptor: PlayerDescriptor | null;
   descriptionHtml?: string | null;
   descriptionText?: string | null;
   videoSeekTargetMs: number | null;
@@ -244,13 +248,41 @@ export default function TranscriptPlaybackPanel({
   playbackSource,
   canonicalSourceUrl,
   chapters,
+  playerDescriptor,
   descriptionHtml,
   descriptionText,
   videoSeekTargetMs,
   onSeek,
 }: TranscriptPlaybackPanelProps) {
-  const { play, addToQueue, queueItems, currentTimeSeconds } = useGlobalPlayer();
+  const { playAudio, presentation, state } = useGlobalPlayer();
+  const { placeItems, resource } = useLectern();
   const [playbackError, setPlaybackError] = useState(false);
+  const currentTimeSeconds = presentation.positionMs / 1000;
+
+  // Play and Lectern mutations wait for the canonical snapshot to be Ready (spec
+  // §6): playAudio/placeItems both defect if invoked before Ready, so their
+  // affordances are disabled until then.
+  const lecternReady = resource.status === "ready";
+
+  // "Play next": After the active exact Lectern origin, else First; a no-op when
+  // it would target the current origin's own media.
+  const activeOrigin = state.kind === "Absent" ? null : state.session.origin;
+  const activeMediaId = state.kind === "Absent" ? null : state.session.descriptor.mediaId;
+  const playNextDisabled =
+    !lecternReady || (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
+  const onLectern =
+    resource.status === "ready" && resource.data.items.some((item) => item.mediaId === mediaId);
+
+  const handlePlayNext = () => {
+    const placement =
+      activeOrigin?.kind === "Lectern"
+        ? ({ kind: "After", itemId: activeOrigin.itemId } as const)
+        : ({ kind: "First" } as const);
+    void placeItems({ mediaIds: [parseMediaId(mediaId)], placement });
+  };
+  const handleAddToLectern = () => {
+    void placeItems({ mediaIds: [parseMediaId(mediaId)], placement: { kind: "Last" } });
+  };
 
   const normalizedChapters = useMemo(
     () => normalizeTrackChapters(chapters),
@@ -305,7 +337,6 @@ export default function TranscriptPlaybackPanel({
   const showSourceFallbackAction =
     Boolean(fallbackSourceUrl) &&
     (mediaKind === "video" || playbackError || playerUnavailable);
-  const isInQueue = queueItems.some((item) => item.media_id === mediaId);
 
   useEffect(() => {
     setPlaybackError(false);
@@ -344,32 +375,33 @@ export default function TranscriptPlaybackPanel({
           <div className={styles.globalPlayerPrompt}>
             <p>Playback is controlled in the global player footer.</p>
             <div className={styles.podcastPlaybackActions}>
+              {playerDescriptor ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!lecternReady}
+                  onClick={() => playAudio(playerDescriptor)}
+                >
+                  Play in footer
+                </Button>
+              ) : null}
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => play()}
-              >
-                Play in footer
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  void addToQueue(mediaId, "next");
-                }}
+                disabled={playNextDisabled}
+                onClick={handlePlayNext}
               >
                 Play next
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  void addToQueue(mediaId, "last");
-                }}
+                disabled={!lecternReady}
+                onClick={handleAddToLectern}
               >
-                Add to queue
+                Add to Lectern
               </Button>
-              {isInQueue ? <span className={styles.queueBadge}>In Queue</span> : null}
+              {onLectern ? <span className={styles.queueBadge}>On Lectern</span> : null}
             </div>
           </div>
         ) : mediaKind === "video" && iframeSrc ? (

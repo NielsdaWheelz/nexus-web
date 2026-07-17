@@ -6,6 +6,8 @@ import {
   fetchInputPath,
   stubFetch,
 } from "@/__tests__/helpers/fetch";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import MediaPaneBody from "./MediaPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the media pane's primary
@@ -66,14 +68,6 @@ vi.mock("@/lib/media/useDocumentActions", () => ({
     handleRefresh: vi.fn(),
     handleRetryMetadata: vi.fn(),
   }),
-}));
-
-vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({ seekToMs: vi.fn(), play: vi.fn() }),
-}));
-
-vi.mock("@/lib/player/usePodcastTrackSeeding", () => ({
-  usePodcastTrackSeeding: () => {},
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
@@ -149,6 +143,14 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
+      // The pane consumes the (real) Lectern + player providers; settle the
+      // Lectern snapshot so those hooks are Ready.
+      if (fetchInputPath(input) === "/api/lectern") {
+        return new Response(JSON.stringify({ data: { items: [] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response("{}", {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -159,7 +161,13 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     const { onSetPaneTitle } = renderHydratedPane({
       href,
       resources: { [MEDIA_ID]: { media: seededMedia(), fragments: [] } },
-      children: <MediaPaneBody />,
+      children: (
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <MediaPaneBody />
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      ),
     });
 
     // Seed consumed: the pane left the loading state and rendered the seeded

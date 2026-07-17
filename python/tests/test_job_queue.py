@@ -21,6 +21,10 @@ from nexus.jobs.queue import (
     fail_job,
     heartbeat_job,
     prune_terminal_jobs,
+    requeue_dead_job,
+    reschedule_running_job,
+    update_running_job_payload,
+    update_unclaimed_job,
 )
 from tests.utils.db import DirectSessionManager, task_session_factory
 
@@ -518,6 +522,551 @@ def test_worker_owner_transitions_reject_expired_lease(db_session: Session):
     assert row[3] is None
 
 
+def _payload(db: Session, job_id: UUID) -> dict[str, object]:
+    return dict(
+        db.execute(
+            text("SELECT payload FROM background_jobs WHERE id = :job_id"),
+            {"job_id": job_id},
+        ).scalar_one()
+    )
+
+
+class TestUpdateRunningJobPayload:
+    def test_accepts_exact_claimant_attempt_and_lease(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_checkpoint_fixture", payload={"step": "start"}, max_attempts=3
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+
+        updated = update_running_job_payload(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts,
+            payload={"step": "checkpoint-1"},
+        )
+        db_session.commit()
+
+        assert updated is True, "Expected exact claimant/attempt/lease to accept the checkpoint."
+        assert _payload(db_session, job.id) == {"step": "checkpoint-1"}
+        assert _job_status(db_session, job.id) == "running"
+
+    def test_rejects_wrong_worker(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="job_checkpoint_wrong_worker",
+            payload={"step": "start"},
+            max_attempts=3,
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+
+        updated = update_running_job_payload(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-b",
+            attempt_no=claimed.attempts,
+            payload={"step": "checkpoint-1"},
+        )
+        db_session.commit()
+
+        assert updated is False, "Expected a non-owning worker's checkpoint write to be rejected."
+        assert _payload(db_session, job.id) == {"step": "start"}
+
+    def test_rejects_wrong_attempt(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="job_checkpoint_wrong_attempt",
+            payload={"step": "start"},
+            max_attempts=3,
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+
+        updated = update_running_job_payload(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts + 1,
+            payload={"step": "checkpoint-1"},
+        )
+        db_session.commit()
+
+        assert updated is False, "Expected a stale attempt number to be rejected."
+        assert _payload(db_session, job.id) == {"step": "start"}
+
+    def test_rejects_expired_lease(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="job_checkpoint_expired_lease",
+            payload={"step": "start"},
+            max_attempts=3,
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        db_session.execute(
+            text(
+                "UPDATE background_jobs SET lease_expires_at = now() - interval '1 second' "
+                "WHERE id = :job_id"
+            ),
+            {"job_id": job.id},
+        )
+        db_session.commit()
+
+        updated = update_running_job_payload(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts,
+            payload={"step": "checkpoint-1"},
+        )
+        db_session.commit()
+
+        assert updated is False, "Expected an expired lease to reject the checkpoint write."
+        assert _payload(db_session, job.id) == {"step": "start"}
+
+    def test_rejects_non_running_status(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_checkpoint_non_running", payload={"step": "start"}, max_attempts=3
+        )
+        db_session.commit()
+
+        updated = update_running_job_payload(
+            db_session,
+            job_id=job.id,
+            worker_id="worker-a",
+            attempt_no=0,
+            payload={"step": "checkpoint-1"},
+        )
+        db_session.commit()
+
+        assert updated is False, "Expected a still-pending (never claimed) row to reject the write."
+        assert _payload(db_session, job.id) == {"step": "start"}
+
+
+class TestRescheduleRunningJob:
+    def test_compensates_the_claim_side_attempt_increment(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_reschedule_fixture", payload={"checkpoint": "a"}, max_attempts=3
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        assert claimed.attempts == 1
+        # Immediately due, so the reclaim assertion below can observe it right away.
+        reschedule_at = db_session.execute(text("SELECT now()")).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts,
+            available_at=reschedule_at,
+            payload={"checkpoint": "b"},
+        )
+        db_session.commit()
+        assert ok is True
+
+        row = (
+            db_session.execute(
+                text(
+                    """
+                SELECT status, attempts, claimed_by, lease_expires_at, payload
+                FROM background_jobs
+                WHERE id = :job_id
+                """
+                ),
+                {"job_id": job.id},
+            )
+            .mappings()
+            .one()
+        )
+        assert row["status"] == "pending"
+        assert row["attempts"] == 0, (
+            "Expected reschedule to compensate the claim-side +1 so waiting doesn't burn budget. "
+            f"Row={dict(row)}"
+        )
+        assert row["claimed_by"] is None
+        assert row["lease_expires_at"] is None
+        assert dict(row["payload"]) == {"checkpoint": "b"}
+
+        # Claimable again, and this second claim brings attempts back to 1, not 2.
+        reclaimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+        assert reclaimed is not None
+        assert reclaimed.attempts == 1, (
+            f"Expected the compensated reschedule to preserve the full retry budget on "
+            f"reclaim. attempts={reclaimed.attempts}"
+        )
+
+    def test_without_payload_keeps_existing_payload(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="job_reschedule_keep_payload",
+            payload={"checkpoint": "unchanged"},
+            max_attempts=3,
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is True
+        assert _payload(db_session, job.id) == {"checkpoint": "unchanged"}
+
+    def test_floors_attempts_at_zero(self, db_session: Session):
+        job = enqueue_job(db_session, kind="job_reschedule_floor", payload={}, max_attempts=3)
+        db_session.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET status = 'running', attempts = 0, claimed_by = 'worker-a',
+                    lease_expires_at = now() + interval '1 minute'
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": job.id},
+        )
+        db_session.commit()
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=job.id,
+            worker_id="worker-a",
+            attempt_no=0,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is True
+        attempts = db_session.execute(
+            text("SELECT attempts FROM background_jobs WHERE id = :job_id"), {"job_id": job.id}
+        ).scalar_one()
+        assert attempts == 0, (
+            f"Expected attempts to floor at 0, not go negative. attempts={attempts}"
+        )
+
+    def test_rejects_wrong_worker(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_reschedule_wrong_worker", payload={}, max_attempts=3
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-b",
+            attempt_no=claimed.attempts,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is False
+        assert _job_status(db_session, job.id) == "running"
+
+    def test_rejects_wrong_attempt(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_reschedule_wrong_attempt", payload={}, max_attempts=3
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts + 1,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is False
+        assert _job_status(db_session, job.id) == "running"
+
+    def test_rejects_expired_lease(self, db_session: Session):
+        job = enqueue_job(
+            db_session, kind="job_reschedule_expired_lease", payload={}, max_attempts=3
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=120)
+        assert claimed is not None
+        db_session.execute(
+            text(
+                "UPDATE background_jobs SET lease_expires_at = now() - interval '1 second' "
+                "WHERE id = :job_id"
+            ),
+            {"job_id": job.id},
+        )
+        db_session.commit()
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=claimed.id,
+            worker_id="worker-a",
+            attempt_no=claimed.attempts,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is False
+
+    def test_rejects_non_running_status(self, db_session: Session):
+        job = enqueue_job(db_session, kind="job_reschedule_non_running", payload={}, max_attempts=3)
+        db_session.commit()
+        reschedule_at = db_session.execute(
+            text("SELECT now() + interval '10 seconds'")
+        ).scalar_one()
+
+        ok = reschedule_running_job(
+            db_session,
+            job_id=job.id,
+            worker_id="worker-a",
+            attempt_no=0,
+            available_at=reschedule_at,
+        )
+        db_session.commit()
+
+        assert ok is False
+
+
+class TestRequeueDeadJob:
+    def test_transitions_dead_to_pending_with_full_budget_restored(self, db_session: Session):
+        job = enqueue_job(db_session, kind="job_requeue_fixture", payload={"x": 1}, max_attempts=3)
+        db_session.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET status = 'dead', attempts = 3, claimed_by = 'worker-a',
+                    lease_expires_at = NULL, finished_at = now(),
+                    error_code = 'E_TERMINAL_TEST', last_error = 'boom'
+                WHERE id = :job_id
+                """
+            ),
+            {"job_id": job.id},
+        )
+        db_session.commit()
+
+        requeued = requeue_dead_job(db_session, job_id=job.id)
+        db_session.commit()
+
+        assert requeued is True
+        row = (
+            db_session.execute(
+                text(
+                    """
+                SELECT status, attempts, claimed_by, lease_expires_at, finished_at,
+                       error_code, last_error
+                FROM background_jobs
+                WHERE id = :job_id
+                """
+                ),
+                {"job_id": job.id},
+            )
+            .mappings()
+            .one()
+        )
+        assert row["status"] == "pending"
+        assert row["attempts"] == 0, f"Expected full retry budget restored. Row={dict(row)}"
+        assert row["claimed_by"] is None
+        assert row["lease_expires_at"] is None
+        assert row["finished_at"] is None, "Expected the row to no longer look terminal."
+        assert row["error_code"] == "E_TERMINAL_TEST", "Expected dead-letter history preserved."
+        assert row["last_error"] == "boom", "Expected dead-letter history preserved."
+
+        reclaimed = claim_next_job(db_session, worker_id="worker-b", lease_seconds=60)
+        assert reclaimed is not None
+        assert reclaimed.id == job.id
+        assert reclaimed.attempts == 1, (
+            f"Expected the full max_attempts budget to be available again. "
+            f"attempts={reclaimed.attempts}"
+        )
+
+    def test_rejects_non_dead_status(self, db_session: Session):
+        job = enqueue_job(db_session, kind="job_requeue_reject_fixture", payload={}, max_attempts=1)
+        db_session.commit()
+
+        assert requeue_dead_job(db_session, job_id=job.id) is False
+        assert _job_status(db_session, job.id) == "pending"
+
+
+class TestUpdateUnclaimedJob:
+    def test_matches_payload_fields_and_updates(self, db_session: Session):
+        future_available_at = db_session.execute(
+            text("SELECT now() + interval '1 hour'")
+        ).scalar_one()
+        job = enqueue_job(
+            db_session,
+            kind="storage_object_cleanup_fixture",
+            payload={
+                "mediaId": "m1",
+                "storagePath": "media/m1/original.pdf",
+                "checkpoint": "Armed",
+            },
+            available_at=future_available_at,
+            max_attempts=1,
+        )
+        db_session.commit()
+
+        new_available_at = db_session.execute(
+            text("SELECT now() + interval '2 hours'")
+        ).scalar_one()
+        updated = update_unclaimed_job(
+            db_session,
+            job_id=job.id,
+            kind="storage_object_cleanup_fixture",
+            expected_payload_match={"mediaId": "m1", "storagePath": "media/m1/original.pdf"},
+            payload={
+                "mediaId": "m1",
+                "storagePath": "media/m1/original.pdf",
+                "checkpoint": "Retained",
+            },
+            available_at=new_available_at,
+        )
+        db_session.commit()
+
+        assert updated is True
+        row = (
+            db_session.execute(
+                text("SELECT payload, available_at FROM background_jobs WHERE id = :job_id"),
+                {"job_id": job.id},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row["payload"]) == {
+            "mediaId": "m1",
+            "storagePath": "media/m1/original.pdf",
+            "checkpoint": "Retained",
+        }
+
+    def test_fails_on_payload_mismatch(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="storage_object_cleanup_mismatch_fixture",
+            payload={"mediaId": "m1", "storagePath": "media/m1/original.pdf"},
+            max_attempts=1,
+        )
+        db_session.commit()
+
+        updated = update_unclaimed_job(
+            db_session,
+            job_id=job.id,
+            kind="storage_object_cleanup_mismatch_fixture",
+            expected_payload_match={"mediaId": "wrong-media-id"},
+            payload={"mediaId": "m1", "storagePath": "media/m1/original.pdf", "checkpoint": "x"},
+        )
+        db_session.commit()
+
+        assert updated is False
+        assert _payload(db_session, job.id) == {
+            "mediaId": "m1",
+            "storagePath": "media/m1/original.pdf",
+        }
+
+    def test_fails_on_kind_mismatch(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="storage_object_cleanup_kind_fixture",
+            payload={"mediaId": "m1"},
+            max_attempts=1,
+        )
+        db_session.commit()
+
+        updated = update_unclaimed_job(
+            db_session,
+            job_id=job.id,
+            kind="a_totally_different_kind",
+            expected_payload_match={"mediaId": "m1"},
+            payload={"mediaId": "m1", "checkpoint": "x"},
+        )
+        db_session.commit()
+
+        assert updated is False
+
+    def test_fails_once_claimed(self, db_session: Session):
+        job = enqueue_job(
+            db_session,
+            kind="storage_object_cleanup_claimed_fixture",
+            payload={"mediaId": "m1"},
+            max_attempts=1,
+        )
+        db_session.commit()
+        claimed = claim_next_job(db_session, worker_id="worker-a", lease_seconds=60)
+        assert claimed is not None
+
+        updated = update_unclaimed_job(
+            db_session,
+            job_id=job.id,
+            kind="storage_object_cleanup_claimed_fixture",
+            expected_payload_match={"mediaId": "m1"},
+            payload={"mediaId": "m1", "checkpoint": "x"},
+        )
+        db_session.commit()
+
+        assert updated is False, "Expected the update to fail once the row has been claimed."
+
+    def test_without_available_at_keeps_existing_schedule(self, db_session: Session):
+        original_available_at = db_session.execute(
+            text("SELECT now() + interval '30 minutes'")
+        ).scalar_one()
+        job = enqueue_job(
+            db_session,
+            kind="storage_object_cleanup_keep_schedule_fixture",
+            payload={"mediaId": "m1"},
+            available_at=original_available_at,
+            max_attempts=1,
+        )
+        db_session.commit()
+
+        updated = update_unclaimed_job(
+            db_session,
+            job_id=job.id,
+            kind="storage_object_cleanup_keep_schedule_fixture",
+            expected_payload_match={"mediaId": "m1"},
+            payload={"mediaId": "m1", "checkpoint": "x"},
+        )
+        db_session.commit()
+
+        assert updated is True
+        available_at = db_session.execute(
+            text("SELECT available_at FROM background_jobs WHERE id = :job_id"),
+            {"job_id": job.id},
+        ).scalar_one()
+        assert available_at == original_available_at, (
+            "Expected omitting available_at to leave the existing schedule untouched."
+        )
+
+
 def test_prune_terminal_jobs_deletes_only_old_terminal_rows(db_session: Session):
     now = datetime.now(UTC)
     old_succeeded = enqueue_job(db_session, kind="old_succeeded", payload={}, max_attempts=1)
@@ -599,6 +1148,45 @@ def test_prune_terminal_jobs_deletes_only_old_terminal_rows(db_session: Session)
     assert recent_succeeded.id in remaining_ids
     assert failed_retry.id in remaining_ids
     assert pending.id in remaining_ids
+
+
+def test_prune_terminal_jobs_excludes_configured_never_prune_dead_kinds(db_session: Session):
+    now = datetime.now(UTC)
+    protected = enqueue_job(db_session, kind="never_prune_dead_fixture", payload={}, max_attempts=1)
+    prunable_same_age = enqueue_job(
+        db_session, kind="prunable_dead_fixture", payload={}, max_attempts=1
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs SET status = 'dead', finished_at = :old_finished_at
+            WHERE id IN (:protected_id, :prunable_id)
+            """
+        ),
+        {
+            "protected_id": protected.id,
+            "prunable_id": prunable_same_age.id,
+            "old_finished_at": now - timedelta(days=40),
+        },
+    )
+    db_session.commit()
+
+    deleted = prune_terminal_jobs(
+        db_session,
+        succeeded_after_days=7,
+        dead_after_days=30,
+        limit=10,
+        excluded_dead_kinds={"never_prune_dead_fixture"},
+    )
+    db_session.commit()
+
+    assert deleted == 1, f"Expected only the non-excluded dead kind to prune. deleted={deleted}"
+    remaining_ids = {
+        UUID(str(row[0]))
+        for row in db_session.execute(text("SELECT id FROM background_jobs")).fetchall()
+    }
+    assert protected.id in remaining_ids, "Expected the excluded dead kind to remain unpruned."
+    assert prunable_same_age.id not in remaining_ids
 
 
 def test_prune_background_jobs_task_forwards_settings_and_commits(
@@ -697,6 +1285,78 @@ def test_prune_background_jobs_task_forwards_settings_and_commits(
     assert default_only_dead.id in remaining_ids
     assert custom_old_succeeded.id in remaining_ids
     assert custom_old_dead.id not in remaining_ids
+
+
+def test_prune_background_jobs_task_derives_exclusions_from_registry_never_prune_dead(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The task composes prune_terminal_jobs' excluded_dead_kinds from the
+    registry rather than hardcoding kinds, so registering a new
+    never_prune_dead=True job kind automatically protects its dead rows."""
+    from nexus.jobs.registry import JobDefinition
+    from nexus.tasks.prune_background_jobs import prune_background_jobs_job
+
+    now = datetime.now(UTC)
+    protected = enqueue_job(
+        db_session, kind="task_registry_protected_kind", payload={}, max_attempts=1
+    )
+    prunable = enqueue_job(
+        db_session, kind="task_registry_prunable_kind", payload={}, max_attempts=1
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE background_jobs SET status = 'dead', finished_at = :old_finished_at
+            WHERE id IN (:protected_id, :prunable_id)
+            """
+        ),
+        {
+            "protected_id": protected.id,
+            "prunable_id": prunable.id,
+            "old_finished_at": now - timedelta(days=40),
+        },
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "nexus.tasks.prune_background_jobs.get_session_factory",
+        lambda: task_session_factory(db_session),
+    )
+    monkeypatch.setattr(
+        "nexus.tasks.prune_background_jobs.get_settings",
+        lambda: SimpleNamespace(
+            background_job_prune_succeeded_after_days=7,
+            background_job_prune_dead_after_days=30,
+            background_job_prune_batch_size=100,
+        ),
+    )
+    monkeypatch.setattr(
+        "nexus.tasks.prune_background_jobs.get_default_registry",
+        lambda: {
+            "task_registry_protected_kind": JobDefinition(
+                kind="task_registry_protected_kind",
+                handler=lambda *, payload, context: None,
+                never_prune_dead=True,
+            ),
+            "task_registry_prunable_kind": JobDefinition(
+                kind="task_registry_prunable_kind",
+                handler=lambda *, payload, context: None,
+            ),
+        },
+    )
+
+    result = prune_background_jobs_job(request_id="req-prune-registry-exclusion")
+
+    assert result == {"deleted_count": 1}
+    remaining_ids = {
+        UUID(str(row[0]))
+        for row in db_session.execute(text("SELECT id FROM background_jobs")).fetchall()
+    }
+    assert protected.id in remaining_ids, (
+        "Expected the registry's never_prune_dead=True kind to stay unpruned."
+    )
+    assert prunable.id not in remaining_ids
 
 
 def test_fail_job_parks_retry_then_transitions_to_dead(db_session: Session):

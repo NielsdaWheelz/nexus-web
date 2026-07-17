@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import BinaryIO
 
 import boto3
@@ -30,6 +31,23 @@ class ObjectMetadata:
 
     content_type: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class StorageObjectEntry:
+    """One listed object: its path, last-modified time, and size."""
+
+    path: str
+    last_modified: datetime
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ObjectPage:
+    """One page of a prefix listing plus the token to fetch the next page."""
+
+    objects: tuple[StorageObjectEntry, ...]
+    next_continuation_token: str | None
 
 
 class StorageClientBase(ABC):
@@ -97,6 +115,16 @@ class StorageClientBase(ABC):
         """Delete an object path."""
         ...
 
+    @abstractmethod
+    def list_objects(
+        self,
+        prefix: str,
+        *,
+        continuation_token: str | None = None,
+    ) -> ObjectPage:
+        """List one page of objects under a prefix, in listing order."""
+        ...
+
 
 class StorageError(Exception):
     """Storage operation error."""
@@ -131,6 +159,8 @@ class StorageClient(StorageClientBase):
                 s3={"addressing_style": "path"},
                 request_checksum_calculation="when_required",
                 response_checksum_validation="when_required",
+                connect_timeout=get_settings().r2_connect_timeout_seconds,
+                read_timeout=get_settings().r2_read_timeout_seconds,
             ),
         )
 
@@ -260,6 +290,32 @@ class StorageClient(StorageClientBase):
             self._client.delete_object(Bucket=self._bucket, Key=path)
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to delete object {path}") from exc
+
+    def list_objects(
+        self,
+        prefix: str,
+        *,
+        continuation_token: str | None = None,
+    ) -> ObjectPage:
+        params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
+        if continuation_token:
+            params["ContinuationToken"] = continuation_token
+        try:
+            response = self._client.list_objects_v2(**params)
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageError(f"Failed to list objects under {prefix}") from exc
+
+        objects = tuple(
+            StorageObjectEntry(
+                path=str(item["Key"]),
+                last_modified=item["LastModified"],
+                size_bytes=int(item.get("Size", 0)),
+            )
+            for item in response.get("Contents", [])
+        )
+        is_truncated = bool(response.get("IsTruncated", False))
+        next_token = response.get("NextContinuationToken") if is_truncated else None
+        return ObjectPage(objects=objects, next_continuation_token=next_token)
 
 
 def get_storage_client() -> StorageClientBase:

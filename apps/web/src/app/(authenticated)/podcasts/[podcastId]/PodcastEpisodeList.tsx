@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
-import { addToLectern } from "@/lib/player/consumptionQueueClient";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -19,6 +18,7 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
   deriveEpisodeState,
+  episodePlayerDescriptor,
   type EpisodeSort,
   type EpisodeStateFilter,
   type PodcastEpisodeMedia,
@@ -49,7 +49,10 @@ interface PodcastEpisodeListProps {
   busyMediaIds: StringIdSet;
   markingEpisodeIds: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
-  queueMediaIds: Set<string>;
+  lecternMediaIds: Set<string>;
+  playNextDisabledMediaId: string | null;
+  /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
+  lecternReady: boolean;
   visibleUnplayedEpisodeIds: string[];
   markAllAsPlayedBusy: boolean;
   hasMoreEpisodes: boolean;
@@ -57,7 +60,8 @@ interface PodcastEpisodeListProps {
   onMarkAllVisibleUnplayedAsPlayed: () => void;
   onLoadMoreEpisodes: () => void;
   onToggleShowNotes: (mediaId: string) => void;
-  onAddToQueue: (mediaId: string, position: "next" | "last") => void;
+  onPlayNext: (mediaId: string) => void;
+  onAddToLectern: (mediaId: string) => void;
   onOpenChat: (episode: PodcastEpisodeMedia) => void;
   onRetry: (mediaId: string) => void;
   onRefreshSource: (mediaId: string) => void;
@@ -82,7 +86,9 @@ export default function PodcastEpisodeList({
   busyMediaIds,
   markingEpisodeIds,
   expandedShowNotesMediaIds,
-  queueMediaIds,
+  lecternMediaIds,
+  playNextDisabledMediaId,
+  lecternReady,
   visibleUnplayedEpisodeIds,
   markAllAsPlayedBusy,
   hasMoreEpisodes,
@@ -90,7 +96,8 @@ export default function PodcastEpisodeList({
   onMarkAllVisibleUnplayedAsPlayed,
   onLoadMoreEpisodes,
   onToggleShowNotes,
-  onAddToQueue,
+  onPlayNext,
+  onAddToLectern,
   onOpenChat,
   onRetry,
   onRefreshSource,
@@ -111,6 +118,21 @@ export default function PodcastEpisodeList({
   const { loadLibraries } = membership;
   const connectionSummaries = useConnectionSummaries(
     episodes.map((episode) => `media:${episode.id}`),
+  );
+
+  // A podcast-episode row is audio-playable when its decoded playerDescriptor is
+  // Present (spec §4). That presence gates the Lectern placement affordances
+  // ("Play next" / "Add to Lectern"); an Absent descriptor hides them.
+  const audioEpisodeIds = useMemo(
+    () =>
+      new Set(
+        episodes
+          .filter(
+            (episode) => episodePlayerDescriptor(episode).kind === "Present",
+          )
+          .map((episode) => episode.id),
+      ),
+    [episodes],
   );
 
   const rows = episodes.map((episode) =>
@@ -162,9 +184,12 @@ export default function PodcastEpisodeList({
         onTogglePlayed: () => {
           onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
         },
-        onAddToLectern: () => {
-          void addToLectern(episode.id);
-        },
+        onAddToLectern:
+          audioEpisodeIds.has(episode.id) && lecternReady
+            ? () => {
+                onAddToLectern(episode.id);
+              }
+            : undefined,
       },
     ),
   );
@@ -174,13 +199,17 @@ export default function PodcastEpisodeList({
       panels[episode.id] = (
         <EpisodeControls
           episode={episode}
-          inQueue={queueMediaIds.has(episode.id)}
+          isAudioEpisode={audioEpisodeIds.has(episode.id)}
+          onLectern={lecternMediaIds.has(episode.id)}
+          playNextDisabled={episode.id === playNextDisabledMediaId}
+          lecternReady={lecternReady}
           transcriptionAllowed={transcriptionAllowed}
           billingDisabled={billingDisabled}
           showNotesExpanded={expandedShowNotesMediaIds.ids.has(episode.id)}
           transcript={transcript}
           onToggleShowNotes={onToggleShowNotes}
-          onAddToQueue={onAddToQueue}
+          onPlayNext={onPlayNext}
+          onAddToLectern={onAddToLectern}
         />
       );
       return panels;

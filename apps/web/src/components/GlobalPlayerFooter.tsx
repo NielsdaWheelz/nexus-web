@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatClock } from "@/lib/formatClock";
+import { presenceValueOr } from "@/lib/api/presence";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { isPositiveFinite } from "@/lib/validation";
@@ -10,6 +11,7 @@ import {
   PLAYER_SKIP_FORWARD_SECONDS,
   useGlobalPlayer,
 } from "@/lib/player/globalPlayer";
+import { chapterIndexAtPositionMs, chapterMarkers } from "@/lib/player/chapters";
 import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
@@ -17,6 +19,7 @@ import {
 import {
   areAudioEffectsActive,
   normalizeVolumeBoostLevel,
+  type AudioEffectsState,
   type AudioEffectsVolumeBoost,
 } from "@/lib/player/audioEffects";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
@@ -25,7 +28,6 @@ import { useVoiceRecorder } from "@/lib/walknotes/useVoiceRecorder";
 import { transcribeAudio } from "@/lib/walknotes/transcribeAudio";
 import MediaImage from "@/components/ui/MediaImage";
 import MobileSheet from "@/components/ui/MobileSheet";
-import GlobalPlayerConsumptionPanel from "@/components/GlobalPlayerConsumptionPanel";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import WalknoteReviewPanel from "@/components/walknotes/WalknoteReviewPanel";
 import Button from "@/components/ui/Button";
@@ -41,6 +43,10 @@ const VOLUME_BOOST_OPTIONS: Array<{ value: AudioEffectsVolumeBoost; label: strin
   { value: "high", label: "High (+9dB)" },
 ];
 
+function isSubscriptionSpeed(rate: number): boolean {
+  return SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.some((option) => option === rate);
+}
+
 function EffectsPanel({
   audioEffects,
   audioEffectsAvailable,
@@ -48,9 +54,9 @@ function EffectsPanel({
   silenceTimeSavedSeconds,
   isSilenceTrimming,
 }: {
-  audioEffects: ReturnType<typeof useGlobalPlayer>["audioEffects"];
+  audioEffects: AudioEffectsState;
   audioEffectsAvailable: boolean;
-  setAudioEffects: ReturnType<typeof useGlobalPlayer>["setAudioEffects"];
+  setAudioEffects: (patch: Partial<AudioEffectsState>) => void;
   silenceTimeSavedSeconds: number;
   isSilenceTrimming: boolean;
 }) {
@@ -108,14 +114,17 @@ function EffectsPanel({
         <span>Mono audio</span>
       </label>
 
-      <p className={styles.effectsMeta}>Time saved: {isPositiveFinite(silenceTimeSavedSeconds) ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s</p>
+      <p className={styles.effectsMeta}>
+        Time saved: {isPositiveFinite(silenceTimeSavedSeconds) ? silenceTimeSavedSeconds.toFixed(1) : "0.0"}s
+      </p>
       {isSilenceTrimming && <span className={styles.trimmingBadge}>Trimming silence</span>}
     </section>
   );
 }
 
-function PlaybackErrorOrTimecode({
+function StatusArea({
   playbackError,
+  completionRetry,
   retryPlayback,
   sourceUrl,
   isBuffering,
@@ -123,6 +132,7 @@ function PlaybackErrorOrTimecode({
   durationSafe,
 }: {
   playbackError: { message: string } | null;
+  completionRetry: (() => void) | null;
   retryPlayback: () => void;
   sourceUrl: string;
   isBuffering: boolean;
@@ -154,6 +164,22 @@ function PlaybackErrorOrTimecode({
       </div>
     );
   }
+  if (completionRetry) {
+    return (
+      <div className={styles.playbackErrorArea} role="status" aria-live="polite">
+        <span className={styles.playbackErrorMessage}>Couldn’t save your progress.</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          className={styles.playbackErrorAction}
+          onClick={completionRetry}
+          aria-label="Retry saving progress"
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
   return (
     <span className={styles.timecode}>
       {isBuffering && (
@@ -167,13 +193,20 @@ function PlaybackErrorOrTimecode({
   );
 }
 
+/** The read-only "Next" preview line (spec §6). */
+function nextPreviewText(preview: ReturnType<typeof useGlobalPlayer>["nextPreview"]): string | null {
+  if (preview.kind === "Forward") return `Forward: ${preview.descriptor.title}`;
+  if (preview.kind === "Lectern") return `Next on the Lectern: ${preview.descriptor.title}`;
+  return null;
+}
+
 export default function GlobalPlayerFooter() {
   const isMobile = useIsMobileViewport();
-  const [queueOpen, setQueueOpen] = useState(false);
   const [effectsOpen, setEffectsOpen] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [walknoteReviewOpen, setWalknoteReviewOpen] = useState(false);
+  const [nowPlaying, setNowPlaying] = useState("");
   const morePopoverRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const miniExpandButtonRef = useRef<HTMLButtonElement>(null);
@@ -181,36 +214,46 @@ export default function GlobalPlayerFooter() {
   const markButtonMobileRef = useRef<HTMLButtonElement>(null);
 
   const {
-    track,
+    state,
+    presentation,
+    nextPreview,
     bindAudioElement,
-    isPlaying,
-    isBuffering,
-    playbackError,
-    play,
+    playAudio,
+    resume,
     pause,
-    retryPlayback,
-    currentTimeSeconds,
-    durationSeconds,
-    bufferedSeconds,
-    currentChapter,
-    chapterMarkers,
-    selectedPlaybackRateOption,
-    volume,
-    audioEffects,
-    setAudioEffects,
-    audioEffectsAvailable,
-    isSilenceTrimming,
-    silenceTimeSavedSeconds,
-    seekToMs,
-    skipBySeconds,
+    previous,
+    next,
+    seekTo,
+    skipBy,
     setPlaybackRate,
     setVolume,
-    refreshQueue,
-    playNextInQueue,
-    playPreviousInQueue,
-    hasNextInQueue,
+    setAudioEffects,
   } = useGlobalPlayer();
-  const trackMediaId = track?.media_id ?? null;
+
+  const session = state.kind === "Absent" ? null : state.session;
+  const descriptor = session?.descriptor ?? null;
+  const currentMediaId = descriptor?.mediaId ?? null;
+
+  const isPlaying = state.kind === "Active" && state.phase === "Playing";
+  const isBuffering = state.kind === "Active" && state.phase === "Buffering";
+  const playbackError = state.kind === "PlaybackFailed" ? { message: state.error.message } : null;
+  const completionRetry = state.kind === "CompletionFailed" ? state.retry : null;
+  const retryPlayback = state.kind === "PlaybackFailed" ? state.retry : () => {};
+  // Session-replacing transport is disabled while a completion is in flight/failed.
+  const transportLocked = state.kind === "Completing" || state.kind === "CompletionFailed";
+
+  const currentTimeSeconds = presentation.positionMs / 1000;
+  const durationSeconds = presentation.durationMs / 1000;
+  const bufferedSeconds = presentation.bufferedMs / 1000;
+
+  const chapters = descriptor?.activation.chapters ?? [];
+  const currentChapterIndex = chapterIndexAtPositionMs(chapters, presentation.positionMs);
+  const currentChapter = presentation.currentChapter;
+  const markers = chapterMarkers(chapters, presentation.durationMs);
+
+  const selectedPlaybackRateOption = isSubscriptionSpeed(presentation.playbackRate)
+    ? presentation.playbackRate
+    : 1;
 
   const { account } = useBillingAccount();
   const canTranscribe = account?.can_transcribe ?? false;
@@ -227,16 +270,19 @@ export default function GlobalPlayerFooter() {
   const recordingWaypointIdRef = useRef<string | null>(null);
   const pointerDownCaptureRef = useRef<{ mediaId: string; posMs: number } | null>(null);
 
+  // Announce track changes politely (spec §6 "Now playing: …").
+  const announcedMediaRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!queueOpen || !trackMediaId) {
-      return;
+    if (descriptor && descriptor.mediaId !== announcedMediaRef.current) {
+      announcedMediaRef.current = descriptor.mediaId;
+      setNowPlaying(`Now playing: ${descriptor.title}`);
+    } else if (!descriptor) {
+      announcedMediaRef.current = null;
     }
-    void refreshQueue();
-  }, [queueOpen, refreshQueue, trackMediaId]);
+  }, [descriptor]);
 
   const closeMobileExpanded = () => {
     setMobileExpanded(false);
-    setQueueOpen(false);
     setEffectsOpen(false);
   };
 
@@ -250,7 +296,7 @@ export default function GlobalPlayerFooter() {
 
   const handleMarkPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
-      if (!track) return;
+      if (!currentMediaId) return;
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
@@ -258,7 +304,7 @@ export default function GlobalPlayerFooter() {
       }
 
       const posMs = Math.floor(currentTimeSeconds * 1000);
-      const mediaId = track.media_id;
+      const mediaId = currentMediaId;
       pointerDownCaptureRef.current = { mediaId, posMs };
       holdFiredRef.current = false;
 
@@ -291,7 +337,7 @@ export default function GlobalPlayerFooter() {
         });
       }, MARK_HOLD_THRESHOLD_MS);
     },
-    [track, currentTimeSeconds, canTranscribe, addWaypoint, updateWaypointVoice, voiceRecorder]
+    [currentMediaId, currentTimeSeconds, canTranscribe, addWaypoint, updateWaypointVoice, voiceRecorder]
   );
 
   const handleMarkPointerUp = useCallback(() => {
@@ -360,7 +406,9 @@ export default function GlobalPlayerFooter() {
     }
   }, [isRecording, voiceRecorder, updateWaypointVoice]);
 
-  if (!track) {
+  // The dock is activity-conditional: it renders for every non-Absent session
+  // (including PausedAtEnd / Completing / CompletionFailed / PlaybackFailed).
+  if (state.kind === "Absent" || descriptor === null) {
     return null;
   }
 
@@ -368,55 +416,73 @@ export default function GlobalPlayerFooter() {
   const currentSafe = Math.max(0, currentTimeSeconds);
   const bufferedSafe = Math.max(0, bufferedSeconds);
   const progressPercent = durationSafe > 0 ? Math.min(100, (currentSafe / durationSafe) * 100) : 0;
-  const bufferedPercent =
-    durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
+  const bufferedPercent = durationSafe > 0 ? Math.min(100, (bufferedSafe / durationSafe) * 100) : 0;
   const seekSliderValue = durationSafe > 0 ? Math.min(durationSafe, currentSafe) : 0;
-  const artworkUrl = track.image_url;
+  const artworkUrl = presenceValueOr(descriptor.activation.artworkUrl, undefined);
+  const sourceUrl = descriptor.activation.sourceUrl;
+  const streamUrl = descriptor.activation.streamUrl;
   const seekTrackStyle = {
     "--progress-percent": `${progressPercent}%`,
     "--buffered-percent": `${Math.max(progressPercent, bufferedPercent)}%`,
   } as CSSProperties;
 
-  const onSeek = (nextValue: number) => {
-    if (durationSafe <= 0) {
-      return;
-    }
-    const clampedSeconds = Math.max(0, Math.min(durationSafe, nextValue));
-    seekToMs(Math.floor(clampedSeconds * 1000));
+  const onSeek = (nextValueSeconds: number) => {
+    if (durationSafe <= 0) return;
+    const clampedSeconds = Math.max(0, Math.min(durationSafe, nextValueSeconds));
+    seekTo(Math.floor(clampedSeconds * 1000));
   };
 
-  const hasActiveAudioEffects = areAudioEffectsActive(audioEffects);
-  const getQueueReturnFocusTarget = () =>
-    isMobile ? miniExpandButtonRef.current : moreButtonRef.current;
-  const openQueueFromMobileExpanded = () => {
-    // On mobile the Lectern pane IS the queue surface; the audio-only panel is
-    // desktop-only (D-4).
+  // Play/Pause: pause the active session, resume a paused one, or start a NEW
+  // session from PausedAtEnd / a failed session (explicit Play).
+  const onPlayPause = () => {
+    if (isPlaying) {
+      pause();
+      return;
+    }
+    if (state.kind === "PausedAtEnd" || state.kind === "PlaybackFailed") {
+      playAudio(descriptor);
+      return;
+    }
+    resume();
+  };
+  const playPauseLabel = isPlaying ? "Pause" : "Play";
+
+  const hasActiveAudioEffects = areAudioEffectsActive(presentation.audioEffects);
+  const nextDisabled = transportLocked || nextPreview.kind === "None";
+  const previewText = nextPreviewText(nextPreview);
+  const silenceTimeSavedSeconds = presentation.silenceTimeSavedMs / 1000;
+
+  const openLecternFromMobileExpanded = () => {
     miniExpandButtonRef.current?.focus();
     setMobileExpanded(false);
     requestOpenInAppPane("/lectern", { titleHint: "Lectern" });
   };
-  const openQueueFromDesktopMore = () => {
+  const openLecternFromDesktopMore = () => {
     moreButtonRef.current?.focus();
     setMoreOpen(false);
-    setQueueOpen(true);
+    requestOpenInAppPane("/lectern", { titleHint: "Lectern" });
   };
   const getWalknoteReviewReturnFocusTarget = () =>
     isMobile ? markButtonMobileRef.current : markButtonDesktopRef.current;
 
+  const chapterLabel =
+    currentChapter.kind === "Present"
+      ? `Chapter ${currentChapterIndex >= 0 ? currentChapterIndex + 1 : 1}: ${currentChapter.value.title}`
+      : null;
+
   return (
     <footer
       className={styles.footer}
-      role="contentinfo"
-      aria-label="Global player footer"
+      role="region"
+      aria-label="Media player"
       data-mobile-view={isMobile ? (mobileExpanded ? "expanded" : "minibar") : undefined}
     >
-      {/* Aria-live region for walknote status announcements */}
-      <span
-        role="status"
-        aria-live="polite"
-        className={styles.srOnly}
-      >
+      {/* Polite live region for walknote status + track-change announcements. */}
+      <span role="status" aria-live="polite" className={styles.srOnly}>
         {liveStatus}
+      </span>
+      <span role="status" aria-live="polite" className={styles.srOnly}>
+        {nowPlaying}
       </span>
 
       {isMobile ? (
@@ -449,28 +515,27 @@ export default function GlobalPlayerFooter() {
               ) : (
                 <div className={styles.miniArtworkFallback} aria-hidden="true" />
               )}
-              <span className={styles.miniTitle}>{track.title}</span>
+              <span className={styles.miniTitle}>{descriptor.title}</span>
             </Button>
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={isPlaying ? pause : play}
-              aria-label={isPlaying ? "Pause" : "Play"}
+              onClick={onPlayPause}
+              aria-label={playPauseLabel}
             >
-              {isPlaying ? "Pause" : "Play"}
+              {playPauseLabel}
             </Button>
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
+              onClick={() => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
             </Button>
           </div>
-
         </>
       ) : (
         <>
@@ -488,27 +553,35 @@ export default function GlobalPlayerFooter() {
             )}
             <span className={styles.kicker}>Now playing</span>
             <div className={styles.metaText}>
-              <a href={`/media/${track.media_id}`} className={styles.trackLink}>
-                {track.title}
+              <a href={`/media/${descriptor.mediaId}`} className={styles.trackLink}>
+                {descriptor.title}
               </a>
-              {currentChapter && (
-                <span className={styles.chapterLabel}>
-                  Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
+              {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}
+              {previewText && (
+                <span className={styles.nextPreview} data-testid="player-next-preview">
+                  {previewText}
                 </span>
               )}
             </div>
           </div>
 
-          <div
-            className={styles.controlsRow}
-            role="group"
-            aria-label="Global player controls"
-          >
+          <div className={styles.controlsRow} role="group" aria-label="Media player controls">
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
+              onClick={previous}
+              disabled={transportLocked}
+              aria-label="Previous"
+            >
+              ⏮
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={() => skipBy(-PLAYER_SKIP_BACK_SECONDS * 1000)}
               aria-label="Back 15 seconds"
             >
               ◄◄ 15s
@@ -518,20 +591,31 @@ export default function GlobalPlayerFooter() {
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={isPlaying ? pause : play}
-              aria-label={isPlaying ? "Pause global player" : "Play global player"}
+              onClick={onPlayPause}
+              aria-label={isPlaying ? "Pause media player" : "Play media player"}
             >
-              {isPlaying ? "Pause" : "Play"}
+              {playPauseLabel}
             </Button>
 
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
+              onClick={() => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              className={styles.transportButton}
+              onClick={next}
+              disabled={nextDisabled}
+              aria-label="Next"
+            >
+              ⏭
             </Button>
 
             <Button
@@ -551,21 +635,21 @@ export default function GlobalPlayerFooter() {
             <Button
               variant="secondary"
               size="sm"
-              className={styles.queueButton}
+              className={styles.walknoteButton}
               onClick={() => setWalknoteReviewOpen(true)}
               aria-label={`Review waypoints (${waypointCount})`}
             >
               Waypoints
-              <span className={styles.queueBadge} aria-hidden="true">{waypointCount}</span>
+              <span className={styles.walknoteBadge} aria-hidden="true">{waypointCount}</span>
             </Button>
 
             <div className={styles.seekArea}>
               <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
-              {chapterMarkers.length > 0 && (
+              {markers.length > 0 && (
                 <div className={styles.chapterTicks} aria-hidden="true">
-                  {chapterMarkers.map((chapter) => (
+                  {markers.map((chapter) => (
                     <span
-                      key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                      key={`${chapter.index}-${chapter.startMs}`}
                       className={styles.chapterTick}
                       style={{ left: `${chapter.leftPercent}%` }}
                       title={chapter.title}
@@ -586,10 +670,11 @@ export default function GlobalPlayerFooter() {
               />
             </div>
 
-            <PlaybackErrorOrTimecode
+            <StatusArea
               playbackError={playbackError}
+              completionRetry={completionRetry}
               retryPlayback={retryPlayback}
-              sourceUrl={track.source_url}
+              sourceUrl={sourceUrl}
               isBuffering={isBuffering}
               currentSafe={currentSafe}
               durationSafe={durationSafe}
@@ -610,45 +695,22 @@ export default function GlobalPlayerFooter() {
 
           {moreOpen && (
             <div className={styles.morePopover} ref={morePopoverRef}>
-              <div className={styles.morePopoverRow}>
-                <Button
-                  variant="secondary"
+              <label className={styles.speedControl}>
+                <span className={styles.controlLabel}>Speed</span>
+                <Select
                   size="sm"
-                  className={styles.transportButton}
-                  onClick={() => void playPreviousInQueue()}
-                  aria-label="Previous in queue"
+                  aria-label="Playback speed"
+                  value={selectedPlaybackRateOption.toString()}
+                  onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
+                  className={styles.select}
                 >
-                  ⏮
-                </Button>
-
-                <label className={styles.speedControl}>
-                  <span className={styles.controlLabel}>Speed</span>
-                  <Select
-                    size="sm"
-                    aria-label="Playback speed"
-                    value={selectedPlaybackRateOption.toString()}
-                    onChange={(event) => setPlaybackRate(Number(event.currentTarget.value))}
-                    className={styles.select}
-                  >
-                    {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
-                      <option key={option} value={option.toString()}>
-                        {formatPlaybackSpeedLabel(option)}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.transportButton}
-                  onClick={() => void playNextInQueue()}
-                  aria-label="Next in queue"
-                  disabled={!hasNextInQueue}
-                >
-                  ⏭
-                </Button>
-              </div>
+                  {SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS.map((option) => (
+                    <option key={option} value={option.toString()}>
+                      {formatPlaybackSpeedLabel(option)}
+                    </option>
+                  ))}
+                </Select>
+              </label>
 
               <label className={styles.volumeControl}>
                 <span className={styles.controlLabel}>Volume</span>
@@ -657,7 +719,7 @@ export default function GlobalPlayerFooter() {
                   min={0}
                   max={1}
                   step={0.01}
-                  value={volume}
+                  value={presentation.volume}
                   onInput={(event) => setVolume(Number(event.currentTarget.value))}
                   className={styles.volumeSlider}
                   aria-label="Volume"
@@ -681,21 +743,21 @@ export default function GlobalPlayerFooter() {
                 <Button
                   variant="secondary"
                   size="sm"
-                  className={styles.queueButton}
-                  onClick={openQueueFromDesktopMore}
-                  aria-label="Open up next"
+                  className={styles.walknoteButton}
+                  onClick={openLecternFromDesktopMore}
+                  aria-label="Open Lectern"
                 >
-                  Queue
+                  Open Lectern
                 </Button>
               </div>
 
               {effectsOpen && (
                 <EffectsPanel
-                  audioEffects={audioEffects}
-                  audioEffectsAvailable={audioEffectsAvailable}
+                  audioEffects={presentation.audioEffects}
+                  audioEffectsAvailable={presentation.audioEffectsAvailable}
                   setAudioEffects={setAudioEffects}
                   silenceTimeSavedSeconds={silenceTimeSavedSeconds}
-                  isSilenceTrimming={isSilenceTrimming}
+                  isSilenceTrimming={presentation.isSilenceTrimming}
                 />
               )}
             </div>
@@ -703,7 +765,7 @@ export default function GlobalPlayerFooter() {
         </>
       )}
 
-      {/* Expanded bottom sheet (mobile). Stays mounted; `active` gates it (MobileSheet mount contract). */}
+      {/* Expanded bottom sheet (mobile). Stays mounted; `active` gates it. */}
       <MobileSheet
         active={isMobile && mobileExpanded}
         onDismiss={closeMobileExpanded}
@@ -725,7 +787,7 @@ export default function GlobalPlayerFooter() {
             <MediaImage
               kind="proxied"
               remoteUrl={artworkUrl}
-              alt={track.title}
+              alt={descriptor.title}
               width={240}
               height={240}
               className={styles.expandedArtwork}
@@ -735,23 +797,20 @@ export default function GlobalPlayerFooter() {
           )}
 
           <div className={styles.expandedMeta}>
-            <a href={`/media/${track.media_id}`} className={styles.trackLink}>
-              {track.title}
+            <a href={`/media/${descriptor.mediaId}`} className={styles.trackLink}>
+              {descriptor.title}
             </a>
-            {currentChapter && (
-              <span className={styles.chapterLabel}>
-                Chapter {currentChapter.chapter_idx + 1}: {currentChapter.title}
-              </span>
-            )}
+            {chapterLabel && <span className={styles.chapterLabel}>{chapterLabel}</span>}
+            {previewText && <span className={styles.nextPreview}>{previewText}</span>}
           </div>
 
           <div className={styles.seekArea}>
             <div className={styles.seekTrack} style={seekTrackStyle} aria-hidden="true" />
-            {chapterMarkers.length > 0 && (
+            {markers.length > 0 && (
               <div className={styles.chapterTicks} aria-hidden="true">
-                {chapterMarkers.map((chapter) => (
+                {markers.map((chapter) => (
                   <span
-                    key={`${chapter.chapter_idx}-${chapter.t_start_ms}`}
+                    key={`${chapter.index}-${chapter.startMs}`}
                     className={styles.chapterTick}
                     style={{ left: `${chapter.leftPercent}%` }}
                     title={chapter.title}
@@ -772,10 +831,11 @@ export default function GlobalPlayerFooter() {
             />
           </div>
 
-          <PlaybackErrorOrTimecode
+          <StatusArea
             playbackError={playbackError}
+            completionRetry={completionRetry}
             retryPlayback={retryPlayback}
-            sourceUrl={track.source_url}
+            sourceUrl={sourceUrl}
             isBuffering={isBuffering}
             currentSafe={currentSafe}
             durationSafe={durationSafe}
@@ -786,8 +846,9 @@ export default function GlobalPlayerFooter() {
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => void playPreviousInQueue()}
-              aria-label="Previous in queue"
+              onClick={previous}
+              disabled={transportLocked}
+              aria-label="Previous"
             >
               ⏮
             </Button>
@@ -795,7 +856,7 @@ export default function GlobalPlayerFooter() {
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(-PLAYER_SKIP_BACK_SECONDS)}
+              onClick={() => skipBy(-PLAYER_SKIP_BACK_SECONDS * 1000)}
               aria-label="Back 15 seconds"
             >
               ◄◄ 15s
@@ -804,16 +865,16 @@ export default function GlobalPlayerFooter() {
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={isPlaying ? pause : play}
-              aria-label={isPlaying ? "Pause" : "Play"}
+              onClick={onPlayPause}
+              aria-label={playPauseLabel}
             >
-              {isPlaying ? "Pause" : "Play"}
+              {playPauseLabel}
             </Button>
             <Button
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => skipBySeconds(PLAYER_SKIP_FORWARD_SECONDS)}
+              onClick={() => skipBy(PLAYER_SKIP_FORWARD_SECONDS * 1000)}
               aria-label="Forward 30 seconds"
             >
               30s ►►
@@ -822,9 +883,9 @@ export default function GlobalPlayerFooter() {
               variant="secondary"
               size="sm"
               className={styles.transportButton}
-              onClick={() => void playNextInQueue()}
-              aria-label="Next in queue"
-              disabled={!hasNextInQueue}
+              onClick={next}
+              disabled={nextDisabled}
+              aria-label="Next"
             >
               ⏭
             </Button>
@@ -864,11 +925,11 @@ export default function GlobalPlayerFooter() {
             <Button
               variant="secondary"
               size="sm"
-              className={styles.queueButton}
-              onClick={openQueueFromMobileExpanded}
+              className={styles.walknoteButton}
+              onClick={openLecternFromMobileExpanded}
               aria-label="Open Lectern"
             >
-              Queue
+              Open Lectern
             </Button>
 
             <Button
@@ -888,22 +949,22 @@ export default function GlobalPlayerFooter() {
             <Button
               variant="secondary"
               size="sm"
-              className={styles.queueButton}
+              className={styles.walknoteButton}
               onClick={() => setWalknoteReviewOpen(true)}
               aria-label={`Review waypoints (${waypointCount})`}
             >
               Waypoints
-              <span className={styles.queueBadge} aria-hidden="true">{waypointCount}</span>
+              <span className={styles.walknoteBadge} aria-hidden="true">{waypointCount}</span>
             </Button>
           </div>
 
           {effectsOpen && (
             <EffectsPanel
-              audioEffects={audioEffects}
-              audioEffectsAvailable={audioEffectsAvailable}
+              audioEffects={presentation.audioEffects}
+              audioEffectsAvailable={presentation.audioEffectsAvailable}
               setAudioEffects={setAudioEffects}
               silenceTimeSavedSeconds={silenceTimeSavedSeconds}
-              isSilenceTrimming={isSilenceTrimming}
+              isSilenceTrimming={presentation.isSilenceTrimming}
             />
           )}
         </div>
@@ -912,17 +973,10 @@ export default function GlobalPlayerFooter() {
       <audio
         ref={bindAudioElement}
         preload="none"
-        src={track.stream_url}
+        src={streamUrl}
         className={styles.hiddenAudio}
-        aria-label="Global podcast player"
+        aria-label="Media player audio"
       />
-
-      {queueOpen && (
-        <GlobalPlayerConsumptionPanel
-          onClose={() => setQueueOpen(false)}
-          returnFocusFallback={getQueueReturnFocusTarget}
-        />
-      )}
 
       {walknoteReviewOpen && (
         <WalknoteReviewPanel

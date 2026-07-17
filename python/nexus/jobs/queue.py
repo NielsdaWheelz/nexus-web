@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -90,6 +90,40 @@ class JobRow:
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class JobExecutionContext:
+    """Identity of one running worker attempt, threaded into every job handler.
+
+    The worker builds this from the claimed row and passes it to
+    `JobDefinition.handler` as a required keyword argument alongside payload.
+    Handlers that need a durable checkpoint or self-reschedule use these exact
+    values (job_id, worker_id, attempt_no) with the lease-fenced primitives
+    below -- queue-owned checkpoint writes from a worker require that exact
+    running attempt, claimant, and unexpired lease.
+    """
+
+    job_id: UUID
+    worker_id: str
+    attempt_no: int
+
+
+@dataclass(frozen=True)
+class RescheduleRequested:
+    """Sentinel handler return value requesting a self-reschedule.
+
+    A handler that must wait (e.g. until a checkpoint's `cleanupNotBefore` or
+    `writeMayLandUntil`) returns this instead of a normal result mapping. The
+    worker recognizes it, calls `reschedule_running_job` on the handler's
+    behalf using the worker's own job/attempt identity, and then does not call
+    `complete_job` or `fail_job` for this attempt. Handlers must not call
+    `reschedule_running_job` themselves and also return normally -- returning
+    this marker is the one supported mechanism.
+    """
+
+    available_at: datetime
+    payload: Mapping[str, Any] | None = None
 
 
 def _insert_job_row(
@@ -470,6 +504,230 @@ def heartbeat_job(
     return updated is not None
 
 
+def update_running_job_payload(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    attempt_no: int,
+    payload: Mapping[str, Any],
+) -> bool:
+    """Lease-fenced durable checkpoint write for a running job's payload.
+
+    CAS: only updates when the row is status='running', claimed_by=worker_id,
+    attempts=attempt_no, and the lease is unexpired. This is the only way a
+    running task persists a durable checkpoint (for example a MediaTeardownJob
+    or StorageObjectCleanupJob's discriminated checkpoint payload) without
+    racing a concurrent reclaim of the same row.
+    """
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                payload = CAST(:payload AS jsonb),
+                updated_at = now()
+            WHERE id = :job_id
+              AND status = 'running'
+              AND claimed_by = :worker_id
+              AND attempts = :attempt_no
+              AND lease_expires_at > now()
+            RETURNING id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "worker_id": worker_id,
+            "attempt_no": int(attempt_no),
+            "payload": json.dumps(dict(payload)),
+        },
+    ).first()
+    return updated is not None
+
+
+def reschedule_running_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    attempt_no: int,
+    available_at: datetime,
+    payload: Mapping[str, Any] | None = None,
+) -> bool:
+    """Self-reschedule a running job back to pending without burning its retry budget.
+
+    CAS-fenced exactly like update_running_job_payload (exact running attempt,
+    claimant, and unexpired lease). Sets status='pending', the given
+    available_at, optionally a new payload, and clears the claim/lease.
+
+    attempts is compensated (attempts - 1, floored at 0) to undo the +1 that
+    claim_next_job already applied when this attempt started, so time spent
+    waiting on a self-reschedule does not consume the job's max_attempts
+    budget. See RescheduleRequested for the worker-side contract: handlers
+    request this by returning that marker, and the worker -- not the handler
+    -- calls this function and skips complete_job/fail_job for that attempt.
+    """
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                status = 'pending',
+                available_at = :available_at,
+                payload = COALESCE(CAST(:payload AS jsonb), payload),
+                attempts = GREATEST(attempts - 1, 0),
+                claimed_by = NULL,
+                lease_expires_at = NULL,
+                updated_at = now()
+            WHERE id = :job_id
+              AND status = 'running'
+              AND claimed_by = :worker_id
+              AND attempts = :attempt_no
+              AND lease_expires_at > now()
+            RETURNING id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "worker_id": worker_id,
+            "attempt_no": int(attempt_no),
+            "available_at": available_at,
+            "payload": json.dumps(dict(payload)) if payload is not None else None,
+        },
+    ).first()
+    return updated is not None
+
+
+def requeue_dead_job(db: Session, *, job_id: UUID) -> bool:
+    """Operator/system repair transition: dead -> pending with a fresh full budget.
+
+    Only transitions rows currently in 'dead' status. Resets attempts to 0 so
+    the job's complete max_attempts budget is available again and sets
+    available_at to now(); clears the stale claim/lease and the terminal
+    finished_at (the row is no longer terminal). error_code and last_error are
+    intentionally preserved as operator-visible history of why the job
+    dead-lettered; the next failure, if any, overwrites them.
+    """
+    updated = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    status = 'pending',
+                    attempts = 0,
+                    available_at = now(),
+                    claimed_by = NULL,
+                    lease_expires_at = NULL,
+                    finished_at = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND status = 'dead'
+                RETURNING id, kind
+                """
+            ),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .first()
+    )
+    if updated is None:
+        return False
+    db.execute(
+        text("SELECT pg_notify('nexus_background_jobs', :kind)"),
+        {"kind": str(updated["kind"])},
+    )
+    return True
+
+
+def update_unclaimed_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    available_at: datetime | None = None,
+) -> bool:
+    """Pre-claim CAS update for a future-dated, unclaimed pending job.
+
+    For a job that is still pending and unclaimed only: updates when kind
+    matches and every key in expected_payload_match equals the stored
+    payload's value (jsonb containment), so a caller matches on job/media/path
+    identity without a separate read. Used to renew an Armed cleanup job's
+    deadline or mark it Retained before any worker ever claims it; the update
+    fails once the row is claimed. Domain code never writes background_jobs
+    raw -- this is one of the queue's doorway functions.
+    """
+    updated = db.execute(
+        text(
+            """
+            UPDATE background_jobs
+            SET
+                payload = CAST(:payload AS jsonb),
+                available_at = COALESCE(:available_at, available_at),
+                updated_at = now()
+            WHERE id = :job_id
+              AND status = 'pending'
+              AND claimed_by IS NULL
+              AND kind = :kind
+              AND payload @> CAST(:expected_payload_match AS jsonb)
+            RETURNING id
+            """
+        ),
+        {
+            "job_id": job_id,
+            "kind": kind,
+            "expected_payload_match": json.dumps(dict(expected_payload_match)),
+            "payload": json.dumps(dict(payload)),
+            "available_at": available_at,
+        },
+    ).first()
+    return updated is not None
+
+
+def find_nonterminal_jobs_for_payload(
+    db: Session,
+    *,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+) -> list[JobRow]:
+    """Return every not-yet-terminal job of ``kind`` whose payload contains the match.
+
+    "Nonterminal" means status is neither ``succeeded`` nor ``dead`` (i.e. still
+    ``pending``, ``running``, or ``failed``). Payload matching uses jsonb
+    containment (``@>``), so a caller matches on stable identity keys
+    (``mediaId``/``storagePath``) without decoding the checkpoint. This is the
+    queue-owned lookup that lets a media-locked caller enforce "at most one
+    nonterminal cleanup job per (mediaId, storagePath)" and lets media teardown
+    enumerate the Armed storage-cleanup writers for one media. Domain code never
+    reads ``background_jobs`` raw -- this is one of the queue's doorway functions.
+    Serialization comes from the caller's own row lock (e.g. the media row held
+    ``FOR UPDATE`` while reserving), not from this read.
+    """
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE kind = :kind
+                  AND status NOT IN ('succeeded', 'dead')
+                  AND payload @> CAST(:expected_payload_match AS jsonb)
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {
+                "kind": kind,
+                "expected_payload_match": json.dumps(dict(expected_payload_match)),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [_row_to_job(row) for row in rows]
+
+
 def complete_job(
     db: Session,
     *,
@@ -593,8 +851,14 @@ def prune_terminal_jobs(
     succeeded_after_days: int,
     dead_after_days: int,
     limit: int,
+    excluded_dead_kinds: Collection[str] = (),
 ) -> int:
-    """Delete old terminal queue rows from the hot background_jobs table."""
+    """Delete old terminal queue rows from the hot background_jobs table.
+
+    Dead rows whose kind is in excluded_dead_kinds are never deleted (they
+    stay operator-discoverable, per requeue_dead_job as their repair
+    transition); succeeded rows of those same kinds still prune normally.
+    """
     deleted = (
         db.execute(
             text(
@@ -612,6 +876,7 @@ def prune_terminal_jobs(
                         status = 'dead'
                         AND finished_at IS NOT NULL
                         AND finished_at < now() - (CAST(:dead_after_days AS integer) * interval '1 day')
+                        AND NOT (kind = ANY(CAST(:excluded_dead_kinds AS text[])))
                     )
                     ORDER BY finished_at ASC, id ASC
                     LIMIT :limit
@@ -624,6 +889,7 @@ def prune_terminal_jobs(
                 "succeeded_after_days": max(int(succeeded_after_days), 1),
                 "dead_after_days": max(int(dead_after_days), 1),
                 "limit": max(int(limit), 1),
+                "excluded_dead_kinds": list(excluded_dead_kinds),
             },
         )
         .mappings()

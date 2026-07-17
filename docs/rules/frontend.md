@@ -15,6 +15,10 @@ route-owned data loading.
 - Decoded same-system API and domain values keep their owned absence
   representation in frontend code, including inside reusable frontend models
   and view helpers.
+- A decoded field encoded on the wire as `Presence<T>`
+  ([boundaries.md](boundaries.md#internal-representation)) stays `Presence<T>`
+  through frontend models and view helpers. Do not flatten it to `T | null` or
+  `T | undefined` before it reaches the render boundary.
 - It is fine for local loading or empty state to wrap a decoded DTO that itself
   contains owned absence fields. Do not flatten those DTO fields into local UI
   emptiness.

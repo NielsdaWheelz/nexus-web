@@ -26,6 +26,7 @@ from nexus.db.models import (
     MediaSourceAttemptStatus,
     ProcessingStatus,
 )
+from nexus.db.session import transaction
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -106,6 +107,10 @@ from nexus.storage.paths import (
     build_storage_path,
     build_upload_staging_storage_path,
     get_file_extension,
+)
+from nexus.tasks.storage_object_cleanup import (
+    finalize_storage_object_write,
+    reserve_storage_object_write,
 )
 
 logger = get_logger(__name__)
@@ -459,10 +464,22 @@ def accept_browser_article_capture(
     )
     db.commit()
 
+    # Reserve durable final-sweeps before the bounded writes (spec §3.1).
+    reserve_storage_object_write(db, media_id=media.id, storage_path=storage_path)
+    reserve_storage_object_write(db, media_id=media.id, storage_path=source_storage_path)
     try:
         storage_client.put_object(storage_path, html_bytes, "text/html; charset=utf-8")
         storage_client.put_object(
             source_storage_path, source_html_bytes, "text/html; charset=utf-8"
+        )
+        finalize_storage_object_write(
+            db, media_id=media.id, storage_path=storage_path, storage_client=storage_client
+        )
+        finalize_storage_object_write(
+            db,
+            media_id=media.id,
+            storage_path=source_storage_path,
+            storage_client=storage_client,
         )
     except Exception as exc:
         _fail_source_attempt_and_media(
@@ -781,7 +798,12 @@ def accept_browser_file_capture(
     try:
         if storage_path is None:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser file storage path.")
+        # Reserve the durable final-sweep before the bounded write (spec §3.1).
+        reserve_storage_object_write(db, media_id=media.id, storage_path=storage_path)
         storage_client.put_object(storage_path, payload, normalized_content_type)
+        finalize_storage_object_write(
+            db, media_id=media.id, storage_path=storage_path, storage_client=storage_client
+        )
     except Exception as exc:
         _fail_source_attempt_and_media(
             db,
@@ -3296,7 +3318,11 @@ def _upload_init_response(
     expires_in_seconds: int,
     idempotency_outcome: str,
 ) -> dict[str, object]:
-    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
+    # Browser direct upload TTL is capped at 300s and by signed_url_expiry_s: the
+    # server cannot post-write-check a browser PUT, so the signed expiry (persisted
+    # below) + the R2 lifecycle + the orphan sweep are the durable backstops (spec §3.1).
+    capped_ttl = min(int(expires_in_seconds), 300, int(get_settings().signed_url_expiry_s))
+    expires_at = datetime.now(UTC) + timedelta(seconds=capped_ttl)
     media_file = media.media_file or db.get(MediaFile, media.id)
     upload_url: str | None = None
     can_sign_upload = (
@@ -3306,12 +3332,37 @@ def _upload_init_response(
         and attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED}
     )
     if can_sign_upload:
+        # Lock the media row, reject a teardown intent, and persist
+        # signed_upload_expires_at BEFORE signing (spec §3.1). A replayed init extends
+        # the timestamp; nothing can sign after a claim. Own short transaction.
+        with transaction(db):
+            locked = db.execute(
+                text("SELECT 1 FROM media WHERE id = :m FOR UPDATE"), {"m": media.id}
+            ).first()
+            if locked is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            if db.execute(
+                text("SELECT 1 FROM media_teardown_intents WHERE media_id = :m"),
+                {"m": media.id},
+            ).first():
+                raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+            db.execute(
+                text(
+                    """
+                    UPDATE media_source_attempts
+                    SET signed_upload_expires_at = now() + (CAST(:ttl AS integer) * interval '1 second'),
+                        updated_at = now()
+                    WHERE id = :attempt_id
+                    """
+                ),
+                {"ttl": capped_ttl, "attempt_id": attempt.id},
+            )
         try:
             signed_upload = get_storage_client().sign_upload(
                 media_file.storage_path,
                 content_type=content_type,
                 size_bytes=size_bytes,
-                expires_in=expires_in_seconds,
+                expires_in=capped_ttl,
             )
             upload_url = signed_upload.upload_url
         except StorageError:

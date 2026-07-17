@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import clear_settings_cache, get_settings
+from nexus.db.models import Media, MediaKind, PodcastEpisode, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.billing_entitlements import (
     grant_entitlement_override,
@@ -6947,19 +6948,33 @@ upgrade now
 
         in_progress_put = auth_client.put(
             f"/media/{in_progress_media_id}/listening-state",
-            json={"position_ms": 900_000, "duration_ms": 1_800_000},
+            json={
+                "positionMs": 900_000,
+                "durationMs": {"kind": "Present", "value": 1_800_000},
+                "playbackSpeed": 1.0,
+                "dwellMsDelta": 0,
+                "deviceId": "podcast-test",
+                "expectedWriteRevision": 0,
+                "expectedResetEpoch": 0,
+                "heartbeatGeneration": str(uuid4()),
+                "heartbeatSequence": 1,
+            },
             headers=auth_headers(user_id),
         )
-        assert in_progress_put.status_code == 204, (
+        assert in_progress_put.status_code == 200, (
             "position write should succeed before state-filter assertions; "
             f"got {in_progress_put.status_code}: {in_progress_put.text}"
         )
-        played_put = auth_client.put(
-            f"/media/{played_media_id}/listening-state",
-            json={"is_completed": True},
+        played_put = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(played_media_id),
+            },
             headers=auth_headers(user_id),
         )
-        assert played_put.status_code == 204, (
+        assert played_put.status_code == 200, (
             "manual mark-as-played should succeed before state-filter assertions; "
             f"got {played_put.status_code}: {played_put.text}"
         )
@@ -7093,12 +7108,16 @@ upgrade now
         )
         assert alpha_episodes_response.status_code == 200
         alpha_rows = alpha_episodes_response.json()["data"]
-        mark_played_response = auth_client.put(
-            f"/media/{alpha_rows[0]['id']}/listening-state",
-            json={"is_completed": True},
+        mark_played_response = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(alpha_rows[0]["id"]),
+            },
             headers=auth_headers(user_id),
         )
-        assert mark_played_response.status_code == 204, (
+        assert mark_played_response.status_code == 200, (
             "marking one alpha episode played should leave one unplayed for count assertions; "
             f"got {mark_played_response.status_code}: {mark_played_response.text}"
         )
@@ -7246,12 +7265,16 @@ upgrade now
             headers=auth_headers(user_id),
         )
         assert bravo_episodes.status_code == 200
-        mark_bravo_played = auth_client.put(
-            f"/media/{bravo_episodes.json()['data'][0]['id']}/listening-state",
-            json={"is_completed": True},
+        mark_bravo_played = auth_client.post(
+            "/consumption/commands",
+            json={
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(bravo_episodes.json()["data"][0]["id"]),
+            },
             headers=auth_headers(user_id),
         )
-        assert mark_bravo_played.status_code == 204, (
+        assert mark_bravo_played.status_code == 200, (
             "marking bravo played should succeed before has_new assertions, "
             f"got {mark_bravo_played.status_code}: {mark_bravo_played.text}"
         )
@@ -10253,3 +10276,467 @@ class TestSubscribeWithLibraryIds:
         assert feed_two_libs == {lib_a}, (
             f"feed_two falls back to default_library_ids → lib_a; got {feed_two_libs}"
         )
+
+
+# =============================================================================
+# Auto-subscription watermark (lectern-player-lifecycle-hard-cutover.md §5.3, §8
+# item 5). The fenced watermark step owns eligible-episode selection + Lectern
+# insertion + monotonic watermark advance as one database fact; the ensure has no
+# replay memo, disabled preserves the watermark, and a reclaimed claim writes
+# nothing.
+# =============================================================================
+
+
+def _seed_watermark_podcast(auth_client, direct_db, monkeypatch, *, user_id):
+    """Create a podcast + subscription (via the real subscribe path) and return the
+    podcast id. The provider feed is empty so no episodes are ingested; the tests
+    seed episodes directly to control published_at."""
+    _bootstrap_user(auth_client, user_id)
+    provider_id = f"watermark-{uuid4()}"
+    payload = _podcast_payload(provider_id, "Watermark Podcast")
+    _mock_podcast_index(monkeypatch, podcasts=[payload], episodes_by_podcast={provider_id: []})
+    data = _subscribe(auth_client, user_id, {**payload, "auto_queue": True})
+    return UUID(data["podcast_id"])
+
+
+def _seed_watermark_episode(session, *, podcast_id, user_id, published_at, title="WM Episode"):
+    media_id = uuid4()
+    session.add(
+        Media(
+            id=media_id,
+            kind=MediaKind.podcast_episode.value,
+            title=title,
+            processing_status=ProcessingStatus.ready_for_reading,
+            external_playback_url="https://cdn.example.com/wm.mp3",
+            created_by_user_id=user_id,
+        )
+    )
+    session.flush()
+    tag = f"wm-{media_id}"
+    session.add(
+        PodcastEpisode(
+            media_id=media_id,
+            podcast_id=podcast_id,
+            provider_episode_id=tag,
+            guid=tag,
+            fallback_identity=tag,
+            published_at=published_at,
+            duration_seconds=60,
+            created_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+    return media_id
+
+
+def _set_subscription_sync_state(
+    direct_db, *, user_id, podcast_id, auto_queue, watermark, sync_started_at, sync_attempts=1
+):
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                UPDATE podcast_subscriptions
+                SET sync_status = 'running',
+                    sync_attempts = :attempts,
+                    sync_started_at = :started,
+                    auto_queue = :auto_queue,
+                    auto_queue_watermark_at = :watermark,
+                    updated_at = now()
+                WHERE user_id = :user_id AND podcast_id = :podcast_id
+                """
+            ),
+            {
+                "attempts": sync_attempts,
+                "started": sync_started_at,
+                "auto_queue": auto_queue,
+                "watermark": watermark,
+                "user_id": user_id,
+                "podcast_id": podcast_id,
+            },
+        )
+        session.commit()
+
+
+def _queue_media_ids(direct_db, user_id):
+    with direct_db.session() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT media_id, source
+                FROM consumption_queue_items
+                WHERE user_id = :u
+                ORDER BY position ASC
+                """
+            ),
+            {"u": user_id},
+        ).fetchall()
+    return [(UUID(str(r[0])), r[1]) for r in rows]
+
+
+def _subscription_state(direct_db, user_id, podcast_id):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                """
+                SELECT auto_queue_watermark_at, sync_status, sync_attempts
+                FROM podcast_subscriptions
+                WHERE user_id = :u AND podcast_id = :p
+                """
+            ),
+            {"u": user_id, "p": podcast_id},
+        ).fetchone()
+
+
+class TestAutoSubscriptionWatermark:
+    def test_eligible_null_watermark_selects_initial_window_oldest_first(self, direct_db):
+        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcastindex', :pid, 'Eligible Show', 'https://feed.example/e.xml')
+                    """
+                ),
+                {"id": (podcast_id := uuid4()), "pid": f"elig-{uuid4()}"},
+            )
+            cutoff = datetime.now(UTC)
+            eps = [
+                _seed_watermark_episode(
+                    session,
+                    podcast_id=podcast_id,
+                    user_id=user_id,
+                    published_at=cutoff - timedelta(days=days),
+                    title=f"E{days}",
+                )
+                for days in (40, 30, 20, 10)
+            ]
+            session.commit()
+        # eps are [oldest(40d)..newest(10d)]; window=2 -> two most recent, oldest-first.
+        with direct_db.session() as session:
+            eligible = _eligible_auto_subscription_media(
+                session,
+                podcast_id=podcast_id,
+                sync_cutoff_at=cutoff,
+                watermark=None,
+                initial_episode_window=2,
+            )
+        assert eligible == [eps[2], eps[3]]
+
+    def test_eligible_cutoff_boundary_and_missing_published_at(self, direct_db):
+        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+
+        user_id = create_test_user_id()
+        cutoff = datetime.now(UTC)
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcastindex', :pid, 'Boundary Show', 'https://feed.example/b.xml')
+                    """
+                ),
+                {"id": (podcast_id := uuid4()), "pid": f"bound-{uuid4()}"},
+            )
+            at_cutoff = _seed_watermark_episode(
+                session, podcast_id=podcast_id, user_id=user_id, published_at=cutoff, title="AT"
+            )
+            _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=cutoff + timedelta(seconds=1),
+                title="AFTER",
+            )
+            _seed_watermark_episode(
+                session, podcast_id=podcast_id, user_id=user_id, published_at=None, title="NONE"
+            )
+            session.commit()
+        with direct_db.session() as session:
+            eligible = _eligible_auto_subscription_media(
+                session,
+                podcast_id=podcast_id,
+                sync_cutoff_at=cutoff,
+                watermark=None,
+                initial_episode_window=10,
+            )
+        # published_at == cutoff is eligible; > cutoff excluded; NULL excluded.
+        assert eligible == [at_cutoff]
+
+    def test_eligible_watermark_window_is_open_interval(self, direct_db):
+        from nexus.services.podcasts.poll import _eligible_auto_subscription_media
+
+        user_id = create_test_user_id()
+        cutoff = datetime.now(UTC)
+        watermark = cutoff - timedelta(days=20)
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcastindex', :pid, 'Interval Show', 'https://feed.example/i.xml')
+                    """
+                ),
+                {"id": (podcast_id := uuid4()), "pid": f"intvl-{uuid4()}"},
+            )
+            _seed_watermark_episode(  # at watermark -> excluded (strictly greater)
+                session, podcast_id=podcast_id, user_id=user_id, published_at=watermark, title="AT"
+            )
+            after = _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=watermark + timedelta(days=1),
+                title="AFTER",
+            )
+            session.commit()
+        with direct_db.session() as session:
+            eligible = _eligible_auto_subscription_media(
+                session,
+                podcast_id=podcast_id,
+                sync_cutoff_at=cutoff,
+                watermark=watermark,
+                initial_episode_window=10,
+            )
+        assert eligible == [after]
+
+    def test_advance_disabled_inserts_nothing_and_preserves_watermark(
+        self, auth_client, direct_db, monkeypatch
+    ):
+        from nexus.services.podcasts.poll import (
+            SubscriptionSyncClaim,
+            _advance_auto_subscription_after_sync,
+        )
+
+        user_id = create_test_user_id()
+        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
+        started = datetime.now(UTC)
+        watermark = started - timedelta(days=30)
+        with direct_db.session() as session:
+            _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=started - timedelta(days=1),
+            )
+            session.commit()
+        _set_subscription_sync_state(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            auto_queue=False,
+            watermark=watermark,
+            sync_started_at=started,
+        )
+        _advance_auto_subscription_after_sync(
+            user_id=user_id,
+            podcast_id=podcast_id,
+            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
+            sync_cutoff_at=started,
+            sync_status_on_complete="complete",
+            sync_lease_seconds=3600,
+            initial_episode_window=3,
+            now=started,
+        )
+        assert _queue_media_ids(direct_db, user_id) == []
+        wm, status, _ = _subscription_state(direct_db, user_id, podcast_id)
+        assert wm == watermark, "disabled auto-queue preserves the watermark"
+        assert status == "complete", "the exact claim is still completed"
+
+    def test_advance_monotonic_second_sync_same_cutoff_noops(
+        self, auth_client, direct_db, monkeypatch
+    ):
+        from nexus.services.podcasts.poll import (
+            SubscriptionSyncClaim,
+            _advance_auto_subscription_after_sync,
+        )
+
+        user_id = create_test_user_id()
+        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
+        started = datetime.now(UTC)
+        with direct_db.session() as session:
+            _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=started - timedelta(days=1),
+            )
+            session.commit()
+
+        def run_advance(attempt):
+            _set_subscription_sync_state(
+                direct_db,
+                user_id=user_id,
+                podcast_id=podcast_id,
+                auto_queue=True,
+                watermark=None if attempt == 1 else started,
+                sync_started_at=started,
+                sync_attempts=attempt,
+            )
+            _advance_auto_subscription_after_sync(
+                user_id=user_id,
+                podcast_id=podcast_id,
+                claim=SubscriptionSyncClaim(sync_attempts=attempt, sync_started_at=started),
+                sync_cutoff_at=started,
+                sync_status_on_complete="complete",
+                sync_lease_seconds=3600,
+                initial_episode_window=3,
+                now=started,
+            )
+
+        run_advance(1)
+        first = _queue_media_ids(direct_db, user_id)
+        assert len(first) == 1
+        wm_after_first, _, _ = _subscription_state(direct_db, user_id, podcast_id)
+        assert wm_after_first == started
+
+        run_advance(2)
+        second = _queue_media_ids(direct_db, user_id)
+        assert second == first, "a second sync at the same cutoff inserts nothing"
+        wm_after_second, _, _ = _subscription_state(direct_db, user_id, podcast_id)
+        assert wm_after_second == started, "watermark advance is idempotent (monotonic)"
+
+    def test_advance_reenable_resumes_from_watermark(self, auth_client, direct_db, monkeypatch):
+        from nexus.services.podcasts.poll import (
+            SubscriptionSyncClaim,
+            _advance_auto_subscription_after_sync,
+        )
+
+        user_id = create_test_user_id()
+        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
+        first_cutoff = datetime.now(UTC) - timedelta(days=10)
+        watermark = first_cutoff  # a prior run already advanced to here
+        with direct_db.session() as session:
+            newer = _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=first_cutoff + timedelta(days=1),
+                title="NEWER",
+            )
+            _seed_watermark_episode(  # already covered by the watermark
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=first_cutoff - timedelta(days=1),
+                title="OLDER",
+            )
+            session.commit()
+        second_cutoff = datetime.now(UTC)
+        _set_subscription_sync_state(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            auto_queue=True,
+            watermark=watermark,
+            sync_started_at=second_cutoff,
+        )
+        _advance_auto_subscription_after_sync(
+            user_id=user_id,
+            podcast_id=podcast_id,
+            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=second_cutoff),
+            sync_cutoff_at=second_cutoff,
+            sync_status_on_complete="complete",
+            sync_lease_seconds=3600,
+            initial_episode_window=3,
+            now=second_cutoff,
+        )
+        queued = _queue_media_ids(direct_db, user_id)
+        assert [media_id for media_id, _ in queued] == [newer], (
+            "re-enable resumes strictly after the watermark"
+        )
+        assert {source for _, source in queued} == {"auto_subscription"}
+
+    def test_advance_stale_claim_writes_nothing(self, auth_client, direct_db, monkeypatch):
+        from nexus.services.podcasts.poll import (
+            StaleSubscriptionSyncClaim,
+            SubscriptionSyncClaim,
+            _advance_auto_subscription_after_sync,
+        )
+
+        user_id = create_test_user_id()
+        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
+        started = datetime.now(UTC)
+        with direct_db.session() as session:
+            _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=started - timedelta(days=1),
+            )
+            session.commit()
+        # The subscription now carries a REPLACEMENT claim (attempt 2); this worker
+        # still holds attempt 1.
+        _set_subscription_sync_state(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            auto_queue=True,
+            watermark=None,
+            sync_started_at=started,
+            sync_attempts=2,
+        )
+        with pytest.raises(StaleSubscriptionSyncClaim):
+            _advance_auto_subscription_after_sync(
+                user_id=user_id,
+                podcast_id=podcast_id,
+                claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
+                sync_cutoff_at=started,
+                sync_status_on_complete="complete",
+                sync_lease_seconds=3600,
+                initial_episode_window=3,
+                now=started,
+            )
+        assert _queue_media_ids(direct_db, user_id) == [], "reclaimed worker writes no rows"
+        wm, status, attempts = _subscription_state(direct_db, user_id, podcast_id)
+        assert wm is None, "no watermark advance"
+        assert status == "running" and attempts == 2, "the replacement claim is untouched"
+
+    def test_advance_writes_no_replay_memo(self, auth_client, direct_db, monkeypatch):
+        from nexus.services.podcasts.poll import (
+            SubscriptionSyncClaim,
+            _advance_auto_subscription_after_sync,
+        )
+
+        user_id = create_test_user_id()
+        podcast_id = _seed_watermark_podcast(auth_client, direct_db, monkeypatch, user_id=user_id)
+        started = datetime.now(UTC)
+        with direct_db.session() as session:
+            _seed_watermark_episode(
+                session,
+                podcast_id=podcast_id,
+                user_id=user_id,
+                published_at=started - timedelta(days=1),
+            )
+            session.commit()
+        _set_subscription_sync_state(
+            direct_db,
+            user_id=user_id,
+            podcast_id=podcast_id,
+            auto_queue=True,
+            watermark=None,
+            sync_started_at=started,
+        )
+        _advance_auto_subscription_after_sync(
+            user_id=user_id,
+            podcast_id=podcast_id,
+            claim=SubscriptionSyncClaim(sync_attempts=1, sync_started_at=started),
+            sync_cutoff_at=started,
+            sync_status_on_complete="complete",
+            sync_lease_seconds=3600,
+            initial_episode_window=3,
+            now=started,
+        )
+        assert len(_queue_media_ids(direct_db, user_id)) == 1
+        with direct_db.session() as session:
+            memo_rows = session.execute(
+                text("SELECT count(*) FROM resource_mutations WHERE user_id = :u"),
+                {"u": user_id},
+            ).scalar_one()
+        assert memo_rows == 0, "the trusted ensure persists no replay memo (spec §5.3)"

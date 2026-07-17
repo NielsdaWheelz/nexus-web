@@ -1362,6 +1362,9 @@ class MediaSourceAttempt(Base):
     retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    signed_upload_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1464,6 +1467,36 @@ class MediaSourceAttempt(Base):
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
     )
+
+
+class MediaTeardownIntent(Base):
+    """Durable claim that a media row is being torn down (lectern-player-lifecycle
+    hard cutover §3.1).
+
+    Presence excludes the media from every public visibility query and makes new
+    references fail with ``E_MEDIA_DELETING``; ordinary reads still return
+    non-leaking ``E_NOT_FOUND``. ``id`` is application-generated (``nexus.ids.
+    new_uuid7()``), not a database default, because intent creation is the trusted
+    id-generation owner in the reference-creation/teardown-claim protocol. A later
+    void deletes only the exact matching intent; a committed deletion deletes the
+    intent together with the media row it claimed.
+    """
+
+    __tablename__ = "media_teardown_intents"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("media.id", name="fk_media_teardown_intents_media"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (UniqueConstraint("media_id", name="uq_media_teardown_intents_media"),)
 
 
 class ProjectGutenbergCatalogEntry(Base):
@@ -2315,6 +2348,9 @@ class PodcastSubscription(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    auto_queue_watermark_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2594,18 +2630,23 @@ class PodcastListeningState(Base):
 
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", name="fk_podcast_listening_states_user"),
         primary_key=True,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="fk_podcast_listening_states_media"),
         primary_key=True,
     )
     position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     playback_speed: Mapped[float] = mapped_column(Float, nullable=False, server_default="1.0")
     is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Listening-heartbeat fencing tokens (spec §5.4): only an exact expected
+    # write_revision + reset_epoch may atomically write position/dwell and
+    # advance write_revision; SetUnread advances both and resets position.
+    write_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    reset_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2644,12 +2685,12 @@ class ConsumptionQueueItem(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", name="fk_consumption_queue_items_user"),
         nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="fk_consumption_queue_items_media"),
         nullable=False,
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -2658,6 +2699,10 @@ class ConsumptionQueueItem(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    # Internal provenance only (agent undo/trust, auto-subscription diagnostics);
+    # intentionally absent from the LecternSnapshot wire contract. The enum
+    # vocabulary is owned by persistence adapters, not a database CHECK (spec
+    # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
 
     __table_args__ = (
@@ -2665,10 +2710,6 @@ class ConsumptionQueueItem(Base):
         CheckConstraint(
             "position >= 0",
             name="ck_consumption_queue_items_position_non_negative",
-        ),
-        CheckConstraint(
-            "source IN ('manual', 'auto_subscription', 'auto_playlist', 'assistant')",
-            name="ck_consumption_queue_items_source",
         ),
         Index("ix_consumption_queue_items_user_position", "user_id", "position"),
     )
@@ -6315,12 +6356,12 @@ class ReadingSession(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", name="fk_reading_sessions_user"),
         nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="fk_reading_sessions_media"),
         nullable=False,
     )
     device_id: Mapped[str] = mapped_column(Text, nullable=False)
@@ -6376,35 +6417,31 @@ class ReadingSession(Base):
 class ConsumptionOverride(Base):
     """Explicit per-viewer read-state override (highest-priority signal).
 
-    Written solely by ``services.attention.set_consumption_override`` /
-    ``delete_consumption_override``. Vocabulary is 'unread' | 'finished' only —
-    'in_progress' is a derived state, not a user gesture.
+    Written and read solely by the consumption owner
+    ``services.consumption._state_store`` (media teardown composes its all-users
+    delete). Vocabulary is 'unread' | 'finished' only — 'in_progress' is a derived
+    state, not a user gesture.
     """
 
     __tablename__ = "consumption_overrides"
 
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id", name="fk_consumption_overrides_user"),
         primary_key=True,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id", name="fk_consumption_overrides_media"),
         primary_key=True,
     )
+    # Vocabulary owned by persistence adapters, not a database CHECK (spec
+    # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
     status: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('unread', 'finished')",
-            name="ck_consumption_overrides_status",
-        ),
     )
 
     user: Mapped["User"] = relationship("User")

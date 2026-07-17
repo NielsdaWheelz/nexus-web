@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
     ItemLibraryMembershipOut,
     LibraryEntryKind,
@@ -33,7 +33,9 @@ from nexus.schemas.library import (
 )
 from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
+from nexus.services import attention
 from nexus.services import library_governance as governance
+from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     visible_credit_rows_sql,
@@ -71,32 +73,31 @@ _RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
 # media entry's reading sessions / listening state (podcast episodes are still
 # `media_id` library entries), and a podcast entry's MAX listening-state recency
 # across its visible episodes. NULL when the target was never engaged.
-_LAST_ENGAGED_AT_SQL = """
+# Engagement recency composes the attention owner's reading-session recency and the
+# consumption owner's listening recency; the raw consumption/attention table reads
+# live only in their owners (spec §3 / §8 AC-15).
+_LAST_ENGAGED_AT_SQL = f"""
     CASE
-        WHEN le.media_id IS NOT NULL THEN (
-            SELECT NULLIF(
-                GREATEST(
-                    COALESCE((
-                        SELECT MAX(rs.last_active_at)
-                        FROM reading_sessions rs
-                        WHERE rs.user_id = :viewer_id AND rs.media_id = m.id
-                    ), '-infinity'::timestamptz),
-                    COALESCE(pls.updated_at, '-infinity'::timestamptz)
-                ),
-                '-infinity'::timestamptz
-            )
-            FROM media m
-            LEFT JOIN podcast_listening_states pls
-              ON pls.user_id = :viewer_id AND pls.media_id = m.id
-            WHERE m.id = le.media_id
+        WHEN le.media_id IS NOT NULL THEN NULLIF(
+            GREATEST(
+                COALESCE(
+                    {
+    attention.reading_recency_subquery_sql(user_param=":viewer_id", media_expr="le.media_id")
+}, '-infinity'::timestamptz),
+                COALESCE(
+                    {
+    consumption_service.listening_recency_subquery_sql(
+        user_param=":viewer_id", media_expr="le.media_id"
+    )
+}, '-infinity'::timestamptz)
+            ),
+            '-infinity'::timestamptz
         )
-        WHEN le.podcast_id IS NOT NULL THEN (
-            SELECT MAX(pls.updated_at)
-            FROM podcast_episodes pe
-            JOIN podcast_listening_states pls
-              ON pls.user_id = :viewer_id AND pls.media_id = pe.media_id
-            WHERE pe.podcast_id = le.podcast_id
-        )
+        WHEN le.podcast_id IS NOT NULL THEN {
+    consumption_service.listening_recency_max_subquery_sql(
+        user_param=":viewer_id", podcast_expr="le.podcast_id"
+    )
+}
         ELSE NULL
     END
 """
@@ -306,11 +307,45 @@ def _next_position(db: Session, library_id: UUID) -> int:
     return int(value or 0)
 
 
+def raise_if_media_teardown_pending(db: Session, media_id: UUID) -> None:
+    """Reference barrier (spec §3.1): lock the media row, reject a pending teardown.
+
+    Every lifetime-reference insert for a media target first locks that media row
+    ``FOR UPDATE`` and checks ``media_teardown_intents`` in the same transaction, so a
+    reference creator and the teardown claim (which locks only that media row, checks
+    zero committed references, then inserts the intent + enqueues the job) linearize on
+    the media row: creator-first makes the claim observe a reference; claim-first makes
+    the creator raise ``E_MEDIA_DELETING``. The claim never locks library rows, so this
+    introduces no cross-owner global lock order. The media lock is taken before any
+    library lock so the reference path and the delete path share one media->library
+    order.
+
+    A missing media row is left for the caller's own existence handling; a teardown
+    intent FKs ``media`` and cannot exist without the row.
+    """
+    locked = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).fetchone()
+    if locked is None:
+        return
+    intent = db.execute(
+        text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if intent is not None:
+        raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+
+
 def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     """Append the target to the library at next_position if absent. The sole inserter —
     replaces the inline add inserts and the closure's per-media append.
 
-    Locks the target library row first as the single per-library append serialization
+    For a media target, first runs the teardown reference barrier
+    (:func:`raise_if_media_teardown_pending`) so a concurrent last-reference claim and
+    this insert linearize on the media row before any library lock is taken.
+
+    Locks the target library row next as the single per-library append serialization
     point. justify-concurrency: two concurrent appends would otherwise both read the
     same MAX(position)+1 — a result no sequential ordering yields — and collide on
     UNIQUE(library_id, position) at commit. concurrency.md requires locking when
@@ -320,6 +355,8 @@ def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
     (library_id, podcast_id) unique constraints independently make a duplicate entry
     uncommittable regardless of isolation.
     """
+    if target.kind == "media":
+        raise_if_media_teardown_pending(db, target.id)
     db.execute(text("SELECT 1 FROM libraries WHERE id = :lib FOR UPDATE"), {"lib": library_id})
     column = _TARGET_COLUMN[target.kind]
     existing = db.execute(
@@ -579,14 +616,23 @@ def _hydrate_entries(
                     SELECT
                         pe.podcast_id,
                         COUNT(*) FILTER (
-                            WHERE pls.is_completed IS NOT TRUE
-                              AND COALESCE(pls.position_ms, 0) = 0
+                            WHERE {
+                    consumption_service.episode_state_case_sql(
+                        listening_alias="pls", override_alias="co", episode_alias="pe"
+                    )
+                } = 'unplayed'
                         ) AS unplayed_count,
                         MAX(pls.updated_at) AS last_listened_at
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
-                    LEFT JOIN podcast_listening_states pls
-                      ON pls.user_id = :viewer_id AND pls.media_id = pe.media_id
+                    {
+                    consumption_service.episode_state_joins_sql(
+                        user_param=":viewer_id",
+                        media_expr="pe.media_id",
+                        listening_alias="pls",
+                        override_alias="co",
+                    )
+                }
                     WHERE pe.podcast_id = ANY(:podcast_ids)
                     GROUP BY pe.podcast_id
                 )

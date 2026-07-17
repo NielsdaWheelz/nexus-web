@@ -18,6 +18,7 @@ import Launcher from "@/components/launcher/Launcher";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { createDefaultWorkspaceState } from "@/lib/workspace/schema";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
@@ -67,6 +68,7 @@ function mockApi(
       return jsonResponse({ results: [], page: { has_more: false, next_cursor: null } });
     }
     if (url.pathname === "/api/pinned-objects") return jsonResponse({ data: { pins: [] } });
+    if (url.pathname === "/api/lectern") return jsonResponse({ data: { items: [] } });
     throw new Error(`Unexpected fetch: ${url.pathname}`);
   });
 }
@@ -76,12 +78,14 @@ function renderLauncher() {
     withRenderEnvironment(
       <KeybindingsProvider>
         <FeedbackProvider>
-          <WorkspaceStoreProvider
-            workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
-          >
-            <Launcher />
-          </WorkspaceStoreProvider>
+          <LecternProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={workspacePrimaryMetrics}
+              initialState={createDefaultWorkspaceState("/libraries", workspacePrimaryMetrics)}
+            >
+              <Launcher />
+            </WorkspaceStoreProvider>
+          </LecternProvider>
         </FeedbackProvider>
       </KeybindingsProvider>,
       { androidShell: true },

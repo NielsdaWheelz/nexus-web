@@ -76,7 +76,8 @@ for exactly this (provenance N9: a new writer is a new origin):
 - `add_to_library`, `file_note` (append to a page or daily note),
   `create_highlight` (anchored via the existing text-quote selector machinery),
   `mint_edge` (context / supports / contradicts, origin `assistant`),
-  `set_queue`.
+  `queue_add` (adds to the Lectern via the consumption owner's trusted-ensure
+  path, source `Assistant`).
 - Every write origin-marked, surfaced in the turn's trust trail, reversible.
   Sole-writer doctrine holds. The harness's own economics say each tool is
   ~60 lines of domain code.
@@ -160,10 +161,12 @@ Honesty as ornament; the ledger data is already there.
   works, faint lines are synapse edges, and red-gold lines are contradictions.
   The stance era's visual argument, and the manuscript register's second
   escape from the Oracle.
-- **The Lectern & the Chapbook** — one consumption queue across kinds (audio
-  already has `playback_queue_items`; text has nothing), and mobile reframed
-  as the queue + reader + pulse device instead of a shrunken twelve-pane
-  workspace it can't render anyway.
+- **The Lectern & the Chapbook** — one consumption queue across kinds: the
+  Lectern shipped as the mixed-media list unifying podcast/video/reader/agent
+  intentions (`consumption_queue_items`, widened from the audio-only
+  `playback_queue_items`; see `lectern-player-lifecycle-hard-cutover.md`). The
+  Chapbook — mobile reframed as the queue + reader + pulse device instead of a
+  shrunken twelve-pane workspace it can't render anyway — remains undelivered.
 - **The Post Room** — a private ingest email address. Newsletters are the
   largest missing mouth for a serious reading tool; senders resolve through
   the contributor identity system, which is already built to exactly this

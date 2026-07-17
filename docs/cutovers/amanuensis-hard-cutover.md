@@ -3,6 +3,15 @@
 **Status:** Spec · Rev 1 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 
+**Historical note (2026-07-16):** P-11's `consumption_queue_items` table +
+queue-service pointer resolved to `lectern-player-lifecycle-hard-cutover.md`,
+not `lectern-hard-cutover.md` (superseded). `queue_add`'s live implementation
+(`services/agent_tools/writes.py`) writes through
+`services/consumption/service.ensure_missing_items` with `source="Assistant"`
+— the trusted-ensure path (spec §5.3), not a standalone queue service. Below,
+§10/§11/§13's `assistant_queue_add`/S6 sequencing and file pointers describe
+the superseded pre-cutover shape and are retained as historical record only.
+
 ## One-line
 
 The house agent stops being read-only: five additive, origin-marked, undoable

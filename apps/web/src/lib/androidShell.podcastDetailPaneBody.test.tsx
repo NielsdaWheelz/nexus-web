@@ -48,14 +48,21 @@ vi.mock("@/lib/billing/useBillingAccount", () => ({
   }),
 }));
 
-vi.mock("@/lib/player/globalPlayer", () => ({
-  useGlobalPlayer: () => ({
-    addToQueue: vi.fn(async () => []),
-    queueItems: [],
-  }),
-}));
-
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
+import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+
+// The pane reads useLectern()/useGlobalPlayer(); mount the real providers and
+// answer their initial GET /api/lectern at the fetch boundary below.
+function Wrapped() {
+  return (
+    <LecternProvider>
+      <GlobalPlayerProvider>
+        <PodcastDetailPaneBody />
+      </GlobalPlayerProvider>
+    </LecternProvider>
+  );
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -113,6 +120,7 @@ describe("PodcastDetailPaneBody transcript billing", () => {
               failure_stage: null,
               last_error_code: null,
               playback_source: null,
+              playerDescriptor: { kind: "Absent" },
               capabilities: {
                 can_read: true,
                 can_highlight: true,
@@ -140,10 +148,13 @@ describe("PodcastDetailPaneBody transcript billing", () => {
       if (url.pathname === "/api/media/transcript/forecasts") {
         return jsonResponse({ data: [] });
       }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
       throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
     });
 
-    render(<PodcastDetailPaneBody />);
+    render(<Wrapped />);
 
     expect(
       await screen.findByText(

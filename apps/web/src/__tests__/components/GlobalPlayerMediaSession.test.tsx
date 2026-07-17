@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { withRenderEnvironment } from "../helpers/renderEnvironment";
 import {
-  buildPlaybackQueueItem,
-  installPlaybackFetchMock,
+  FOOTER_AUDIO_LABEL,
+  buildFooterDescriptor,
+  installLecternPlayerFetchMock,
   setAudioMetrics,
   setViewportWidth,
 } from "../helpers/audio";
@@ -91,46 +93,56 @@ function installMediaSessionHarness(): MediaSessionHarness {
 }
 
 function Harness() {
-  const { setTrack, clearTrack } = useGlobalPlayer();
+  const { playAudio } = useGlobalPlayer();
+  const { resource } = useLectern();
   return (
     <>
+      <span data-testid="lectern-status">{resource.status}</span>
       <button
         type="button"
         onClick={() =>
-          setTrack(
-            {
-              media_id: "media-a",
-              title: "Episode A",
-              stream_url: "https://cdn.example.com/media-a.mp3",
-              source_url: "https://example.com/media-a",
-              podcast_title: "Queue Podcast",
-              image_url: "https://cdn.example.com/podcast-cover.jpg",
-            },
-            { autoplay: false }
+          playAudio(
+            buildFooterDescriptor("media-a", "Episode A", {
+              subtitle: "Queue Podcast",
+              artworkUrl: "https://cdn.example.com/podcast-cover.jpg",
+            })
           )
         }
       >
-        Load A
-      </button>
-      <button type="button" onClick={() => clearTrack()}>
-        Clear
+        Play episode
       </button>
       <GlobalPlayerFooter />
     </>
   );
 }
 
+// playAudio defects before the Lectern snapshot is Ready (spec §6); wait for the
+// mount GET to resolve before the explicit Play.
+async function play() {
+  await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+  fireEvent.click(screen.getByRole("button", { name: "Play episode" }));
+}
+
 function App() {
+  // GlobalPlayerProvider consumes useLectern(), so it must be wrapped in a
+  // LecternProvider; `installLecternPlayerFetchMock` serves the mount fetches.
   return (
-    <GlobalPlayerProvider>
-      <Harness />
-    </GlobalPlayerProvider>
+    <LecternProvider>
+      <GlobalPlayerProvider>
+        <Harness />
+      </GlobalPlayerProvider>
+    </LecternProvider>
   );
 }
 
 describe("GlobalPlayer MediaSession integration", () => {
   beforeEach(() => {
     setViewportWidth(1280);
+    installLecternPlayerFetchMock();
+    // `playAudio` autoplays; stub transport so the bogus stream never hits the
+    // network and never flips the session to PlaybackFailed mid-test.
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -138,19 +150,15 @@ describe("GlobalPlayer MediaSession integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("registers metadata and media action handlers; updates playback/position state", async () => {
+  it("registers metadata and media action handlers; updates playback/position state; previous restarts", async () => {
     const mediaSession = installMediaSessionHarness();
     let now = 0;
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    installPlaybackFetchMock([
-      buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0),
-      buildPlaybackQueueItem("item-b", "media-b", "Episode B", 1),
-    ]);
 
     let unmount: (() => void) | null = null;
     try {
       ({ unmount } = render(withRenderEnvironment(<App />)));
-      fireEvent.click(screen.getByRole("button", { name: "Load A" }));
+      await play();
 
       await waitFor(() => {
         for (const action of MEDIA_SESSION_ACTIONS) {
@@ -158,6 +166,8 @@ describe("GlobalPlayer MediaSession integration", () => {
         }
       });
 
+      // Metadata now derives from the descriptor: title, subtitle -> artist/album,
+      // artworkUrl -> artwork.
       const sessionMetadata = window.navigator.mediaSession?.metadata as
         | {
             title?: string;
@@ -173,7 +183,9 @@ describe("GlobalPlayer MediaSession integration", () => {
         buildMediaImageProxySrc("https://cdn.example.com/podcast-cover.jpg"),
       );
 
-      const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+      const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+      // Spy after autoplay so the play/pause handler assertions count only their
+      // own invocations.
       const playSpy = vi.spyOn(audio, "play").mockResolvedValue(undefined);
       const pauseSpy = vi.spyOn(audio, "pause").mockImplementation(() => {});
 
@@ -211,11 +223,13 @@ describe("GlobalPlayer MediaSession integration", () => {
       const seekBackwardHandler = mediaSession.actionHandlers.get("seekbackward");
       const seekForwardHandler = mediaSession.actionHandlers.get("seekforward");
       const seekToHandler = mediaSession.actionHandlers.get("seekto");
-      const nextTrackHandler = mediaSession.actionHandlers.get("nexttrack");
 
+      // Isolate each handler's own transport call from autoplay/effect churn.
+      playSpy.mockClear();
       playHandler?.({ action: "play" } as MediaSessionActionDetails);
       expect(playSpy).toHaveBeenCalledTimes(1);
 
+      pauseSpy.mockClear();
       pauseHandler?.({ action: "pause" } as MediaSessionActionDetails);
       expect(pauseSpy).toHaveBeenCalledTimes(1);
 
@@ -229,44 +243,14 @@ describe("GlobalPlayer MediaSession integration", () => {
       seekToHandler?.({ action: "seekto", seekTime: 72 } as MediaSessionActionDetails);
       expect(Math.floor(audio.currentTime)).toBe(72);
 
-      await nextTrackHandler?.({ action: "nexttrack" } as MediaSessionActionDetails);
-      await waitFor(() => {
-        expect(screen.getByText("Episode B")).toBeInTheDocument();
-      });
-
+      // previous() is now history/lectern-aware, not queue-order: past the 3s
+      // threshold with an empty device history it restarts the current audio.
       setAudioMetrics(audio, { duration: 120, currentTime: 8 });
       fireEvent(audio, new Event("timeupdate"));
       const previousTrackHandler = mediaSession.actionHandlers.get("previoustrack");
       await previousTrackHandler?.({ action: "previoustrack" } as MediaSessionActionDetails);
       await waitFor(() => {
         expect(Math.floor(audio.currentTime)).toBe(0);
-      });
-    } finally {
-      unmount?.();
-      mediaSession.restore();
-    }
-  });
-
-  it("cleans up MediaSession handlers and playback state when track is cleared", async () => {
-    const mediaSession = installMediaSessionHarness();
-    installPlaybackFetchMock([buildPlaybackQueueItem("item-a", "media-a", "Episode A", 0)]);
-
-    let unmount: (() => void) | null = null;
-    try {
-      ({ unmount } = render(withRenderEnvironment(<App />)));
-      fireEvent.click(screen.getByRole("button", { name: "Load A" }));
-
-      await waitFor(() => {
-        expect(mediaSession.actionHandlers.get("play")).toEqual(expect.any(Function));
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-
-      await waitFor(() => {
-        for (const action of MEDIA_SESSION_ACTIONS) {
-          expect(mediaSession.actionHandlers.get(action)).toBeNull();
-        }
-        expect(window.navigator.mediaSession?.playbackState).toBe("none");
       });
     } finally {
       unmount?.();

@@ -12,9 +12,10 @@
 import type { useFeedback } from "@/components/feedback/Feedback";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { createRandomId } from "@/lib/createRandomId";
+import { parseMediaId } from "@/lib/lectern/client";
+import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
-import { addToLectern } from "@/lib/player/consumptionQueueClient";
 import { openTodayPage } from "@/lib/notes/openToday";
 import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
@@ -66,6 +67,9 @@ export interface LauncherDispatchCtx {
   androidShell: boolean;
   feedback: ReturnType<typeof useFeedback>;
   defaultLibraryIds: string[];
+  // The one Lectern capability, threaded from the controller (which holds the React
+  // context) so this plain-function owner appends media without its own hook access.
+  placeItems: LecternCapability["placeItems"];
   panes: {
     id: string;
     href: string;
@@ -132,7 +136,7 @@ export async function dispatchTarget(
       });
       return;
     case "queue-add":
-      await addToLectern(target.mediaId);
+      await ctx.placeItems({ mediaIds: [parseMediaId(target.mediaId)], placement: { kind: "Last" } });
       feedback.show({ severity: "success", title: "Added to Lectern" });
       return;
     case "add-url": {

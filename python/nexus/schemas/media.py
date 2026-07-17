@@ -8,9 +8,12 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic.alias_generators import to_camel
 
+from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.presence import Presence
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
 
@@ -218,30 +221,70 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state (attention ledger). Populated post-hoc by
-    # `services.attention.consumption_state` (applied in `services.media`) for
-    # viewer-scoped listings; absent (None) only on contexts that never derive it
-    # (e.g. SSE snapshots). For documents, "unread" means no reading session yet.
+    # Derived per-viewer read-state. Populated post-hoc by the consumption
+    # projection (`services.consumption.media_read_states`, applied in
+    # `services.media`) for viewer-scoped listings; absent (None) only on contexts
+    # that never derive it (e.g. SSE snapshots). For documents, "unread" means no
+    # reading session yet.
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
+    # New field (spec `lectern-player-lifecycle-hard-cutover.md` §6: "Lectern,
+    # podcast, and media DTOs reuse the same server-derived title/subtitle +
+    # FooterAudio descriptor"). Populated by `services.media._apply_consumption_state`
+    # via the one projection owner, `services.consumption.player_descriptors`, which
+    # derives it exactly like a Lectern item. Present only when this media is a
+    # podcast episode whose derived activation is FooterAudio; Absent otherwise
+    # (including podcast episodes without playable audio, and every other kind).
+    # Unlike its snake-wire siblings (D-1 legacy), this field is new-cutover
+    # camelCase on the wire (`playerDescriptor`): routes serializing it must dump
+    # `by_alias=True`.
+    player_descriptor: Presence[PlayerDescriptor] = Field(alias="playerDescriptor")
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-DeleteDocumentStatus = Literal["deleted", "removed", "hidden"]
+# DELETE /media/{id} response: the tagged wire union (spec §3.1). Strict
+# camelCase, ``extra="forbid"``, PascalCase discriminator. ``populate_by_name``
+# lets the service construct with snake field names; routes serialize
+# ``by_alias=True``.
+_MEDIA_DELETE_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
-class DeleteDocumentResponse(BaseModel):
-    """Response for document delete and scoped library removal."""
+class MediaRemovedResult(BaseModel):
+    """A scoped/whole-workspace removal that left at least one lifetime reference."""
 
-    status: DeleteDocumentStatus
-    hard_deleted: bool
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
-    hidden_for_viewer: bool
-    remaining_reference_count: int
+    remaining_reference_count: int = Field(ge=0)
+
+
+class MediaHiddenResult(BaseModel):
+    """A whole-workspace removal that recorded the viewer's hide marker."""
+
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Hidden"] = "Hidden"
+    removed_from_library_ids: list[UUID]
+    remaining_reference_count: int = Field(ge=0)
+
+
+class MediaDeletingResult(BaseModel):
+    """The last lifetime reference was removed; teardown intent + job installed."""
+
+    model_config = _MEDIA_DELETE_CONFIG
+
+    kind: Literal["Deleting"] = "Deleting"
+
+
+MediaDeleteResult = Annotated[
+    MediaRemovedResult | MediaHiddenResult | MediaDeletingResult,
+    Field(discriminator="kind"),
+]
 
 
 class FragmentOut(BaseModel):
@@ -347,42 +390,6 @@ class TranscriptRequestBatchRequest(BaseModel):
     reason: TranscriptRequestReason = "episode_open"
 
     model_config = ConfigDict(extra="forbid")
-
-
-class ListeningStateUpsertRequest(BaseModel):
-    """Body for PUT /media/{id}/listening-state."""
-
-    position_ms: int | None = Field(default=None, ge=0)
-    duration_ms: int | None = Field(default=None, ge=0)
-    playback_speed: float | None = Field(default=None, gt=0)
-    is_completed: bool | None = None
-    # Attention ledger: elapsed listening dwell since the last persist and the
-    # originating device. Both optional — absent for clients that predate the
-    # ledger; when present the route records an attention session.
-    dwell_ms_delta: int | None = Field(default=None, ge=0)
-    device_id: str | None = Field(default=None, max_length=128)
-
-    @model_validator(mode="after")
-    def validate_has_mutation_field(self) -> "ListeningStateUpsertRequest":
-        if (
-            self.position_ms is None
-            and self.duration_ms is None
-            and self.playback_speed is None
-            and self.is_completed is None
-        ):
-            raise ValueError(
-                "At least one of position_ms, duration_ms, playback_speed, or is_completed is required"
-            )
-        return self
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ListeningStateBatchUpsertRequest(BaseModel):
-    """Body for POST /media/listening-state/batch."""
-
-    media_ids: list[UUID] = Field(min_length=1, max_length=1000)
-    is_completed: bool
 
     model_config = ConfigDict(extra="forbid")
 

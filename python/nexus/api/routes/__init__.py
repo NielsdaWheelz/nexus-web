@@ -12,7 +12,6 @@ from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_rou
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
-from nexus.api.routes.consumption import router as consumption_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
 from nexus.api.routes.conversation_context import router as conversation_context_router
@@ -24,6 +23,7 @@ from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.internal_libraries import router as internal_libraries_router
 from nexus.api.routes.keys import router as keys_router
+from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_dossier import router as library_dossier_router
 from nexus.api.routes.listening_state import router as listening_state_router
@@ -39,7 +39,6 @@ from nexus.api.routes.oracle import router as oracle_router
 from nexus.api.routes.pinned_objects import router as pinned_objects_router
 from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_router
 from nexus.api.routes.podcasts import router as podcasts_router
-from nexus.api.routes.queue import router as queue_router
 from nexus.api.routes.reader import router as reader_router
 from nexus.api.routes.resource_graph import router as resource_graph_router
 from nexus.api.routes.resource_items import router as resource_items_router
@@ -77,7 +76,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(media_assets_router)
     api_router.include_router(media_ingest_router)
     api_router.include_router(listening_state_router)
-    api_router.include_router(consumption_router)
     api_router.include_router(podcast_transcripts_router)
     api_router.include_router(reader_router)
     api_router.include_router(media_router)
@@ -106,9 +104,10 @@ def create_api_router() -> APIRouter:
     api_router.include_router(users_router)
     api_router.include_router(walknotes_router)
     api_router.include_router(atlas_router)
-    # The consumption queue serves web articles, epubs, and PDFs regardless of the
-    # podcast feature flag, so it is registered unconditionally.
-    api_router.include_router(queue_router)
+    # Lectern command ports (GET /lectern, POST /lectern/commands,
+    # POST /consumption/commands). The listening heartbeat keeps its
+    # /media/{id}/listening-state paths on listening_state_router above.
+    api_router.include_router(lectern_router)
     settings = get_settings()
     if settings.podcasts_enabled:
         api_router.include_router(podcasts_router)

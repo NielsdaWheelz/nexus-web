@@ -11,7 +11,8 @@ Composition:
 
 - identity rows (contributors/aliases/keys) mutate only via the visibly private
   ``_contributor_identity``; credit rows and the media pin only via
-  ``_contributor_credit_writes``; replay memos only via ``_contributor_replay``;
+  ``_contributor_credit_writes``; replay memos only via the shared
+  ``resource_mutation_replay`` (byte basis: alias-free, see the two call sites);
 - reads compose the canonical credit relation owned by ``contributor_credits``
   and the visibility CTEs owned by ``auth/permissions``;
 - the four mutation entry points take NO session: each opens a fresh session
@@ -117,9 +118,6 @@ from nexus.services._contributor_identity import (
 from nexus.services._contributor_identity import (
     resolve_observation_credits as _resolve_observation_credits,
 )
-from nexus.services._contributor_replay import lookup_memo as _lookup_memo
-from nexus.services._contributor_replay import record_memo as _record_memo
-from nexus.services._contributor_replay import request_hash as _request_hash
 from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
 from nexus.services.contributor_credits import (
@@ -139,6 +137,11 @@ from nexus.services.contributor_taxonomy import (
     contributor_match_key,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 
 # One fresh session + one serializable operation per chunk of gutenberg targets
 # (D-15): caps a 75k-row first sync at ~375 transactions without sharing any
@@ -638,13 +641,17 @@ def _put_media_authors_op(
             "Only the media creator or an administrator can edit authors",
         )
     scope = f"media:{media_id}:authors"
-    payload_hash = _request_hash(request)
-    stored = _lookup_memo(
+    # Alias-free hash basis (spec 4/D-21), deliberately unlike other scopes'
+    # by_alias=True: keys the memo to the request's meaning, not its camelCase
+    # wire spelling, so a wire-alias rename never masquerades as a different
+    # mutation.
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=False))
+    stored = lookup_replay(
         db,
         viewer_id=viewer.user_id,
         scope=scope,
         client_mutation_id=request.client_mutation_id,
-        request_hash=payload_hash,
+        request_bytes=request_bytes,
     )
     if stored is not None:
         return _revalidated_memo(MediaAuthorsOut, stored)
@@ -671,13 +678,16 @@ def _put_media_authors_op(
         author_mode = "automatic"
 
     response = _media_authors_out(db, media_id=media_id, author_mode=author_mode)
-    _record_memo(
+    # changed_lanes is intentionally empty: author mutations do not participate
+    # in the resource-item lane-version protocol.
+    record_replay(
         db,
         viewer_id=viewer.user_id,
         scope=scope,
         client_mutation_id=request.client_mutation_id,
-        request_hash=payload_hash,
+        request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
+        changed_lanes={},
     )
     if dropped:
         prune_contributors_if_orphaned(db, contributor_ids=dropped)
@@ -832,13 +842,17 @@ def _ensure_display_name_op(
             "Renaming an author requires an administrator or curator role",
         )
     scope = f"contributor:{contributor.id}:display-name"
-    payload_hash = _request_hash(request)
-    stored = _lookup_memo(
+    # Alias-free hash basis (spec 4/D-21), deliberately unlike other scopes'
+    # by_alias=True: keys the memo to the request's meaning, not its camelCase
+    # wire spelling, so a wire-alias rename never masquerades as a different
+    # mutation.
+    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=False))
+    stored = lookup_replay(
         db,
         viewer_id=viewer.user_id,
         scope=scope,
         client_mutation_id=request.client_mutation_id,
-        request_hash=payload_hash,
+        request_bytes=request_bytes,
     )
     if stored is not None:
         return _revalidated_memo(ContributorDetailOut, stored)
@@ -857,13 +871,16 @@ def _ensure_display_name_op(
         _ensure_alias(db, contributor_id=contributor.id, alias=new_display, resolves_identity=True)
 
     response = _contributor_detail_out(db, contributor, can_rename=True)
-    _record_memo(
+    # changed_lanes is intentionally empty: author mutations do not participate
+    # in the resource-item lane-version protocol.
+    record_replay(
         db,
         viewer_id=viewer.user_id,
         scope=scope,
         client_mutation_id=request.client_mutation_id,
-        request_hash=payload_hash,
+        request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
+        changed_lanes={},
     )
     db.commit()
     return response

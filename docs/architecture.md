@@ -394,11 +394,20 @@ message API responses include a
 `trust_trail` read model assembled from these durable rows; persisted
 `message_document` blocks are text-only.
 
-**Podcasts / playback** — `podcasts`, `podcast_subscriptions`,
-`podcast_subscription_libraries`, `podcast_episodes` (PK = `media_id`),
-`podcast_episode_chapters`, `podcast_listening_states`, `playback_queue_items`,
-`podcast_transcription_jobs`, `podcast_transcription_usage_daily`,
-`podcast_transcript_segments`.
+**Podcasts / playback** — `podcasts`, `podcast_subscriptions`
+(`auto_queue_watermark_at`), `podcast_subscription_libraries`,
+`podcast_episodes` (PK = `media_id`), `podcast_episode_chapters`,
+`podcast_listening_states` (position/duration/speed +
+`write_revision`/`reset_epoch` heartbeat fencing), `podcast_transcription_jobs`,
+`podcast_transcription_usage_daily`, `podcast_transcript_segments`.
+
+**Lectern / consumption** — `consumption_queue_items` (the Lectern: one
+ordered, mixed-media list per viewer, membership/order only — completion is
+never stored on the row), `consumption_overrides` (explicit `Unread`/
+`Finished` state), and `media_teardown_intents` (media-deletion claim; see
+§8.8 and [`modules/storage.md`](modules/storage.md)). See
+[`modules/player.md`](modules/player.md) for the owning
+`services/consumption/` package.
 
 **Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
 tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
@@ -691,7 +700,9 @@ capability-owned:
   attempts.
 - `epub_assets.py`: private EPUB resource asset authorization and byte-size
   checked reads.
-- `listening_state.py`: podcast listening-state CRUD and batch updates.
+- `api/routes/listening_state.py`: the singular listening-heartbeat route
+  (GET/PUT, no batch endpoint); position/duration/speed DML is owned by
+  `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
 - `media_processing_state.py`: every processing-state transition, including
   reingest reset and ready-for-reading completion.
@@ -947,20 +958,57 @@ step with its body); a note attached to a highlight is itself a `note_block`
 Frontend: `components/notes/ProseMirrorOutlineEditor.tsx` +
 `lib/notes/prosemirror/*`.
 
-### 8.8 Podcasts & playback
+### 8.8 Lectern & podcast playback
 
-`services/podcasts/*`: discover via Podcast Index, subscribe (optionally scoped to
-libraries + auto-queue), sync episodes into `media` rows of kind
+`services/podcasts/*`: discover via Podcast Index, subscribe (optionally scoped
+to libraries + auto-queue), sync episodes into `media` rows of kind
 `podcast_episode`, and transcribe. Transcripts come from **RSS sidecar files**
 (eager, during sync) or **Deepgram** (on-demand per viewer, gated by
 `can_transcribe` + a daily quota; diarized with non-diarized fallback). New
-episodes stay `pending` until a viewer requests transcription. The **playback
-queue** (`playback_queue_items`, dense positions, unique per media) and
-**listening state** (`podcast_listening_states`, resume position, ≥95%
-auto-completion, `services/listening_state.py`) are per-user. Frontend: a single
-app-wide `<audio>` element in
-`lib/player/globalPlayer.tsx` with a Web Audio effects graph, OS media-session
-integration, and 15s listening-state persistence.
+episodes stay `pending` until a viewer requests transcription. Auto-subscription
+composes the consumption owner's `ensure_missing_items_in_txn` in the same
+transaction that advances `podcast_subscriptions.auto_queue_watermark_at`
+(`podcasts/poll.py`), so insertion and watermark are one database fact; a
+stale/reclaimed sync worker's lease check rolls the whole step back rather than
+double-inserting.
+
+The **Lectern** is the one ordered, mixed-media list of outstanding intentions
+(podcast, video, reader, agent, and Launcher actions all address it); **Now
+Playing** is one device-local audio session, not a second durable list.
+`services/consumption/` is the sole backend consumption owner, split by table:
+`_lectern_store.py` (`consumption_queue_items` membership/order + the
+canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
+explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
+position/duration/speed + heartbeat fencing tokens `write_revision`/
+`reset_epoch`), and `_projection.py` (the combined explicit + attention-derived
+read model, plus batched `PlayerDescriptor`s reusing `derive_playback_source`).
+`services/attention.py` remains the sole writer of `reading_sessions` and
+exposes only derived session aggregates to the projection. Two bounded
+aggregate command ports — `POST /lectern/commands`
+(`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
+(`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
+share one `retry_serializable` transaction, one canonical response, and
+`clientMutationId` replay through `services/resource_mutation_replay.py`;
+`GET /lectern` and the retained `GET`/`PUT /media/{id}/listening-state`
+heartbeat sit outside that replay ledger. Owned-absence fields on every wire
+shape use `Presence<T>` ([`rules/boundaries.md`](rules/boundaries.md)), never
+`null` or omission.
+
+Media teardown (see [`modules/storage.md`](modules/storage.md)) composes
+`consumption_service.delete_media_consumption_state_in_txn` (all users'
+Lectern/override/listening rows) and `attention.delete_media_state`
+(`reading_sessions`) inside the same deletion transaction —
+`media_deletion.py` never writes those tables directly.
+
+Frontend: `AuthenticatedShell` mounts `LecternProvider` (one `AsyncResource` +
+one mutation FIFO, `lib/lectern/`) above `GlobalPlayerProvider` (one
+`PlayerSession`, `lib/player/`), which wraps `WorkspaceHost` and a
+shell-resident dock — `region` labelled **Media player** — that persists
+across pane navigation and is never an editor. A single app-wide `<audio>`
+element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
+OS media-session integration, and a single-flight, generation-keyed
+15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
+[`modules/player.md`](modules/player.md) for the full file map.
 
 ### 8.9 Search surfaces & command palette
 
@@ -1240,11 +1288,11 @@ attached-reference citation regression came from breaking this density.
 | Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |
-| Podcasts / playback | `python/nexus/services/podcasts/`, `playback_queue.py` |
+| Podcasts / playback | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py` |
 | Auth / billing / keys / rate limit | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/` |
 | Frontend BFF / auth / SSE | `apps/web/src/lib/{api,auth,supabase}/` |
 | Workspace / panes | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/` |
-| Reader / chat / player UI | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player}/` |
+| Reader / chat / player UI | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/` |
 | Android shell | `apps/android/app/src/main/` |
 | Browser extension | `apps/extension/` |
 | Build / run / deploy | `Makefile`, `deployment.md`, `deploy/` |

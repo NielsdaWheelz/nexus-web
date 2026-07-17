@@ -1,4 +1,16 @@
-"""Document deletion service."""
+"""Document deletion service.
+
+Media teardown (spec ``lectern-player-lifecycle-hard-cutover.md`` §3.1): removing
+the last lifetime reference no longer deletes storage or child state inline. The
+claim (:func:`claim_media_teardown`) locks only the media row, checks zero
+committed references, inserts a UUIDv7 teardown intent, and enqueues one
+addressable ``media_teardown`` job in that same transaction. The job
+(:mod:`nexus.tasks.media_teardown`) owns the checkpointed physical deletion and
+storage sweep. Child-state deletion composes the consumption and attention owners
+(never direct consumption/listening DML here). Viewer-scoped removal/hide
+preserves consumption and latent Lectern rows; the visibility projection hides
+them.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +24,23 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.ids import new_uuid7
+from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
-from nexus.schemas.media import DeleteDocumentResponse, DeleteDocumentStatus
-from nexus.services import contributors, library_entries, library_governance, media_intelligence
+from nexus.schemas.media import (
+    MediaDeleteResult,
+    MediaDeletingResult,
+    MediaHiddenResult,
+    MediaRemovedResult,
+)
+from nexus.services import (
+    attention,
+    contributors,
+    library_entries,
+    library_governance,
+    media_intelligence,
+)
+from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.default_library_closure import (
     count_default_references,
@@ -34,6 +60,56 @@ if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
 
 logger = get_logger(__name__)
+
+# The durable teardown job kind + its retry policy live in the registry; this is
+# the one enqueue site for the claim.
+_MEDIA_TEARDOWN_JOB_KIND = "media_teardown"
+
+
+def claim_media_teardown(db: Session, media_id: UUID) -> UUID:
+    """Claim a media for physical teardown: intent + one addressable job, one txn.
+
+    Locks only the media row, checks zero committed references, inserts the UUIDv7
+    intent, and enqueues one ``media_teardown`` job — all inside the caller's open
+    transaction, so creator-first makes this observe a reference and claim-first makes
+    a creator raise ``E_MEDIA_DELETING`` (they linearize on the media row). Idempotent:
+    if the exact intent already exists (concurrent/replayed delete of an already-
+    tearing-down media), it returns that intent id without enqueuing a second job.
+    Callers must have already confirmed zero references under the media lock.
+    """
+    db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    )
+    existing = db.execute(
+        text("SELECT id FROM media_teardown_intents WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if existing is not None:
+        return UUID(str(existing[0]))
+    if _total_reference_count(db, media_id) != 0:
+        # justify-defect: the claim doorway is only reached after the caller removed
+        # the last reference under the media lock. A reference here is an impossible
+        # state, not a modeled outcome.
+        raise RuntimeError("claim_media_teardown reached with references still present")
+
+    intent_id = new_uuid7()
+    db.execute(
+        text("INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :media_id)"),
+        {"id": intent_id, "media_id": media_id},
+    )
+    enqueue_job(
+        db,
+        kind=_MEDIA_TEARDOWN_JOB_KIND,
+        payload={
+            "mediaId": str(media_id),
+            "intentId": str(intent_id),
+            "checkpoint": {"kind": "Unprepared"},
+        },
+        max_attempts=5,
+    )
+    return intent_id
+
 
 _DOCUMENT_KINDS = {
     MediaKind.pdf.value,
@@ -75,13 +151,16 @@ def delete_document_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
     storage_client: StorageClientBase | None = None,
-) -> DeleteDocumentResponse:
-    """Delete a document from the viewer's whole workspace."""
-    storage_paths: list[str] = []
+) -> MediaDeleteResult:
+    """Remove a document from the viewer's whole workspace (spec §3.1).
+
+    Removes the viewer's references, preserves latent consumption/listening rows, then:
+    last reference gone -> claim (intent + job), return ``Deleting``; references
+    remain and the viewer keeps a system-library reference -> ``Removed``; otherwise
+    record the viewer hide marker and return ``Hidden``. Storage and child-state
+    teardown are owned by the ``media_teardown`` job, not this transaction.
+    """
     removed_from_library_ids: list[UUID] = []
-    hard_deleted = False
-    hidden_for_viewer = False
-    remaining_reference_count = 0
 
     with transaction(db):
         media = db.execute(
@@ -127,52 +206,39 @@ def delete_document_for_viewer(
 
         remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0:
-            paths = delete_document_media_if_unreferenced(db, media_id)
-            if paths is not None:
-                storage_paths = paths
-                hard_deleted = True
-        elif _viewer_has_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
-            hidden_for_viewer = False
-        else:
-            existing = db.execute(
+            claim_media_teardown(db, media_id)
+            return MediaDeletingResult()
+
+        if _viewer_has_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+            return MediaRemovedResult(
+                removed_from_library_ids=removed_from_library_ids,
+                remaining_reference_count=remaining_reference_count,
+            )
+
+        existing = db.execute(
+            text("""
+                SELECT 1
+                FROM user_media_deletions
+                WHERE user_id = :viewer_id
+                  AND media_id = :media_id
+            """),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        ).fetchone()
+        if existing is None:
+            db.execute(
                 text("""
-                    SELECT 1
-                    FROM user_media_deletions
-                    WHERE user_id = :viewer_id
-                      AND media_id = :media_id
+                    INSERT INTO user_media_deletions (user_id, media_id)
+                    VALUES (:viewer_id, :media_id)
                 """),
                 {"viewer_id": viewer_id, "media_id": media_id},
-            ).fetchone()
-            if existing is None:
-                db.execute(
-                    text("""
-                        INSERT INTO user_media_deletions (user_id, media_id)
-                        VALUES (:viewer_id, :media_id)
-                    """),
-                    {"viewer_id": viewer_id, "media_id": media_id},
-                )
-            detach_document_embed_targets_for_owner(
-                db, owner_user_id=viewer_id, target_media_id=media_id
             )
-            hidden_for_viewer = True
-
-    _delete_storage_objects(storage_paths, storage_client)
-
-    status: DeleteDocumentStatus
-    if hard_deleted:
-        status = "deleted"
-    elif hidden_for_viewer:
-        status = "hidden"
-    else:
-        status = "removed"
-
-    return DeleteDocumentResponse(
-        status=status,
-        hard_deleted=hard_deleted,
-        removed_from_library_ids=removed_from_library_ids,
-        hidden_for_viewer=hidden_for_viewer,
-        remaining_reference_count=remaining_reference_count,
-    )
+        detach_document_embed_targets_for_owner(
+            db, owner_user_id=viewer_id, target_media_id=media_id
+        )
+        return MediaHiddenResult(
+            removed_from_library_ids=removed_from_library_ids,
+            remaining_reference_count=remaining_reference_count,
+        )
 
 
 def remove_document_from_library(
@@ -181,12 +247,13 @@ def remove_document_from_library(
     media_id: UUID,
     library_id: UUID,
     storage_client: StorageClientBase | None = None,
-) -> DeleteDocumentResponse:
-    """Remove a document from one viewer-administered library."""
-    storage_paths: list[str] = []
-    hard_deleted = False
-    remaining_reference_count = 0
+) -> MediaDeleteResult:
+    """Remove a document from one viewer-administered library (spec §3.1).
 
+    Scoped removal returns ``Removed`` while any lifetime reference remains, and
+    ``Deleting`` (claim: intent + job) when it removes the last one. It never records a
+    viewer hide marker.
+    """
     with transaction(db):
         media = db.execute(
             text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
@@ -235,20 +302,13 @@ def remove_document_from_library(
 
         remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0:
-            paths = delete_document_media_if_unreferenced(db, media_id)
-            if paths is not None:
-                storage_paths = paths
-                hard_deleted = True
+            claim_media_teardown(db, media_id)
+            return MediaDeletingResult()
 
-    _delete_storage_objects(storage_paths, storage_client)
-
-    return DeleteDocumentResponse(
-        status="deleted" if hard_deleted else "removed",
-        hard_deleted=hard_deleted,
-        removed_from_library_ids=[library_id],
-        hidden_for_viewer=False,
-        remaining_reference_count=remaining_reference_count,
-    )
+        return MediaRemovedResult(
+            removed_from_library_ids=[library_id],
+            remaining_reference_count=remaining_reference_count,
+        )
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -263,29 +323,26 @@ def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> N
 
 
 def delete_duplicate_document_media(db: Session, media_id: UUID) -> list[str]:
-    """Hard-delete a duplicate document row after its replacement is reachable."""
-    return _delete_document_media_with_references(
-        db,
-        media_id,
-        defect_context="duplicate document media cleanup",
-    )
+    """Claim a duplicate document row for teardown after its replacement is reachable.
+
+    Routes through the claim doorway (spec §3.1): purge the loser's references, then
+    claim (intent + ``media_teardown`` job) so the durable job owns the physical
+    deletion and storage sweep. Returns an empty path list — the job, not the caller,
+    deletes storage.
+    """
+    return _claim_document_media_teardown(db, media_id)
 
 
 def delete_abandoned_document_media(db: Session, media_id: UUID) -> list[str]:
-    """Hard-delete an abandoned document row that never became readable."""
-    return _delete_document_media_with_references(
-        db,
-        media_id,
-        defect_context="abandoned document media cleanup",
-    )
+    """Claim an abandoned document row (never became readable) for teardown.
+
+    Same claim doorway as :func:`delete_duplicate_document_media`; returns an empty path
+    list because the ``media_teardown`` job owns storage deletion.
+    """
+    return _claim_document_media_teardown(db, media_id)
 
 
-def _delete_document_media_with_references(
-    db: Session,
-    media_id: UUID,
-    *,
-    defect_context: str,
-) -> list[str]:
+def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     media = db.execute(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
         {"media_id": media_id},
@@ -295,34 +352,34 @@ def _delete_document_media_with_references(
 
     purge_media_default_references(db, media_id)
     affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
-
-    storage_paths = delete_document_media_if_unreferenced(db, media_id)
-    if storage_paths is None:
-        raise RuntimeError(f"{defect_context} left references behind")
-
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)
-    return storage_paths
+
+    claim_media_teardown(db, media_id)
+    return []
 
 
 def delete_document_storage_objects(
     storage_paths: list[str],
     storage_client: StorageClientBase | None = None,
 ) -> None:
+    """Best-effort delete of already-unreachable storage objects.
+
+    Legacy synchronous helper kept for non-teardown cleanup (extraction-artifact GC on
+    source requeue). Media teardown no longer produces paths here — its callers now
+    claim + enqueue and pass an empty list — so this is a no-op on the teardown paths.
+    """
     _delete_storage_objects(storage_paths, storage_client)
 
 
-def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[str] | None:
-    """Hard-delete one unreferenced document media row and return storage paths."""
-    media = db.execute(
-        text("SELECT kind FROM media WHERE id = :media_id"),
-        {"media_id": media_id},
-    ).fetchone()
-    if media is None or media[0] not in _DOCUMENT_KINDS:
-        return None
-    if _total_reference_count(db, media_id) != 0:
-        return None
+def enumerate_media_storage_paths(db: Session, media_id: UUID) -> list[str]:
+    """Every storage object a media hard-delete owns: file, EPUB resources, and
+    source-attempt artifacts, sorted and de-duplicated.
 
+    The pure path enumerator reused by the ``media_teardown`` job's preparation
+    checkpoint and by :func:`delete_document_media_if_unreferenced`. It reads rows only;
+    it never touches storage or deletes anything.
+    """
     storage_paths: list[str] = []
     for (storage_path,) in db.execute(
         text("""
@@ -351,6 +408,28 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         for storage_path in source_attempt_storage_paths(source_payload):
             if storage_path not in storage_paths:
                 storage_paths.append(storage_path)
+    return storage_paths
+
+
+def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[str] | None:
+    """Hard-delete one unreferenced document media row and return storage paths.
+
+    Deletes the four in-scope consumption/attention child families through their owners
+    (never direct consumption/listening DML), then the remaining child tables, the
+    teardown intent, and the media row. Composed by the ``media_teardown`` job inside
+    its deletion transaction, and by library teardown. Returns ``None`` (deleting
+    nothing) when the media is missing, non-document, or still referenced.
+    """
+    media = db.execute(
+        text("SELECT kind FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    ).fetchone()
+    if media is None or media[0] not in _DOCUMENT_KINDS:
+        return None
+    if _total_reference_count(db, media_id) != 0:
+        return None
+
+    storage_paths = enumerate_media_storage_paths(db, media_id)
 
     db.execute(
         text("DELETE FROM document_embeds WHERE media_id = :media_id"), {"media_id": media_id}
@@ -510,14 +589,11 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    db.execute(
-        text("DELETE FROM podcast_listening_states WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("DELETE FROM consumption_queue_items WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
+    # Four in-scope child families through their owners (spec §3, §8.15): all users'
+    # Lectern/override/listening rows (consumption owner) and reading-session rows
+    # (attention owner). media_deletion never writes those tables directly.
+    consumption_service.delete_media_consumption_state_in_txn(db, media_id=media_id)
+    attention.delete_media_state(db, media_id)
     db.execute(
         text("DELETE FROM reader_media_state WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -554,6 +630,13 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     db.execute(text("DELETE FROM fragments WHERE media_id = :media_id"), {"media_id": media_id})
     db.execute(
         text("DELETE FROM podcast_episodes WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    # A committed deletion deletes the teardown intent together with the media row it
+    # claimed (the intent FKs media). Only one intent per media (unique media_id), and
+    # the caller verified the exact intent before reaching this point.
+    db.execute(
+        text("DELETE FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
@@ -663,22 +746,11 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )
-    db.execute(
-        text("""
-            DELETE FROM consumption_queue_items
-            WHERE user_id = :viewer_id
-              AND media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM podcast_listening_states
-            WHERE user_id = :viewer_id
-              AND media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
+    # Behavior change (spec §3): viewer-scoped removal/hide preserves the viewer's
+    # latent Lectern and listening rows (owned by the consumption stores). The
+    # visibility projection hides them while the media is out of the viewer's
+    # workspace; explicit re-add restores them after clearing the hide marker. Only the
+    # last-reference physical teardown removes them, through the consumption owner.
 
 
 def _delete_storage_objects(

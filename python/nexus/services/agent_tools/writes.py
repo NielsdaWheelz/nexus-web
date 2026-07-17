@@ -33,11 +33,12 @@ from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.schemas.notes import QuickCaptureRequest
-from nexus.services import consumption_queue, highlights, library_entries, notes, text_quote
+from nexus.services import highlights, library_entries, notes, text_quote
 from nexus.services.chat_run_tools import (
     assistant_write_tool_call_count,
     persist_write_tool_call,
 )
+from nexus.services.consumption import service as consumption_service
 from nexus.services.library_governance import lock_library_for_member, require_admin
 from nexus.services.resource_graph.edges import create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
@@ -569,11 +570,20 @@ def _mint_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerRe
 
 def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
     media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
-    item = consumption_queue.add_assistant_queue_item(db, viewer_id, media_id=media_ref.id)
-    created = {"kind": "queue", "id": str(item.item_id), "label": item.title}
+    # Trusted ensure: append the row at Last if absent, never move an existing row
+    # (idempotent re-add). The item echoed for undo is the resulting Lectern row,
+    # whether newly ensured or already present.
+    consumption_service.ensure_missing_items(viewer_id, [media_ref.id], source="Assistant")
+    resolved = consumption_service.get_lectern_item_for_media(
+        db, viewer_id=viewer_id, media_id=media_ref.id
+    )
+    if resolved is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    item_id, title = resolved
+    created = {"kind": "queue", "id": str(item_id), "label": title}
     return _HandlerResult(
         created_refs=[created],
-        output={"queued": item.title, "queue_item_id": str(item.item_id)},
+        output={"queued": title, "queue_item_id": str(item_id)},
     )
 
 
@@ -653,7 +663,8 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "note_block":
             notes.remove_note_block(db, viewer_id, UUID(ref["id"]))
         elif kind == "queue":
-            consumption_queue.remove_queue_item_for_viewer(db, viewer_id, UUID(ref["id"]))
+            # Tolerates an already-removed Lectern item (manual removal, R-5).
+            consumption_service.remove_lectern_item(viewer_id, UUID(ref["id"]))
     except ApiError:
         # R-5: the target is already gone (manual delete). The revert still
         # succeeds and the row is stamped reverted.

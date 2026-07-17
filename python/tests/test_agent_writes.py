@@ -82,11 +82,14 @@ def _seed_readable_media(
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("highlights", "user_id", user_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
     direct_db.register_cleanup("fragments", "id", fragment_id)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("memberships", "library_id", library_id)
     direct_db.register_cleanup("libraries", "id", library_id)
+    # Registered LAST so LIFO teardown deletes the Lectern rows BEFORE their media:
+    # migration 0182 made the consumption_queue_items -> media FK non-cascading, so
+    # the row no longer disappears with its media.
+    direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
     return media_id, library_id
 
 

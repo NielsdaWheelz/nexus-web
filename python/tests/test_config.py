@@ -412,6 +412,66 @@ class TestR2StorageConfiguration:
         with pytest.raises(ValidationError, match="CSP_EXTRA_CONNECT_ORIGINS"):
             _make_settings(CSP_EXTRA_CONNECT_ORIGINS="https://abc123.r2.cloudflarestorage.com")
 
+    def test_r2_timeout_defaults_are_within_ceiling(self):
+        settings = _make_settings()
+        assert settings.r2_connect_timeout_seconds == 5.0
+        assert settings.r2_read_timeout_seconds == 30.0
+
+    @pytest.mark.parametrize(
+        ("setting_name", "invalid_value"),
+        [
+            ("R2_CONNECT_TIMEOUT_SECONDS", 0),
+            ("R2_CONNECT_TIMEOUT_SECONDS", 10.1),
+            ("R2_READ_TIMEOUT_SECONDS", 0),
+            ("R2_READ_TIMEOUT_SECONDS", 60.1),
+        ],
+    )
+    def test_r2_timeout_bounds_are_validated(self, setting_name: str, invalid_value: float):
+        with pytest.raises(ValidationError, match=setting_name):
+            _make_settings(**{setting_name: invalid_value})
+
+
+class TestMediaTeardownConfiguration:
+    def test_defaults_match_spec(self):
+        settings = _make_settings()
+        assert settings.media_teardown_cleanup_grace_seconds == 60
+        assert settings.storage_object_cleanup_write_window_seconds == 300
+        assert settings.storage_orphan_sweep_interval_seconds == 21600
+        assert settings.storage_orphan_sweep_min_age_seconds == 86400
+
+    def test_media_teardown_cleanup_grace_seconds_rejects_negative(self):
+        with pytest.raises(ValidationError, match="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS"):
+            _make_settings(MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS=-1)
+
+    def test_storage_object_cleanup_write_window_seconds_rejects_zero(self):
+        with pytest.raises(ValidationError, match="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"):
+            _make_settings(STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS=0)
+
+    def test_storage_object_cleanup_write_window_must_exceed_r2_read_timeout(self):
+        with pytest.raises(ValidationError, match="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"):
+            _make_settings(
+                R2_READ_TIMEOUT_SECONDS=30,
+                STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS=30,
+            )
+
+    def test_storage_object_cleanup_write_window_may_equal_default_margin(self):
+        settings = _make_settings(
+            R2_READ_TIMEOUT_SECONDS=30,
+            STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS=31,
+        )
+        assert settings.storage_object_cleanup_write_window_seconds == 31
+
+    @pytest.mark.parametrize(
+        ("setting_name", "invalid_value"),
+        [
+            ("STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS", 0),
+            ("STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS", -1),
+        ],
+    )
+    def test_storage_orphan_sweep_bounds_are_validated(self, setting_name: str, invalid_value: int):
+        with pytest.raises(ValidationError, match=setting_name):
+            _make_settings(**{setting_name: invalid_value})
+
 
 class TestSupabaseServiceRoleConfiguration:
     @pytest.mark.parametrize(

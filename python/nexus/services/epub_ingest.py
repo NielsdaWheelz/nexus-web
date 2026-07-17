@@ -53,6 +53,7 @@ from nexus.services.reader_apparatus import (
 )
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_asset_storage_path
+from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
 
 if TYPE_CHECKING:
     from nexus.storage.client import StorageClientBase
@@ -620,6 +621,11 @@ def extract_epub_artifacts(
 
         for ae in asset_entries:
             asset_storage_key = build_epub_asset_storage_path(media_id, ae.asset_key)
+            # Reserve the durable final-sweep before each bounded asset write (spec §3.1).
+            # The EpubResource owner rows are persisted below in the same call, so the
+            # Armed deadline (not an immediate post-write recheck) records Retained once
+            # they commit, or DeleteRequired if extraction rolls back.
+            reserve_storage_object_write(db, media_id=media_id, storage_path=asset_storage_key)
             try:
                 storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
                 uploaded_asset_paths.append(asset_storage_key)

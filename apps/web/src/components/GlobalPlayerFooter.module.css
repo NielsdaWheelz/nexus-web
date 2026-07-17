@@ -59,6 +59,15 @@
   line-height: var(--leading-snug);
 }
 
+.nextPreview {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .controlsRow {
   display: flex;
   align-items: center;
@@ -329,7 +338,7 @@
   accent-color: var(--accent);
 }
 
-.queueButton {
+.walknoteButton {
   border: 1px solid var(--edge);
   background: var(--surface-canvas);
   color: var(--ink);
@@ -342,7 +351,7 @@
   gap: var(--space-2);
 }
 
-.queueBadge {
+.walknoteBadge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -543,189 +552,6 @@
   flex-wrap: wrap;
 }
 
-/* ---- Queue overlay ---- */
-
-.queueOverlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-scrim);
-  display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
-  overscroll-behavior: contain;
-  z-index: var(--z-modal);
-}
-
-.queuePanel {
-  width: min(460px, 92vw);
-  height: 100%;
-  background: var(--surface-2);
-  border-left: 1px solid var(--edge);
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-4);
-  gap: var(--space-3);
-  min-height: 0;
-  overflow: hidden;
-  box-shadow: var(--shadow-4);
-}
-
-.queueHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.queueTitle {
-  margin: 0;
-  font-size: var(--text-md);
-}
-
-.queueTitle:focus {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.queueCloseButton {
-  border: 1px solid var(--edge);
-  background: var(--surface-canvas);
-  color: var(--ink);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.queueEmpty {
-  margin: 0;
-  color: var(--ink-faint);
-}
-
-.queueList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  flex: 1 1 auto;
-  overflow-y: auto;
-  min-height: 0;
-  overscroll-behavior: contain;
-}
-
-.queueListItem {
-  list-style: none;
-}
-
-.queueListItemInner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2);
-  background: var(--surface-canvas);
-}
-
-.queueListItemInner[data-current="true"] {
-  border-color: var(--accent);
-}
-
-.queueListItem[data-dragging="true"] .queueListItemInner {
-  box-shadow: var(--shadow-3);
-}
-
-.queueDragHandle {
-  border: 1px solid var(--edge);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2);
-  font-size: var(--text-sm);
-  line-height: var(--leading-tight);
-  cursor: grab;
-  touch-action: none;
-}
-
-.queueDragHandle:active {
-  cursor: grabbing;
-}
-
-.queueItemMain {
-  border: none;
-  background: transparent;
-  color: inherit;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  text-align: left;
-  gap: 2px;
-  cursor: pointer;
-  padding: 0;
-  flex: 1;
-  min-width: 0;
-  min-height: var(--size-xl);
-  border-radius: var(--radius-md);
-}
-
-.queueItemTitle {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.queueItemMeta {
-  font-size: var(--text-xs);
-  color: var(--ink-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.queueItemRemoveButton {
-  border: 1px solid var(--edge);
-  background: var(--surface-2);
-  color: var(--ink);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.queueFooter {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.queueLecternLink {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-  text-decoration: none;
-}
-
-.queueLecternLink:hover {
-  color: var(--ink);
-}
-
-.queueClearButton {
-  border: 1px solid var(--edge);
-  background: var(--surface-2);
-  color: var(--ink);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
 @media (max-width: 768px) {
   .footer {
     padding: 0 var(--space-3) calc(var(--space-1) + env(safe-area-inset-bottom));
@@ -737,10 +563,5 @@
 
   .transportButton {
     padding: var(--space-2);
-  }
-
-  .queuePanel {
-    width: 100%;
-    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
   }
 }

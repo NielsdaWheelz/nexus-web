@@ -31,6 +31,10 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.contributors import MediaTarget, replace_observed_role_slices
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
+from nexus.tasks.storage_object_cleanup import (
+    finalize_storage_object_write,
+    reserve_storage_object_write,
+)
 
 # MIME walk safety caps — no newsletter legitimately exceeds these.
 _MAX_MIME_PARTS = 50
@@ -414,10 +418,17 @@ def accept_email_message(
     # the duplicate-path retry converges (D-27).
     _apply_email_sender_credit(media.id, author_observation)
 
+    # Reserve the durable final-sweep before the bounded write (spec §3.1): rejects a
+    # teardown intent and installs the Armed cleanup reservation for this object.
+    reserve_storage_object_write(db, media_id=media.id, storage_path=storage_path)
+
     # Upload HTML to R2.
     storage_client = get_storage_client()
     try:
         storage_client.put_object(storage_path, html_bytes, "text/html; charset=utf-8")
+        finalize_storage_object_write(
+            db, media_id=media.id, storage_path=storage_path, storage_client=storage_client
+        )
     except StorageError as exc:
         from nexus.services.media_processing_state import mark_failed
 

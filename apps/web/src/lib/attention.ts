@@ -1,6 +1,3 @@
-import { apiFetch } from "@/lib/api/client";
-import type { ReadStatus } from "@/lib/collections/types";
-
 /**
  * Read the opaque device id for the attention ledger. The server-owned
  * `nx_device` cookie is canonical; a localStorage-persisted UUID is the fallback
@@ -20,16 +17,4 @@ export function readDeviceId(): string {
     localStorage.setItem(KEY, id);
   }
   return id;
-}
-
-export type ConsumptionOverrideStatus = Extract<ReadStatus, "unread" | "finished">;
-
-export async function postConsumptionOverride(
-  mediaId: string,
-  status: ConsumptionOverrideStatus,
-): Promise<void> {
-  await apiFetch(`/api/media/${mediaId}/consumption-override`, {
-    method: "POST",
-    body: JSON.stringify({ status }),
-  });
 }

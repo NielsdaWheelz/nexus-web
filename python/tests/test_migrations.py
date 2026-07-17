@@ -7135,7 +7135,9 @@ class TestConsumptionQueueMigration:
         queue_constraint_names = {row[0] for row in queue_constraints}
         assert "uq_consumption_queue_items_user_media" in queue_constraint_names
         assert "ck_consumption_queue_items_position_non_negative" in queue_constraint_names
-        assert "ck_consumption_queue_items_source" in queue_constraint_names
+        # The source vocabulary CHECK was dropped by 0182 (lectern player
+        # lifecycle): persistence adapters own the enum, not the database.
+        assert "ck_consumption_queue_items_source" not in queue_constraint_names
 
         queue_index_names = {row[0] for row in queue_indexes}
         assert "ix_consumption_queue_items_user_position" in queue_index_names
@@ -14112,39 +14114,9 @@ class TestMigration0172AttentionLedger:
         assert "ck_reading_sessions_device_id_len" in reading_session_constraints
         assert "ix_reading_sessions_user_media_active" in reading_session_indexes
         assert "ix_reading_sessions_user_started" in reading_session_indexes
-        assert "ck_consumption_overrides_status" in override_constraints
-
-    def test_status_check_rejects_in_progress_override(self, head_engine):
-        user_id = uuid4()
-        media_id = uuid4()
-        with Session(head_engine) as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (id, kind, title, processing_status)
-                    VALUES (:id, 'web_article', 'M', 'ready_for_reading')
-                    """
-                ),
-                {"id": media_id},
-            )
-            session.commit()
-
-            with pytest.raises(IntegrityError):
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO consumption_overrides (user_id, media_id, status)
-                        VALUES (:u, :m, 'in_progress')
-                        """
-                    ),
-                    {"u": user_id, "m": media_id},
-                )
-            session.rollback()
-
-            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
-            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
-            session.commit()
+        # The status vocabulary CHECK was dropped by 0182 (lectern player
+        # lifecycle): persistence adapters own the enum, not the database.
+        assert "ck_consumption_overrides_status" not in override_constraints
 
 
 class TestMigration0173SynapseSpanGrainTargets:
@@ -17899,6 +17871,458 @@ class TestMigration0181ReaderProfileCreatedAt:
                 "ck_reader_profiles_hyphenation",
             ):
                 assert constraints.get(check_name) == "c", f"{check_name} must survive"
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+
+class TestMigration0182LecternPlayerLifecycle:
+    """0182 adds media_teardown_intents, podcast_subscriptions.
+    auto_queue_watermark_at, media_source_attempts.signed_upload_expires_at
+    (with a conservative pending-upload backfill), and podcast_listening_states.
+    {write_revision,reset_epoch}; drops the dead consumption_queue_items /
+    consumption_overrides source/status CHECKs; and recreates the four in-scope
+    tables' user/media FKs under stable non-cascading names."""
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def test_media_teardown_intents_table_shape(self, head_engine):
+        with Session(head_engine) as session:
+            columns = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, is_nullable
+                        FROM information_schema.columns
+                        WHERE table_name = 'media_teardown_intents'
+                        """
+                    )
+                ).fetchall()
+            }
+            constraint_types = {
+                row[0]: row[1]
+                for row in session.execute(
+                    text(
+                        "SELECT conname, contype FROM pg_constraint"
+                        " WHERE conrelid = 'media_teardown_intents'::regclass"
+                    )
+                ).fetchall()
+            }
+            fk_delete_rule = session.execute(
+                text(
+                    "SELECT confdeltype FROM pg_constraint"
+                    " WHERE conrelid = 'media_teardown_intents'::regclass"
+                    "   AND conname = 'fk_media_teardown_intents_media'"
+                )
+            ).scalar_one()
+            id_default = session.execute(
+                text(
+                    "SELECT column_default FROM information_schema.columns"
+                    " WHERE table_name = 'media_teardown_intents' AND column_name = 'id'"
+                )
+            ).scalar_one_or_none()
+
+        assert set(columns) == {"id", "media_id", "created_at"}, columns
+        assert columns["media_id"] == "NO", "media_id must be NOT NULL"
+        assert columns["created_at"] == "NO", "created_at must be NOT NULL"
+        assert constraint_types.get("uq_media_teardown_intents_media") == "u", constraint_types
+        assert constraint_types.get("fk_media_teardown_intents_media") == "f", constraint_types
+        assert fk_delete_rule == "a", (
+            "media FK must be NO ACTION: teardown deletes child rows through its own owners"
+        )
+        assert id_default is None, (
+            "id must be application-generated (UUIDv7), not a database default"
+        )
+
+    def test_media_teardown_intents_enforces_one_intent_per_media(self, head_engine):
+        media_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status)"
+                    " VALUES (:id, 'web_article', 'M', 'ready_for_reading')"
+                ),
+                {"id": media_id},
+            )
+            session.execute(
+                text("INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :media_id)"),
+                {"id": uuid4(), "media_id": media_id},
+            )
+            session.commit()
+
+            with pytest.raises(IntegrityError):
+                session.execute(
+                    text(
+                        "INSERT INTO media_teardown_intents (id, media_id) VALUES (:id, :media_id)"
+                    ),
+                    {"id": uuid4(), "media_id": media_id},
+                )
+            session.rollback()
+
+            session.execute(
+                text("DELETE FROM media_teardown_intents WHERE media_id = :id"), {"id": media_id}
+            )
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.commit()
+
+    def test_auto_queue_watermark_and_signed_upload_expiry_columns_are_nullable(self, head_engine):
+        with Session(head_engine) as session:
+            rows = {
+                (row[0], row[1]): row[2]
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT table_name, column_name, is_nullable
+                        FROM information_schema.columns
+                        WHERE (table_name = 'podcast_subscriptions'
+                                AND column_name = 'auto_queue_watermark_at')
+                           OR (table_name = 'media_source_attempts'
+                                AND column_name = 'signed_upload_expires_at')
+                        """
+                    )
+                ).fetchall()
+            }
+        assert rows[("podcast_subscriptions", "auto_queue_watermark_at")] == "YES", rows
+        assert rows[("media_source_attempts", "signed_upload_expires_at")] == "YES", rows
+
+    def test_write_revision_and_reset_epoch_default_to_zero(self, head_engine):
+        with Session(head_engine) as session:
+            columns = {
+                row[0]: row
+                for row in session.execute(
+                    text(
+                        """
+                        SELECT column_name, is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_name = 'podcast_listening_states'
+                          AND column_name IN ('write_revision', 'reset_epoch')
+                        """
+                    )
+                ).fetchall()
+            }
+        assert columns["write_revision"][1] == "NO", columns["write_revision"]
+        assert columns["reset_epoch"][1] == "NO", columns["reset_epoch"]
+        assert columns["write_revision"][2] is not None and "0" in columns["write_revision"][2]
+        assert columns["reset_epoch"][2] is not None and "0" in columns["reset_epoch"][2]
+
+        # A live insert proves the default is real, not just reported metadata.
+        user_id = uuid4()
+        media_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status)"
+                    " VALUES (:id, 'podcast_episode', 'M', 'ready_for_reading')"
+                ),
+                {"id": media_id},
+            )
+            session.execute(
+                text("INSERT INTO podcast_listening_states (user_id, media_id) VALUES (:u, :m)"),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+
+            write_revision, reset_epoch = session.execute(
+                text(
+                    "SELECT write_revision, reset_epoch FROM podcast_listening_states"
+                    " WHERE user_id = :u AND media_id = :m"
+                ),
+                {"u": user_id, "m": media_id},
+            ).one()
+            assert write_revision == 0
+            assert reset_epoch == 0
+
+            session.execute(
+                text("DELETE FROM podcast_listening_states WHERE user_id = :u AND media_id = :m"),
+                {"u": user_id, "m": media_id},
+            )
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_dropped_checks_are_gone_and_arbitrary_source_status_now_succeed(self, head_engine):
+        with Session(head_engine) as session:
+            constraint_names = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid IN ("
+                        "   'consumption_queue_items'::regclass,"
+                        "   'consumption_overrides'::regclass"
+                        " )"
+                    )
+                ).fetchall()
+            }
+        assert "ck_consumption_queue_items_source" not in constraint_names
+        assert "ck_consumption_overrides_status" not in constraint_names
+
+        user_id = uuid4()
+        media_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            session.execute(
+                text(
+                    "INSERT INTO media (id, kind, title, processing_status)"
+                    " VALUES (:id, 'web_article', 'M', 'ready_for_reading')"
+                ),
+                {"id": media_id},
+            )
+            # An arbitrary, never-enumerated source/status value now succeeds —
+            # the vocabulary is owned by persistence adapters, not a CHECK.
+            session.execute(
+                text(
+                    "INSERT INTO consumption_queue_items (user_id, media_id, position, source)"
+                    " VALUES (:u, :m, 0, 'anything')"
+                ),
+                {"u": user_id, "m": media_id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO consumption_overrides (user_id, media_id, status)"
+                    " VALUES (:u, :m, 'anything')"
+                ),
+                {"u": user_id, "m": media_id},
+            )
+            session.commit()
+
+            session.execute(
+                text("DELETE FROM consumption_queue_items WHERE user_id = :u AND media_id = :m"),
+                {"u": user_id, "m": media_id},
+            )
+            session.execute(
+                text("DELETE FROM consumption_overrides WHERE user_id = :u AND media_id = :m"),
+                {"u": user_id, "m": media_id},
+            )
+            session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
+            session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+            session.commit()
+
+    def test_four_owner_tables_user_and_media_fks_are_named_and_non_cascading(self, head_engine):
+        with Session(head_engine) as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT tc.table_name, tc.constraint_name, rc.delete_rule
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.referential_constraints rc
+                      ON rc.constraint_name = tc.constraint_name
+                     AND rc.constraint_schema = tc.constraint_schema
+                    WHERE tc.table_name IN (
+                        'consumption_queue_items', 'consumption_overrides',
+                        'podcast_listening_states', 'reading_sessions'
+                    )
+                    AND tc.constraint_type = 'FOREIGN KEY'
+                    """
+                )
+            ).fetchall()
+
+        by_table: dict[str, dict[str, str]] = {}
+        for table_name, constraint_name, delete_rule in rows:
+            by_table.setdefault(table_name, {})[constraint_name] = delete_rule
+
+        for table in (
+            "consumption_queue_items",
+            "consumption_overrides",
+            "podcast_listening_states",
+            "reading_sessions",
+        ):
+            fks = by_table[table]
+            assert set(fks) == {f"fk_{table}_user", f"fk_{table}_media"}, (table, fks)
+            assert fks[f"fk_{table}_user"] == "NO ACTION", (
+                f"{table} user FK must be NO ACTION: there is no product user-delete flow yet"
+            )
+            assert fks[f"fk_{table}_media"] == "NO ACTION", (
+                f"{table} media FK must be NO ACTION: media deletion removes child rows itself"
+            )
+
+    def test_preflight_aborts_on_auto_playlist_provenance(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title, processing_status)"
+                        " VALUES (:id, 'podcast_episode', 'M', 'ready_for_reading')"
+                    ),
+                    {"id": media_id},
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO consumption_queue_items (user_id, media_id, position, source)"
+                        " VALUES (:u, :m, 0, 'auto_playlist')"
+                    ),
+                    {"u": user_id, "m": media_id},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on undisposed auto_playlist rows"
+            assert "auto_playlist" in result.stderr
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_signed_upload_expiry_backfills_pending_upload_attempts_only(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
+
+            media_ids = {
+                name: uuid4()
+                for name in (
+                    "pending_upload",
+                    "queued_upload",
+                    "succeeded_upload",
+                    "other_source_type",
+                )
+            }
+            with Session(engine) as session:
+                for media_id in media_ids.values():
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, processing_status)"
+                            " VALUES (:id, 'pdf', 'M', 'ready_for_reading')"
+                        ),
+                        {"id": media_id},
+                    )
+                attempt_specs = [
+                    ("pending_upload", "uploaded_pdf_file", "accepted"),
+                    ("queued_upload", "uploaded_epub_file", "queued"),
+                    ("succeeded_upload", "uploaded_pdf_file", "succeeded"),
+                    ("other_source_type", "generic_web_url", "accepted"),
+                ]
+                for name, source_type, status in attempt_specs:
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO media_source_attempts (
+                                id, media_id, source_type, attempt_no, status,
+                                intent_key, source_payload
+                            )
+                            VALUES (
+                                :id, :media_id, :source_type, 1, :status,
+                                :intent_key, '{}'::jsonb
+                            )
+                            """
+                        ),
+                        {
+                            "id": uuid4(),
+                            "media_id": media_ids[name],
+                            "source_type": source_type,
+                            "status": status,
+                            "intent_key": f"test:{name}",
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                expiry_by_name = {
+                    name: session.execute(
+                        text(
+                            "SELECT signed_upload_expires_at FROM media_source_attempts"
+                            " WHERE media_id = :m"
+                        ),
+                        {"m": media_id},
+                    ).scalar_one()
+                    for name, media_id in media_ids.items()
+                }
+
+            assert expiry_by_name["pending_upload"] is not None
+            assert expiry_by_name["queued_upload"] is not None
+            assert expiry_by_name["succeeded_upload"] is None, (
+                "a succeeded attempt is not pending and must not be backfilled"
+            )
+            assert expiry_by_name["other_source_type"] is None, (
+                "only uploaded_pdf_file/uploaded_epub_file are signed browser uploads"
+            )
+        finally:
+            reset_test_schema()
+            engine.dispose()
+
+    def test_out_of_range_playback_speed_is_clamped_into_new_wire_bound(self):
+        # Pre-cutover rows could carry any playback_speed > 0 (the old CHECK's
+        # only bound); the new wire contract is [0.25, 3]. An unclamped legacy
+        # row would make ListeningStateOut/FooterAudioActivation construction
+        # raise on read, 500ing that viewer's whole Lectern.
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_ids = {
+                name: uuid4() for name in ("too_fast", "too_slow", "in_range", "at_upper_bound")
+            }
+            speed_by_name = {
+                "too_fast": 5.0,
+                "too_slow": 0.1,
+                "in_range": 1.5,
+                "at_upper_bound": 3.0,
+            }
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for name, media_id in media_ids.items():
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, processing_status)"
+                            " VALUES (:id, 'podcast_episode', 'M', 'ready_for_reading')"
+                        ),
+                        {"id": media_id},
+                    )
+                    session.execute(
+                        text(
+                            "INSERT INTO podcast_listening_states"
+                            " (user_id, media_id, position_ms, playback_speed)"
+                            " VALUES (:u, :m, 0, :speed)"
+                        ),
+                        {"u": user_id, "m": media_id, "speed": speed_by_name[name]},
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                speed_after = {
+                    name: session.execute(
+                        text(
+                            "SELECT playback_speed FROM podcast_listening_states"
+                            " WHERE user_id = :u AND media_id = :m"
+                        ),
+                        {"u": user_id, "m": media_id},
+                    ).scalar_one()
+                    for name, media_id in media_ids.items()
+                }
+
+            assert speed_after["too_fast"] == 3.0, "above-bound speed must clamp down to 3.0"
+            assert speed_after["too_slow"] == 0.25, "below-bound speed must clamp up to 0.25"
+            assert speed_after["in_range"] == 1.5, "in-range speed must be left untouched"
+            assert speed_after["at_upper_bound"] == 3.0, "exact bound must be left untouched"
         finally:
             reset_test_schema()
             engine.dispose()

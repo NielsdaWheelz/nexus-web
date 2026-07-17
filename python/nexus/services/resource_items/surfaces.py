@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ResourceEdge, ResourceMutation, ResourceViewState
+from nexus.db.models import ResourceEdge, ResourceViewState
 from nexus.db.retries import retry_serializable
 from nexus.errors import ApiError, ApiErrorCode, ConflictError
 from nexus.schemas.resource_items import (
@@ -33,6 +31,11 @@ from nexus.services.resource_graph.resolve import (
 from nexus.services.resource_items import versions
 from nexus.services.resource_items.capabilities import capability_for_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 
 
 def get_surface(db: Session, *, viewer_id: UUID, source: ResourceRef) -> ResourceSurfaceOut:
@@ -87,21 +90,16 @@ def replace_surface(
 ) -> ResourceSurfaceMutationOut:
     def op() -> ResourceSurfaceMutationOut:
         scope = f"resource:{source.uri}:outgoing_edges"
-        request_hash = _request_hash(request)
-        replay = db.scalar(
-            select(ResourceMutation).where(
-                ResourceMutation.user_id == viewer_id,
-                ResourceMutation.mutation_scope == scope,
-                ResourceMutation.client_mutation_id == request.client_mutation_id,
-            )
+        request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=True))
+        replay = lookup_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
         )
         if replay is not None:
-            if replay.request_hash != request_hash:
-                raise ConflictError(
-                    ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-                    "Resource mutation id was reused with a different request",
-                )
-            return ResourceSurfaceMutationOut.model_validate(replay.response_json)
+            return ResourceSurfaceMutationOut.model_validate(replay)
 
         assert_ref_visible(db, viewer_id=viewer_id, ref=source)
         for base in request.base_versions:
@@ -146,15 +144,14 @@ def replace_surface(
             changed_edge_ids=changed_edge_ids,
             updated_at=updated_at,
         )
-        db.add(
-            ResourceMutation(
-                user_id=viewer_id,
-                mutation_scope=scope,
-                client_mutation_id=request.client_mutation_id,
-                request_hash=request_hash,
-                changed_lanes=changed_lanes,
-                response_json=response.model_dump(mode="json", by_alias=True),
-            )
+        record_replay(
+            db,
+            viewer_id=viewer_id,
+            scope=scope,
+            client_mutation_id=request.client_mutation_id,
+            request_bytes=request_bytes,
+            response_json=response.model_dump(mode="json", by_alias=True),
+            changed_lanes=changed_lanes,
         )
         db.commit()
         return response
@@ -219,12 +216,3 @@ def _parse_ref_or_error(raw: str) -> ResourceRef:
     if isinstance(parsed, ResourceRefParseFailure):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource ref is invalid")
     return parsed
-
-
-def _request_hash(request: ResourceSurfaceMutationRequest) -> str:
-    encoded = json.dumps(
-        request.model_dump(mode="json", by_alias=True),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()

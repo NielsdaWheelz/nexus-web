@@ -2,7 +2,16 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { setAudioMetrics, setViewportWidth } from "../helpers/audio";
+import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import { assumeMediaId } from "@/lib/lectern/client";
+import {
+  buildFooterDescriptor,
+  installLecternPlayerFetchMock,
+  jsonResponse,
+  setAudioMetrics,
+  setViewportWidth,
+  FOOTER_AUDIO_LABEL,
+} from "../helpers/audio";
 
 function installIntervalHarness() {
   const handlers = new Map<number, { delay: number; handler: TimerHandler }>();
@@ -25,9 +34,7 @@ function installIntervalHarness() {
     run(delay: number): boolean {
       let invoked = false;
       for (const { delay: registeredDelay, handler } of handlers.values()) {
-        if (registeredDelay !== delay || typeof handler !== "function") {
-          continue;
-        }
+        if (registeredDelay !== delay || typeof handler !== "function") continue;
         handler();
         invoked = true;
       }
@@ -36,68 +43,41 @@ function installIntervalHarness() {
   };
 }
 
-function getListeningStateCalls(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- justify-eslint-override: Vitest fetch mock calls are intentionally untyped test data.
-  fetchSpy: { mock: { calls: any[][] } }
+function listeningStatePuts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- justify-eslint-override: fetch mock calls are intentionally untyped test data.
+  fetchSpy: { mock: { calls: any[][] } },
 ): Array<[input: string, init?: RequestInit]> {
   return fetchSpy.mock.calls.filter(
     (args) =>
-      String(args[0]).includes("/api/media/") &&
-      String(args[0]).includes("/listening-state")
+      String(args[0]).includes("/listening-state") &&
+      (args[1]?.method ?? "GET") === "PUT",
   ) as Array<[string, RequestInit?]>;
 }
 
-// Returns 204 for listening-state calls and a minimal billing response for billing calls,
-// so that useBillingAccount does not crash when GlobalPlayerFooter renders.
-function makeFetchMock() {
-  return vi.spyOn(window, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.includes("/api/billing/")) {
-      return new Response(
-        JSON.stringify({ data: { can_transcribe: false, can_use_platform_llm: false } }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-    return new Response(null, { status: 204 });
-  });
+const DESCRIPTOR_A = buildFooterDescriptor("media-123", "Episode Alpha", {
+  positionMs: 45_000,
+  playbackSpeed: 1.75,
+});
+const DESCRIPTOR_B = buildFooterDescriptor("media-456", "Episode Beta");
+
+function PersistenceProbe() {
+  const { persistence } = useGlobalPlayer();
+  return <span data-testid="persistence">{persistence.kind}</span>;
+}
+
+function LecternReadyProbe() {
+  const { resource } = useLectern();
+  return <span data-testid="lectern-status">{resource.status}</span>;
 }
 
 function Harness() {
-  const { setTrack } = useGlobalPlayer();
+  const { playAudio } = useGlobalPlayer();
   return (
     <>
-      <button
-        type="button"
-        onClick={() =>
-          setTrack(
-            {
-              media_id: "media-123",
-              title: "Episode Alpha",
-              stream_url: "https://cdn.example.com/episode-alpha.mp3",
-              source_url: "https://example.com/episode-alpha",
-            },
-            { autoplay: false, seek_seconds: 45, playback_rate: 1.75 }
-          )
-        }
-      >
-        Load episode A
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          setTrack(
-            {
-              media_id: "media-456",
-              title: "Episode Beta",
-              stream_url: "https://cdn.example.com/episode-beta.mp3",
-              source_url: "https://example.com/episode-beta",
-            },
-            { autoplay: false }
-          )
-        }
-      >
-        Load episode B
-      </button>
+      <button type="button" onClick={() => playAudio(DESCRIPTOR_A)}>Load episode A</button>
+      <button type="button" onClick={() => playAudio(DESCRIPTOR_B)}>Load episode B</button>
+      <PersistenceProbe />
+      <LecternReadyProbe />
       <GlobalPlayerFooter />
     </>
   );
@@ -105,13 +85,20 @@ function Harness() {
 
 function App() {
   return (
-    <GlobalPlayerProvider>
-      <Harness />
-    </GlobalPlayerProvider>
+    <LecternProvider>
+      <GlobalPlayerProvider>
+        <Harness />
+      </GlobalPlayerProvider>
+    </LecternProvider>
   );
 }
 
-describe("GlobalPlayer listening-state persistence", () => {
+async function loadA() {
+  await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+  fireEvent.click(screen.getByRole("button", { name: "Load episode A" }));
+}
+
+describe("GlobalPlayer listening heartbeat", () => {
   beforeEach(() => {
     setViewportWidth(1280);
     window.localStorage.clear();
@@ -122,73 +109,240 @@ describe("GlobalPlayer listening-state persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("writes at most every 15 seconds during playback and flushes on pause", async () => {
-    const fetchSpy = makeFetchMock();
-    const intervalHarness = installIntervalHarness();
+  it("sends a fenced camelCase heartbeat on the 15s cadence and on pause", async () => {
+    const { fetchMock } = installLecternPlayerFetchMock();
+    const intervals = installIntervalHarness();
 
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Load episode A" }));
+    await loadA();
 
-    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
     setAudioMetrics(audio, { duration: 120, currentTime: 30, playbackRate: 1.5 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
     fireEvent(audio, new Event("play"));
 
     await waitFor(() =>
-      expect(intervalHarness.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000)
+      expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),
     );
-    expect(getListeningStateCalls(fetchSpy)).toHaveLength(0);
-    expect(intervalHarness.run(15_000)).toBe(true);
-    expect(getListeningStateCalls(fetchSpy)).toHaveLength(1);
+    expect(intervals.run(15_000)).toBe(true);
 
-    const firstCall = getListeningStateCalls(fetchSpy)[0];
-    expect(String(firstCall?.[0])).toContain("/api/media/media-123/listening-state");
+    await waitFor(() => expect(listeningStatePuts(fetchMock).length).toBeGreaterThanOrEqual(1));
+    const [url, init] = listeningStatePuts(fetchMock)[0];
+    expect(String(url)).toContain("/api/media/media-123/listening-state");
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    expect(body).toMatchObject({
+      positionMs: expect.any(Number),
+      playbackSpeed: expect.any(Number),
+      deviceId: expect.any(String),
+      expectedWriteRevision: expect.any(Number),
+      expectedResetEpoch: expect.any(Number),
+      heartbeatSequence: expect.any(Number),
+    });
+    expect(typeof body.heartbeatGeneration).toBe("string");
+    expect(body.durationMs).toHaveProperty("kind");
 
-    audio.currentTime = 42;
-    fireEvent(audio, new Event("timeupdate"));
+    const before = listeningStatePuts(fetchMock).length;
     fireEvent(audio, new Event("pause"));
-    expect(getListeningStateCalls(fetchSpy)).toHaveLength(2);
-    expect(intervalHarness.clearIntervalSpy).toHaveBeenCalled();
+    await waitFor(() => expect(listeningStatePuts(fetchMock).length).toBeGreaterThan(before));
   });
 
-  it("flushes on track switch and page unload", async () => {
-    const fetchSpy = makeFetchMock();
+  it("flushes the outgoing media's heartbeat on a session switch", async () => {
+    const { fetchMock } = installLecternPlayerFetchMock();
 
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Load episode A" }));
+    await loadA();
 
-    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
-    setAudioMetrics(audio, { duration: 120, currentTime: 15, playbackRate: 1.0 });
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 15 });
     fireEvent(audio, new Event("durationchange"));
     fireEvent(audio, new Event("timeupdate"));
 
     fireEvent.click(screen.getByRole("button", { name: "Load episode B" }));
-    expect(getListeningStateCalls(fetchSpy)).toHaveLength(1);
-    expect(String(getListeningStateCalls(fetchSpy)[0]?.[0])).toContain(
-      "/api/media/media-123/listening-state"
-    );
 
-    setAudioMetrics(audio, { duration: 180, currentTime: 20, playbackRate: 1.25 });
-    fireEvent(audio, new Event("durationchange"));
-    fireEvent(audio, new Event("timeupdate"));
-
-    window.dispatchEvent(new Event("beforeunload"));
-    expect(getListeningStateCalls(fetchSpy)).toHaveLength(2);
-    expect(String(getListeningStateCalls(fetchSpy)[1]?.[0])).toContain(
-      "/api/media/media-456/listening-state"
+    await waitFor(() =>
+      expect(
+        listeningStatePuts(fetchMock).some(([url]) =>
+          String(url).includes("/api/media/media-123/listening-state"),
+        ),
+      ).toBe(true),
     );
   });
 
-  it("applies resume seek and speed options when setting a track", async () => {
+  it("applies the descriptor resume seek and speed on Direct play", async () => {
+    installLecternPlayerFetchMock();
     render(<App />);
+    await loadA();
 
-    fireEvent.click(screen.getByRole("button", { name: "Load episode A" }));
-    const audio = screen.getByLabelText("Global podcast player") as HTMLAudioElement;
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    fireEvent(audio, new Event("loadedmetadata"));
 
     await waitFor(() => {
       expect(Math.floor(audio.currentTime)).toBe(45);
       expect(audio.playbackRate).toBeCloseTo(1.75, 3);
     });
+  });
+
+  it("suspends persistence when heartbeat GET recovery fails (playback continues)", async () => {
+    // Lectern GET succeeds; every listening-state PUT/GET fails, forcing the
+    // engine through recovery into Suspended.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/lectern" && method === "GET") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (url.pathname.endsWith("/listening-state")) {
+        throw new TypeError("network down");
+      }
+      return jsonResponse({ data: {} });
+    });
+    const intervals = installIntervalHarness();
+
+    render(<App />);
+    await loadA();
+
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 10 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("play"));
+
+    await waitFor(() =>
+      expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),
+    );
+    intervals.run(15_000);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("persistence").textContent).toBe("Suspended"),
+    );
+    // Playback is unaffected: the dock is still mounted.
+    expect(screen.getByRole("region", { name: "Media player" })).toBeInTheDocument();
+  });
+
+  it("drains the in-flight heartbeat BEFORE issuing the active-media SetUnread command", async () => {
+    // spec §5.4: "Before active-media Unread, the provider closes and drains the
+    // old generation ... then issues the command." The fetch order must show the
+    // heartbeat PUT resolving before the SetUnread consumption POST.
+    const MEDIA = "33333333-3333-4333-8333-333333333333";
+    const order: string[] = [];
+    let releasePut!: () => void;
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/lectern" && method === "GET") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      if (url.pathname === "/api/consumption/commands" && method === "POST") {
+        order.push("setUnread");
+        return jsonResponse({
+          data: {
+            outcome: { kind: "StateOnly" },
+            lectern: { items: [] },
+            nextItem: { kind: "Absent" },
+            listeningStates: [
+              {
+                mediaId: MEDIA,
+                state: {
+                  positionMs: 0,
+                  durationMs: { kind: "Absent" },
+                  playbackSpeed: 1,
+                  writeRevision: 5,
+                  resetEpoch: 1,
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/listening-state")) {
+        if (method === "PUT") {
+          order.push("heartbeatPut");
+          await putGate; // hang until released so the drain has something to await
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return jsonResponse({
+            data: {
+              listeningState: {
+                positionMs: body.positionMs,
+                durationMs: body.durationMs,
+                playbackSpeed: body.playbackSpeed,
+                writeRevision: 1,
+                resetEpoch: 0,
+              },
+              heartbeatGeneration: body.heartbeatGeneration,
+              heartbeatSequence: body.heartbeatSequence,
+            },
+          });
+        }
+        return jsonResponse({
+          data: { positionMs: 0, durationMs: { kind: "Absent" }, playbackSpeed: 1, writeRevision: 0, resetEpoch: 0 },
+        });
+      }
+      return jsonResponse({ data: {} });
+    });
+    const intervals = installIntervalHarness();
+
+    function DrainHarness() {
+      const { playAudio } = useGlobalPlayer();
+      const { setUnread } = useLectern();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => playAudio(buildFooterDescriptor(MEDIA, "Drainable"))}
+          >
+            Load drain
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUnread(assumeMediaId(MEDIA)).catch(() => {});
+            }}
+          >
+            Mark unread
+          </button>
+          <LecternReadyProbe />
+          <GlobalPlayerFooter />
+        </>
+      );
+    }
+
+    render(
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <DrainHarness />
+        </GlobalPlayerProvider>
+      </LecternProvider>,
+    );
+
+    await screen.findByText("ready", { selector: '[data-testid="lectern-status"]' });
+    fireEvent.click(screen.getByRole("button", { name: "Load drain" }));
+
+    const audio = screen.getByLabelText(FOOTER_AUDIO_LABEL) as HTMLAudioElement;
+    setAudioMetrics(audio, { duration: 120, currentTime: 30 });
+    fireEvent(audio, new Event("durationchange"));
+    fireEvent(audio, new Event("timeupdate"));
+    fireEvent(audio, new Event("play"));
+
+    await waitFor(() =>
+      expect(intervals.setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000),
+    );
+    intervals.run(15_000); // fire one heartbeat -> PUT in flight (hangs)
+    await waitFor(() => expect(order).toContain("heartbeatPut"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark unread" }));
+    // Give the command a chance to (wrongly) race ahead: while the heartbeat PUT
+    // hangs, the SetUnread POST must NOT be sent.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(order).toEqual(["heartbeatPut"]);
+
+    // Release the heartbeat: the drain completes, then the command is issued.
+    releasePut();
+    await waitFor(() => expect(order).toContain("setUnread"));
+    expect(order.indexOf("heartbeatPut")).toBeLessThan(order.indexOf("setUnread"));
   });
 });

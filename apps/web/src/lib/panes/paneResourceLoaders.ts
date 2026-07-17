@@ -93,7 +93,10 @@ export interface PaneResourceLoader {
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // settingsLocalVault (client-only File System data), search (query-driven,
-// no route-keyed primary). Intent still warms their chunk; only the data is skipped.
+// no route-keyed primary), lectern (the shell-mounted LecternProvider is the one
+// snapshot owner — it issues its own initial GET /api/lectern through its FIFO
+// lane and never reads ResourceCache, so a pane loader would create a second,
+// non-canonical fetch path). Intent still warms their chunk; only the data is skipped.
 export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),

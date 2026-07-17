@@ -3,6 +3,15 @@
 **Status:** Spec · **Rev 1** · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior.
 
+**Historical note (2026-07-16):** `lectern-player-lifecycle-hard-cutover.md`
+deleted `GlobalPlayerQueuePanel`, the "pattern" this doc cites for
+`WalknoteReviewPanel` below. Its cited `GlobalPlayerFooter.tsx` line numbers
+for the queue/review button (e.g. "lines 510/694") have also drifted — the
+shipped review button uses the `walknoteButton`/`walknoteBadge` CSS classes
+(`GlobalPlayerFooter.module.css`), and, contrary to the "no separate badge
+element" note below, the shipped markup does use a separate `walknoteBadge`
+span. These are retained as historical implementation record only.
+
 ## One-line
 
 One tap on the global player marks the current `(media_id, position_ms)` as a session waypoint; hold to speak a reaction; an explicit materialize step resolves each waypoint to the nearest transcript fragment, creates a real `highlight_fragment_anchors`-anchored highlight, and attaches the Deepgram-transcribed voice note as the highlight note body.

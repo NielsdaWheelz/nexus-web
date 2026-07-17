@@ -40,6 +40,23 @@ from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
+
+@pytest.fixture(autouse=True)
+def _clean_teardown_state(direct_db: DirectSessionManager):
+    """Clear teardown intents + durable teardown/cleanup jobs after each test so the
+    confirmation reservation + any teardown jobs do not leak across the suite."""
+    yield
+    with direct_db.session() as db:
+        db.execute(text("DELETE FROM media_teardown_intents"))
+        db.execute(
+            text(
+                "DELETE FROM background_jobs "
+                "WHERE kind IN ('media_teardown', 'storage_object_cleanup', 'storage_orphan_sweep')"
+            )
+        )
+        db.commit()
+
+
 # Sample file content for testing
 PDF_MAGIC = b"%PDF-1.4"
 PDF_CONTENT = PDF_MAGIC + b"fake pdf content " * 1000  # ~18KB
@@ -94,6 +111,9 @@ def _assert_failed_upload_source_attempt(
 
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
     with direct_db.session() as session:
+        # Fail the ingest dispatch enqueue but allow the confirmation's durable
+        # storage-object-cleanup reservation (spec §3.1) to land, so this stays a
+        # dispatch-failure test rather than a confirm-copy failure test.
         session.execute(
             text(
                 """
@@ -102,6 +122,11 @@ def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> N
                 LANGUAGE plpgsql
                 AS $$
                 BEGIN
+                    IF NEW.kind IN (
+                        'storage_object_cleanup', 'media_teardown', 'storage_orphan_sweep'
+                    ) THEN
+                        RETURN NEW;
+                    END IF;
                     RAISE EXCEPTION 'queue unavailable';
                 END;
                 $$;

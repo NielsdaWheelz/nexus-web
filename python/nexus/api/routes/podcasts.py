@@ -216,4 +216,6 @@ def list_podcast_episodes(
         sort=sort,
         q=q,
     )
-    return ok(rows)
+    # by_alias=True: MediaOut.player_descriptor is the sole aliased field
+    # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
+    return ok(rows, by_alias=True)

@@ -110,6 +110,9 @@ def ensure_default_intrinsic(
     Used by all default-library direct writer paths (upload, from_url, etc.).
     Never writes closure edges.
     """
+    # Teardown reference barrier (spec §3.1): lock the media row + reject a pending
+    # intent before the first lifetime reference (the intrinsic + the library entry).
+    library_entries.raise_if_media_teardown_pending(db, media_id)
     library_entries.ensure_entry(db, default_library_id, library_entries.media_target(media_id))
 
     intrinsic_exists = db.execute(
@@ -142,6 +145,10 @@ def add_media_to_non_default_closure(
     media_id: UUID,
 ) -> None:
     """Create closure edges and materialized default media entries for all members."""
+    # Teardown reference barrier (spec §3.1): lock the media row + reject a pending
+    # intent before the first closure edge (a lifetime reference counted by
+    # count_default_references) is inserted.
+    library_entries.raise_if_media_teardown_pending(db, media_id)
     default_library_rows = db.execute(
         text("""
             SELECT dl.id
