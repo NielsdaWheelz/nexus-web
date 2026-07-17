@@ -1560,7 +1560,7 @@ class TestListLibraryMedia:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
         # Registered LAST so LIFO teardown deletes these BEFORE their media: migration
-        # 0181 made the reading_sessions/podcast_listening_states -> media FKs
+        # 0182 made the reading_sessions/podcast_listening_states -> media FKs
         # non-cascading, so they no longer disappear with the media row.
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
         direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)

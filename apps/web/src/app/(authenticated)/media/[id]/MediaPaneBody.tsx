@@ -635,8 +635,9 @@ export default function MediaPaneBody() {
   const isMobileViewport = useIsMobileViewport();
   const {
     profile: readerProfile,
-    save: saveReaderProfile,
-    updateTheme,
+    persistence: readerPersistence,
+    setTheme,
+    setFocusMode,
   } = useReaderContext();
   const attentionTracker = useAttentionTracker({ mediaId: id });
   const scrollRestoreAppliedRef = useRef(false);
@@ -4281,6 +4282,11 @@ export default function MediaPaneBody() {
       if (isEditableTarget(event.target)) {
         return;
       }
+      // Forbidden disables persistence controls; the shortcut goes quiet with
+      // them instead of firing intents the reducer would ignore.
+      if (readerPersistence.state === "Forbidden") {
+        return;
+      }
       const isCycle =
         event.shiftKey &&
         (event.metaKey || event.ctrlKey) &&
@@ -4296,7 +4302,7 @@ export default function MediaPaneBody() {
               : current === "paragraph"
                 ? "sentence"
                 : "off";
-        saveReaderProfile({ focus_mode: next });
+        setFocusMode(next);
         return;
       }
       if (event.key === "Escape" && !event.shiftKey) {
@@ -4312,14 +4318,14 @@ export default function MediaPaneBody() {
         readerProfile.focus_mode !== "off"
       ) {
         event.preventDefault();
-        saveReaderProfile({ focus_mode: "off" });
+        setFocusMode("off");
       }
     }
     window.addEventListener("keydown", handleKeydown);
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [clearTarget, readerProfile.focus_mode, saveReaderProfile, targetStatus]);
+  }, [clearTarget, readerPersistence.state, readerProfile.focus_mode, setFocusMode, targetStatus]);
 
   // Selection-active mirror on the reader root so focus mode dimming auto-suspends.
   useEffect(() => {
@@ -4635,6 +4641,8 @@ export default function MediaPaneBody() {
       });
     }
 
+    // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
+    const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
     if (isReflowableReader) {
       readerOptions.push({
         id: "reader-theme-light",
@@ -4642,8 +4650,8 @@ export default function MediaPaneBody() {
           readerProfile.theme === "light"
             ? "Light theme (current)"
             : "Light theme",
-        disabled: readerProfile.theme === "light",
-        onSelect: () => updateTheme("light"),
+        disabled: readerProfile.theme === "light" || readerPersistenceForbidden,
+        onSelect: () => setTheme("light"),
       });
       readerOptions.push({
         id: "reader-theme-dark",
@@ -4651,8 +4659,21 @@ export default function MediaPaneBody() {
           readerProfile.theme === "dark"
             ? "Dark theme (current)"
             : "Dark theme",
-        disabled: readerProfile.theme === "dark",
-        onSelect: () => updateTheme("dark"),
+        disabled: readerProfile.theme === "dark" || readerPersistenceForbidden,
+        onSelect: () => setTheme("dark"),
+      });
+    } else if (isPdf && canRead) {
+      readerOptions.push({
+        id: "reader-pdf-source-colors",
+        label: "PDF pages keep their source colors",
+        // A static, perceivable status row (the render seam wraps it in a
+        // labelled role="group"): a native-disabled menuitem would be skipped
+        // by the menu's keyboard traversal entirely.
+        render: () => (
+          <div className={styles.readerMenuStatusRow}>
+            PDF pages keep their source colors
+          </div>
+        ),
       });
     }
 
@@ -4674,6 +4695,7 @@ export default function MediaPaneBody() {
     handleRetryMetadata,
     handleRetryProcessing,
     isMobileViewport,
+    isPdf,
     isTranscriptMedia,
     isReflowableReader,
     loadLibraryPickerLibraries,
@@ -4682,12 +4704,13 @@ export default function MediaPaneBody() {
     openChatForMedia,
     openInNewPane,
     readerProfile.theme,
+    readerPersistence.state,
     refreshSourceBusy,
     requestSecondarySurface,
     retryMetadataBusy,
     retryProcessingBusy,
     canRead,
-    updateTheme,
+    setTheme,
   ]);
 
   const closeSecondaryOnMobile = useCallback(() => {
@@ -5827,6 +5850,8 @@ export default function MediaPaneBody() {
       fragments={fragments}
       activeFragment={activeTranscriptFragment}
       renderedHtml={renderedHtml}
+      readerSurfaceClassName={readerSurfaceClassName}
+      readerSurfaceStyle={readerSurfaceStyle}
       evidenceHighlightId={
         resolvedEvidence?.resolver.kind === "transcript"
           ? resolvedEvidenceHighlightId

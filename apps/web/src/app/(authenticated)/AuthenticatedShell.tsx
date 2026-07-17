@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import AppNav from "@/components/appnav/AppNav";
 import Launcher from "@/components/launcher/Launcher";
 import WorkspaceHost from "@/components/workspace/WorkspaceHost";
@@ -14,6 +14,7 @@ import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { ReaderProvider } from "@/lib/reader/ReaderContext";
+import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
@@ -50,6 +51,7 @@ export default function AuthenticatedShell({
         <ResourceCacheProvider value={resources}>
           <KeybindingsProvider>
             <ReaderProvider initialProfile={readerProfile}>
+              <ReaderProfileSaveFeedback />
               <AuthenticatedWorkspace initialState={initialState} />
             </ReaderProvider>
           </KeybindingsProvider>
@@ -61,6 +63,15 @@ export default function AuthenticatedShell({
 
 function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState }) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
+
+  // Interactivity fact for the workspace root: absent in server HTML, stamped
+  // by the first client commit. Input dispatched before hydration lands on
+  // dead SSR markup (React re-renders over it), so anything driving the UI
+  // programmatically must be able to await this.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   // Warm every restored visible pane's chunk as soon as the shell mounts so the downloads
   // overlap hydration instead of waiting for each WorkspaceHost Suspense to commit (D-7).
@@ -95,7 +106,7 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
               GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
           <LecternProvider>
             <Launcher />
-            <div className={styles.layout}>
+            <div className={styles.layout} data-hydrated={hydrated || undefined}>
               <AppNav />
               <main className={styles.main}>
                 <GlobalPlayerProvider>

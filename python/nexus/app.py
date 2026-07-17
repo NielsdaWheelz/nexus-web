@@ -38,6 +38,7 @@ LLM client lifecycle:
 
 import json
 import re
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from uuid import UUID
@@ -71,8 +72,9 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 
 logger = get_logger(__name__)
 
-# Exact reader-state path: /media/{id}/reader-state and nothing else.
-READER_STATE_PATH_RE = re.compile(r"/media/[^/]+/reader-state")
+# Exact private-reader paths: /media/{id}/reader-state or /me/reader-profile,
+# and nothing else.
+READER_PRIVATE_NO_STORE_PATH_RE = re.compile(r"/media/[^/]+/reader-state|/me/reader-profile")
 
 
 async def validate_json_request_body(request: Request) -> JSONResponse | None:
@@ -225,11 +227,20 @@ async def lifespan(app: FastAPI):
     logger.info("httpx_client_closed")
 
 
-def create_app(skip_auth_middleware: bool = False) -> FastAPI:
+def create_app(
+    skip_auth_middleware: bool = False,
+    install_auth_middleware: Callable[[FastAPI], None] | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
-        skip_auth_middleware: If True, skip adding auth middleware (for testing).
+        skip_auth_middleware: If True (and no installer is given), run without
+            auth middleware (for testing).
+        install_auth_middleware: Test-tier hook that installs a
+            custom-verifier ``AuthMiddleware`` at the exact production
+            position in the stack. Adding auth after ``create_app`` returns
+            would place it outermost and change middleware ordering — e.g.
+            ``private_reader_no_store`` would no longer stamp 401 responses.
 
     Returns:
         Configured FastAPI application instance.
@@ -303,7 +314,9 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
     app.include_router(api_router)
 
     # Add auth middleware (runs on all requests except public paths)
-    if not skip_auth_middleware:
+    if install_auth_middleware is not None:
+        install_auth_middleware(app)
+    elif not skip_auth_middleware:
         verifier = create_token_verifier()
         bootstrap_callback = create_bootstrap_callback()
 
@@ -380,16 +393,24 @@ def create_app(skip_auth_middleware: bool = False) -> FastAPI:
                 stream_base_url=settings.effective_stream_base_url,
             )
 
-    # Reader-state responses are never cacheable: the cursor is revalidated
-    # event-driven and a cached snapshot would defeat revision arbitration.
-    # Registered after every other create_app middleware so it runs outermost
-    # here and stamps every reader-state response, including auth failures,
-    # exception-handler output, and validation errors.
+    # Reader-state and reader-profile responses are never cacheable: the
+    # cursor is revalidated event-driven and the profile is per-user private
+    # state, so a cached snapshot would defeat revision arbitration or leak
+    # across accounts. Registered after every other create_app middleware so
+    # it runs outermost here and stamps every matched response, including
+    # auth failures, validation errors, and exception-handler output; for a
+    # matched path it also owns the raw-500 stamp by delegating once to the
+    # canonical exception handler instead of letting the exception propagate
+    # to the outer ServerErrorMiddleware unstamped.
     @app.middleware("http")
-    async def reader_state_no_store(request: Request, call_next):
-        response = await call_next(request)
-        if READER_STATE_PATH_RE.fullmatch(request.url.path):
-            response.headers["Cache-Control"] = "private, no-store"
+    async def private_reader_no_store(request: Request, call_next):
+        if not READER_PRIVATE_NO_STORE_PATH_RE.fullmatch(request.url.path):
+            return await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            response = await unhandled_exception_handler(request, exc)
+        response.headers["Cache-Control"] = "private, no-store"
         return response
 
     return app

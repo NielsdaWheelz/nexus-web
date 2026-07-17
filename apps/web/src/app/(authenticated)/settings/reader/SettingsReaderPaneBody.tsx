@@ -1,20 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
+import { toReaderProfileSaveErrorMessage } from "@/lib/reader/readerProfileSync";
+import { READER_PROFILE_SAVE_FEEDBACK_KEY } from "@/lib/reader/ReaderProfileSaveFeedback";
 import {
   isReaderFocusMode,
   isReaderFontFamily,
   isReaderTheme,
   type ReaderFocusMode,
 } from "@/lib/reader/types";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
+import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
@@ -27,26 +31,50 @@ const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string 
 export default function SettingsReaderPaneBody() {
   const {
     profile: p,
-    error,
-    saving,
-    save,
-    updateTheme,
-    updateFontFamily,
-    updateFontSize,
-    updateLineHeight,
-    updateColumnWidth,
+    persistence,
+    setTheme,
+    setFontFamily,
+    setFocusMode,
+    setHyphenation,
+    setFontSize,
+    setLineHeight,
+    setColumnWidth,
+    retrySave,
   } = useReaderContext();
-  const [mounted, setMounted] = useState(false);
-  const disabled = !mounted || saving;
+  const { suppressDedupeKey } = useFeedback();
+  const isActive = usePaneRuntime()?.isActive ?? true;
 
+  // While this pane is active it owns the reader-profile-save presentation:
+  // the retained global toast is suppressed and failures render inline below.
+  // Releasing the lease (deactivation/unmount) restores the global notice if
+  // failure remains, so there is exactly one visible live presentation.
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    if (!isActive) {
+      return;
+    }
+    return suppressDedupeKey(READER_PROFILE_SAVE_FEEDBACK_KEY);
+  }, [isActive, suppressDedupeKey]);
+
+  // Controls stay interactive while Pending or SaveFailed; only the terminal
+  // Forbidden state disables persistence controls.
+  const disabled = persistence.state === "Forbidden";
+  const failure =
+    persistence.state === "SaveFailed" || persistence.state === "Forbidden"
+      ? persistence.failure
+      : null;
 
   return (
     <PaneSurface opener={<SectionOpener heading="Reader" />}>
       <PaneSection title="Appearance">
-        {error && <FeedbackNotice severity="error">{error}</FeedbackNotice>}
+        {isActive && failure && (
+          <FeedbackNotice severity="error" {...toReaderProfileSaveErrorMessage(failure)}>
+            {persistence.state === "SaveFailed" && (
+              <Button variant="secondary" onClick={retrySave}>
+                Retry
+              </Button>
+            )}
+          </FeedbackNotice>
+        )}
 
         <div className={styles.form}>
         <div className={styles.formRow}>
@@ -58,7 +86,7 @@ export default function SettingsReaderPaneBody() {
               id="theme"
               value={p.theme}
               onChange={(e) => {
-                if (isReaderTheme(e.target.value)) updateTheme(e.target.value);
+                if (isReaderTheme(e.target.value)) setTheme(e.target.value);
               }}
               disabled={disabled}
             >
@@ -76,7 +104,7 @@ export default function SettingsReaderPaneBody() {
               value={p.font_family}
               onChange={(e) => {
                 if (isReaderFontFamily(e.target.value)) {
-                  updateFontFamily(e.target.value);
+                  setFontFamily(e.target.value);
                 }
               }}
               disabled={disabled}
@@ -98,9 +126,7 @@ export default function SettingsReaderPaneBody() {
               min={12}
               max={28}
               value={p.font_size_px}
-              onChange={(e) =>
-                updateFontSize(Number.parseInt(e.target.value, 10))
-              }
+              onChange={(e) => setFontSize(Number.parseInt(e.target.value, 10))}
               disabled={disabled}
               className={styles.range}
             />
@@ -119,9 +145,7 @@ export default function SettingsReaderPaneBody() {
               max={2.2}
               step={0.1}
               value={p.line_height}
-              onChange={(e) =>
-                updateLineHeight(Number.parseFloat(e.target.value))
-              }
+              onChange={(e) => setLineHeight(Number.parseFloat(e.target.value))}
               disabled={disabled}
               className={styles.range}
             />
@@ -139,9 +163,7 @@ export default function SettingsReaderPaneBody() {
               min={40}
               max={120}
               value={p.column_width_ch}
-              onChange={(e) =>
-                updateColumnWidth(Number.parseInt(e.target.value, 10))
-              }
+              onChange={(e) => setColumnWidth(Number.parseInt(e.target.value, 10))}
               disabled={disabled}
               className={styles.range}
             />
@@ -154,7 +176,7 @@ export default function SettingsReaderPaneBody() {
             <Tabs
               value={p.focus_mode}
               onValueChange={(next) => {
-                if (isReaderFocusMode(next)) save({ focus_mode: next });
+                if (isReaderFocusMode(next)) setFocusMode(next);
               }}
               variant="segmented"
             >
@@ -177,16 +199,18 @@ export default function SettingsReaderPaneBody() {
           <div className={styles.formField}>
             <Toggle
               checked={p.hyphenation === "auto"}
-              onCheckedChange={(checked) =>
-                save({ hyphenation: checked ? "auto" : "off" })
-              }
+              onCheckedChange={(checked) => setHyphenation(checked ? "auto" : "off")}
               disabled={disabled}
               label="Hyphenation on narrow screens"
             />
           </div>
         </div>
 
-        {saving && <p className={styles.savingHint}>Saving...</p>}
+        {persistence.state === "Pending" && (
+          <p className={styles.savingHint} role="status">
+            Saving…
+          </p>
+        )}
         </div>
       </PaneSection>
     </PaneSurface>

@@ -1,107 +1,282 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+/**
+ * The one browser owner of reader-profile writes and revalidation.
+ *
+ * One logical PATCH is in flight per provider with one latest-merged queue;
+ * discrete fields send immediately when idle, range fields after 400 ms idle
+ * within a 5 s maximum. Revalidation is event-driven only (visible, focus,
+ * pageshow, online) and adopts only from Clean with an unchanged intent
+ * generation. Decisions are pure in `readerProfileSync.ts`; this hook owns
+ * timers, fetches, the attempt watchdog, lifecycle flush, and listeners.
+ *
+ * Defective settlements (contract errors) throw out of the continuation; the
+ * 35 s attempt watchdog is the liveness escape that converts the wedged
+ * attempt into a retryable failure.
+ */
+
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { toFeedback } from "@/components/feedback/Feedback";
-import type { ReaderFontFamily, ReaderProfile, ReaderTheme } from "./types";
+import {
+  classifyReaderProfileSaveError,
+  desiredReaderProfile,
+  initialReaderProfileSyncState,
+  parseReaderProfile,
+  readerProfilePersistence,
+  readerProfileWorkDueAt,
+  readerProfilesEqual,
+  reduceReaderProfileSync,
+  sendableReaderProfilePatch,
+  type ReaderProfilePatch,
+  type ReaderProfilePersistence,
+  type ReaderProfileSyncEvent,
+  type ReaderProfileSyncState,
+} from "./readerProfileSync";
+import type { ReaderProfile } from "./types";
 
-type ApiFetchFn = typeof apiFetch;
-
-interface UseReaderProfileOptions {
-  initialProfile: ReaderProfile;
-  apiFetch?: ApiFetchFn;
-  debounceMs?: number;
+export interface UseReaderProfileResult {
+  /** Optimistic desired projection; drives pixels. */
+  profile: ReaderProfile;
+  persistence: ReaderProfilePersistence;
+  /** Semantic-setter seam for the provider; not a public save. */
+  intend: (patch: ReaderProfilePatch) => void;
+  retrySave: () => void;
 }
 
-// Save-only: the profile is seeded from the server bootstrap, so there is no
-// load-on-mount. Edits debounce a PATCH and optimistically update local state.
-export function useReaderProfile(options: UseReaderProfileOptions) {
-  const fetchFn = options.apiFetch ?? apiFetch;
-  const debounceMs = options.debounceMs ?? 400;
-  const [profile, setProfile] = useState<ReaderProfile>(options.initialProfile);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef<Partial<ReaderProfile> | null>(null);
-
-  const flushPending = useCallback(async () => {
-    const payload = pendingRef.current;
-    pendingRef.current = null;
-    debounceRef.current = null;
-    if (!payload) {
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetchFn<{ data: ReaderProfile }>("/api/me/reader-profile", {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      setProfile(res.data);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setError(toFeedback(err, { fallback: "Failed to save reader settings" }).title);
-    } finally {
-      setSaving(false);
-    }
-  }, [fetchFn]);
-
-  const save = useCallback(
-    (updates: Partial<ReaderProfile>) => {
-      pendingRef.current = { ...pendingRef.current, ...updates };
-      setProfile((prev) => ({ ...prev, ...updates }));
-
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-      debounceRef.current = setTimeout(() => {
-        void flushPending();
-      }, debounceMs);
-    },
-    [debounceMs, flushPending]
+export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfileResult {
+  const [state, dispatch] = useReducer(
+    reduceReaderProfileSync,
+    initialProfile,
+    initialReaderProfileSyncState,
   );
+  const stateRef = useRef<ReaderProfileSyncState>(state);
+  stateRef.current = state;
 
-  const updateTheme = useCallback(
-    (theme: ReaderTheme) => save({ theme }),
-    [save]
-  );
-  const updateFontFamily = useCallback(
-    (font_family: ReaderFontFamily) => save({ font_family }),
-    [save]
-  );
-  const updateFontSize = useCallback(
-    (font_size_px: number) => save({ font_size_px }),
-    [save]
-  );
-  const updateLineHeight = useCallback(
-    (line_height: number) => save({ line_height }),
-    [save]
-  );
-  const updateColumnWidth = useCallback(
-    (column_width_ch: number) => save({ column_width_ch }),
-    [save]
-  );
+  const attemptSeqRef = useRef(0);
+  const intentGenerationRef = useRef(0);
+  const revalidateInFlightRef = useRef(false);
 
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-    };
+  /** Reduce, mirror synchronously, and dispatch — callers act on the result. */
+  const apply = useCallback((event: ReaderProfileSyncEvent): ReaderProfileSyncState => {
+    const next = reduceReaderProfileSync(stateRef.current, event);
+    stateRef.current = next;
+    dispatch(event);
+    return next;
   }, []);
 
-  return {
-    profile,
-    error,
-    saving,
-    save,
-    updateTheme,
-    updateFontFamily,
-    updateFontSize,
-    updateLineHeight,
-    updateColumnWidth,
-  };
+  const send = useCallback(async (): Promise<void> => {
+    const patch = sendableReaderProfilePatch(stateRef.current.local);
+    if (patch === null) {
+      return;
+    }
+    attemptSeqRef.current += 1;
+    const attemptId = attemptSeqRef.current;
+    apply({ type: "save_started", attemptId, now: Date.now() });
+    try {
+      const res = await apiFetch<{ data: unknown }>("/api/me/reader-profile", {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+        keepalive: true,
+      });
+      apply({ type: "save_succeeded", attemptId, profile: parseReaderProfile(res.data) });
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) {
+        return;
+      }
+      const local = stateRef.current.local;
+      if (local.status !== "saving" || local.attemptId !== attemptId) {
+        // The watchdog already expired this attempt (including our own abort);
+        // late settlement is ignored.
+        return;
+      }
+      apply({ type: "save_failed", attemptId, failure: classifyReaderProfileSaveError(err) });
+    }
+  }, [apply]);
+
+  // Deferred-work scheduling: Immediate work sends now; range work at
+  // min(idleAt, deadlineAt). Re-arms on every transition, so work queued
+  // behind an acknowledged PATCH resumes its remaining clock.
+  useEffect(() => {
+    if (state.local.status !== "deferred") {
+      return;
+    }
+    const delay = Math.max(0, readerProfileWorkDueAt(state.local.work) - Date.now());
+    const timer = setTimeout(() => {
+      if (stateRef.current.local.status === "deferred") {
+        void send();
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [state, send]);
+
+  /** The one expiry check: timer, pageshow, visible, and focus all land here. */
+  const checkAttemptExpiry = useCallback(() => {
+    const local = stateRef.current.local;
+    if (local.status !== "saving" || Date.now() < local.expiresAt) {
+      return;
+    }
+    // Expiry invalidates the attempt logically: the attempt-id guard ignores
+    // any late settlement, and restore never auto-starts a replacement PATCH.
+    // The wire request is deliberately NOT aborted — attaching an AbortSignal
+    // to a keepalive fetch starves delivery in Chromium under automation, and
+    // an abort proves nothing about the server transaction anyway (spec §7
+    // residual); a late-but-committed write is reconciled by last-write-wins.
+    apply({
+      type: "save_failed",
+      attemptId: local.attemptId,
+      failure: { kind: "AttemptDeadlineExceeded" },
+    });
+  }, [apply]);
+
+  useEffect(() => {
+    if (state.local.status !== "saving") {
+      return;
+    }
+    const timer = setTimeout(checkAttemptExpiry, Math.max(0, state.local.expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [state, checkAttemptExpiry]);
+
+  const revalidate = useCallback(async (): Promise<void> => {
+    if (revalidateInFlightRef.current || stateRef.current.local.status !== "clean") {
+      return;
+    }
+    revalidateInFlightRef.current = true;
+    const generation = intentGenerationRef.current;
+    try {
+      const res = await apiFetch<{ data: unknown }>("/api/me/reader-profile", {
+        cache: "no-store",
+      });
+      const profile = parseReaderProfile(res.data);
+      if (intentGenerationRef.current !== generation || stateRef.current.local.status !== "clean") {
+        return;
+      }
+      apply({ type: "revalidated", profile });
+    } catch (err) {
+      if (handleUnauthenticatedApiError(err)) {
+        return;
+      }
+      const failure = classifyReaderProfileSaveError(err);
+      if (failure.kind === "Forbidden") {
+        // A forbidden read is an authorization contract regression, not a
+        // save failure; defect loudly.
+        throw err;
+      }
+      // justify-ignore-error: classified transient revalidation failure
+      // retains current state until the next resume event (spec §7).
+      console.error("Reader profile revalidation failed:", err);
+    } finally {
+      revalidateInFlightRef.current = false;
+    }
+  }, [apply]);
+
+  /**
+   * Lifecycle capture: flush deferred or retryable-failed work only when no
+   * logical PATCH is in flight. Forbidden is never promoted.
+   */
+  const lifecycleFlush = useCallback(() => {
+    const status = stateRef.current.local.status;
+    if (status === "deferred" || status === "save_failed") {
+      void send();
+    }
+  }, [send]);
+
+  // justify-event-driven-get: revalidation runs only inside the registered
+  // resume listeners (visible/focus/pageshow/online), never on effect run.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        lifecycleFlush();
+      } else {
+        checkAttemptExpiry();
+        void revalidate();
+      }
+    };
+    const onFocus = () => {
+      checkAttemptExpiry();
+      void revalidate();
+    };
+    const onPageHide = () => {
+      lifecycleFlush();
+    };
+    const onPageShow = () => {
+      checkAttemptExpiry();
+      void revalidate();
+    };
+    const onOnline = () => {
+      void revalidate();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [checkAttemptExpiry, lifecycleFlush, revalidate]);
+
+  // Provider teardown flushes like pagehide; the ref keeps the effect
+  // mount-only so it cannot double-flush on dependency churn.
+  const lifecycleFlushRef = useRef(lifecycleFlush);
+  lifecycleFlushRef.current = lifecycleFlush;
+  useEffect(() => () => lifecycleFlushRef.current(), []);
+
+  const intend = useCallback(
+    (patch: ReaderProfilePatch) => {
+      intentGenerationRef.current += 1;
+      const next = apply({ type: "intent", patch, now: Date.now() });
+      // "Send now when idle": due Immediate work dispatches in the same task,
+      // so the keepalive PATCH is already in flight before an instant reload
+      // — never parked behind a zero-delay timer a navigation could beat.
+      if (
+        next.local.status === "deferred" &&
+        readerProfileWorkDueAt(next.local.work) <= Date.now()
+      ) {
+        void send();
+      }
+    },
+    [apply, send],
+  );
+
+  const retrySave = useCallback(() => {
+    if (stateRef.current.local.status !== "save_failed") {
+      throw new Error("retrySave is only available from SaveFailed");
+    }
+    void send();
+  }, [send]);
+
+  // Value-stable projections: transitions that change no desired pixel and no
+  // persistence fact (e.g. deferred -> saving) keep both identities, so the
+  // context value memo holds and reader consumers skip the re-render.
+  const profileRef = useRef<ReaderProfile | null>(null);
+  const profile = useMemo(() => {
+    const next = desiredReaderProfile(state);
+    if (profileRef.current && readerProfilesEqual(profileRef.current, next)) {
+      return profileRef.current;
+    }
+    profileRef.current = next;
+    return next;
+  }, [state]);
+
+  const persistenceRef = useRef<ReaderProfilePersistence | null>(null);
+  const persistence = useMemo(() => {
+    const next = readerProfilePersistence(state);
+    const prev = persistenceRef.current;
+    if (
+      prev &&
+      prev.state === next.state &&
+      ("failure" in prev ? prev.failure : null) === ("failure" in next ? next.failure : null)
+    ) {
+      return prev;
+    }
+    persistenceRef.current = next;
+    return next;
+  }, [state]);
+
+  return { profile, persistence, intend, retrySave };
 }

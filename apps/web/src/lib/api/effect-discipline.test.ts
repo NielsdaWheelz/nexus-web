@@ -221,6 +221,18 @@ function adHocGetEffects(source: Source): AdHocGetEffect[] {
   return offenders;
 }
 
+// An effect may carry a `justify-event-driven-get` comment (within the three
+// lines above it) when its GET runs only inside event handlers the effect
+// registers (e.g. visible/focus/pageshow/online revalidation), never on the
+// effect's own execution — the same nearby-comment escape as justify-polling.
+function hasEventDrivenGetJustification(offender: AdHocGetEffect): boolean {
+  const lines = sourceText(offender.path).split("\n");
+  return lines
+    .slice(Math.max(0, offender.line - 4), offender.line - 1)
+    .join("\n")
+    .includes("justify-event-driven-get");
+}
+
 function formatAdHocGetEffect(offender: AdHocGetEffect): string {
   const causes = [
     offender.directApiFetchGet ? "direct apiFetch GET" : null,
@@ -418,6 +430,7 @@ describe("effect discipline source shape", () => {
   it("keeps GET requests out of ad hoc effects", () => {
     const offenders = readSources()
       .flatMap(adHocGetEffects)
+      .filter((offender) => !hasEventDrivenGetJustification(offender))
       .map(formatAdHocGetEffect);
 
     expect(offenders).toEqual([]);

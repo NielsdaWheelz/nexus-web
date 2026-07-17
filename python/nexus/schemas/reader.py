@@ -1,6 +1,5 @@
 """Reader profile and per-media reader state schemas."""
 
-from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -17,7 +16,11 @@ HyphenationValue = Literal["auto", "off"]
 
 
 class ReaderProfileOut(BaseModel):
-    """Response schema for reader profile."""
+    """Response schema for reader profile.
+
+    Exactly the seven preference fields: creation metadata (``created_at``) is
+    database-clock-only and never appears here.
+    """
 
     theme: ThemeValue
     font_size_px: int = Field(ge=12, le=28)
@@ -26,9 +29,8 @@ class ReaderProfileOut(BaseModel):
     column_width_ch: int = Field(ge=40, le=120)
     focus_mode: FocusModeValue
     hyphenation: HyphenationValue
-    updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, frozen=True)
 
 
 class ReaderConnectionAnchorOut(BaseModel):
@@ -82,7 +84,9 @@ class ReaderProfilePatch(BaseModel):
     focus_mode: FocusModeValue | None = None
     hyphenation: HyphenationValue | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    # strict=True: numeric strings and non-integer numeric forms for the int
+    # fields must fail validation rather than silently coerce.
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     @model_validator(mode="after")
     def reject_null_values(self) -> "ReaderProfilePatch":
@@ -98,6 +102,13 @@ class ReaderProfilePatch(BaseModel):
         ):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
+        return self
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "ReaderProfilePatch":
+        """An empty patch has nothing to apply and is rejected."""
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
         return self
 
 

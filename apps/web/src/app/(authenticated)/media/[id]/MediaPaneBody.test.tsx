@@ -57,13 +57,19 @@ const testState = vi.hoisted(() => ({
     | "distraction_free"
     | "paragraph"
     | "sentence",
+  readerPersistence: { state: "Clean" } as
+    | { state: "Clean" }
+    | { state: "Pending" }
+    | { state: "Forbidden"; failure: unknown },
   readerContextFns: {
-    save: vi.fn(),
-    updateTheme: vi.fn(),
-    updateFontFamily: vi.fn(),
-    updateFontSize: vi.fn(),
-    updateLineHeight: vi.fn(),
-    updateColumnWidth: vi.fn(),
+    setTheme: vi.fn(),
+    setFontFamily: vi.fn(),
+    setFocusMode: vi.fn(),
+    setHyphenation: vi.fn(),
+    setFontSize: vi.fn(),
+    setLineHeight: vi.fn(),
+    setColumnWidth: vi.fn(),
+    retrySave: vi.fn(),
   },
 }));
 
@@ -108,9 +114,7 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
       focus_mode: testState.readerFocusMode,
       hyphenation: "auto",
     },
-    loading: false,
-    error: null,
-    saving: false,
+    persistence: testState.readerPersistence,
     ...testState.readerContextFns,
   }),
 }));
@@ -735,6 +739,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.documentMapConnections = null;
     testState.documentMapEmbeds = null;
     testState.readerFocusMode = "off";
+    testState.readerPersistence = { state: "Clean" };
     paneShellMocks.usePaneChromeOverride.mockReset();
     paneShellMocks.usePaneMobileChromeController.mockClear();
     for (const fn of Object.values(testState.readerContextFns)) {
@@ -1633,5 +1638,51 @@ describe("MediaPaneBody pane sizing", () => {
       undefined,
     );
     expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+  });
+
+  it("offers the reader theme quick switch for reflowable media, honoring Forbidden", async () => {
+    testState.mediaKind = "web_article";
+    renderMediaPane();
+
+    const light = await getChromeOption("reader-theme-light");
+    const dark = await getChromeOption("reader-theme-dark");
+    // The current theme is light: its own option is inert, the other active.
+    expect(light.disabled).toBe(true);
+    expect(dark.disabled).toBe(false);
+    expect(latestChromeOverrides()?.options?.map((option) => option.id)).not.toContain(
+      "reader-pdf-source-colors",
+    );
+
+    dark.onSelect?.({ triggerEl: null });
+    expect(testState.readerContextFns.setTheme).toHaveBeenCalledWith("dark");
+  });
+
+  it("disables both theme quick-switch options under terminal Forbidden", async () => {
+    testState.mediaKind = "web_article";
+    testState.readerPersistence = { state: "Forbidden", failure: {} };
+    renderMediaPane();
+
+    const light = await getChromeOption("reader-theme-light");
+    const dark = await getChromeOption("reader-theme-dark");
+    expect(light.disabled).toBe(true);
+    expect(dark.disabled).toBe(true);
+  });
+
+  it("shows the static PDF source-colors status row instead of the quick switch for PDFs", async () => {
+    testState.mediaKind = "pdf";
+    renderMediaPane();
+
+    const statusRow = await getChromeOption("reader-pdf-source-colors");
+    expect(statusRow.label).toBe("PDF pages keep their source colors");
+    // A render-seam status row: perceivable static content, not a disabled
+    // menuitem that keyboard traversal would skip.
+    expect(statusRow.render).toBeDefined();
+    expect(statusRow.onSelect).toBeUndefined();
+    render(<>{statusRow.render?.({ closeMenu: () => {}, triggerEl: null })}</>);
+    expect(screen.getByText("PDF pages keep their source colors")).toBeInTheDocument();
+
+    const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);
+    expect(optionIds).not.toContain("reader-theme-light");
+    expect(optionIds).not.toContain("reader-theme-dark");
   });
 });

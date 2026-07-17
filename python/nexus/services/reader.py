@@ -1,6 +1,5 @@
 """Reader profile and per-media reader state service layer."""
 
-from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -26,13 +25,19 @@ from nexus.schemas.reader import (
     ReaderResumeState,
 )
 
-DEFAULT_THEME = "light"
-DEFAULT_FONT_SIZE_PX = 16
-DEFAULT_LINE_HEIGHT = 1.5
-DEFAULT_FONT_FAMILY = "serif"
-DEFAULT_COLUMN_WIDTH_CH = 65
-DEFAULT_FOCUS_MODE = "off"
-DEFAULT_HYPHENATION = "auto"
+# The only preference-default authority: schema-validated by construction and
+# immutable (ReaderProfileOut is frozen). Preference columns carry no database
+# default (migration 0181); a missing row and a first PATCH both consume this
+# exact value.
+READER_PROFILE_DEFAULTS = ReaderProfileOut(
+    theme="light",
+    font_family="serif",
+    font_size_px=16,
+    line_height=1.5,
+    column_width_ch=65,
+    focus_mode="off",
+    hyphenation="auto",
+)
 READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
 # The final, explicitly named media FK on reader_media_state (see migration
 # 0180). Runtime race normalization matches this exact name.
@@ -153,44 +158,44 @@ def get_reader_profile(db: Session, user_id: UUID) -> ReaderProfileOut:
     profile = db.query(ReaderProfile).filter(ReaderProfile.user_id == user_id).first()
     if profile:
         return ReaderProfileOut.model_validate(profile)
-    return ReaderProfileOut(
-        theme=DEFAULT_THEME,
-        font_size_px=DEFAULT_FONT_SIZE_PX,
-        line_height=DEFAULT_LINE_HEIGHT,
-        font_family=DEFAULT_FONT_FAMILY,
-        column_width_ch=DEFAULT_COLUMN_WIDTH_CH,
-        focus_mode=DEFAULT_FOCUS_MODE,
-        hyphenation=DEFAULT_HYPHENATION,
-        updated_at=datetime.now(UTC),
-    )
+    return READER_PROFILE_DEFAULTS
 
 
 def patch_reader_profile(db: Session, user_id: UUID, patch: ReaderProfilePatch) -> ReaderProfileOut:
-    """Update reader profile (upsert)."""
-    profile = db.query(ReaderProfile).filter(ReaderProfile.user_id == user_id).first()
-    if not profile:
-        profile = ReaderProfile(user_id=user_id)
-        db.add(profile)
-        db.flush()
+    """Update reader profile, creating it from the default authority if absent.
 
-    if patch.theme is not None:
-        profile.theme = patch.theme
-    if patch.font_size_px is not None:
-        profile.font_size_px = patch.font_size_px
-    if patch.line_height is not None:
-        profile.line_height = patch.line_height
-    if patch.font_family is not None:
-        profile.font_family = patch.font_family
-    if patch.column_width_ch is not None:
-        profile.column_width_ch = patch.column_width_ch
-    if patch.focus_mode is not None:
-        profile.focus_mode = patch.focus_mode
-    if patch.hyphenation is not None:
-        profile.hyphenation = patch.hyphenation
+    Runs entirely inside ``retry_serializable``: a concurrent first insert
+    surfaces as an IntegrityError on ``reader_profiles_pkey``, which retries
+    the whole attempt so the SELECT observes the winner and applies this
+    patch on top of it. No upsert, explicit lock, or custom retry schedule.
+    """
 
-    db.commit()
-    db.refresh(profile)
-    return ReaderProfileOut.model_validate(profile)
+    def attempt() -> ReaderProfileOut:
+        profile = db.query(ReaderProfile).filter(ReaderProfile.user_id == user_id).first()
+        if not profile:
+            # First PATCH: the migration dropped column server defaults, so
+            # every field must be explicitly seeded from the one authority
+            # before the patch is applied.
+            profile = ReaderProfile(
+                user_id=user_id,
+                theme=READER_PROFILE_DEFAULTS.theme,
+                font_size_px=READER_PROFILE_DEFAULTS.font_size_px,
+                line_height=READER_PROFILE_DEFAULTS.line_height,
+                font_family=READER_PROFILE_DEFAULTS.font_family,
+                column_width_ch=READER_PROFILE_DEFAULTS.column_width_ch,
+                focus_mode=READER_PROFILE_DEFAULTS.focus_mode,
+                hyphenation=READER_PROFILE_DEFAULTS.hyphenation,
+            )
+            db.add(profile)
+
+        for field_name in patch.model_fields_set:
+            setattr(profile, field_name, getattr(patch, field_name))
+
+        db.commit()
+        db.refresh(profile)
+        return ReaderProfileOut.model_validate(profile)
+
+    return retry_serializable(db, "reader_profile_patch", attempt)
 
 
 def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openEvidencePane, openMediaInSinglePaneWorkspace } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
+import { stateChangingApiHeaders } from "./api";
 import {
   activePaneSelector,
   activeWorkspacePane,
@@ -215,5 +216,99 @@ test.describe("youtube transcript media", () => {
       "href",
       /youtube\.com\/watch\?v=/
     );
+  });
+
+  // AC-6: Reader Theme completes the boundary for transcript content
+  // (segments/timeline/active prose share one themed root) while playback,
+  // app chrome, and workspace chrome stay app-themed.
+  test("reader theme completes the boundary for transcript content while playback and app chrome stay unaffected", async ({
+    page,
+  }, testInfo) => {
+    const seed = readSeededYoutubeMedia();
+
+    // The seed user's reader profile is account-global and shared across
+    // specs; pin a known starting point before asserting the dark switch.
+    const pinLight = await page.request.patch("/api/me/reader-profile", {
+      data: { theme: "light" },
+      headers: stateChangingApiHeaders(),
+    });
+    expect(pinLight.ok()).toBeTruthy();
+
+    try {
+      await openMediaInSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-youtube-theme"),
+        seed.media_id,
+      );
+      const activePane = activeWorkspacePane(page);
+      const documentViewport = activePane.locator('[data-testid="document-viewport"]');
+      await expect(documentViewport).toBeVisible({ timeout: 10_000 });
+      const playerFrame = activePane.locator("iframe").first();
+      await expect(playerFrame).toBeVisible({ timeout: 10_000 });
+
+      const primaryNav = page.getByRole("navigation", { name: "Primary" });
+      const navBackgroundBefore = await primaryNav.evaluate(
+        (el) => getComputedStyle(el).backgroundColor,
+      );
+      const playerBackgroundBefore = await playerFrame.evaluate(
+        (el) =>
+          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el).backgroundColor,
+      );
+
+      const optionsTrigger = activePane.getByRole("button", { name: "Options" }).first();
+      await expect(optionsTrigger).toBeVisible();
+      await optionsTrigger.click();
+      await page.getByRole("menuitem", { name: "Dark theme", exact: true }).click();
+
+      // The transcript content root (segments/timeline/active prose share the
+      // one themed root per the transcript theme-composition cutover) reflects
+      // the dark reader theme.
+      const themedRoot = documentViewport.locator('[class*="readerThemeDark"]').first();
+      await expect(themedRoot).toBeVisible({ timeout: 10_000 });
+      await expect
+        .poll(() => themedRoot.evaluate((el) => getComputedStyle(el).backgroundColor))
+        .toBe("rgb(21, 20, 15)");
+
+      // The playback panel (player/chapters/show notes) is a sibling of the
+      // themed transcript root, not a descendant, and its background is
+      // untouched by the reading-surface theme switch.
+      const playerAncestorIsThemed = await playerFrame.evaluate(
+        (el) => el.closest('[class*="readerThemeDark"]') !== null,
+      );
+      expect(playerAncestorIsThemed).toBe(false);
+      const playerBackgroundAfter = await playerFrame.evaluate(
+        (el) =>
+          getComputedStyle(el.closest('[class*="playerPanel"]') ?? el).backgroundColor,
+      );
+      expect(playerBackgroundAfter).toBe(playerBackgroundBefore);
+
+      // App chrome (header/nav) is unaffected by the reading-surface theme.
+      const navBackgroundAfter = await primaryNav.evaluate(
+        (el) => getComputedStyle(el).backgroundColor,
+      );
+      expect(navBackgroundAfter).toBe(navBackgroundBefore);
+
+      // Reduced motion: toggling the theme back applies with no transition.
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await optionsTrigger.click();
+      await page.getByRole("menuitem", { name: "Light theme", exact: true }).click();
+      const lightRoot = documentViewport.locator('[class*="readerThemeLight"]').first();
+      await expect(lightRoot).toBeVisible({ timeout: 10_000 });
+      const transitionDurations = await lightRoot.evaluate((el) =>
+        getComputedStyle(el).transitionDuration.split(",").map((value) => value.trim()),
+      );
+      // One entry per transitioned property (background-color, color) — every
+      // one must resolve to 0s under reduced motion.
+      expect(transitionDurations.length).toBeGreaterThan(0);
+      for (const duration of transitionDurations) {
+        expect(duration).toBe("0s");
+      }
+    } finally {
+      const restore = await page.request.patch("/api/me/reader-profile", {
+        data: { theme: "light" },
+        headers: stateChangingApiHeaders(),
+      });
+      expect(restore.ok()).toBeTruthy();
+    }
   });
 });

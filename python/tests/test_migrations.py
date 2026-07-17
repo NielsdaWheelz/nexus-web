@@ -7135,7 +7135,7 @@ class TestConsumptionQueueMigration:
         queue_constraint_names = {row[0] for row in queue_constraints}
         assert "uq_consumption_queue_items_user_media" in queue_constraint_names
         assert "ck_consumption_queue_items_position_non_negative" in queue_constraint_names
-        # The source vocabulary CHECK was dropped by 0181 (lectern player
+        # The source vocabulary CHECK was dropped by 0182 (lectern player
         # lifecycle): persistence adapters own the enum, not the database.
         assert "ck_consumption_queue_items_source" not in queue_constraint_names
 
@@ -14114,7 +14114,7 @@ class TestMigration0172AttentionLedger:
         assert "ck_reading_sessions_device_id_len" in reading_session_constraints
         assert "ix_reading_sessions_user_media_active" in reading_session_indexes
         assert "ix_reading_sessions_user_started" in reading_session_indexes
-        # The status vocabulary CHECK was dropped by 0181 (lectern player
+        # The status vocabulary CHECK was dropped by 0182 (lectern player
         # lifecycle): persistence adapters own the enum, not the database.
         assert "ck_consumption_overrides_status" not in override_constraints
 
@@ -17759,8 +17759,122 @@ class TestMigration0180ReaderProgressContinuity:
             engine.dispose()
 
 
-class TestMigration0181LecternPlayerLifecycle:
-    """0181 adds media_teardown_intents, podcast_subscriptions.
+class TestMigration0181ReaderProfileCreatedAt:
+    """0181 renames reader_profiles.updated_at to created_at — truthful
+    creation metadata, since no code path ever advanced it as a conflict
+    clock — and drops the seven preference-column server defaults, now
+    owned solely by the FastAPI reader service's READER_PROFILE_DEFAULTS
+    authority."""
+
+    def test_upgrade_renames_updated_at_and_drops_preference_defaults(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0180")
+            assert result.returncode == 0, f"upgrade 0180 failed: {result.stderr}"
+
+            user_id = uuid4()
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text("INSERT INTO reader_profiles (user_id) VALUES (:user_id)"),
+                    {"user_id": user_id},
+                )
+                session.commit()
+
+                sentinel_updated_at = session.execute(
+                    text("SELECT updated_at FROM reader_profiles WHERE user_id = :user_id"),
+                    {"user_id": user_id},
+                ).scalar_one()
+
+                # Characterization: pre-0181, updated_at is only ever set by
+                # the column's own now() default at first-row creation; a
+                # later preference UPDATE never advances it.
+                session.execute(
+                    text("UPDATE reader_profiles SET theme = 'dark' WHERE user_id = :user_id"),
+                    {"user_id": user_id},
+                )
+                session.commit()
+
+                sentinel_after_update = session.execute(
+                    text("SELECT updated_at FROM reader_profiles WHERE user_id = :user_id"),
+                    {"user_id": user_id},
+                ).scalar_one()
+
+            assert sentinel_after_update == sentinel_updated_at, (
+                "updated_at never advanced on a preference UPDATE before 0181"
+            )
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                columns = {
+                    row[0]: row
+                    for row in session.execute(
+                        text(
+                            """
+                            SELECT column_name, is_nullable, column_default
+                            FROM information_schema.columns
+                            WHERE table_name = 'reader_profiles'
+                            """
+                        )
+                    ).fetchall()
+                }
+
+                created_at_value = session.execute(
+                    text("SELECT created_at FROM reader_profiles WHERE user_id = :user_id"),
+                    {"user_id": user_id},
+                ).scalar_one()
+
+                constraints = {
+                    row[0]: row[1]
+                    for row in session.execute(
+                        text(
+                            "SELECT conname, contype FROM pg_constraint"
+                            " WHERE conrelid = 'reader_profiles'::regclass"
+                        )
+                    ).fetchall()
+                }
+
+            assert "updated_at" not in columns
+            assert "created_at" in columns
+            assert columns["created_at"][1] == "NO"
+            assert columns["created_at"][2] is not None and "now()" in columns["created_at"][2]
+            assert created_at_value == sentinel_updated_at, (
+                "the same instant is now truthfully named created_at"
+            )
+
+            for column_name in (
+                "theme",
+                "font_size_px",
+                "line_height",
+                "font_family",
+                "column_width_ch",
+                "focus_mode",
+                "hyphenation",
+            ):
+                assert columns[column_name][2] is None, (
+                    f"{column_name} must have no database default; "
+                    "the service READER_PROFILE_DEFAULTS is the only authority"
+                )
+                assert columns[column_name][1] == "NO", f"{column_name} must stay NOT NULL"
+
+            assert constraints.get("reader_profiles_pkey") == "p"
+            for check_name in (
+                "ck_reader_profiles_theme",
+                "ck_reader_profiles_font_size_px",
+                "ck_reader_profiles_line_height",
+                "ck_reader_profiles_font_family",
+                "ck_reader_profiles_column_width_ch",
+                "ck_reader_profiles_focus_mode",
+                "ck_reader_profiles_hyphenation",
+            ):
+                assert constraints.get(check_name) == "c", f"{check_name} must survive"
+
+
+class TestMigration0182LecternPlayerLifecycle:
+    """0182 adds media_teardown_intents, podcast_subscriptions.
     auto_queue_watermark_at, media_source_attempts.signed_upload_expires_at
     (with a conservative pending-upload backfill), and podcast_listening_states.
     {write_revision,reset_epoch}; drops the dead consumption_queue_items /

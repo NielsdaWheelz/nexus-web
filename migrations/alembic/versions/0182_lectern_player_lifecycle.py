@@ -38,8 +38,8 @@ docs/cutovers/lectern-player-lifecycle-hard-cutover.md §3.1/§4/§5.3/§5.4):
    §2 non-goals); media teardown already deletes child rows itself through its
    own owners.
 
-Revision ID: 0181
-Revises: 0180
+Revision ID: 0182
+Revises: 0181
 Create Date: 2026-07-16
 """
 
@@ -47,8 +47,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0181"
-down_revision: str | Sequence[str] | None = "0180"
+revision: str = "0182"
+down_revision: str | Sequence[str] | None = "0181"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -97,7 +97,7 @@ def upgrade() -> None:
     )
     if auto_playlist_count:
         raise RuntimeError(
-            f"0181 preflight: {auto_playlist_count} consumption_queue_items row(s) carry "
+            f"0182 preflight: {auto_playlist_count} consumption_queue_items row(s) carry "
             "source='auto_playlist'; this provenance needs an explicit disposition before "
             "ck_consumption_queue_items_source is dropped "
             "(docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4)"
@@ -196,7 +196,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE podcast_listening_states DROP COLUMN write_revision")
     op.execute("ALTER TABLE podcast_listening_states DROP COLUMN reset_epoch")
 
-    # (5) Restore the dropped CHECKs to their pre-0181 vocabularies (0175/0172).
+    # (5) Restore the dropped CHECKs to their pre-0182 vocabularies (0175/0172).
     op.execute("""
         ALTER TABLE consumption_queue_items
             ADD CONSTRAINT ck_consumption_queue_items_source

@@ -6159,14 +6159,16 @@ class ReaderProfile(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    theme: Mapped[str] = mapped_column(Text, nullable=False, server_default="light")
-    font_size_px: Mapped[int] = mapped_column(Integer, nullable=False, server_default="16")
-    line_height: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, server_default="1.5")
-    font_family: Mapped[str] = mapped_column(Text, nullable=False, server_default="serif")
-    column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False, server_default="65")
-    focus_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="off")
-    hyphenation: Mapped[str] = mapped_column(Text, nullable=False, server_default="auto")
-    updated_at: Mapped[datetime] = mapped_column(
+    theme: Mapped[str] = mapped_column(Text, nullable=False)
+    font_size_px: Mapped[int] = mapped_column(Integer, nullable=False)
+    line_height: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False)
+    font_family: Mapped[str] = mapped_column(Text, nullable=False)
+    column_width_ch: Mapped[int] = mapped_column(Integer, nullable=False)
+    focus_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    hyphenation: Mapped[str] = mapped_column(Text, nullable=False)
+    # Creation metadata only; never in the DTO. The service's
+    # READER_PROFILE_DEFAULTS is the one preference-default authority.
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,

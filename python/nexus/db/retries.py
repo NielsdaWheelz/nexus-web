@@ -11,11 +11,13 @@ from nexus.db.errors import integrity_constraint_name, is_serialization_failure
 from nexus.db.session import use_serializable_if_available
 
 # Named uniqueness constraints whose violation is a legitimate concurrent-insert
-# race rather than a defect, so the whole operation retries on a first-sight
-# race instead of surfacing a raw IntegrityError: the author resolver's
-# exact-batch operation (spec lightweight-author-deduplication-hard-cutover.md
-# §2.7), the repository-wide replay-memo constraint, and the consumption
-# ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3).
+# race rather than a defect, owner-neutral across callers: the author
+# resolver's exact-batch operation (spec
+# lightweight-author-deduplication-hard-cutover.md §2.7), the repository-wide
+# replay-memo constraint, the reader profile's first-PATCH insert (spec
+# reader-profile-persistence-hard-cutover.md §6), and the consumption
+# ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3)
+# all retry the whole operation on a first-sight race.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
@@ -28,6 +30,7 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uq_contributor_credits_gutenberg_ordinal",
         "uq_contributor_credits_gutenberg_contributor_role",
         "uix_resource_mutations_client_id",
+        "reader_profiles_pkey",
         "uq_consumption_queue_items_user_media",
     }
 )

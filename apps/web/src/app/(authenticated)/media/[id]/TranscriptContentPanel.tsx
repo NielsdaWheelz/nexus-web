@@ -3,7 +3,6 @@
 import type { CSSProperties, MouseEvent, PointerEvent, RefObject } from "react";
 import HtmlRenderer from "@/components/HtmlRenderer";
 import Button from "@/components/ui/Button";
-import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { normalizeTrackChapters } from "@/lib/media/transcriptChapters";
 import {
   formatTranscriptTimestampMs,
@@ -22,6 +21,8 @@ interface TranscriptContentPanelProps {
   fragments: TranscriptFragment[];
   activeFragment: TranscriptFragment | null;
   renderedHtml: string;
+  readerSurfaceClassName: string;
+  readerSurfaceStyle: CSSProperties;
   evidenceHighlightId?: string | null;
   evidenceExactText?: string | null;
   evidenceStartMs?: number | null;
@@ -42,6 +43,8 @@ export default function TranscriptContentPanel({
   fragments,
   activeFragment,
   renderedHtml,
+  readerSurfaceClassName,
+  readerSurfaceStyle,
   evidenceHighlightId,
   evidenceExactText,
   evidenceStartMs,
@@ -53,20 +56,6 @@ export default function TranscriptContentPanel({
   onContentPointerOver,
   onContentPointerOut,
 }: TranscriptContentPanelProps) {
-  const { profile } = useReaderContext();
-  const readerFontFamily =
-    profile.font_family === "sans"
-      ? "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-      : "Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, Times New Roman, serif";
-  const readerSurfaceStyle = {
-    "--reader-font-family": readerFontFamily,
-    "--reader-font-size-px": `${profile.font_size_px}px`,
-    "--reader-line-height": String(profile.line_height),
-    "--reader-column-width-ch": `${profile.column_width_ch}ch`,
-  } as CSSProperties;
-  const readerSurfaceClassName = `${styles.readerContentRoot} ${
-    profile.theme === "dark" ? styles.readerThemeDark : styles.readerThemeLight
-  }`;
   const normalizedChapters = normalizeTrackChapters(chapters);
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
@@ -118,7 +107,7 @@ export default function TranscriptContentPanel({
   }
 
   return (
-    <>
+    <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
       {isReadablePartialTranscript ? (
         <div className={styles.partialCoverageWarning}>
           <p>Transcript is partial; search and highlights may miss sections.</p>
@@ -227,21 +216,19 @@ export default function TranscriptContentPanel({
           </div>
 
           {activeFragment ? (
-            <div className={readerSurfaceClassName} style={readerSurfaceStyle}>
-              <div className={styles.readerContentInner}>
-                <div
-                  ref={contentRef}
-                  onClick={onContentClick}
-                  onPointerOver={onContentPointerOver}
-                  onPointerOut={onContentPointerOut}
-                >
-                  <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
-                </div>
+            <div className={styles.readerContentInner}>
+              <div
+                ref={contentRef}
+                onClick={onContentClick}
+                onPointerOver={onContentPointerOver}
+                onPointerOut={onContentPointerOut}
+              >
+                <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
               </div>
             </div>
           ) : null}
         </div>
       )}
-    </>
+    </div>
   );
 }

@@ -185,6 +185,21 @@ export async function gotoWithWorkspaceSession(
   // Restore is server-side now: the seeded session is read during SSR and streamed into the
   // first paint, so there is no client GET to await — the caller asserts on the restored panes.
   await page.goto(path, { waitUntil: "domcontentloaded" });
+  await waitForWorkspaceHydration(page);
+}
+
+/**
+ * Input dispatched before hydration lands on dead SSR markup and is then
+ * re-rendered away, so navigation helpers block until the workspace root
+ * carries the client-commit `data-hydrated` fact before handing the page to
+ * a test that will interact with it — or the bootstrap error boundary's alert
+ * region appears (a failed bootstrap never mounts the workspace root).
+ */
+export async function waitForWorkspaceHydration(page: Page): Promise<void> {
+  await page
+    .locator('[data-hydrated="true"], [role="alert"]')
+    .first()
+    .waitFor({ state: "attached", timeout: 15_000 });
 }
 
 export function activeWorkspacePane(page: Page): Locator {
