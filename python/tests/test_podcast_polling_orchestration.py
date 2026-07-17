@@ -39,13 +39,16 @@ def test_registry_disables_periodic_jobs_by_default(monkeypatch: pytest.MonkeyPa
         for kind, definition in registry.items()
         if definition.periodic_interval_seconds is not None
     }
-    # purge_expired_auth_handoff_codes and dawn_write_job are unconditionally
-    # periodic — the former is a security-critical cleanup for single-use auth
-    # codes; the latter defaults to hourly (DAWN_WRITE_SCHEDULE_SECONDS=3600)
-    # and is always-on ambient background generation, not an opt-in poller.
+    # purge_expired_auth_handoff_codes, dawn_write_job, and storage_orphan_sweep
+    # are unconditionally periodic — the first is a security-critical cleanup for
+    # single-use auth codes; the second defaults to hourly
+    # (DAWN_WRITE_SCHEDULE_SECONDS=3600) always-on ambient generation; the third
+    # reclaims R2 objects orphaned by completed media teardowns and is always-on
+    # so teardown-based deletion cannot leak storage (spec §3.1 / Lectern).
     assert set(periodic_jobs.keys()) == {
         "purge_expired_auth_handoff_codes",
         "dawn_write_job",
+        "storage_orphan_sweep",
     }, (
         "Expected production-safe defaults to disable opt-in periodic jobs. "
         f"Periodic jobs={sorted(periodic_jobs)}"
@@ -80,6 +83,7 @@ def test_registry_enables_periodic_jobs_from_positive_schedule_env(
         "dawn_write_job",
         "conversation_distill_sweep",
         "atlas_project_job",
+        "storage_orphan_sweep",
     }, f"Unexpected periodic job set: {sorted(periodic_jobs.keys())}"
     assert periodic_jobs["podcast_active_subscription_poll_job"] == 3600
     assert periodic_jobs["reconcile_stale_ingest_media_job"] == 7200
