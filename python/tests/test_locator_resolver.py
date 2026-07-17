@@ -19,7 +19,7 @@ from nexus.services.content_indexing import (
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import (
-    add_library_entry_only as seed_media_in_library,
+    add_media_to_library as seed_media_in_library,
 )
 from tests.factories import (
     create_searchable_media,
@@ -53,15 +53,6 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
             {"media_id": media_id, "user_id": user_id},
         )
         seed_media_in_library(session, default_library_id, media_id)
-        session.execute(
-            text(
-                """
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lid, :mid)
-                """
-            ),
-            {"lid": default_library_id, "mid": media_id},
-        )
         session.execute(
             text(
                 """
@@ -112,7 +103,6 @@ def test_web_evidence_uses_snapshot_after_fragment_mutation(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
     response = auth_client.get(
         f"/media/{media_id}/evidence/{evidence_span_id}",
@@ -162,7 +152,6 @@ def test_evidence_resolution_rejects_span_from_inactive_index_run(
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 
     response = auth_client.get(
@@ -196,15 +185,6 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
             {"media_id": media_id, "user_id": user_id},
         )
         seed_media_in_library(session, default_library_id, media_id)
-        session.execute(
-            text(
-                """
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lid, :mid)
-                """
-            ),
-            {"lid": default_library_id, "mid": media_id},
-        )
         session.execute(
             text(
                 """
@@ -298,7 +278,6 @@ def test_evidence_resolution_requires_primary_chunk_span_coherence(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
     response = auth_client.get(
         f"/media/{media_id}/evidence/{mismatch_span_id}",
@@ -337,15 +316,6 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
             {"media_id": media_id, "user_id": user_id},
         )
         seed_media_in_library(session, default_library_id, media_id)
-        session.execute(
-            text(
-                """
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lid, :mid)
-                """
-            ),
-            {"lid": default_library_id, "mid": media_id},
-        )
         session.execute(
             text(
                 """
@@ -435,7 +405,6 @@ def test_web_evidence_resolves_sub_chunk_span_not_primary_chunk_span(
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
     response = auth_client.get(
         f"/media/{media_id}/evidence/{evidence_span_id}",
@@ -486,15 +455,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
             },
         )
         seed_media_in_library(session, default_library_id, media_id)
-        session.execute(
-            text(
-                """
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lid, :mid)
-                """
-            ),
-            {"lid": default_library_id, "mid": media_id},
-        )
         selector = {
             "kind": "pdf_text",
             "page_number": 1,
@@ -573,7 +533,6 @@ def test_pdf_evidence_uses_snapshot_after_plain_text_mutation(
 
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
     response = auth_client.get(
         f"/media/{media_id}/evidence/{evidence_span_id}",
@@ -624,15 +583,6 @@ def test_transcript_evidence_uses_current_blocks_after_segment_changes(
             {"media_id": media_id, "user_id": user_id},
         )
         seed_media_in_library(session, default_library_id, media_id)
-        session.execute(
-            text(
-                """
-                INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                VALUES (:lid, :mid)
-                """
-            ),
-            {"lid": default_library_id, "mid": media_id},
-        )
         session.execute(
             text(
                 """
@@ -705,7 +655,6 @@ def test_transcript_evidence_uses_current_blocks_after_segment_changes(
 
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
     direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
 

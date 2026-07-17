@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -49,13 +50,17 @@ def _create_audio_media(direct_db: DirectSessionManager) -> UUID:
     return media_id
 
 
-def _add_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, f"add media to library failed: {response.text}"
+def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Seed a physical library_entries row directly, bypassing the REST filing
+    endpoint's membership-reachability gate: bare factory/direct-INSERT media
+    isn't membership-reachable, so POST /libraries/{id}/media 404s on it.
+    Production ingest always auto-files freshly-created media into the
+    creator's default library (ensure_media_in_default_library); this mirrors
+    that reachability for fixture media created via a bare Media row rather
+    than real ingest."""
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _heartbeat_body(
@@ -107,7 +112,7 @@ class TestGet:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         response = _get(auth_client, user_id, media_id)
         assert response.status_code == 200, response.text
@@ -127,7 +132,7 @@ class TestPut:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         response = _put(
             auth_client,
@@ -149,7 +154,7 @@ class TestPut:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         # First heartbeat creates the row at revision 1 with 5s dwell.
         assert (
@@ -191,7 +196,7 @@ class TestPut:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         assert (
             _put(
                 auth_client,
@@ -228,7 +233,7 @@ class TestVisibility:
         owner = create_test_user_id()
         owner_library = _bootstrap(auth_client, owner)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, owner, owner_library, media_id)
+        _add_to_library(direct_db, owner_library, media_id)
         other = create_test_user_id()
         _bootstrap(auth_client, other)
 
@@ -254,7 +259,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid() | {"isCompleted": True}
         response = _put(auth_client, user_id, media_id, body)
         # The app maps strict-decode failures to 400 E_INVALID_REQUEST.
@@ -265,7 +270,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid() | {"durationMs": None}
         response = _put(auth_client, user_id, media_id, body)
         assert response.status_code == 400, response.text
@@ -275,7 +280,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid()
         body["position_ms"] = body.pop("positionMs")
         response = _put(auth_client, user_id, media_id, body)

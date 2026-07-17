@@ -53,6 +53,7 @@ from tests.factories import (
     add_media_to_library,
     create_test_conversation,
     create_test_library,
+    create_test_media,
     create_test_media_in_library,
     create_test_message,
     get_user_default_library,
@@ -547,6 +548,102 @@ def test_resolve_library_non_member_returns_missing(db_session: Session, bootstr
     resolved = _resolve(db_session, f"library:{other_library_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-member must see library as missing"
+
+
+def test_resolve_default_library_counts_distinct_virtual_media(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """Spec §5: the viewer's own Default counts distinct virtual media — every
+    media reachable through a current non-system membership, deduped across
+    libraries — not a physical `library_entries` row count."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+    other_library_id = create_test_library(db_session, bootstrapped_user, "Shelf")
+
+    # Filed directly into Default.
+    create_test_media_in_library(db_session, bootstrapped_user, default_library_id, title="Direct")
+    # Filed only into the personal non-default library the viewer is a member of —
+    # still reachable, so still counted in Default's virtual set.
+    create_test_media_in_library(db_session, bootstrapped_user, other_library_id, title="Shelved")
+    # Filed into BOTH: must be counted once, not twice.
+    both = create_test_media(db_session, title="Everywhere")
+    add_media_to_library(db_session, default_library_id, both)
+    add_media_to_library(db_session, other_library_id, both)
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"library:{default_library_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    assert resolved.summary.endswith("(3 items)"), (
+        f"expected 3 distinct virtual media (Direct, Shelved, Everywhere-once); "
+        f"got {resolved.summary!r}"
+    )
+
+
+def test_resolve_non_default_library_counts_physical_entries(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """A non-default library's count stays the unchanged physical entry count
+    (spec §5): unaffected by the virtual-relation branch."""
+    library_id = create_test_library(db_session, bootstrapped_user, "Reading List")
+    create_test_media_in_library(db_session, bootstrapped_user, library_id, title="One")
+    create_test_media_in_library(db_session, bootstrapped_user, library_id, title="Two")
+
+    resolved = _resolve(db_session, f"library:{library_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    assert resolved.summary.endswith("(2 items)"), (
+        f"expected 2 physical entries; got {resolved.summary!r}"
+    )
+
+
+def test_resolve_default_library_excludes_system_only_media(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """AC2: a work reachable only through a system library (e.g. Oracle corpus)
+    never counts toward the viewer's Default, even though the viewer is a member
+    of that system library."""
+    default_library_id = get_user_default_library(db_session, bootstrapped_user)
+    assert default_library_id is not None
+    system_media_id = create_test_media(db_session, title="System only")
+    system_library_id = uuid4()
+    db_session.execute(
+        text(
+            """
+            INSERT INTO libraries (id, name, owner_user_id, is_default, system_key)
+            VALUES (:id, 'System Corpus', :owner_user_id, false, :system_key)
+            """
+        ),
+        {
+            "id": system_library_id,
+            "owner_user_id": bootstrapped_user,
+            "system_key": f"test-resolve-system-{system_library_id}",
+        },
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO memberships (library_id, user_id, role) "
+            "VALUES (:library_id, :user_id, 'admin')"
+        ),
+        {"library_id": system_library_id, "user_id": bootstrapped_user},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO library_entries (library_id, media_id, position) "
+            "VALUES (:library_id, :media_id, 0)"
+        ),
+        {"library_id": system_library_id, "media_id": system_media_id},
+    )
+    db_session.commit()
+
+    resolved = _resolve(db_session, f"library:{default_library_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing
+    # item_count 0 renders the bare name (no "(N items)" suffix) — see resolve.py's
+    # library summary formatting.
+    assert resolved.summary == resolved.label, (
+        f"system-only media must not count toward Default; got {resolved.summary!r}"
+    )
 
 
 def test_resolve_li_artifact_promoted_inlines_current_revision(

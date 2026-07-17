@@ -519,7 +519,7 @@ def test_add_to_library_preexisting_entry_survives_undo(direct_db):
     media_id, _ = _seed_readable_media(direct_db, user_id, title="Doc", canonical_text="content")
     with direct_db.session() as session:
         target_library = factories.create_test_library(session, user_id, name="Criticism")
-        factories.add_library_entry_only(session, target_library, media_id)  # user's own filing
+        factories.add_media_to_library(session, target_library, media_id)  # user's own filing
         session.commit()
     direct_db.register_cleanup("library_entries", "library_id", target_library)
     direct_db.register_cleanup("memberships", "library_id", target_library)

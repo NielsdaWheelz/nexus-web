@@ -36,9 +36,12 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.tasks.artifacts import _fail_revision_after_worker_exception
 from tests.factories import (
+    add_library_member,
     add_media_to_library,
     create_searchable_media_in_library,
     create_test_library,
+    create_test_media,
+    get_user_default_library,
 )
 from tests.helpers import create_test_user_id
 
@@ -935,6 +938,168 @@ class TestPodcastExpansion:
         assert view.stale_source_count == 1, (
             f"One added episode should count as 1; got {view.stale_source_count}"
         )
+
+
+@pytest.mark.integration
+class TestVirtualMediaSet:
+    """Spec §4.1/AC12: the dossier's media set is `library_media_ids_cte_sql`'s
+    personal virtual relation, viewer-anchored on the library's owner_user_id."""
+
+    def test_default_dossier_covers_media_filed_only_in_a_member_library(
+        self, db_session: Session
+    ) -> None:
+        owner_id = _create_owner(db_session)
+        default_library_id = get_user_default_library(db_session, owner_id)
+        assert default_library_id is not None
+        shelf_id = create_test_library(db_session, owner_id, "Shelf")
+        _ready_unit_media(db_session, owner_id, default_library_id, title="Direct Default")
+        shelf_media_id = _ready_unit_media(db_session, owner_id, shelf_id, title="Shelved Only")
+
+        router = _ReduceRouter(
+            content_md="An overview [1] and a shelf source [2].",
+            citations=[(1, 0, "supports"), (2, 1, "supports")],
+        )
+        revision_id = _drive_generation(
+            db_session,
+            owner_id=owner_id,
+            library_id=default_library_id,
+            token="t1",
+            router=router,
+        )
+
+        covered = db_session.execute(
+            text("SELECT covered_targets FROM artifact_revisions WHERE id = :r"),
+            {"r": revision_id},
+        ).scalar_one()
+        covered_media_ids = {rec["id"] for rec in covered if rec.get("kind") == "media"}
+        assert str(shelf_media_id) in covered_media_ids, (
+            "media filed only in a member non-default library must be covered by the "
+            f"Default dossier (the personal virtual relation); got {covered_media_ids}"
+        )
+
+    def test_default_dossier_excludes_system_only_media(self, db_session: Session) -> None:
+        # AC2: a system-library-only work (e.g. Oracle corpus) never enters the
+        # Default dossier's media set, even though the viewer is a member of that
+        # system library.
+        owner_id = _create_owner(db_session)
+        default_library_id = get_user_default_library(db_session, owner_id)
+        assert default_library_id is not None
+        _ready_unit_media(db_session, owner_id, default_library_id, title="Direct Default")
+
+        system_media_id = create_test_media(db_session, title="Oracle-only")
+        system_library_id = uuid4()
+        db_session.execute(
+            text(
+                """
+                INSERT INTO libraries (id, name, owner_user_id, is_default, system_key)
+                VALUES (:id, 'System Corpus', :owner_user_id, false, :system_key)
+                """
+            ),
+            {
+                "id": system_library_id,
+                "owner_user_id": owner_id,
+                "system_key": f"test-li-system-{system_library_id}",
+            },
+        )
+        db_session.execute(
+            text(
+                "INSERT INTO memberships (library_id, user_id, role) "
+                "VALUES (:library_id, :user_id, 'admin')"
+            ),
+            {"library_id": system_library_id, "user_id": owner_id},
+        )
+        db_session.execute(
+            text(
+                "INSERT INTO library_entries (library_id, media_id, position) "
+                "VALUES (:library_id, :media_id, 0)"
+            ),
+            {"library_id": system_library_id, "media_id": system_media_id},
+        )
+        db_session.commit()
+
+        router = _ReduceRouter(content_md="An overview [1].", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session,
+            owner_id=owner_id,
+            library_id=default_library_id,
+            token="t1",
+            router=router,
+        )
+
+        covered = db_session.execute(
+            text("SELECT covered_targets FROM artifact_revisions WHERE id = :r"),
+            {"r": revision_id},
+        ).scalar_one()
+        covered_media_ids = {rec["id"] for rec in covered if rec.get("kind") == "media"}
+        assert str(system_media_id) not in covered_media_ids, (
+            f"system-only media must never enter the Default dossier; got {covered_media_ids}"
+        )
+
+    def test_non_owner_member_generation_still_covers_library_media(
+        self, db_session: Session
+    ) -> None:
+        # The reducer viewer is always the library's owner_user_id (spec §4.1 /
+        # engine.py collect_viewer), never the acting caller's own id, so a
+        # non-owner member of a shared library can still trigger a generation
+        # that covers the library's media.
+        owner_id = _create_owner(db_session)
+        member_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Shared Library")
+        add_library_member(db_session, library_id, member_id, role="member")
+        _ready_unit_media(db_session, owner_id, library_id, title="Owner Source")
+
+        router = _ReduceRouter(content_md="Overview [1].", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=member_id, library_id=library_id, token="t1", router=router
+        )
+
+        view = get_artifact(db_session, viewer_id=member_id, library_id=library_id)
+        assert view.status == "current"
+        covered = db_session.execute(
+            text("SELECT covered_targets FROM artifact_revisions WHERE id = :r"),
+            {"r": revision_id},
+        ).scalar_one()
+        assert any(rec.get("kind") == "media" for rec in covered), (
+            f"non-owner-triggered generation must still cover the library's media; got {covered}"
+        )
+
+    def test_engine_is_artifact_stale_resolves_library_owner_as_viewer(
+        self, db_session: Session
+    ) -> None:
+        """`engine.is_artifact_stale`'s `_viewer_for_subject` must resolve a real
+        viewer (the library's owner) for a ``library`` subject — the path
+        `dawn_write.py`'s stale-library sweep depends on — since the dossier's
+        live_fingerprint now requires a viewer_id and raises without one."""
+        from nexus.services.artifacts.engine import is_artifact_stale
+
+        owner_id = _create_owner(db_session)
+        library_id = create_test_library(db_session, owner_id, "Sweep Library")
+        _ready_unit_media(db_session, owner_id, library_id, title="Source")
+
+        router = _ReduceRouter(content_md="Overview [1].", citations=[(1, 0, "supports")])
+        revision_id = _drive_generation(
+            db_session, owner_id=owner_id, library_id=library_id, token="t1", router=router
+        )
+
+        assert not is_artifact_stale(
+            db_session,
+            subject_scheme="library",
+            subject_id=library_id,
+            kind="library_dossier",
+            current_revision_id=revision_id,
+        ), "a freshly generated revision must not be stale"
+
+        create_searchable_media_in_library(db_session, owner_id, library_id, title="Added")
+        db_session.commit()
+        db_session.expire_all()
+
+        assert is_artifact_stale(
+            db_session,
+            subject_scheme="library",
+            subject_id=library_id,
+            kind="library_dossier",
+            current_revision_id=revision_id,
+        ), "a newly added source must flip the revision stale"
 
 
 @pytest.mark.integration

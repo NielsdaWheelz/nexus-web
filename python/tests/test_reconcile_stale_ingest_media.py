@@ -163,13 +163,6 @@ def _seed_stale_pending_upload_child_rows(db: Session, media_id: UUID) -> None:
     )
     db.execute(
         text("""
-            INSERT INTO default_library_intrinsics (default_library_id, media_id)
-            VALUES (:library_id, :media_id)
-        """),
-        {"library_id": default_library_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
             INSERT INTO user_media_deletions (user_id, media_id)
             VALUES (:user_id, :media_id)
         """),
@@ -201,10 +194,6 @@ def _seed_stale_pending_upload_child_rows(db: Session, media_id: UUID) -> None:
 
 def _assert_stale_pending_upload_child_rows_deleted(db: Session, media_id: UUID) -> None:
     assert _count_rows(db, "library_entries", "media_id = :media_id", media_id=media_id) == 0
-    assert (
-        _count_rows(db, "default_library_intrinsics", "media_id = :media_id", media_id=media_id)
-        == 0
-    )
     assert _count_rows(db, "user_media_deletions", "media_id = :media_id", media_id=media_id) == 0
     assert _count_rows(db, "media_file", "media_id = :media_id", media_id=media_id) == 0
     assert (

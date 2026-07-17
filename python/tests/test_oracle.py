@@ -1089,16 +1089,6 @@ def test_ensure_oracle_corpus_media_uses_system_ingest_without_default_membershi
             ),
             {"library_id": default_library_id, "media_id": result.media_id},
         ).first()
-        default_intrinsic = db.execute(
-            text(
-                """
-                SELECT 1
-                FROM default_library_intrinsics
-                WHERE default_library_id = :library_id AND media_id = :media_id
-                """
-            ),
-            {"library_id": default_library_id, "media_id": result.media_id},
-        ).first()
         source_payload = db.execute(
             text(
                 """
@@ -1132,7 +1122,6 @@ def test_ensure_oracle_corpus_media_uses_system_ingest_without_default_membershi
 
     assert corpus_entry is not None
     assert default_entry is None
-    assert default_intrinsic is None
     assert source_payload["system_source"] == oracle_corpus.ORACLE_CORPUS_SYSTEM_KEY
     assert "library_ids" not in source_payload
 

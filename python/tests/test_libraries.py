@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from nexus.services import library_entries, library_governance
-from tests.factories import add_library_entry_only, create_test_library, create_test_media
+from tests.factories import add_media_to_library, create_test_library, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
@@ -82,7 +82,7 @@ def _seed_reachable_media(
     with direct_db.session() as session:
         media_id = create_test_media(session, title=title)
         seed_library_id = create_test_library(session, user_id, f"Seed {title}")
-        add_library_entry_only(session, seed_library_id, media_id)
+        add_media_to_library(session, seed_library_id, media_id)
         session.commit()
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -726,7 +726,7 @@ class TestDeleteLibrary:
         library_id = create_resp.json()["data"]["id"]
 
         with direct_db.session() as session:
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         # Verify library_entries exists
@@ -941,7 +941,7 @@ class TestRemoveMediaFromLibrary:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1013,7 +1013,7 @@ class TestRemoveMediaFromLibrary:
                 page_count=1,
                 with_page_spans=True,
             )
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         storage_path = f"media/{media_id}/original.pdf"
@@ -1107,7 +1107,7 @@ class TestRemoveMediaFromLibrary:
                 """),
                 {"media_id": media_id, "storage_path": resource_path},
             )
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
@@ -1166,7 +1166,7 @@ class TestRemoveMediaFromLibrary:
                 """),
                 {"library_id": library_id, "user_id": member_id},
             )
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         response = auth_client.delete(
@@ -1350,7 +1350,7 @@ class TestListLibraryMedia:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1641,7 +1641,7 @@ class TestListLibraryMedia:
                 """),
                 {"user_id": user_id, "media_id": media_id, "fraction": 12000.0 / 180000.0},
             )
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -1738,7 +1738,7 @@ class TestListLibraryMedia:
         # Add media in order
         with direct_db.session() as session:
             for media_id in media_ids:
-                add_library_entry_only(session, UUID(library_id), media_id)
+                add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         response = _list_library_entries(auth_client, user_id, library_id)
@@ -1762,7 +1762,7 @@ class TestListLibraryMedia:
             for idx in range(3):
                 media_id = create_test_media(session, title=f"Paged Entry {idx}")
                 media_ids.append(media_id)
-                add_library_entry_only(session, UUID(library_id), media_id)
+                add_media_to_library(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
@@ -1840,7 +1840,7 @@ class TestListLibraryMedia:
             for idx in range(3):
                 media_id = create_test_media(session, title=f"Keyset Invariant {idx}")
                 media_ids.append(media_id)
-                add_library_entry_only(session, UUID(library_id), media_id)
+                add_media_to_library(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
@@ -1860,7 +1860,7 @@ class TestListLibraryMedia:
         # before page 2 is fetched.
         with direct_db.session() as session:
             newest_media_id = create_test_media(session, title="Filed after page 1")
-            add_library_entry_only(session, UUID(library_id), newest_media_id)
+            add_media_to_library(session, UUID(library_id), newest_media_id)
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", newest_media_id)
         direct_db.register_cleanup("media", "id", newest_media_id)
@@ -2429,7 +2429,7 @@ class TestDefaultLibraryVirtualView:
         with direct_db.session() as session:
             media_ids = [create_test_media(session, title=f"Scope {i}") for i in range(2)]
             for media_id in media_ids:
-                add_library_entry_only(session, UUID(library_a), media_id)
+                add_media_to_library(session, UUID(library_a), media_id)
             session.commit()
         for media_id in media_ids:
             direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2508,7 +2508,7 @@ class TestReorderLibraryMedia:
 
         with direct_db.session() as session:
             media_id = create_test_media(session, title="Default reorder target")
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -2540,7 +2540,7 @@ class TestReorderLibraryMedia:
             for index in range(3):
                 media_id = create_test_media(session, title=f"Reorder {index}")
                 media_ids.append(media_id)
-                add_library_entry_only(session, UUID(library_id), media_id)
+                add_media_to_library(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
@@ -2580,8 +2580,8 @@ class TestReorderLibraryMedia:
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Order A")
             media_b = create_test_media(session, title="Order B")
-            add_library_entry_only(session, UUID(library_id), media_a)
-            add_library_entry_only(session, UUID(library_id), media_b)
+            add_media_to_library(session, UUID(library_id), media_a)
+            add_media_to_library(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2614,7 +2614,7 @@ class TestReorderLibraryMedia:
             for idx in range(3):
                 media_id = create_test_media(session, title=f"Partial Reorder {idx}")
                 media_ids.append(media_id)
-                add_library_entry_only(session, UUID(library_id), media_id)
+                add_media_to_library(session, UUID(library_id), media_id)
                 direct_db.register_cleanup("library_entries", "media_id", media_id)
                 direct_db.register_cleanup("media", "id", media_id)
             session.commit()
@@ -2649,8 +2649,8 @@ class TestReorderLibraryMedia:
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Shared A")
             media_b = create_test_media(session, title="Shared B")
-            add_library_entry_only(session, UUID(library_id), media_a)
-            add_library_entry_only(session, UUID(library_id), media_b)
+            add_media_to_library(session, UUID(library_id), media_a)
+            add_media_to_library(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2717,7 +2717,7 @@ class TestReorderLibraryMedia:
                 """),
                 {"user_id": user_id, "podcast_id": podcast_id},
             )
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -2762,8 +2762,8 @@ class TestReorderLibraryMedia:
         with direct_db.session() as session:
             media_a = create_test_media(session, title="Bad set A")
             media_b = create_test_media(session, title="Bad set B")
-            add_library_entry_only(session, UUID(library_id), media_a)
-            add_library_entry_only(session, UUID(library_id), media_b)
+            add_media_to_library(session, UUID(library_id), media_a)
+            add_media_to_library(session, UUID(library_id), media_b)
             session.commit()
         for media_id in (media_a, media_b):
             direct_db.register_cleanup("library_entries", "media_id", media_id)
@@ -4263,12 +4263,14 @@ class TestLibraryInviteAccept:
         assert data["membership"]["user_id"] == str(invitee_id)
         assert data["membership"]["role"] == "member"
         assert data["idempotent"] is False
-        assert data["backfill_job_status"] == "pending"
+        assert "backfill_job_status" not in data
 
-    def test_accept_invite_transaction_creates_membership_updates_invite_and_upserts_backfill_job(
+    def test_accept_invite_transaction_creates_membership_and_updates_invite_no_projection(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Accept atomically creates membership, updates invite, and upserts backfill job."""
+        """Accept atomically creates membership and updates invite. There is no
+        backfill job or other follow-up projection (spec AC3): the membership
+        commit alone is the whole contract."""
         owner_id = create_test_user_id()
         invitee_id = create_test_user_id()
 
@@ -4280,7 +4282,7 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -4319,29 +4321,71 @@ class TestLibraryInviteAccept:
             assert row[0] == "accepted"
             assert row[1] is not None
 
-        # Verify backfill job row
+        # No background_jobs row is enqueued for this accept — membership
+        # commit alone is the whole contract, no follow-up worker.
         with direct_db.session() as session:
-            # Get invitee default library
-            dl = session.execute(
-                text("""
-                    SELECT id FROM libraries
-                    WHERE owner_user_id = :uid AND is_default = true
-                """),
-                {"uid": invitee_id},
-            ).fetchone()
-            assert dl is not None
+            queued = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM background_jobs "
+                    "WHERE kind = 'backfill_default_library_closure_job'"
+                )
+            ).scalar_one()
+            assert queued == 0
 
-            result = session.execute(
-                text("""
-                    SELECT status FROM default_library_backfill_jobs
-                    WHERE default_library_id = :dlid AND source_library_id = :slid
-                          AND user_id = :uid
-                """),
-                {"dlid": dl[0], "slid": library_id, "uid": invitee_id},
-            )
-            job_row = result.fetchone()
-            assert job_row is not None
-            assert job_row[0] == "pending"
+    def test_accept_invite_and_member_removal_change_default_list_immediately(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Membership commit alone changes Default list/count immediately after
+        accept AND after the member is later removed — no follow-up projection
+        work (spec AC3)."""
+        owner_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+
+        with direct_db.session() as session:
+            media_id = create_test_media(session)
+            add_media_to_library(session, UUID(library_id), media_id)
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        me_resp = auth_client.get("/me", headers=auth_headers(invitee_id))
+        default_library_id = me_resp.json()["data"]["default_library_id"]
+        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+
+        # Before accept: shared media is absent from invitee's Default.
+        before = _list_library_entries(auth_client, invitee_id, default_library_id).json()["data"]
+        assert str(media_id) not in _library_entry_media_ids(before)
+
+        auth_client.post(
+            f"/libraries/invites/{invite_id}/accept",
+            headers=auth_headers(invitee_id),
+        )
+
+        # Immediately after accept, with no worker/projection step run:
+        # shared media appears in invitee's Default.
+        after_accept = _list_library_entries(auth_client, invitee_id, default_library_id).json()[
+            "data"
+        ]
+        assert str(media_id) in _library_entry_media_ids(after_accept)
+
+        # Owner (admin) removes the invitee from the shared library.
+        response = auth_client.delete(
+            f"/libraries/{library_id}/members/{invitee_id}",
+            headers=auth_headers(owner_id),
+        )
+        assert response.status_code == 204
+
+        # Immediately after removal, with no worker/projection step run: the
+        # media is gone from invitee's Default again.
+        after_removal = _list_library_entries(auth_client, invitee_id, default_library_id).json()[
+            "data"
+        ]
+        assert str(media_id) not in _library_entry_media_ids(after_removal)
 
     def test_accept_invite_grants_immediate_media_access_before_backfill_worker(
         self, auth_client, direct_db: DirectSessionManager
@@ -4357,7 +4401,7 @@ class TestLibraryInviteAccept:
 
         with direct_db.session() as session:
             media_id = create_test_media(session)
-            add_library_entry_only(session, UUID(library_id), media_id)
+            add_media_to_library(session, UUID(library_id), media_id)
             session.commit()
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -4858,8 +4902,8 @@ class TestLibraryListPdfCapabilities:
                 plain_text=None,
                 page_count=1,
             )
-            add_library_entry_only(session, UUID(library_id), mid_ready)
-            add_library_entry_only(session, UUID(library_id), mid_not_ready)
+            add_media_to_library(session, UUID(library_id), mid_ready)
+            add_media_to_library(session, UUID(library_id), mid_not_ready)
             session.commit()
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_ready)
@@ -4902,7 +4946,7 @@ class TestLibraryListPdfCapabilities:
                 page_count=1,
                 with_page_spans=True,
             )
-            add_library_entry_only(session, UUID(library_id), mid)
+            add_media_to_library(session, UUID(library_id), mid)
             session.commit()
 
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)

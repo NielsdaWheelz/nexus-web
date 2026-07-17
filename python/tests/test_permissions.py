@@ -18,9 +18,9 @@ Key invariants tested:
   (media_teardown_intents).
 - default_library_intrinsics / default_library_closure_edges rows no longer
   grant access by themselves: only a membership-reachable physical
-  library_entries row does. The ORM models for those tables still exist in
-  this slice; tests below create such rows explicitly to prove they are now
-  inert for visibility purposes.
+  library_entries row does. Their ORM models are deleted in this slice (the
+  tables themselves still exist at head until 0183); tests below insert such
+  rows via raw SQL to prove they are now inert for visibility purposes.
 - Strict revocation: membership/share removal flips outcome immediately
 """
 
@@ -35,7 +35,6 @@ from nexus.auth.permissions import (
     is_library_member,
     visible_media_ids_cte_sql,
 )
-from nexus.db.models import DefaultLibraryClosureEdge, DefaultLibraryIntrinsic
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.library_governance import ensure_system_library
 
@@ -108,25 +107,42 @@ def _add_physical_entry(db: Session, library_id, media_id) -> None:
 
 
 def _create_intrinsic_row(db: Session, default_library_id, media_id) -> None:
-    """Create a default_library_intrinsics row directly (no physical entry).
+    """Insert a default_library_intrinsics row directly (no physical entry),
+    via raw SQL since its ORM model is deleted in this slice (table itself
+    still exists at head until 0183).
 
     Used only to prove this table no longer grants read access by itself.
     """
-    db.merge(DefaultLibraryIntrinsic(default_library_id=default_library_id, media_id=media_id))
+    db.execute(
+        text(
+            "INSERT INTO default_library_intrinsics (default_library_id, media_id) "
+            "VALUES (:default_library_id, :media_id) "
+            "ON CONFLICT (default_library_id, media_id) DO NOTHING"
+        ),
+        {"default_library_id": default_library_id, "media_id": media_id},
+    )
     db.flush()
 
 
 def _create_closure_edge_row(db: Session, default_library_id, media_id, source_library_id) -> None:
-    """Create a default_library_closure_edges row directly (no physical entry).
+    """Insert a default_library_closure_edges row directly (no physical
+    entry), via raw SQL since its ORM model is deleted in this slice (table
+    itself still exists at head until 0183).
 
     Used only to prove this table no longer grants read access by itself.
     """
-    db.merge(
-        DefaultLibraryClosureEdge(
-            default_library_id=default_library_id,
-            media_id=media_id,
-            source_library_id=source_library_id,
-        )
+    db.execute(
+        text(
+            "INSERT INTO default_library_closure_edges "
+            "(default_library_id, media_id, source_library_id) "
+            "VALUES (:default_library_id, :media_id, :source_library_id) "
+            "ON CONFLICT (default_library_id, media_id, source_library_id) DO NOTHING"
+        ),
+        {
+            "default_library_id": default_library_id,
+            "media_id": media_id,
+            "source_library_id": source_library_id,
+        },
     )
     db.flush()
 

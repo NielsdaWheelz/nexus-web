@@ -638,8 +638,12 @@ def _require_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
 
 def _validate_add_targets(db: Session, viewer_id: UUID, media_ids: list[UUID]) -> None:
+    # include_tearing_down keeps a reachable, non-tombstoned target mid-teardown
+    # visible here so it hits the specific E_MEDIA_DELETING below rather than a
+    # generic not-found; an unreachable or tombstoned target still 404s, so the
+    # teardown state never leaks to a non-member.
     for media_id in media_ids:
-        if not can_read_media(db, viewer_id, media_id):
+        if not can_read_media(db, viewer_id, media_id, include_tearing_down=True):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
     if _lectern_store.teardown_intent_media(db, media_ids=media_ids):
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "A target media is being deleted")

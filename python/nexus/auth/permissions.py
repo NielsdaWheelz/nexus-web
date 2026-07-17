@@ -64,7 +64,13 @@ def _media_membership_path_exists(viewer_user_id: UUID, media_id: UUID):
     )
 
 
-def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
+def can_read_media(
+    session: Session,
+    viewer_user_id: UUID,
+    media_id: UUID,
+    *,
+    include_tearing_down: bool = False,
+) -> bool:
     """Check if viewer can read a media item.
 
     True iff a current membership reaches a physical library_entries row for
@@ -72,6 +78,13 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
     system — no is_default distinction), AND the viewer has no
     user_media_deletions tombstone for it, AND no media_teardown_intents row
     is armed for it.
+
+    ``include_tearing_down=True`` drops only the teardown clause (keeping the
+    tombstone exclusion), so a reachable, non-tombstoned target still mid-
+    teardown passes. A write path uses this to reach the target and then raise
+    the specific ``E_MEDIA_DELETING`` for it, instead of the generic 404 the
+    teardown-excluding read surface returns — while an unreachable or tombstoned
+    target still fails here, so the specific error never leaks to a non-member.
 
     Returns False if media_id does not exist (no existence leak: a
     non-existent media_id can never match a library_entries row).
@@ -83,10 +96,11 @@ def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bo
         UserMediaDeletion.media_id == media_id,
     )
 
-    not_tearing_down = ~exists().where(MediaTeardownIntent.media_id == media_id)
+    predicate = membership_path & not_deleted
+    if not include_tearing_down:
+        predicate = predicate & ~exists().where(MediaTeardownIntent.media_id == media_id)
 
-    query = select(membership_path & not_deleted & not_tearing_down)
-    result = session.execute(query)
+    result = session.execute(select(predicate))
     return bool(result.scalar())
 
 

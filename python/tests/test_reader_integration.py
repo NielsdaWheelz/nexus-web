@@ -14,6 +14,7 @@ from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, Reader
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.reader import CursorWrite
 from nexus.services import reader as reader_service
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -31,15 +32,20 @@ READER_PROFILE_FIELDS = {
 }
 
 
-def _add_media_to_user_library(auth_client, user_id, media_id):
-    """Bootstrap user and add media to their default library. Returns library_id."""
+def _add_media_to_user_library(auth_client, direct_db: DirectSessionManager, user_id, media_id):
+    """Bootstrap user and seed media into their default library. Returns library_id.
+
+    Seeds a physical `library_entries` row directly, bypassing the REST filing
+    endpoint's membership-reachability gate: bare factory-created media isn't
+    membership-reachable, so POST /libraries/{id}/media 404s on it. Production
+    ingest always auto-files freshly-created media into the creator's default
+    library (ensure_media_in_default_library); this mirrors that reachability
+    for fixture media created via a bare Media row rather than real ingest."""
     me_resp = auth_client.get("/me", headers=auth_headers(user_id))
     library_id = me_resp.json()["data"]["default_library_id"]
-    auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
+    with direct_db.session() as session:
+        add_media_to_library(session, UUID(library_id), media_id)
+        session.commit()
     return library_id
 
 
@@ -629,7 +635,7 @@ class TestReaderCursorGet:
             media_id, _ = _create_ready_reader_media(session)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/reader-state",
@@ -651,7 +657,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         with direct_db.session() as session:
             session.add(
@@ -683,7 +689,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         with direct_db.session() as session:
             session.add(
@@ -714,7 +720,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         with direct_db.session() as session:
@@ -761,7 +767,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(media_kind, fragment_ids)
 
@@ -802,7 +808,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload_b = {
@@ -840,7 +846,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         auth_client.put(
@@ -874,7 +880,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload_b = {
@@ -915,7 +921,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         resp = auth_client.put(
@@ -979,7 +985,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         auth_client.put(
@@ -1011,7 +1017,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
@@ -1045,7 +1051,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         # Astral (non-BMP) characters: the bound counts code points, not bytes.
@@ -1078,7 +1084,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload["text"] = {
@@ -1115,7 +1121,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(payload_kind, fragment_ids)
         resp = auth_client.put(
@@ -1133,7 +1139,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
@@ -1156,7 +1162,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_a, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_a, media_id)
         auth_client.get("/me", headers=auth_headers(user_b))
 
         get_resp = auth_client.get(
@@ -1195,7 +1201,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         # The module-level logger proxy was cached before log_sink reconfigured
         # structlog; rebind so the validation handler routes into the sink.
@@ -1240,7 +1246,7 @@ class TestReaderAttentionIsolation:
 
         _register_media_cleanup(direct_db, media_id)
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
@@ -1265,7 +1271,7 @@ class TestReaderAttentionIsolation:
 
         _register_media_cleanup(direct_db, media_id)
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         auth_client.put(
@@ -1312,7 +1318,7 @@ class TestReaderAttentionIsolation:
 
         _register_media_cleanup(direct_db, media_id)
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         resp = auth_client.put(
@@ -1340,7 +1346,7 @@ class TestReaderAttentionIsolation:
 
         _register_media_cleanup(direct_db, media_id)
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload_b = {
@@ -1377,7 +1383,7 @@ class TestReaderAttentionIsolation:
 
         _register_media_cleanup(direct_db, media_id)
         direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
 
@@ -1417,7 +1423,7 @@ class TestReaderCursorConcurrency:
         with direct_db.session() as session:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=kind)
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
         return user_id, media_id, fragment_ids
 
     def test_concurrent_first_inserts_same_locator_are_idempotent(

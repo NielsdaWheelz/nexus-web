@@ -340,7 +340,6 @@ class TestUploadInit:
         direct_db.register_cleanup("media_source_attempts", "id", first_data["source_attempt_id"])
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
         assert second_data["media_id"] == media_id
         assert second_data["source_attempt_id"] == first_data["source_attempt_id"]
@@ -388,7 +387,6 @@ class TestUploadInit:
         direct_db.register_cleanup("media_source_attempts", "id", first_data["source_attempt_id"])
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
         assert mismatch.status_code == 409
         assert mismatch.json()["error"]["code"] == "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"
@@ -496,7 +494,6 @@ class TestUploadInit:
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
         assert data["upload_url"] is None
         assert data["source_attempt_status"] == "failed"
@@ -1328,10 +1325,15 @@ class TestMediaWithCapabilities:
 class TestUploadProvenance:
     """Tests intrinsic default-library provenance for uploads."""
 
-    def test_upload_init_creates_default_library_intrinsic_row(
+    def test_upload_init_creates_direct_default_library_entry(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
-        """Upload init creates both library_entries and intrinsic rows."""
+        """Upload init creates a direct physical default library_entries row.
+
+        Post-cutover there is no separate intrinsic provenance table — the
+        physical `library_entries` row in the user's default library IS the
+        whole direct-entry contract.
+        """
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1347,7 +1349,6 @@ class TestUploadProvenance:
         ).json()["data"]
 
         media_id = init_response["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1362,15 +1363,6 @@ class TestUploadProvenance:
             ).fetchone()
             assert dl is not None
 
-            intrinsic = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": dl[0], "m": media_id},
-            ).fetchone()
-            assert intrinsic is not None
-
             entry = session.execute(
                 text("""
                     SELECT 1 FROM library_entries
@@ -1380,10 +1372,10 @@ class TestUploadProvenance:
             ).fetchone()
             assert entry is not None
 
-    def test_second_same_file_upload_gets_default_library_intrinsic(
+    def test_second_same_file_upload_gets_own_default_library_entry(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
     ):
-        """A second upload owns its own default-library intrinsic."""
+        """A second upload owns its own direct default-library entry."""
         user_id = create_test_user_id()
         upload_client.get("/me", headers=auth_headers(user_id))
 
@@ -1399,7 +1391,6 @@ class TestUploadProvenance:
             headers=auth_headers(user_id),
         ).json()["data"]
         media_id_1 = init1["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_1)
         direct_db.register_cleanup("library_entries", "media_id", media_id_1)
         direct_db.register_cleanup("media_file", "media_id", media_id_1)
         direct_db.register_cleanup("media", "id", media_id_1)
@@ -1419,7 +1410,6 @@ class TestUploadProvenance:
             headers=auth_headers(user_id),
         ).json()["data"]
         media_id_2 = init2["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id_2)
         direct_db.register_cleanup("library_entries", "media_id", media_id_2)
         direct_db.register_cleanup("media_file", "media_id", media_id_2)
         direct_db.register_cleanup("media", "id", media_id_2)
@@ -1430,7 +1420,7 @@ class TestUploadProvenance:
         current_id = resp.json()["data"]["media_id"]
         assert current_id == media_id_2
 
-        # Verify the second media has its own intrinsic.
+        # Verify the second media has its own direct default-library entry.
         with direct_db.session() as session:
             dl = session.execute(
                 text("""
@@ -1440,14 +1430,14 @@ class TestUploadProvenance:
                 {"uid": user_id},
             ).fetchone()
 
-            intrinsic = session.execute(
+            entry = session.execute(
                 text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
+                    SELECT 1 FROM library_entries
+                    WHERE library_id = :dl AND media_id = :m
                 """),
                 {"dl": dl[0], "m": current_id},
             ).fetchone()
-            assert intrinsic is not None
+            assert entry is not None
 
     def test_confirm_applies_selected_libraries_to_current_media(
         self, upload_client, fake_storage, direct_db: DirectSessionManager
@@ -1473,7 +1463,6 @@ class TestUploadProvenance:
             headers=auth_headers(user_id),
         ).json()["data"]
         first_media_id = init1["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", first_media_id)
         direct_db.register_cleanup("library_entries", "media_id", first_media_id)
         direct_db.register_cleanup("media_file", "media_id", first_media_id)
         direct_db.register_cleanup("media", "id", first_media_id)
@@ -1495,7 +1484,6 @@ class TestUploadProvenance:
             headers=auth_headers(user_id),
         ).json()["data"]
         second_media_id = init2["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", second_media_id)
         direct_db.register_cleanup("library_entries", "media_id", second_media_id)
         direct_db.register_cleanup("media_file", "media_id", second_media_id)
         direct_db.register_cleanup("media", "id", second_media_id)
@@ -1533,7 +1521,6 @@ class TestUploadProvenance:
             headers=auth_headers(user_id),
         ).json()["data"]
         media_id = init_data["media_id"]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -1573,7 +1560,6 @@ class TestEpubIngestLifecycle:
         mid = d["media_id"]
         direct_db.register_cleanup("epub_toc_nodes", "media_id", mid)
         direct_db.register_cleanup("fragment_blocks", "fragment_id", mid)  # best-effort
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", mid)
         direct_db.register_cleanup("fragments", "media_id", mid)
         direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
@@ -1741,7 +1727,6 @@ class TestPdfIngestLifecycle:
         d = resp.json()["data"]
         mid = d["media_id"]
         direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", mid)
         direct_db.register_cleanup("library_entries", "media_id", mid)
         direct_db.register_cleanup("media_file", "media_id", mid)
         direct_db.register_cleanup("media", "id", mid)

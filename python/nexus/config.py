@@ -30,7 +30,7 @@ DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
     "library_dossier_generate,media_unit_build,note_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-    "backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,"
+    "oracle_reading_generate,synapse_scan,"
     "dawn_write_job,"
     "conversation_distill,conversation_distill_sweep,atlas_project_job,"
     # Media teardown + its durable storage sweeps (spec §3.1). The default worker

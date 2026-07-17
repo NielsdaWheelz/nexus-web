@@ -29,6 +29,8 @@ from nexus.services.media_source_ingest import accept_url_source
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
+from tests.support.storage import FakeStorageClient
+from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -498,14 +500,16 @@ class TestSharedHighlightVisibility:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # User A adds media and creates highlight
+        # User A adds media and creates highlight. Filing requires the media
+        # to already be membership-reachable (production guarantees this via
+        # auto-filing new media into the creator's default library on
+        # ingest), so seed the physical entry directly rather than through
+        # the authorization-gated REST endpoint.
         me_a = e2e_client.get("/me", headers=auth_headers(user_a))
         lib_a_id = me_a.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_a_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
+        with direct_db.session() as session:
+            add_media_to_library(session, UUID(lib_a_id), media_id)
+            session.commit()
 
         hl_response = e2e_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -590,14 +594,16 @@ class TestUnicodeEmojiStability:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Add to user's library
+        # Add to user's library. Filing requires the media to already be
+        # membership-reachable (production guarantees this via auto-filing new
+        # media into the creator's default library on ingest), so seed the
+        # physical entry directly rather than through the authorization-gated
+        # REST endpoint.
         me = e2e_client.get("/me", headers=auth_headers(user_id))
         lib_id = me.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            add_media_to_library(session, UUID(lib_id), media_id)
+            session.commit()
 
         # Highlight just the emoji (codepoint index 6-7)
         emoji_response = e2e_client.post(
@@ -685,14 +691,16 @@ class TestUnicodeEmojiStability:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Add to user's library
+        # Add to user's library. Filing requires the media to already be
+        # membership-reachable (production guarantees this via auto-filing new
+        # media into the creator's default library on ingest), so seed the
+        # physical entry directly rather than through the authorization-gated
+        # REST endpoint.
         me = e2e_client.get("/me", headers=auth_headers(user_id))
         lib_id = me.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            add_media_to_library(session, UUID(lib_id), media_id)
+            session.commit()
 
         # Highlight both emoji (codepoints 3-5)
         both_emoji_response = e2e_client.post(
@@ -1164,14 +1172,16 @@ class TestProcessingStateRegression:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        # Add to library
+        # Add to library. Filing requires the media to already be
+        # membership-reachable (production guarantees this via auto-filing new
+        # media into the creator's default library on ingest), so seed the
+        # physical entry directly rather than through the authorization-gated
+        # REST endpoint.
         me = e2e_client.get("/me", headers=auth_headers(user_id))
         lib_id = me.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        with direct_db.session() as session:
+            add_media_to_library(session, UUID(lib_id), media_id)
+            session.commit()
 
         # Try to create highlight - should fail with E_MEDIA_NOT_READY
         response = e2e_client.post(
@@ -1236,15 +1246,29 @@ class TestRedirectDedup:
 
     def test_dedup_by_canonical_url(
         self,
-        db_session: Session,
-        bootstrapped_user: UUID,
+        direct_db: DirectSessionManager,
+        monkeypatch,
         httpserver,
     ):
-        """Verify two URLs resolving to same final URL produce one media row."""
+        """Verify two URLs resolving to same final URL produce one media row.
+
+        The loser's physical deletion is owned by the durable ``media_teardown``
+        job (spec S3/S4.3), not the ingest transaction, so this drives that job
+        to completion the same way ``tests/test_media_teardown.py`` does rather
+        than asserting synchronous deletion. Uses ``direct_db`` (real commits)
+        instead of the savepoint-isolated ``db_session`` because the teardown
+        worker opens its own connection and must see the ingest's committed
+        rows.
+        """
         pytest.importorskip("nexus.services.node_ingest")
         from nexus.tasks.ingest_web_article import run_ingest_sync
 
-        user_id = bootstrapped_user
+        install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
+
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            ensure_user_and_default_library(session, user_id)
+            session.commit()
 
         # Both URLs redirect to same final
         httpserver.expect_request("/alias1").respond_with_data(
@@ -1258,32 +1282,47 @@ class TestRedirectDedup:
             content_type="text/html",
         )
 
-        # Create and ingest first media
-        url1 = httpserver.url_for("/alias1")
-        result1 = accept_url_source(db=db_session, viewer_id=user_id, url=url1, library_ids=[])
-        media_id1 = result1.media_id
-        run_ingest_sync(db_session, media_id1, user_id)
+        with direct_db.session() as session:
+            # Create and ingest first media
+            url1 = httpserver.url_for("/alias1")
+            result1 = accept_url_source(db=session, viewer_id=user_id, url=url1, library_ids=[])
+            media_id1 = result1.media_id
+            session.commit()
+            run_ingest_sync(session, media_id1, user_id)
 
-        # Create and ingest second media (should dedup)
-        url2 = httpserver.url_for("/alias2")
-        result2 = accept_url_source(db=db_session, viewer_id=user_id, url=url2, library_ids=[])
-        media_id2 = result2.media_id
-        ingest_result2 = run_ingest_sync(db_session, media_id2, user_id)
+            # Create and ingest second media (should dedup)
+            url2 = httpserver.url_for("/alias2")
+            result2 = accept_url_source(db=session, viewer_id=user_id, url=url2, library_ids=[])
+            media_id2 = result2.media_id
+            session.commit()
+            ingest_result2 = run_ingest_sync(session, media_id2, user_id)
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id1)
+        direct_db.register_cleanup("media", "id", media_id1)
 
         # Second should be deduped
         if ingest_result2.get("status") == "deduped":
-            db_session.expire_all()
+            # The loser is claimed for durable teardown, not deleted inline;
+            # drive that job to its terminal status.
+            teardown_status = drive_media_teardown(direct_db.session, media_id2)
+            assert teardown_status == "succeeded", (
+                f"Expected loser media {media_id2} teardown to succeed, got {teardown_status!r}"
+            )
 
-            # Loser (media_id2) should be deleted
-            row = db_session.execute(
-                text("SELECT id FROM media WHERE id = :id"),
-                {"id": media_id2},
-            ).fetchone()
-            assert row is None, "Duplicate media should be deleted"
+            with direct_db.session() as session:
+                # Loser (media_id2) should be deleted
+                row = session.execute(
+                    text("SELECT id FROM media WHERE id = :id"),
+                    {"id": media_id2},
+                ).fetchone()
+                assert row is None, "Duplicate media should be deleted"
 
-            # Winner (media_id1) should still exist
-            row = db_session.execute(
-                text("SELECT id FROM media WHERE id = :id"),
-                {"id": media_id1},
-            ).fetchone()
-            assert row is not None
+                # Winner (media_id1) should still exist
+                row = session.execute(
+                    text("SELECT id FROM media WHERE id = :id"),
+                    {"id": media_id1},
+                ).fetchone()
+                assert row is not None
+        else:
+            direct_db.register_cleanup("library_entries", "media_id", media_id2)
+            direct_db.register_cleanup("media", "id", media_id2)

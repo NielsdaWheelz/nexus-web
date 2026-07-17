@@ -276,15 +276,22 @@ _RESONANCE_ORDER = f"""
 """
 
 
-def library_media_ids_cte_sql() -> str:
+def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
     """The sole library media-set relation (spec S4.1). Binds :viewer_id and
-    :library_id; every branch also intersects with `visible_media_ids_cte_sql`,
-    which applies viewer-tombstone and teardown-intent exclusion, so a caller
-    never has to layer those checks again on top.
+    `library_param` (default :library_id); every branch also intersects with
+    `visible_media_ids_cte_sql`, which applies viewer-tombstone and
+    teardown-intent exclusion, so a caller never has to layer those checks
+    again on top.
 
-    - Viewer-owned Default (:library_id is the viewer's own non-system default
-      library): every media_id reachable through any of the viewer's CURRENT
-      non-system memberships — the personal "All" set. This is
+    `library_param` lets a caller rebind the library-id placeholder to its own
+    param name (e.g. search scope's `:scope_id`) instead of string-replacing
+    the returned SQL; :viewer_id stays fixed because `visible_media_ids_cte_sql`
+    (composed below) has no such hook and every caller already has an ambient
+    `:viewer_id` bind.
+
+    - Viewer-owned Default (`library_param` is the viewer's own non-system
+      default library): every media_id reachable through any of the viewer's
+      CURRENT non-system memberships — the personal "All" set. This is
       `auth.permissions.visible_media_ids_cte_sql`'s relation further constrained
       to non-system contributing libraries, so an Oracle work reachable only
       through the system corpus library never leaks into a personal surface
@@ -294,7 +301,7 @@ def library_media_ids_cte_sql() -> str:
       intersected with the broader global-readability relation (so an entry
       whose media a concurrent teardown has since armed, or the viewer has since
       tombstoned, never surfaces even though the physical row still exists).
-    - Any other (:viewer_id, :library_id) pair — non-member, someone else's
+    - Any other (:viewer_id, `library_param`) pair — non-member, someone else's
       default, or a system-library target — contributes zero rows. This
       relation never raises; masking a non-member as "not found" is the
       caller's job (`library_governance.lock_library_for_member`).
@@ -304,7 +311,7 @@ def library_media_ids_cte_sql() -> str:
         FROM library_entries le
         JOIN libraries l ON l.id = le.library_id
         JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-        WHERE l.id = :library_id
+        WHERE l.id = {library_param}
           AND l.is_default = false
           AND le.media_id IS NOT NULL
           AND le.media_id IN ({visible_media_ids_cte_sql()})
@@ -318,7 +325,7 @@ def library_media_ids_cte_sql() -> str:
         WHERE le.media_id IS NOT NULL
           AND EXISTS (
               SELECT 1 FROM libraries dl
-              WHERE dl.id = :library_id
+              WHERE dl.id = {library_param}
                 AND dl.is_default = true
                 AND dl.system_key IS NULL
                 AND dl.owner_user_id = :viewer_id

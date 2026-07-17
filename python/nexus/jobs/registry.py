@@ -52,7 +52,6 @@ USER_FACING_JOB_KINDS = (
     "note_reindex_job",
     "podcast_sync_subscription_job",
     "podcast_reindex_semantic_job",
-    "backfill_default_library_closure_job",
     "oracle_reading_generate",
     "synapse_scan",
     "conversation_distill",
@@ -230,13 +229,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=300,
             periodic_interval_seconds=3600,
-        ),
-        "backfill_default_library_closure_job": JobDefinition(
-            kind="backfill_default_library_closure_job",
-            handler=_run_backfill_default_library_closure,
-            max_attempts=5,
-            retry_delays_seconds=(60, 300, 900, 3600, 21600),
-            lease_seconds=900,
         ),
         "oracle_reading_generate": JobDefinition(
             kind="oracle_reading_generate",
@@ -493,19 +485,6 @@ def _run_purge_expired_auth_handoff_codes(
     from nexus.tasks.purge_expired_auth_handoff_codes import purge_expired_auth_handoff_codes_job
 
     return purge_expired_auth_handoff_codes_job(
-        request_id=_optional_str(payload.get("request_id")),
-    )
-
-
-def _run_backfill_default_library_closure(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
-    from nexus.tasks.backfill_default_library_closure import backfill_default_library_closure_job
-
-    return backfill_default_library_closure_job(
-        default_library_id=str(payload["default_library_id"]),
-        source_library_id=str(payload["source_library_id"]),
-        user_id=str(payload["user_id"]),
         request_id=_optional_str(payload.get("request_id")),
     )
 

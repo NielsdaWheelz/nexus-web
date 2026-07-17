@@ -25,6 +25,7 @@ from nexus.db.models import (
     ProcessingStatus,
     ReadingSession,
 )
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -119,13 +120,17 @@ def _create_podcast_episode(
     return podcast_id, media_id
 
 
-def _add_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, f"add media to library failed: {response.text}"
+def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Seed a physical library_entries row directly, bypassing the REST filing
+    endpoint's membership-reachability gate: bare factory/direct-INSERT media
+    isn't membership-reachable, so POST /libraries/{id}/media 404s on it.
+    Production ingest always auto-files freshly-created media into the
+    creator's default library (ensure_media_in_default_library); this mirrors
+    that reachability for fixture media created via a bare Media row rather
+    than real ingest."""
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _place(auth_client, user_id, media_ids) -> list[dict]:
@@ -242,7 +247,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
 
         _heartbeat(auth_client, user_id, episode, position_ms=950_000, duration_ms=1_000_000)
@@ -259,7 +264,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
 
         # Set is_completed directly (bypassing the command layer, which always
@@ -284,7 +289,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
 
         _heartbeat(auth_client, user_id, episode, position_ms=1_000, duration_ms=600_000)
@@ -298,7 +303,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
         _heartbeat(auth_client, user_id, episode, position_ms=1_000, duration_ms=600_000)
 
@@ -325,7 +330,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
         _heartbeat(auth_client, user_id, episode, position_ms=950_000, duration_ms=1_000_000)
         assert _get_lectern_item(auth_client, user_id, episode)["consumption"]["state"] == (
@@ -345,7 +350,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
-        _add_to_library(auth_client, user_id, library_id, article)
+        _add_to_library(direct_db, library_id, article)
         _place(auth_client, user_id, [article])
 
         item = _get_lectern_item(auth_client, user_id, article)
@@ -357,7 +362,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
-        _add_to_library(auth_client, user_id, library_id, article)
+        _add_to_library(direct_db, library_id, article)
         _place(auth_client, user_id, [article])
         # No reading session at all: derived state would be Unread.
 
@@ -380,7 +385,7 @@ class TestConsumptionStateDerivationMatrix:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
-        _add_to_library(auth_client, user_id, library_id, article)
+        _add_to_library(direct_db, library_id, article)
         _place(auth_client, user_id, [article])
         # A single long session (>= 120s total dwell) derives Finished.
         _seed_reading_session(direct_db, user_id=user_id, media_id=article, dwell_ms=150_000)
@@ -409,7 +414,7 @@ class TestChapterBounds:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         _, episode = _create_podcast_episode(direct_db, title="Chaptered")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
 
         long_title = "A" * 350
         with direct_db.session() as session:
@@ -463,7 +468,7 @@ class TestPlayerDescriptor:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         podcast_id, episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         _place(auth_client, user_id, [episode])
         lectern_activation = _get_lectern_item(auth_client, user_id, episode)["activation"]
         assert lectern_activation["kind"] == "FooterAudio"
@@ -489,7 +494,7 @@ class TestPlayerDescriptor:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
-        _add_to_library(auth_client, user_id, library_id, article)
+        _add_to_library(direct_db, library_id, article)
 
         media_resp = auth_client.get(f"/media/{article}", headers=auth_headers(user_id))
         assert media_resp.status_code == 200, media_resp.text

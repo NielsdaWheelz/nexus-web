@@ -2,8 +2,8 @@
 
 Owns library CRUD, membership/role management, ownership transfer, the
 membership-fetch-and-lock guards reused across the library domain, and the
-libraries/memberships access checks used by ingest paths. Entry rows, invitations,
-and the default-library closure are owned by their own modules.
+libraries/memberships access checks used by ingest paths. Entry rows and
+invitations are owned by their own modules.
 """
 
 import base64
@@ -313,7 +313,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
     from nexus.services import library_entries, media_deletion
     from nexus.services.artifacts import engine as artifact_engine
-    from nexus.services.default_library_closure import remove_media_from_non_default_closure
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
@@ -328,8 +327,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             )
 
         media_ids = library_entries.list_media_ids_in_library(db, library_id)
-        for media_id in media_ids:
-            remove_media_from_non_default_closure(db, library_id, media_id)
 
         artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
 
@@ -697,8 +694,6 @@ def remove_library_member(
     db: Session, viewer_id: UUID, library_id: UUID, target_user_id: UUID
 ) -> None:
     """Remove a member. Admin-only; cannot remove owner; default forbidden; idempotent."""
-    from nexus.services.default_library_closure import remove_member_closure_and_gc
-
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_admin(ctx.role)
@@ -724,7 +719,6 @@ def remove_library_member(
             text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
             {"lid": library_id, "uid": target_user_id},
         )
-        remove_member_closure_and_gc(db, library_id, target_user_id)
 
 
 def transfer_library_ownership(

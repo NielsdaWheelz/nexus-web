@@ -646,14 +646,6 @@ def _seed_duplicate_loser_child_rows(
     winner_media_id: UUID,
     loser_media_id: UUID,
 ) -> UUID:
-    default_library_id = db.execute(
-        text("""
-            SELECT id
-            FROM libraries
-            WHERE owner_user_id = :user_id AND is_default = true
-        """),
-        {"user_id": user_id},
-    ).scalar_one()
     source_library_id = uuid4()
     fragment_id = uuid4()
 
@@ -677,21 +669,6 @@ def _seed_duplicate_loser_child_rows(
             VALUES (:library_id, :media_id, 0)
         """),
         {"library_id": source_library_id, "media_id": loser_media_id},
-    )
-    db.execute(
-        text("""
-            INSERT INTO default_library_closure_edges (
-                default_library_id,
-                media_id,
-                source_library_id
-            )
-            VALUES (:default_library_id, :media_id, :source_library_id)
-        """),
-        {
-            "default_library_id": default_library_id,
-            "media_id": loser_media_id,
-            "source_library_id": source_library_id,
-        },
     )
     db.execute(
         text("""
@@ -768,19 +745,6 @@ def _assert_duplicate_loser_child_rows_deleted(
 ) -> None:
     assert _count_rows(db, "media", "id = :media_id", media_id=media_id) == 0
     assert _count_rows(db, "library_entries", "media_id = :media_id", media_id=media_id) == 0
-    assert (
-        _count_rows(db, "default_library_intrinsics", "media_id = :media_id", media_id=media_id)
-        == 0
-    )
-    assert (
-        _count_rows(
-            db,
-            "default_library_closure_edges",
-            "media_id = :media_id",
-            media_id=media_id,
-        )
-        == 0
-    )
     assert _count_rows(db, "user_media_deletions", "media_id = :media_id", media_id=media_id) == 0
     assert _count_rows(db, "media_file", "media_id = :media_id", media_id=media_id) == 0
     assert _count_rows(db, "fragments", "media_id = :media_id", media_id=media_id) == 0

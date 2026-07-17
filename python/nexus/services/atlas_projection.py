@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
+from nexus.services import library_governance as governance
+from nexus.services.library_entries import library_media_ids_cte_sql
 
 logger = get_logger(__name__)
 
@@ -36,12 +38,15 @@ _MIN_PCA_VECTORS = 3
 
 
 def _visible_media_sql() -> str:
-    """SQL predicate subquery listing the user's visible media ids."""
-    return (
-        "SELECT le.media_id FROM library_entries le"
-        " JOIN libraries l ON l.id = le.library_id"
-        " WHERE l.owner_user_id = :user_id AND le.media_id IS NOT NULL"
-    )
+    """SQL predicate subquery listing the user's personal Default virtual
+    media set (spec S4.1): every media id reachable through any of the
+    user's CURRENT non-system memberships. Oracle system-only works never
+    appear here even when the user holds a system-library membership (AC2).
+    Binds :viewer_id and :library_id (the user's own Default library id) —
+    callers must resolve that id first via
+    ``library_governance.find_default_library_id``.
+    """
+    return library_media_ids_cte_sql()
 
 
 def _parse_pgvector_literal(raw: object) -> list[float]:
@@ -62,8 +67,14 @@ def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[f
     """Return ``(media_id, mean_vector)`` for each visible work with embeddings.
 
     Uses the pgvector ``avg()`` aggregate (§D-1); falls back to Python averaging
-    if the installed image lacks ``avg(vector)`` (§R-3).
+    if the installed image lacks ``avg(vector)`` (§R-3). Scoped to the user's
+    personal Default virtual relation (AC2) — a user with no Default library
+    yet has nothing to project.
     """
+    default_library_id = governance.find_default_library_id(db, user_id)
+    if default_library_id is None:
+        return []
+    params = {"viewer_id": user_id, "library_id": default_library_id}
     try:
         rows = db.execute(
             text(
@@ -78,7 +89,7 @@ def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[f
                 HAVING count(e.id) > 0
                 """
             ),
-            {"user_id": user_id},
+            params,
         ).all()
         return [(row.media_id, _parse_pgvector_literal(row.mean)) for row in rows]
     except ProgrammingError as exc:
@@ -86,10 +97,12 @@ def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[f
             raise
         logger.warning("atlas_avg_vector_unavailable_fallback_python", error=str(exc))
         db.rollback()
-        return _fetch_mean_embeddings_python(db, user_id)
+        return _fetch_mean_embeddings_python(db, user_id, default_library_id)
 
 
-def _fetch_mean_embeddings_python(db: Session, user_id: UUID) -> list[tuple[UUID, list[float]]]:
+def _fetch_mean_embeddings_python(
+    db: Session, user_id: UUID, default_library_id: UUID
+) -> list[tuple[UUID, list[float]]]:
     rows = db.execute(
         text(
             f"""
@@ -101,7 +114,7 @@ def _fetch_mean_embeddings_python(db: Session, user_id: UUID) -> list[tuple[UUID
               AND e.embedding_vector IS NOT NULL
             """
         ),
-        {"user_id": user_id},
+        {"viewer_id": user_id, "library_id": default_library_id},
     ).all()
     sums: dict[UUID, list[float]] = {}
     counts: dict[UUID, int] = defaultdict(int)
@@ -287,7 +300,12 @@ def run_projection(db: Session, user_id: UUID) -> dict:
 
 
 def count_unpositioned(db: Session, user_id: UUID) -> int:
-    """How many visible works have no atlas position row yet."""
+    """How many of the user's personal Default virtual media have no atlas
+    position row yet. A user with no Default library yet has nothing
+    unpositioned."""
+    default_library_id = governance.find_default_library_id(db, user_id)
+    if default_library_id is None:
+        return 0
     return int(
         db.execute(
             text(
@@ -298,18 +316,22 @@ def count_unpositioned(db: Session, user_id: UUID) -> int:
                 WHERE p.media_id IS NULL
                 """
             ),
-            {"user_id": user_id},
+            {"viewer_id": user_id, "library_id": default_library_id},
         ).scalar_one()
     )
 
 
 def list_projectable_user_ids(db: Session) -> list[UUID]:
-    """Users owning at least one library entry — the periodic sweep scope."""
+    """Users holding any non-system membership — the periodic sweep scope
+    (spec S4.1/AC2). Ownership is not required: a user whose only media
+    access is through someone else's shared non-default library is still
+    swept, so their Atlas positions stay current."""
     rows = db.execute(
         text(
-            "SELECT DISTINCT l.owner_user_id"
-            " FROM libraries l JOIN library_entries le ON le.library_id = l.id"
-            " WHERE le.media_id IS NOT NULL"
+            "SELECT DISTINCT m.user_id"
+            " FROM memberships m"
+            " JOIN libraries l ON l.id = m.library_id"
+            " WHERE l.system_key IS NULL"
         )
     ).all()
     return [row[0] for row in rows]

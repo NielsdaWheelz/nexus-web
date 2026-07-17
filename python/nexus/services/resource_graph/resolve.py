@@ -523,6 +523,21 @@ def _load_media(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> li
     return out
 
 
+def _count_default_virtual_media(db: Session, *, viewer_id: UUID, library_id: UUID) -> int:
+    """Distinct media reachable through the viewer's own Default library (spec §5):
+    the personal virtual relation, not a physical row count."""
+    row = db.execute(
+        text(
+            f"""
+            SELECT COUNT(DISTINCT media_id)
+            FROM ({library_entries.library_media_ids_cte_sql()}) AS virtual_media
+            """
+        ),
+        {"viewer_id": viewer_id, "library_id": library_id},
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
 def _load_library(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
@@ -530,7 +545,7 @@ def _load_library(
     rows = db.execute(
         text(
             """
-            SELECT l.id, l.name
+            SELECT l.id, l.name, l.is_default, l.owner_user_id
             FROM libraries l
             WHERE l.id = ANY(:ids)
             """
@@ -538,19 +553,31 @@ def _load_library(
         {"ids": ids},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
-    counts = library_entries.count_entries_by_library(db, ids)
+    # A library only ever passes the membership gate below as the viewer's OWN
+    # Default if `is_default` and `owner_user_id` both match this viewer — any
+    # other user's Default library has no membership row for this viewer and is
+    # masked as missing before counts matter.
+    own_default_ids = {row[0] for row in rows if bool(row[2]) and UUID(str(row[3])) == viewer_id}
+    physical_counts = library_entries.count_entries_by_library(
+        db, [lid for lid in ids if lid not in own_default_ids]
+    )
+    virtual_counts = {
+        lid: _count_default_virtual_media(db, viewer_id=viewer_id, library_id=lid)
+        for lid in own_default_ids
+    }
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
         if row is None or not is_library_member(db, viewer_id, ref.id):
             out.append(_missing(ref.uri, "library"))
             continue
+        count = virtual_counts.get(row[0], physical_counts.get(row[0], 0))
         out.append(
             LoadedResource(
                 uri=ref.uri,
                 scheme="library",
                 title=str(row[1]),
-                item_count=int(counts.get(row[0], 0)),
+                item_count=int(count),
             )
         )
     return out

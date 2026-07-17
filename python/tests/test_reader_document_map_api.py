@@ -330,8 +330,6 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
     direct_db.register_cleanup("highlights", "anchor_media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 
 

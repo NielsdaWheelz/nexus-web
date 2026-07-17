@@ -14,7 +14,7 @@ from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.schemas.attention import AttentionBlock
 from nexus.services import attention
 from nexus.services.consumption import service as consumption_service
-from tests.factories import add_library_entry_only, create_test_library
+from tests.factories import add_media_to_library, create_test_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -44,7 +44,7 @@ def _seed_user_and_media(
         )
         session.flush()
         library_id = create_test_library(session, user_id)
-        add_library_entry_only(session, library_id, media_id)
+        add_media_to_library(session, library_id, media_id)
         session.commit()
     # Parent-first registration; LIFO teardown deletes children first.
     direct_db.register_cleanup("users", "id", user_id)

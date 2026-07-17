@@ -9,6 +9,9 @@ from tests.factories import (
     create_test_library,
     create_test_media,
 )
+from tests.factories import (
+    add_media_to_library as seed_media_in_library,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -40,10 +43,15 @@ class TestLibraryTargetPickerOptions:
             owned_out_library_id = create_test_library(session, viewer_id, "Owned Out")
             shared_member_library_id = create_test_library(session, other_owner_id, "Shared Member")
             add_library_member(session, shared_member_library_id, viewer_id, role="member")
+            # The generic filing endpoint below only re-files media already
+            # reachable through a membership (readable-or-restorable, spec
+            # S4.3 rule 1) — establish a direct default entry first. Default
+            # is excluded from `list_item_libraries`'s target rows, so this
+            # doesn't affect the assertions below.
+            seed_media_in_library(session, default_library_id, media_id)
+            session.commit()
 
         direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("libraries", "id", owned_in_library_id)
         direct_db.register_cleanup("memberships", "library_id", owned_in_library_id)

@@ -23,13 +23,17 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "sync_gutenberg_catalog_job",
         "prune_background_jobs_job",
         "purge_expired_auth_handoff_codes",
-        "backfill_default_library_closure_job",
         "oracle_reading_generate",
         "synapse_scan",
         "dawn_write_job",
         "conversation_distill",
         "conversation_distill_sweep",
         "atlas_project_job",
+        # Media teardown + its durable storage sweeps (lectern-player-lifecycle
+        # spec §3.1), pre-existing at head — not part of this cutover's diff.
+        "media_teardown",
+        "storage_object_cleanup",
+        "storage_orphan_sweep",
     }
     actual_kinds = set(get_default_registry().keys())
     assert actual_kinds == expected_kinds, (
