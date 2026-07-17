@@ -17871,6 +17871,9 @@ class TestMigration0181ReaderProfileCreatedAt:
                 "ck_reader_profiles_hyphenation",
             ):
                 assert constraints.get(check_name) == "c", f"{check_name} must survive"
+        finally:
+            reset_test_schema()
+            engine.dispose()
 
 
 class TestMigration0182LecternPlayerLifecycle:
