@@ -35,6 +35,8 @@ from tests.reader_apparatus_corpus import (
     fixture_cases_by_real_media_contract,
     fixture_text,
 )
+from tests.support.storage import FakeStorageClient
+from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -233,13 +235,31 @@ class TestIngestionStateTransitions:
 class TestDeduplication:
     """Tests for canonical URL deduplication."""
 
-    def test_dedup_by_canonical_url_after_redirect(self, db_session: Session, httpserver):
-        """Two URLs redirecting to same final URL should result in one media row."""
+    def test_dedup_by_canonical_url_after_redirect(
+        self,
+        direct_db: DirectSessionManager,
+        monkeypatch,
+        httpserver,
+    ):
+        """Two URLs redirecting to same final URL should result in one media row.
+
+        The loser's physical deletion is owned by the durable ``media_teardown``
+        job (spec S3/S4.3), not the ingest transaction, so this drives that job
+        to completion the same way ``tests/test_media_teardown.py`` does rather
+        than asserting synchronous deletion. Uses ``direct_db`` (real commits)
+        instead of the savepoint-isolated ``db_session`` because the teardown
+        worker opens its own connection and must see the ingest's committed
+        rows.
+        """
         pytest.importorskip("nexus.services.node_ingest")
         from nexus.tasks.ingest_web_article import run_ingest_sync
 
+        install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
+
         user_id = create_test_user_id()
-        _create_user(db_session, user_id)
+        with direct_db.session() as session:
+            _create_user(session, user_id)
+            session.commit()
 
         # Set up redirect
         httpserver.expect_request("/old-url").respond_with_data(
@@ -250,50 +270,75 @@ class TestDeduplication:
             content_type="text/html",
         )
 
-        # Create first media via old URL
-        old_url = httpserver.url_for("/old-url")
-        result1 = accept_url_source(db=db_session, viewer_id=user_id, url=old_url, library_ids=[])
-        media_id1 = result1.media_id
+        with direct_db.session() as session:
+            # Create first media via old URL
+            old_url = httpserver.url_for("/old-url")
+            result1 = accept_url_source(
+                db=session, viewer_id=user_id, url=old_url, library_ids=[]
+            )
+            media_id1 = result1.media_id
+            session.commit()
 
-        # Ingest first media
-        run_ingest_sync(db_session, media_id1, user_id)
+            # Ingest first media
+            run_ingest_sync(session, media_id1, user_id)
 
-        # The canonical URL should now be set
-        db_session.expire_all()
-        media1 = _get_media(db_session, media_id1)
+            # The canonical URL should now be set
+            session.expire_all()
+            media1 = _get_media(session, media_id1)
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id1)
+        direct_db.register_cleanup("media", "id", media_id1)
 
         # If ingestion succeeded, verify canonical URL is set
         if media1 and media1["canonical_url"]:
-            # Create second media via canonical URL directly
-            canonical_url = httpserver.url_for("/canonical")
-            result2 = accept_url_source(
-                db=db_session,
-                viewer_id=user_id,
-                url=canonical_url,
-                library_ids=[],
-            )
-            media_id2 = result2.media_id
-            loser_fragment_id = _seed_duplicate_loser_child_rows(
-                db_session,
-                user_id=user_id,
-                winner_media_id=media_id1,
-                loser_media_id=media_id2,
-            )
+            with direct_db.session() as session:
+                # Create second media via canonical URL directly
+                canonical_url = httpserver.url_for("/canonical")
+                result2 = accept_url_source(
+                    db=session,
+                    viewer_id=user_id,
+                    url=canonical_url,
+                    library_ids=[],
+                )
+                media_id2 = result2.media_id
+                loser_fragment_id = _seed_duplicate_loser_child_rows(
+                    session,
+                    user_id=user_id,
+                    winner_media_id=media_id1,
+                    loser_media_id=media_id2,
+                )
 
-            # Ingest second media - should detect duplicate
-            ingest_result = run_ingest_sync(db_session, media_id2, user_id)
+                # Ingest second media - should detect duplicate
+                ingest_result = run_ingest_sync(session, media_id2, user_id)
 
             # Should be deduped
             if ingest_result.get("status") == "deduped":
-                # Loser media should be deleted
-                db_session.expire_all()
-                loser = _get_media(db_session, media_id2)
-                assert loser is None, "Loser media should be deleted"
-                _assert_duplicate_loser_child_rows_deleted(
-                    db_session,
-                    media_id=media_id2,
-                    fragment_id=loser_fragment_id,
+                # The loser is claimed for durable teardown, not deleted inline;
+                # drive that job to its terminal status.
+                teardown_status = drive_media_teardown(direct_db.session, media_id2)
+                assert teardown_status == "succeeded", (
+                    f"Expected loser media {media_id2} teardown to succeed, "
+                    f"got {teardown_status!r}"
                 )
+
+                with direct_db.session() as session:
+                    # Loser media should be deleted
+                    loser = _get_media(session, media_id2)
+                    assert loser is None, "Loser media should be deleted"
+                    _assert_duplicate_loser_child_rows_deleted(
+                        session,
+                        media_id=media_id2,
+                        fragment_id=loser_fragment_id,
+                    )
+            else:
+                direct_db.register_cleanup("resource_edges", "target_id", media_id1)
+                direct_db.register_cleanup("content_index_states", "owner_id", media_id2)
+                direct_db.register_cleanup("fragment_blocks", "fragment_id", loser_fragment_id)
+                direct_db.register_cleanup("fragments", "media_id", media_id2)
+                direct_db.register_cleanup("media_file", "media_id", media_id2)
+                direct_db.register_cleanup("user_media_deletions", "media_id", media_id2)
+                direct_db.register_cleanup("library_entries", "media_id", media_id2)
+                direct_db.register_cleanup("media", "id", media_id2)
 
 
 class TestFragmentPersistence:
