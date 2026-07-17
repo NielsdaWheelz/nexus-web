@@ -37,6 +37,7 @@ from sqlalchemy.exc import ProgrammingError
 from nexus.errors import ApiErrorCode
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
+from tests.factories import add_media_to_library as seed_media_in_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
@@ -394,7 +395,6 @@ def _register_source_media_cleanup(
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_states", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_items", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_edges", "media_id", media_id)
@@ -1413,13 +1413,8 @@ class TestFromUrlXPost:
                 """),
                 {"media_id": media_id, "user_id": user_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                """),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
+            # Direct physical default entry — the whole direct-entry contract.
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text("""
                     INSERT INTO media_source_attempts (
@@ -1448,7 +1443,6 @@ class TestFromUrlXPost:
 
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         with direct_db.session() as session:
@@ -1549,7 +1543,6 @@ class TestFromUrlXPost:
         media_id = UUID(data["media_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", UUID(data["source_attempt_id"]))
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         assert data["idempotency_outcome"] == "created"
@@ -1646,7 +1639,6 @@ class TestFromUrlXPost:
         assert fragments[1][0] == 1
         assert "Second post in the author's thread." in fragments[1][2]
         assert quoted_media is not None
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media[0])
         direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         direct_db.register_cleanup("media", "id", quoted_media[0])
         assert quoted_media[1] == "web_article"
@@ -1694,7 +1686,6 @@ class TestFromUrlXPost:
         direct_db.register_cleanup(
             "media_source_attempts", "id", UUID(first_data["source_attempt_id"])
         )
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         assert first_data["idempotency_outcome"] == "created"
         assert first_data["source_type"] == "x_author_thread"
@@ -1714,9 +1705,6 @@ class TestFromUrlXPost:
                 """)
             ).fetchone()
             if quoted_media is not None:
-                direct_db.register_cleanup(
-                    "default_library_intrinsics", "media_id", quoted_media[0]
-                )
                 direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
                 direct_db.register_cleanup("media", "id", quoted_media[0])
             cleanup_media_ids = [str(media_id)]
@@ -1784,7 +1772,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         assert data["source_type"] == "x_author_thread"
@@ -1872,7 +1859,6 @@ class TestFromUrlXPost:
         first_attempt_id = UUID(first_data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", first_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         result = _run_source_attempt_for_media(direct_db, media_id)
@@ -1942,7 +1928,6 @@ class TestFromUrlXPost:
         first_attempt_id = UUID(first_data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", first_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         second_response = auth_client.post(
@@ -2012,7 +1997,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         first_result = _run_source_attempt_for_media(direct_db, media_id)
@@ -2061,9 +2045,6 @@ class TestFromUrlXPost:
                 """)
             ).fetchone()
             if quoted_media is not None:
-                direct_db.register_cleanup(
-                    "default_library_intrinsics", "media_id", quoted_media[0]
-                )
                 direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
                 direct_db.register_cleanup("media", "id", quoted_media[0])
 
@@ -2092,7 +2073,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         observed: dict[str, tuple[object, ...]] = {}
@@ -2155,7 +2135,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         def _rate_limited(post_id: str):
@@ -2219,7 +2198,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         def _timed_out(post_id: str):
@@ -2299,7 +2277,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         assert data["source_type"] == "x_author_thread"
@@ -2411,13 +2388,8 @@ class TestFromUrlXPost:
                 """),
                 {"fragment_id": fragment_id},
             )
-            session.execute(
-                text("""
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                """),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
+            # Direct physical default entry — the whole direct-entry contract.
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text("""
                     INSERT INTO media_source_attempts (
@@ -2445,7 +2417,6 @@ class TestFromUrlXPost:
             session.commit()
 
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -2534,7 +2505,6 @@ class TestFromUrlXPost:
         assert "Quoted post by Grace Hopper" in combined_text
         assert "Side reply from Ada" not in combined_text
         assert quoted_media is not None
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media[0])
         direct_db.register_cleanup("library_entries", "media_id", quoted_media[0])
         direct_db.register_cleanup("media", "id", quoted_media[0])
         assert quoted_media[1] == "post:4444444444"
@@ -2580,7 +2550,6 @@ class TestFromUrlXPost:
         source_attempt_id = UUID(data["source_attempt_id"])
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         real_apply = x_ingest_module._apply_x_author_observations
@@ -2603,7 +2572,6 @@ class TestFromUrlXPost:
                 """)
             ).one()
         quoted_media_id = quoted[0]
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", quoted_media_id)
         direct_db.register_cleanup("library_entries", "media_id", quoted_media_id)
         direct_db.register_cleanup("media", "id", quoted_media_id)
         assert quoted[1] == "ready_for_reading"
@@ -4073,10 +4041,15 @@ class TestFromUrlAuth:
 class TestFromUrlProvenance:
     """Tests intrinsic provenance on from_url creation."""
 
-    def test_from_url_creates_default_library_intrinsic_row(
+    def test_from_url_creates_direct_default_library_entry(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """POST /media/from_url creates both library_entries and intrinsic rows."""
+        """POST /media/from_url creates a direct physical default library_entries row.
+
+        Post-cutover there is no separate intrinsic provenance table — the
+        physical `library_entries` row in the user's default library IS the
+        whole direct-entry contract.
+        """
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -4088,7 +4061,6 @@ class TestFromUrlProvenance:
         assert response.status_code == 202
         media_id = UUID(response.json()["data"]["media_id"])
 
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -4112,13 +4084,3 @@ class TestFromUrlProvenance:
                 {"dl": dl[0], "m": media_id},
             ).fetchone()
             assert lm is not None
-
-            # Verify intrinsic row exists
-            intrinsic = session.execute(
-                text("""
-                    SELECT 1 FROM default_library_intrinsics
-                    WHERE default_library_id = :dl AND media_id = :m
-                """),
-                {"dl": dl[0], "m": media_id},
-            ).fetchone()
-            assert intrinsic is not None

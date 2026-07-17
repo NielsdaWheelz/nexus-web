@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
 import { useReaderProgress } from "./useReaderProgress";
 import type { ReaderCursorPositioned } from "./readerProgress";
-import type { AttentionTracker } from "./useAttentionTracker";
 import type { ReaderResumeState } from "./types";
 
 type Options = Parameters<typeof useReaderProgress>[0];
@@ -202,40 +201,9 @@ describe("useReaderProgress: save scheduling", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(scripted.calls.filter(isPut)).toHaveLength(1);
     expect(putBody(scripted.calls.find(isPut))).toEqual({
-      cursor: { locator: A, base_revision: 1 },
+      locator: A,
+      base_revision: 1,
     });
-
-    vi.useRealTimers();
-  });
-
-  it("includes an attention block only when an attention tracker is supplied", async () => {
-    const scripted = createScriptedFetch();
-    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
-    const dwellDeltaRef = { current: 12_345 };
-    const tracker: AttentionTracker = {
-      dwellDeltaRef,
-      resetDelta: () => {
-        dwellDeltaRef.current = 0;
-      },
-      deviceId: "device-x",
-    };
-
-    const { result } = renderHook(() =>
-      useReaderProgress(baseOptions({ apiFetch: scripted.apiFetch, attention: tracker })),
-    );
-    await waitFor(() => expect(result.current.status).toBe("ready"));
-
-    vi.useFakeTimers();
-    scripted.pushPutJson({ state: "Positioned", revision: 2, locator: A });
-
-    act(() => {
-      result.current.reportMovement(A);
-    });
-    await vi.advanceTimersByTimeAsync(500);
-
-    const body = putBody(scripted.calls.find(isPut)) as { attention?: unknown };
-    expect(body.attention).toMatchObject({ dwell_ms_delta: 12_345, device_id: "device-x" });
-    expect(dwellDeltaRef.current).toBe(0);
 
     vi.useRealTimers();
   });
@@ -261,7 +229,8 @@ describe("useReaderProgress: single-flight write ordering", () => {
 
     expect(scripted.calls.filter(isPut)).toHaveLength(1);
     expect(putBody(scripted.calls.find(isPut))).toEqual({
-      cursor: { locator: A, base_revision: 1 },
+      locator: A,
+      base_revision: 1,
     });
 
     // B then C arrive while A is still in flight: only the latest survives,
@@ -286,7 +255,8 @@ describe("useReaderProgress: single-flight write ordering", () => {
     const putCalls = scripted.calls.filter(isPut);
     expect(putCalls).toHaveLength(2);
     expect(putBody(putCalls[1])).toEqual({
-      cursor: { locator: C, base_revision: 2 },
+      locator: C,
+      base_revision: 2,
     });
 
     vi.useRealTimers();
@@ -354,7 +324,8 @@ describe("useReaderProgress: stayAtLocalPosition", () => {
     await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(2));
     const stayPut = scripted.calls.filter(isPut).at(-1);
     expect(putBody(stayPut)).toEqual({
-      cursor: { locator: CAP, base_revision: 5 },
+      locator: CAP,
+      base_revision: 5,
     });
 
     await waitFor(() => expect(result.current.handoff).toBeNull());
@@ -490,7 +461,8 @@ describe("useReaderProgress: save failure and retry", () => {
 
     await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(2));
     expect(putBody(scripted.calls.filter(isPut).at(-1))).toEqual({
-      cursor: { locator: A, base_revision: 3 },
+      locator: A,
+      base_revision: 3,
     });
     await waitFor(() => expect(result.current.saveFailed).toBe(false));
   });
@@ -599,12 +571,10 @@ describe("useReaderProgress: lifecycle capture", () => {
 
     await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(1));
     const call = scripted.calls.find(isPut);
-    const body = putBody(call) as {
-      cursor: { locator: unknown; base_revision: number };
-    };
+    const body = putBody(call) as { locator: unknown; base_revision: number };
     // Not the stale reported locator A: the synchronous capture wins.
-    expect(body.cursor.locator).toEqual(CAP);
-    expect(body.cursor.base_revision).toBe(1);
+    expect(body.locator).toEqual(CAP);
+    expect(body.base_revision).toBe(1);
     expect(call?.init?.keepalive).toBe(true);
 
     // The still-armed idle timer must not double-send after the flush.
@@ -612,7 +582,7 @@ describe("useReaderProgress: lifecycle capture", () => {
     expect(scripted.calls.filter(isPut)).toHaveLength(1);
   });
 
-  it("never promotes a clean position on lifecycle events", async () => {
+  it("sends a same-locator cursor write on a clean lifecycle flush, so engagement still advances", async () => {
     const scripted = createScriptedFetch();
     scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
 
@@ -626,11 +596,72 @@ describe("useReaderProgress: lifecycle capture", () => {
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
 
+    scripted.pushPutJson({ state: "Positioned", revision: 2, locator: CAP });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await waitFor(() => expect(scripted.calls.filter(isPut)).toHaveLength(1));
+    const call = scripted.calls.find(isPut);
+    const body = putBody(call) as { locator: unknown; base_revision: number };
+    expect(body.locator).toEqual(CAP);
+    expect(body.base_revision).toBe(1);
+    expect(call?.init?.keepalive).toBe(true);
+  });
+
+  it("does not flush when the synchronous capture returns null", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator: () => null,
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
     act(() => {
       window.dispatchEvent(new Event("pagehide"));
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(scripted.calls.filter(isPut)).toHaveLength(0);
+  });
+
+  it("does not flush while a remote candidate handoff is open", async () => {
+    const scripted = createScriptedFetch();
+    scripted.pushGetJson({ state: "Positioned", revision: 1, locator: START });
+    const conflictSnapshot: ReaderCursorPositioned = { state: "Positioned", revision: 5, locator: Z };
+
+    const { result } = renderHook(() =>
+      useReaderProgress(
+        baseOptions({
+          apiFetch: scripted.apiFetch,
+          captureCurrentLocator: () => CAP,
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    vi.useFakeTimers();
+    scripted.pushPutReject(conflictError(conflictSnapshot));
+    act(() => {
+      result.current.reportMovement(A);
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    vi.useRealTimers();
+
+    await waitFor(() => expect(result.current.handoff).not.toBeNull());
+
+    const putCountAfterConflict = scripted.calls.filter(isPut).length;
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(scripted.calls.filter(isPut)).toHaveLength(putCountAfterConflict);
   });
 });

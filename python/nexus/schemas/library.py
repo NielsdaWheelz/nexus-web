@@ -11,7 +11,6 @@ from nexus.schemas.media import MediaOut, MediaReadState
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
-BackfillJobStatusValue = Literal["pending", "running", "completed", "failed"]
 LibraryEntryKind = Literal["media", "podcast"]
 PodcastSubscriptionStatusValue = Literal["active", "unsubscribed"]
 PodcastSyncStatusValue = Literal[
@@ -205,7 +204,6 @@ class AcceptLibraryInviteResponse(BaseModel):
     invite: LibraryInvitationOut
     membership: InviteAcceptMembershipOut
     idempotent: bool
-    backfill_job_status: str
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -213,26 +211,5 @@ class AcceptLibraryInviteResponse(BaseModel):
 class DeclineLibraryInviteResponse(BaseModel):
     invite: LibraryInvitationOut
     idempotent: bool
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class RequeueDefaultLibraryBackfillJobRequest(BaseModel):
-    default_library_id: UUID = Field(..., description="Default library ID")
-    source_library_id: UUID = Field(..., description="Source (non-default) library ID")
-    user_id: UUID = Field(..., description="User ID who owns the default library")
-
-
-class DefaultLibraryBackfillJobOut(BaseModel):
-    default_library_id: UUID
-    source_library_id: UUID
-    user_id: UUID
-    status: BackfillJobStatusValue
-    attempts: int
-    last_error_code: str | None
-    updated_at: datetime
-    finished_at: datetime | None
-    idempotent: bool
-    enqueue_dispatched: bool
 
     model_config = ConfigDict(from_attributes=True)

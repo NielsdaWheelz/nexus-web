@@ -134,7 +134,6 @@ describe("GlobalPlayer listening heartbeat", () => {
     expect(body).toMatchObject({
       positionMs: expect.any(Number),
       playbackSpeed: expect.any(Number),
-      deviceId: expect.any(String),
       expectedWriteRevision: expect.any(Number),
       expectedResetEpoch: expect.any(Number),
       heartbeatSequence: expect.any(Number),

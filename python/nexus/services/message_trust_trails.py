@@ -17,9 +17,7 @@ from nexus.db.models import (
     Conversation,
     LLMCall,
     Message,
-    MessageRerankLedger,
     MessageRetrieval,
-    MessageRetrievalCandidateLedger,
     MessageToolCall,
     Model,
     ResourceEdge,
@@ -28,8 +26,6 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     AssistantTrustTrailOut,
     ChatRunContextRefAddedEventPayload,
-    MessageRerankLedgerOut,
-    MessageRetrievalCandidateLedgerOut,
     TrustCitationOut,
     TrustContextRefAddedOut,
     TrustIntegrityNoticeOut,
@@ -166,85 +162,11 @@ def build_assistant_trust_trails(
             if retrieval.cited_edge_id is not None:
                 retrieval_by_edge_id[retrieval.cited_edge_id] = retrieval
 
-    candidate_ledgers_by_tool: dict[UUID, list[MessageRetrievalCandidateLedgerOut]] = {}
-    if tool_ids:
-        rows = db.execute(
-            select(MessageRetrievalCandidateLedger, MessageRetrieval.included_in_prompt)
-            .outerjoin(
-                MessageRetrieval,
-                MessageRetrieval.id == MessageRetrievalCandidateLedger.retrieval_id,
-            )
-            .where(MessageRetrievalCandidateLedger.tool_call_id.in_(tool_ids))
-            .order_by(
-                MessageRetrievalCandidateLedger.tool_call_id,
-                MessageRetrievalCandidateLedger.ordinal,
-                MessageRetrievalCandidateLedger.created_at,
-                MessageRetrievalCandidateLedger.id,
-            )
-        ).all()
-        for row, linked_included in rows:
-            if linked_included is None:
-                included = row.included_in_prompt
-                source = "candidate_ledger"
-                reconciled = True
-            else:
-                included = linked_included
-                source = "linked_retrieval"
-                reconciled = row.included_in_prompt == linked_included
-            candidate_ledgers_by_tool.setdefault(row.tool_call_id, []).append(
-                MessageRetrievalCandidateLedgerOut(
-                    id=row.id,
-                    tool_call_id=row.tool_call_id,
-                    retrieval_id=row.retrieval_id,
-                    ordinal=row.ordinal,
-                    result_type=cast(Any, row.result_type),
-                    source_id=row.source_id,
-                    score=row.score,
-                    selected=row.selected,
-                    included_in_prompt=included,
-                    ledger_included_in_prompt=row.included_in_prompt,
-                    linked_retrieval_included_in_prompt=linked_included,
-                    included_in_prompt_source=cast(Any, source),
-                    included_in_prompt_reconciled=reconciled,
-                    selection_status=row.selection_status,
-                    selection_reason=row.selection_reason,
-                    result_ref=cast(Any, row.result_ref),
-                    locator=cast(Any, row.locator),
-                    created_at=row.created_at,
-                )
-            )
-
     retrievals_by_message: dict[UUID, list[MessageRetrieval]] = {}
     for tool in tool_calls:
         retrievals_by_message.setdefault(tool.assistant_message_id, []).extend(
             retrievals_by_tool.get(tool.id, [])
         )
-
-    rerank_ledgers_by_tool: dict[UUID, list[MessageRerankLedgerOut]] = {}
-    if tool_ids:
-        for row in db.scalars(
-            select(MessageRerankLedger)
-            .where(MessageRerankLedger.tool_call_id.in_(tool_ids))
-            .order_by(
-                MessageRerankLedger.tool_call_id,
-                MessageRerankLedger.created_at,
-                MessageRerankLedger.id,
-            )
-        ):
-            rerank_ledgers_by_tool.setdefault(row.tool_call_id, []).append(
-                MessageRerankLedgerOut(
-                    id=row.id,
-                    tool_call_id=row.tool_call_id,
-                    strategy=row.strategy,
-                    input_count=row.input_count,
-                    selected_count=row.selected_count,
-                    budget_chars=row.budget_chars,
-                    selected_chars=row.selected_chars,
-                    status=row.status,
-                    metadata=row.metadata_,
-                    created_at=row.created_at,
-                )
-            )
 
     context_refs_by_run: dict[UUID, list[TrustContextRefAddedOut]] = {}
     if run_ids:
@@ -374,8 +296,6 @@ def build_assistant_trust_trails(
                 selected_context_refs=tool.selected_context_refs,
                 reverted_at=tool.reverted_at,
                 retrievals=retrievals,
-                candidate_ledgers=candidate_ledgers_by_tool.get(tool.id, []),
-                rerank_ledgers=rerank_ledgers_by_tool.get(tool.id, []),
                 created_at=tool.created_at,
                 updated_at=tool.updated_at,
             )
@@ -457,18 +377,6 @@ def build_assistant_trust_trails(
                         message=f"Citation edge {edge.id} did not build a citation read model.",
                     )
                 )
-        for tool in tools_by_message.get(message.id, []):
-            for ledger in tool.candidate_ledgers:
-                if not ledger.included_in_prompt_reconciled:
-                    integrity_notices.append(
-                        TrustIntegrityNoticeOut(
-                            code=f"candidate_inclusion_mismatch:{ledger.id}",
-                            message=(
-                                f"Candidate ledger {ledger.id} prompt-inclusion flag "
-                                "disagrees with its retrieval row."
-                            ),
-                        )
-                    )
         if prompt is not None:
             retrieval_ids = {str(row.id) for row in retrievals_by_message.get(message.id, [])}
             for retrieval_id in prompt.included_retrieval_ids:

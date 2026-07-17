@@ -11,21 +11,30 @@ from nexus.services.reader_apparatus import (
     replace_media_apparatus,
     source_fingerprint,
 )
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
 
-def _add_media_to_default_library(auth_client, user_id: UUID, media_id: UUID) -> None:
+def _add_media_to_default_library(
+    auth_client, direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> None:
+    """Seed a direct default-library entry for `media_id`.
+
+    Production ingest always auto-files new media into the creator's default
+    library (`ensure_media_in_default_library`), so freshly created media is
+    always reachable there. Fixtures that create a bare `media` row must
+    mirror that by seeding the physical entry directly rather than going
+    through the authorization-gated `POST /libraries/{id}/media` filing
+    endpoint, which requires the media to already be reachable.
+    """
     me = auth_client.get("/me", headers=auth_headers(user_id))
-    library_id = me.json()["data"]["default_library_id"]
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert response.status_code in (200, 201)
+    library_id = UUID(me.json()["data"]["default_library_id"])
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _get_apparatus_data(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID):
@@ -164,7 +173,7 @@ def test_get_reader_apparatus_returns_source_authored_items(auth_client, direct_
         session.commit()
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, user_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
     data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "ready"
@@ -251,7 +260,7 @@ def test_get_reader_apparatus_returns_sidenotes_and_target_only_margin_notes(
         session.commit()
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, user_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
     data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "ready"
@@ -275,7 +284,7 @@ def test_get_reader_apparatus_missing_state_fails_loudly(auth_client, direct_db)
         media_id, _fragment_id = _create_media(session)
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, user_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
     with pytest.raises(ApiError) as exc:
         _get_apparatus_data(direct_db, user_id, media_id)
@@ -300,7 +309,7 @@ def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_c
             session.commit()
 
         _register_cleanup(direct_db, media_id)
-        _add_media_to_default_library(auth_client, user_id, media_id)
+        _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
         data = _get_apparatus_data(direct_db, user_id, media_id)
         seen_statuses.append(data["status"])
         assert data["items"] == []
@@ -311,7 +320,7 @@ def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_c
         session.commit()
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, user_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
     data = _get_apparatus_data(direct_db, user_id, media_id)
     seen_statuses.append(data["status"])
     assert data["items"] == []
@@ -340,7 +349,7 @@ def test_get_reader_apparatus_returns_partial_state_with_valid_rows(auth_client,
         session.commit()
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, user_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
     data = _get_apparatus_data(direct_db, user_id, media_id)
     assert data["status"] == "partial"
@@ -373,7 +382,7 @@ def test_get_reader_apparatus_masks_invisible_media(auth_client, direct_db):
         session.commit()
 
     _register_cleanup(direct_db, media_id)
-    _add_media_to_default_library(auth_client, owner_id, media_id)
+    _add_media_to_default_library(auth_client, direct_db, owner_id, media_id)
 
     with pytest.raises(ApiError) as exc:
         _get_apparatus_data(direct_db, outsider_id, media_id)

@@ -64,7 +64,7 @@ from tests.factories import (
     share_conversation_to_library,
 )
 from tests.factories import (
-    add_library_entry_only as seed_media_in_library,
+    add_media_to_library as seed_media_in_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -179,6 +179,10 @@ class TestBasicSearch:
                 fragments=[fragment],
                 reason="test",
             )
+            # The generic filing endpoint below only re-files media already
+            # reachable through a membership (readable-or-restorable, spec
+            # S4.3 rule 1) — establish the direct entry first.
+            seed_media_in_library(session, default_library_id, media_id)
             session.commit()
 
         auth_client.post(
@@ -273,9 +277,6 @@ class TestBasicSearch:
         unavailable_podcast_id = uuid4()
         ready_video_id = uuid4()
 
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_video_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", unavailable_podcast_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", ready_video_id)
         direct_db.register_cleanup("library_entries", "media_id", unavailable_video_id)
         direct_db.register_cleanup("library_entries", "media_id", unavailable_podcast_id)
         direct_db.register_cleanup("library_entries", "media_id", ready_video_id)
@@ -350,13 +351,6 @@ class TestBasicSearch:
 
             for media_id in (unavailable_video_id, unavailable_podcast_id, ready_video_id):
                 seed_media_in_library(session, default_library_id, media_id)
-                session.execute(
-                    text("""
-                        INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                        VALUES (:default_library_id, :media_id)
-                    """),
-                    {"default_library_id": default_library_id, "media_id": media_id},
-                )
 
             session.commit()
 
@@ -396,7 +390,6 @@ class TestBasicSearch:
         fragment_id = uuid4()
 
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("media", "id", media_id)
@@ -457,13 +450,6 @@ class TestBasicSearch:
                 {"media_id": media_id},
             )
             seed_media_in_library(session, default_library_id, media_id)
-            session.execute(
-                text("""
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                """),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
             session.commit()
 
         response = auth_client.get(
@@ -2207,7 +2193,6 @@ class TestSearchResultFormat:
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -2282,7 +2267,6 @@ class TestSearchResultFormat:
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -2339,7 +2323,6 @@ class TestSearchResultFormat:
 
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         response = auth_client.get(
@@ -3573,13 +3556,15 @@ class TestReaderApparatusSearch:
 class TestSearchProvenance:
     """Tests for media provenance in search visibility."""
 
-    def test_search_does_not_return_stale_default_library_rows_without_intrinsic_or_closure(
+    def test_search_returns_direct_default_library_entry_without_other_provenance(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Stale default library_entries without intrinsic or closure is not searchable.
+        """A direct physical default library_entries row is search-visible on its own.
 
-        Create a library_entries row for the user's default library without any
-        intrinsic or closure-edge provenance. Search must not return it.
+        Post-cutover there is no separate intrinsic/closure provenance table — a
+        direct physical entry in the user's default library is both necessary and
+        sufficient for visibility (the direct-entry contract). Create such an
+        entry with no other provenance and confirm search returns it.
         """
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
@@ -3595,7 +3580,7 @@ class TestSearchProvenance:
                     INSERT INTO media (id, kind, title, processing_status)
                     VALUES (:id, 'web_article', :title, 'ready_for_reading')
                 """),
-                {"id": media_id, "title": "Stale provenance glockenspiel article"},
+                {"id": media_id, "title": "Direct provenance glockenspiel article"},
             )
             session.execute(
                 text("""
@@ -3605,10 +3590,10 @@ class TestSearchProvenance:
                 {
                     "id": fragment_id,
                     "media_id": media_id,
-                    "text": "Stale provenance glockenspiel fragment content",
+                    "text": "Direct provenance glockenspiel fragment content",
                 },
             )
-            # Insert library_entries WITHOUT intrinsic or closure (stale row)
+            # A direct physical entry with no other provenance is the whole contract.
             seed_media_in_library(session, default_lib_id, media_id)
             session.commit()
 
@@ -3621,9 +3606,7 @@ class TestSearchProvenance:
         assert response.status_code == 200
         data = response.json()
         all_ids = [r["id"] for r in data["results"]]
-        assert str(media_id) not in all_ids
-        fragment_ids = [r["id"] for r in data["results"] if r["type"] == "content_chunk"]
-        assert str(fragment_id) not in fragment_ids
+        assert str(media_id) in all_ids
 
 
 class TestSearchScopeMasking:
@@ -3723,15 +3706,6 @@ class TestSemanticTranscriptChunkSearch:
                 {"id": media_id, "user_id": user_id},
             )
             seed_media_in_library(session, default_library_id, media_id)
-            session.execute(
-                text(
-                    """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                    """
-                ),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
             for segment_idx, segment in enumerate(transcript_segments):
                 session.execute(
                     text(
@@ -3806,7 +3780,6 @@ class TestSemanticTranscriptChunkSearch:
         direct_db.register_cleanup("podcast_transcript_segments", "media_id", media_id)
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         return user_id, media_id
 
     def test_semantic_search_returns_timestamped_transcript_chunks(
@@ -4304,15 +4277,6 @@ class TestSearchTranscriptNavigation:
             session.execute(
                 text(
                     """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id)
-                    VALUES (:default_library_id, :media_id)
-                    """
-                ),
-                {"default_library_id": default_library_id, "media_id": media_id},
-            )
-            session.execute(
-                text(
-                    """
                     INSERT INTO media_transcript_states (
                         media_id,
                         transcript_state,
@@ -4553,7 +4517,6 @@ class TestSearchTranscriptNavigation:
         direct_db.register_cleanup("fragments", "id", old_fragment_id)
         direct_db.register_cleanup("fragments", "id", active_fragment_id)
         direct_db.register_cleanup("media_transcript_states", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 

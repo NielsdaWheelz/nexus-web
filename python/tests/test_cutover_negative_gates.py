@@ -1700,13 +1700,14 @@ def test_no_reader_connections_surface():
 
 
 # =============================================================================
-# Attention ledger cutover, superseded by lectern-player-lifecycle-hard-cutover.md
-# §3: read-state derivation moved OUT of attention into the consumption projection;
-# attention is now the sole writer of reading_sessions ONLY and no longer touches
-# consumption_overrides. The old enrich functions remain gone.
+# Attention ledger cutover: read-state derivation moved OUT of attention into
+# the consumption projection (lectern-player-lifecycle-hard-cutover.md §3),
+# then services/attention.py and reading_sessions were dissolved outright
+# (default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+# §1/§4.4/§6) — reader engagement (recency + max whole-document progression)
+# now lives in the consumption package's own reader_engagement_states store.
+# The old enrich functions remain gone.
 # =============================================================================
-
-_ATTENTION_SERVICE = _PY_ROOT / "services" / "attention.py"
 
 
 def test_enrich_media_read_state_absent_from_production():
@@ -1721,18 +1722,35 @@ def test_doc_and_audio_read_state_helpers_absent_from_production():
     assert not hits, f"_doc_read_state/_audio_read_state survive in production:\n{_fmt(hits)}"
 
 
-def test_attention_service_has_no_legacy_table_fallback():
-    # Attention reads only its own reading_sessions; it never touches the listening
-    # or resume tables (hard-cutover doctrine).
-    hits = _grep(r"reader_media_state|podcast_listening_states", _ATTENTION_SERVICE)
-    assert not hits, f"attention.py reads a legacy read-state table:\n{_fmt(hits)}"
+def test_attention_dissolved_consumption_owns_reader_engagement():
+    # default-library-virtualization §1/§4.4/§6: services/attention.py and
+    # reading_sessions are gone outright — not renamed, not kept as a legacy
+    # fallback. The two gates this replaces each scanned a single file
+    # (services/attention.py) that no longer exists in production, so a
+    # single positive owner-boundary gate stands in their place: no production
+    # code names the dissolved module/table, and the table that superseded
+    # reading_sessions has exactly one DML owner. Scanning python/nexus +
+    # apps/web/src means the drop migrations (repo-root migrations/) and
+    # python/tests/ (including test_migrations.py's historical, revision-
+    # pinned classes) sit outside the scanned roots and may go on naming the
+    # dissolved module/table as history without tripping this gate.
+    dead_surface = _grep(
+        r"\bimport attention\b|\bservices\.attention\b|\breading_sessions\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+    )
+    assert not dead_surface, (
+        f"dissolved attention.py/reading_sessions surface survives in "
+        f"production:\n{_fmt(dead_surface)}"
+    )
 
-
-def test_attention_service_does_not_reference_consumption_overrides():
-    # lectern-player-lifecycle §3: consumption owns explicit overrides now; attention
-    # neither writes nor reads consumption_overrides.
-    hits = _grep(r"consumption_overrides", _ATTENTION_SERVICE)
-    assert not hits, f"attention.py still references consumption_overrides:\n{_fmt(hits)}"
+    owner_hits = _excluding(
+        _grep(_CONSUMPTION_TABLE_WRITE + r"reader_engagement_states\b", _PY_ROOT),
+        "services/consumption/_reader_engagement_store.py",
+    )
+    assert not owner_hits, (
+        f"reader_engagement_states written outside its owner:\n{_fmt(owner_hits)}"
+    )
 
 
 # =============================================================================
@@ -1971,22 +1989,27 @@ def test_lectern_player_deleted_imports_absent():
     assert not hits, f"import of a deleted queue/listening module survives:\n{_fmt(hits)}"
 
 
-def test_reading_sessions_sole_writer():
-    # §8 AC-15: session DML (attention's dwell/continuity writes) lives only in
-    # attention.py; consumption never touches reading_sessions directly.
-    hits = _excluding(
-        _grep(_CONSUMPTION_TABLE_WRITE + r"reading_sessions\b", _PY_ROOT),
-        "services/attention.py",
-    )
-    assert not hits, f"reading_sessions written outside attention.py:\n{_fmt(hits)}"
+def test_reading_sessions_absent_from_production():
+    # default-library-virtualization §1: reading_sessions is one of the 8
+    # tables the cutover drops. Its physical DROP TABLE waits for 0183's S6
+    # completion (the migration stays create+backfill-only through S4/S5, per
+    # the locked S4 decision, since the backfill itself reads reading_sessions
+    # for a null-safe GREATEST(...) recency union), but its former sole writer
+    # (services/attention.py) is deleted outright in S4, so no production code
+    # may reference the table any more.
+    hits = _grep(r"\breading_sessions\b", _PY_ROOT, _WEB_ROOT)
+    assert not hits, f"reading_sessions survives in production:\n{_fmt(hits)}"
 
 
 def test_consumption_projection_reads_confined_to_owners():
-    # §3/§8 AC-15: "no direct consumption projection read remains outside
-    # _projection or attention's aggregate owner" (spec §7 adopters list). A fully
-    # general read-gate is impractical: services/media.py is a spec-named
-    # projection adopter (§7) that legitimately joins podcast_listening_states
-    # directly to hydrate MediaOut.listening_state (raw position/duration/speed
+    # §3/§8 AC-15, updated by default-library-virtualization §1/§4.4/§6: "no
+    # direct consumption projection read remains outside _projection or its
+    # per-table store owner" (attention's aggregate read is gone along with
+    # attention.py/reading_sessions; reader_engagement_states, its successor,
+    # is read only through _reader_engagement_store.py). A fully general
+    # read-gate is impractical: services/media.py is a spec-named projection
+    # adopter (§7) that legitimately joins podcast_listening_states directly
+    # to hydrate MediaOut.listening_state (raw position/duration/speed
     # passthrough, not the derived Unread/InProgress/Finished projection state),
     # so it is allowlisted by name rather than excluded generically. Any other
     # file selecting these three tables directly — a route, a new adopter, a
@@ -1994,17 +2017,18 @@ def test_consumption_projection_reads_confined_to_owners():
     # model. db/models.py never matches (it declares __tablename__, not
     # FROM/JOIN literals), so it needs no explicit exclusion.
     pattern = (
-        r"\b(?:FROM|JOIN)\s+(?:consumption_overrides|podcast_listening_states|reading_sessions)\b"
+        r"\b(?:FROM|JOIN)\s+"
+        r"(?:consumption_overrides|podcast_listening_states|reader_engagement_states)\b"
     )
     hits = _excluding(
         _grep(pattern, _PY_ROOT),
         "services/consumption/_state_store.py",
         "services/consumption/_listening_store.py",
         "services/consumption/_projection.py",
-        "services/attention.py",
+        "services/consumption/_reader_engagement_store.py",
         "services/media.py",
     )
-    assert not hits, f"consumption/attention table read outside its owner:\n{_fmt(hits)}"
+    assert not hits, f"consumption table read outside its owner:\n{_fmt(hits)}"
 
 
 def test_lifecycle_composition_callsites_enumerated():
@@ -2035,25 +2059,25 @@ def test_lifecycle_composition_callsites_enumerated():
 
 
 def test_media_deletion_removes_four_child_families_before_parent():
-    # §3/§8 AC-15: media deletion explicitly removes all four in-scope child
-    # families — Lectern, explicit override, and listening state (composed via
-    # the consumption owner's delete_media_consumption_state_in_txn) plus
-    # reading_sessions (attention.delete_media_state) — before the parent media
-    # row, inside delete_document_media_if_unreferenced.
+    # §3/§8 AC-15, folded further by default-library-virtualization §1/§4.4/§6:
+    # the four in-scope child families — Lectern, explicit override, listening
+    # state, and reader engagement (the reading_sessions/attention.py
+    # successor) — now live entirely inside the one consumption-owner call;
+    # media_deletion.py no longer has a second, attention-owned call site.
+    # Assert the single delete_media_consumption_state_in_txn call still
+    # precedes the parent media DELETE, inside
+    # delete_document_media_if_unreferenced.
     src = (_PY_ROOT / "services" / "media_deletion.py").read_text(encoding="utf-8")
     start = src.index("def delete_document_media_if_unreferenced(")
     end = src.index("\ndef ", start + 1)
     body = src[start:end]
 
     consumption_idx = body.index("consumption_service.delete_media_consumption_state_in_txn(")
-    attention_idx = body.index("attention.delete_media_state(")
     parent_delete_idx = body.index('text("DELETE FROM media WHERE id = :media_id")')
 
     assert consumption_idx < parent_delete_idx, (
-        "consumption child-state deletion must precede the parent media DELETE"
-    )
-    assert attention_idx < parent_delete_idx, (
-        "attention child-state deletion must precede the parent media DELETE"
+        "consumption child-state deletion (all four families) must precede "
+        "the parent media DELETE"
     )
 
 
@@ -2286,3 +2310,176 @@ def test_reserved_contributor_handle_segments_present_in_both_languages():
     ts = (_WEB_ROOT / "lib" / "contributors" / "handle.ts").read_text(encoding="utf-8")
     assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in py, "taxonomy dropped reserved-segment set"
     assert "RESERVED_CONTRIBUTOR_HANDLE_SEGMENTS" in ts, "handle.ts dropped reserved-segment set"
+
+
+# #############################################################################
+# Default-library virtualization & transient-state pruning — AC16 extirpation
+# gate (default-library-virtualization-and-transient-state-pruning-hard-
+# cutover.md §16).
+#
+# This is ONE broad, POSITIVE gate — additive to, not a replacement for, the
+# narrower default-library-virtualization gates declared earlier in this file
+# (test_reading_sessions_absent_from_production,
+# test_attention_dissolved_consumption_owns_reader_engagement,
+# test_consumption_projection_reads_confined_to_owners,
+# test_lifecycle_composition_callsites_enumerated,
+# test_media_deletion_removes_four_child_families_before_parent). Those stay
+# exactly as written; this gate scans a much wider surface for the FULL AC16
+# symbol list in one pass.
+#
+# Scanned roots: python/nexus, apps/web (src + scripts — node_modules,
+# bun.lock, and generated build caches are not source, so they are not
+# enumerated as roots), production-adjacent scripts (python/scripts,
+# repo-root scripts/) + the Makefile, non-historical Python tests
+# (python/tests/, minus the two files excluded below), docs/architecture.md,
+# and docs/modules/.
+#
+# Excluded, per AC16:
+#   - Immutable migrations (repo-root migrations/) and docs/cutovers/** are
+#     simply never added to the root list above, so — exactly like the
+#     migrations/python-tests exclusion documented at the top of this file —
+#     neither can ever appear in a hit; no runtime filter is needed for them.
+#     (docs/cutovers/** legitimately keeps naming these symbols: e.g.
+#     resource-provenance-graph-hard-cutover.md still describes
+#     message_retrieval_candidate_ledgers as live chat telemetry, which was
+#     true when that cutover landed and predates this cutover's 0183 drop —
+#     it is superseded history, not a live reference.)
+#   - test_migrations.py is excluded by name: it is pinned to historical
+#     revisions and is EXPECTED to keep constructing/asserting these dropped
+#     tables/columns forever (that is its entire job).
+#   - This file's OWN declarations are excluded by name too — both the
+#     token-list constants below and the narrower pre-existing gates listed
+#     above (test_reading_sessions_absent_from_production etc.) legitimately
+#     name these same dead symbols as grep patterns/comments in THIS file.
+#   - Two individual, non-historical residual lines are allowlisted by EXACT
+#     line text (not by whole file), so nothing else in either file gets a
+#     free pass: test_libraries.py asserts (by SELECT COUNT(*) == 0) that the
+#     closure-backfill job kind is never enqueued — a live absence proof, the
+#     same spirit as this gate. test_permissions.py's docstrings explain,
+#     historically, why the read invariant they test never depended on the
+#     (now-dropped) provenance tables — narrative prose, not a construction.
+# #############################################################################
+
+_AC16_WEB_SCRIPTS_ROOT = _REPO_ROOT / "apps" / "web" / "scripts"
+_AC16_MAKEFILE = _REPO_ROOT / "Makefile"
+_AC16_ARCHITECTURE_DOC = _REPO_ROOT / "docs" / "architecture.md"
+_AC16_MODULES_ROOT = _REPO_ROOT / "docs" / "modules"
+_AC16_PY_TESTS_ROOT = _REPO_ROOT / "python" / "tests"
+
+# default-library-virtualization §1 — the eight dropped tables.
+_AC16_DROPPED_TABLES = (
+    "library_entry_page_snapshot_items",
+    "library_entry_page_snapshots",
+    "reading_sessions",
+    "message_retrieval_candidate_ledgers",
+    "message_rerank_ledgers",
+    "default_library_backfill_jobs",
+    "default_library_closure_edges",
+    "default_library_intrinsics",
+)
+
+# Deleted ORM/DTO model, enum, and TS type names.
+_AC16_DROPPED_MODELS = (
+    "DefaultLibraryIntrinsic",
+    "DefaultLibraryClosureEdge",
+    "DefaultLibraryBackfillJob",
+    "DefaultLibraryBackfillJobStatus",
+    "LibraryEntryPageSnapshot",
+    "LibraryEntryPageSnapshotItem",
+    "ReadingSession",
+    "MessageRetrievalCandidateLedger",
+    "MessageRerankLedger",
+    "ReaderProgressWrite",
+    "AttentionBlock",
+)
+
+# Deleted job kinds / route modules / service helpers.
+_AC16_DROPPED_JOBS_ROUTES_HELPERS = (
+    "backfill_default_library_closure_job",
+    "internal_libraries",
+    "add_library_entry_only",
+    "record_attention",
+    "session_aggregates",
+    "reading_recency",
+)
+
+# Deleted DTO field names (candidate-selection / rerank telemetry).
+_AC16_DROPPED_DTO_FIELDS = (
+    "candidate_ledgers",
+    "rerank_ledgers",
+    "candidate_inclusion_mismatch",
+)
+
+# Attention-module path literals: no gate/allowlist anywhere may still name
+# these deleted files, not even as an *excluded* entry in someone else's
+# allowlist tuple.
+_AC16_DEAD_ATTENTION_PATH_LITERALS = (
+    "services/attention.py",
+    "schemas/attention.py",
+)
+
+_AC16_PATTERN = "|".join(
+    [rf"\b{re.escape(token)}\b" for token in (
+        *_AC16_DROPPED_TABLES,
+        *_AC16_DROPPED_MODELS,
+        *_AC16_DROPPED_JOBS_ROUTES_HELPERS,
+        *_AC16_DROPPED_DTO_FIELDS,
+    )]
+    + [re.escape(token) for token in _AC16_DEAD_ATTENTION_PATH_LITERALS]
+)
+
+# Raw Default containment SQL is subsumed by the table-name absence above
+# (AC16): a "FROM default_library_intrinsics"/"default_library_closure_edges"
+# containment query cannot exist without naming one of those two tables, both
+# already banned by _AC16_DROPPED_TABLES.
+
+_AC16_ALLOWED_TEST_LINES = {
+    "python/tests/test_libraries.py": {
+        "\"WHERE kind = 'backfill_default_library_closure_job'\"",
+    },
+    "python/tests/test_permissions.py": {
+        "- Provenance alone (the former default_library_intrinsics /",
+        "default_library_closure_edges tables, dropped in migration 0183) never",
+        "membership. (Provenance rows, e.g. the former default_library_intrinsics",
+        "default_library_closure_edges table, never granted access by themselves --",
+    },
+}
+
+
+def _ac16_allowed_residual_test_line(hit: _Hit) -> bool:
+    for suffix, allowed_lines in _AC16_ALLOWED_TEST_LINES.items():
+        if hit.path.endswith(suffix) and hit.text in allowed_lines:
+            return True
+    return False
+
+
+def test_default_library_virtualization_ac16_extirpation_gate():
+    ac16_roots = (
+        _PY_ROOT,
+        _WEB_ROOT,
+        _AC16_WEB_SCRIPTS_ROOT,
+        _SCRIPTS_ROOT,
+        _REPO_SCRIPTS_ROOT,
+        _AC16_MAKEFILE,
+        _AC16_ARCHITECTURE_DOC,
+        _AC16_MODULES_ROOT,
+        _AC16_PY_TESTS_ROOT,
+    )
+
+    # Non-vacuity guard: every root must exist, and the combined file list
+    # must be large — a typo'd/misconfigured root would otherwise silently
+    # scan nothing (or near-nothing) and this gate would pass for the wrong
+    # reason. (~2,600 files are expected across these roots at time of
+    # writing; 1,000 is a generous floor that still catches a missing root.)
+    for root in ac16_roots:
+        assert root.exists(), f"AC16 scan root does not exist: {root}"
+    scanned_files = [file for root in ac16_roots for file in _iter_scan_files(root)]
+    assert len(scanned_files) > 1000, (
+        f"AC16 scan touched only {len(scanned_files)} files across {len(ac16_roots)} "
+        "roots — a root is probably misconfigured (non-vacuity guard)."
+    )
+
+    hits = _grep(_AC16_PATTERN, *ac16_roots)
+    hits = _excluding(hits, "test_migrations.py", "test_cutover_negative_gates.py")
+    hits = [hit for hit in hits if not _ac16_allowed_residual_test_line(hit)]
+    assert not hits, f"AC16-dead symbol survives extirpation:\n{_fmt(hits)}"

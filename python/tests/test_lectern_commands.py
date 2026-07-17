@@ -24,6 +24,7 @@ from nexus.errors import ApiErrorCode, ConflictError
 from nexus.ids import new_uuid7
 from nexus.services.consumption import _lectern_store
 from nexus.services.consumption import service as consumption_service
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -43,7 +44,6 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "user_media_deletions",
         "media_teardown_intents",
         "library_entries",
@@ -147,13 +147,15 @@ def _create_podcast_episode(
     return media_id
 
 
-def _add_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, f"add media to library failed: {response.text}"
+def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Seed a physical library_entries row directly, bypassing the REST filing
+    endpoint's membership-reachability gate. Production ingest always auto-files
+    freshly-created media into the creator's default library
+    (ensure_media_in_default_library); this mirrors that reachability for
+    fixture media created via a bare INSERT/factory rather than real ingest."""
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _hide_media(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID) -> None:
@@ -206,7 +208,7 @@ class TestLecternSnapshot:
         video = _create_video(direct_db, title="Watch Me")
         episode = _create_podcast_episode(direct_db, title="Hear Me")
         for media_id in (article, video, episode):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         placed = _place(auth_client, user_id, [article, video, episode], {"kind": "Last"})
         assert placed.status_code == 200, placed.text
@@ -247,7 +249,7 @@ class TestLecternSnapshot:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         episode = _create_podcast_episode(direct_db, title="No Audio", with_audio=False)
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
 
         placed = _place(auth_client, user_id, [episode], {"kind": "Last"})
         assert placed.status_code == 200, placed.text
@@ -265,7 +267,7 @@ class TestPlaceItems:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         _place(auth_client, user_id, [a], {"kind": "Last"})
         _place(auth_client, user_id, [b], {"kind": "Last"})
@@ -294,7 +296,7 @@ class TestPlaceItems:
         a = _create_web_article(direct_db, title="A")
         b = _create_web_article(direct_db, title="B")
         for media_id in (a, b):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b], {"kind": "Last"})
         items = _get_lectern(auth_client, user_id)
         a_item_id = next(i["itemId"] for i in items if i["mediaId"] == str(a))
@@ -313,7 +315,7 @@ class TestPlaceItems:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         a = _create_web_article(direct_db, title="A")
-        _add_to_library(auth_client, user_id, library_id, a)
+        _add_to_library(direct_db, library_id, a)
         placed = _place(auth_client, user_id, [a, a, a], {"kind": "Last"})
         assert placed.status_code == 200, placed.text
         assert _media_order(placed.json()["data"]["lectern"]["items"]) == [str(a)]
@@ -325,7 +327,7 @@ class TestPlaceItems:
         other = create_test_user_id()
         other_lib = _bootstrap(auth_client, other)
         other_media = _create_web_article(direct_db, title="Other's")
-        _add_to_library(auth_client, other, other_lib, other_media)
+        _add_to_library(direct_db, other_lib, other_media)
 
         placed = _place(auth_client, owner, [other_media], {"kind": "Last"})
         assert placed.status_code == 404, placed.text
@@ -337,7 +339,7 @@ class TestPlaceItems:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_web_article(direct_db, title="Deleting")
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         with direct_db.session() as session:
             session.add(MediaTeardownIntent(id=new_uuid7(), media_id=media_id))
             session.commit()
@@ -358,7 +360,7 @@ class TestPlaceItems:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         ok = _place(auth_client, user_id, [a, b], {"kind": "Last"})
         assert ok.status_code == 200, ok.text
@@ -383,7 +385,7 @@ class TestPlaceItemsHiddenBoundaries:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
 
         # A (the earliest row) is hidden; B is now the first VISIBLE row.
@@ -391,7 +393,7 @@ class TestPlaceItemsHiddenBoundaries:
         assert _media_order(_get_lectern(auth_client, user_id)) == [str(b), str(c)]
 
         d = _create_web_article(direct_db, title="D")
-        _add_to_library(auth_client, user_id, library_id, d)
+        _add_to_library(direct_db, library_id, d)
         first = _place(auth_client, user_id, [d], {"kind": "First"})
         assert first.status_code == 200, first.text
         # First lands at the visible boundary, immediately before B.
@@ -411,7 +413,7 @@ class TestPlaceItemsHiddenBoundaries:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
 
         # C (the trailing row) is hidden; B is now the last VISIBLE row.
@@ -419,7 +421,7 @@ class TestPlaceItemsHiddenBoundaries:
         assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(b)]
 
         d = _create_web_article(direct_db, title="D")
-        _add_to_library(auth_client, user_id, library_id, d)
+        _add_to_library(direct_db, library_id, d)
         last = _place(auth_client, user_id, [d], {"kind": "Last"})
         assert last.status_code == 200, last.text
         # Last lands at the visible boundary, immediately after B.
@@ -438,7 +440,7 @@ class TestPlaceItemsHiddenBoundaries:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
         items = _get_lectern(auth_client, user_id)
         a_item_id = next(i["itemId"] for i in items if i["mediaId"] == str(a))
@@ -448,7 +450,7 @@ class TestPlaceItemsHiddenBoundaries:
         assert _media_order(_get_lectern(auth_client, user_id)) == [str(a), str(c)]
 
         d = _create_web_article(direct_db, title="D")
-        _add_to_library(auth_client, user_id, library_id, d)
+        _add_to_library(direct_db, library_id, d)
         after = _place(auth_client, user_id, [d], {"kind": "After", "itemId": a_item_id})
         assert after.status_code == 200, after.text
         assert _media_order(after.json()["data"]["lectern"]["items"]) == [str(a), str(d), str(c)]
@@ -470,7 +472,7 @@ class TestSetOrder:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b, c], {"kind": "Last"})
         items = _get_lectern(auth_client, user_id)
         item_by_media = {i["mediaId"]: i["itemId"] for i in items}
@@ -504,7 +506,7 @@ class TestSetOrder:
         a = _create_web_article(direct_db, title="A")
         b = _create_web_article(direct_db, title="B")
         for media_id in (a, b):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b], {"kind": "Last"})
         items = _get_lectern(auth_client, user_id)
         one_item = items[0]["itemId"]
@@ -525,7 +527,7 @@ class TestRemoveItem:
         a = _create_web_article(direct_db, title="A")
         b = _create_web_article(direct_db, title="B")
         for media_id in (a, b):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a, b], {"kind": "Last"})
         items = _get_lectern(auth_client, user_id)
         a_item_id = next(i["itemId"] for i in items if i["mediaId"] == str(a))
@@ -549,7 +551,7 @@ class TestReplay:
         a = _create_web_article(direct_db, title="A")
         b = _create_web_article(direct_db, title="B")
         for media_id in (a, b):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         cmid = str(uuid4())
         first = _place(auth_client, user_id, [a], {"kind": "Last"}, cmid=cmid)
@@ -574,7 +576,7 @@ class TestReplay:
         a = _create_web_article(direct_db, title="A")
         b = _create_web_article(direct_db, title="B")
         for media_id in (a, b):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         cmid = str(uuid4())
         first = _place(auth_client, user_id, [a], {"kind": "Last"}, cmid=cmid)
@@ -602,7 +604,7 @@ class TestEnsureMissingItems:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
 
         # A is already on the Lectern (manual add); B/C are absent.
         _place(auth_client, user_id, [a], {"kind": "Last"})
@@ -626,7 +628,7 @@ class TestEnsureMissingItems:
         a = _create_web_article(direct_db, title="A")
         deleting = _create_web_article(direct_db, title="Deleting")
         for media_id in (a, deleting):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         with direct_db.session() as session:
             session.add(MediaTeardownIntent(id=new_uuid7(), media_id=deleting))
             session.commit()
@@ -647,7 +649,7 @@ class TestEnsureMissingItems:
         b = _create_web_article(direct_db, title="B")
         c = _create_web_article(direct_db, title="C")
         for media_id in (a, b, c):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         _place(auth_client, user_id, [a], {"kind": "Last"})
 
         with pytest.raises(ConflictError) as excinfo:
@@ -660,7 +662,7 @@ class TestEnsureMissingItems:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         a = _create_web_article(direct_db, title="A")
-        _add_to_library(auth_client, user_id, library_id, a)
+        _add_to_library(direct_db, library_id, a)
 
         first_pairs = consumption_service.ensure_missing_items(user_id, [a], source="Assistant")
         assert len(first_pairs) == 1
@@ -707,7 +709,7 @@ class TestConcurrentPlaceEnsureRace:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_web_article(direct_db, title="Raced")
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         self._run_concurrently(
             [

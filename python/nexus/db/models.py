@@ -163,15 +163,6 @@ class LibraryInvitationStatus(str, PyEnum):
     revoked = "revoked"
 
 
-class DefaultLibraryBackfillJobStatus(str, PyEnum):
-    """States for default-library closure backfill jobs."""
-
-    pending = "pending"
-    running = "running"
-    completed = "completed"
-    failed = "failed"
-
-
 # =============================================================================
 # Models
 # =============================================================================
@@ -2038,79 +2029,6 @@ class LibraryEntry(Base):
     library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
     media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
     podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
-
-
-class LibraryEntryPageSnapshot(Base):
-    """Short-lived stable ordered entry sequence for cursor paging."""
-
-    __tablename__ = "library_entry_page_snapshots"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    viewer_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id"),
-        nullable=False,
-    )
-    sort: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index("ix_library_entry_page_snapshots_expires_at", "expires_at"),
-        Index(
-            "ix_library_entry_page_snapshots_scope",
-            "viewer_user_id",
-            "library_id",
-            "sort",
-            "created_at",
-        ),
-    )
-
-    items: Mapped[list["LibraryEntryPageSnapshotItem"]] = relationship(
-        "LibraryEntryPageSnapshotItem",
-        back_populates="snapshot",
-        order_by=lambda: LibraryEntryPageSnapshotItem.ordinal,
-    )
-
-
-class LibraryEntryPageSnapshotItem(Base):
-    """One entry id at one ordinal in a stable library-entry page snapshot."""
-
-    __tablename__ = "library_entry_page_snapshot_items"
-
-    snapshot_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("library_entry_page_snapshots.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
-    entry_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "snapshot_id",
-            "entry_id",
-            name="uq_library_entry_page_snapshot_items_entry",
-        ),
-    )
-
-    snapshot: Mapped["LibraryEntryPageSnapshot"] = relationship(
-        "LibraryEntryPageSnapshot",
-        back_populates="items",
-    )
 
 
 class SynthesisArtifact(Base):
@@ -4774,157 +4692,6 @@ class MessageRetrieval(Base):
     media: Mapped["Media | None"] = relationship("Media")
 
 
-class MessageRetrievalCandidateLedger(Base):
-    """Durable ledger row for one retrieval candidate and its selection outcome."""
-
-    __tablename__ = "message_retrieval_candidate_ledgers"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    tool_call_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id"),
-        nullable=False,
-    )
-    retrieval_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("message_retrievals.id"),
-        nullable=True,
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    result_type: Mapped[str] = mapped_column(Text, nullable=False)
-    source_id: Mapped[str] = mapped_column(Text, nullable=False)
-    score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    included_in_prompt: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="false",
-    )
-    selection_status: Mapped[str] = mapped_column(Text, nullable=False)
-    selection_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    result_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("ordinal >= 0", name="ck_retrieval_candidate_ledgers_ordinal"),
-        CheckConstraint(
-            "char_length(result_type) BETWEEN 1 AND 64",
-            name="ck_retrieval_candidate_ledgers_result_type",
-        ),
-        CheckConstraint(
-            "char_length(source_id) BETWEEN 1 AND 256",
-            name="ck_retrieval_candidate_ledgers_source_id",
-        ),
-        CheckConstraint(
-            "score IS NULL OR score >= 0",
-            name="ck_retrieval_candidate_ledgers_score",
-        ),
-        CheckConstraint(
-            """
-            selection_status IN (
-                'retrieved',
-                'selected',
-                'included_in_prompt',
-                'excluded_by_budget',
-                'excluded_by_scope',
-                'web_result'
-            )
-            """,
-            name="ck_retrieval_candidate_ledgers_status",
-        ),
-        CheckConstraint(
-            "char_length(selection_reason) BETWEEN 1 AND 128",
-            name="ck_retrieval_candidate_ledgers_reason",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(result_ref) = 'object'",
-            name="ck_retrieval_candidate_ledgers_result_ref_object",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR locator = 'null'::jsonb OR jsonb_typeof(locator) = 'object'",
-            name="ck_retrieval_candidate_ledgers_locator_object",
-        ),
-        Index(
-            "idx_retrieval_candidate_ledgers_tool_call",
-            "tool_call_id",
-            "ordinal",
-        ),
-        Index("idx_retrieval_candidate_ledgers_retrieval", "retrieval_id"),
-    )
-
-    tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
-    retrieval: Mapped["MessageRetrieval | None"] = relationship("MessageRetrieval")
-
-
-class MessageRerankLedger(Base):
-    """Durable ledger row for the selection/rerank pass of one retrieval tool call."""
-
-    __tablename__ = "message_rerank_ledgers"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    tool_call_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("message_tool_calls.id"),
-        nullable=False,
-    )
-    strategy: Mapped[str] = mapped_column(Text, nullable=False)
-    input_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    selected_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    budget_chars: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    selected_chars: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(strategy) BETWEEN 1 AND 128",
-            name="ck_message_rerank_ledgers_strategy",
-        ),
-        CheckConstraint(
-            "input_count >= 0 AND selected_count >= 0 AND selected_chars >= 0",
-            name="ck_message_rerank_ledgers_counts",
-        ),
-        CheckConstraint(
-            "budget_chars IS NULL OR budget_chars >= 0",
-            name="ck_message_rerank_ledgers_budget_chars",
-        ),
-        CheckConstraint(
-            "char_length(status) BETWEEN 1 AND 64",
-            name="ck_message_rerank_ledgers_status",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(metadata) = 'object'",
-            name="ck_message_rerank_ledgers_metadata_object",
-        ),
-        Index("idx_message_rerank_ledgers_tool_call", "tool_call_id", "created_at", "id"),
-    )
-
-    tool_call: Mapped["MessageToolCall"] = relationship("MessageToolCall")
-
-
 class ChatRun(Base):
     """Durable lifecycle row for one user chat send."""
 
@@ -5765,124 +5532,6 @@ class UserMediaDeletion(Base):
     )
 
 
-class DefaultLibraryIntrinsic(Base):
-    """Tracks media intentionally present in a user's default library.
-
-    Independent of closure edges — represents direct user intent (e.g. upload,
-    from-url creation, or media captured by default-library backfill).
-    """
-
-    __tablename__ = "default_library_intrinsics"
-
-    default_library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class DefaultLibraryClosureEdge(Base):
-    """Tracks which shared libraries justify default-library materialization.
-
-    An edge (default_library_id, media_id, source_library_id) means: media_id
-    should be materialized in default_library_id because source_library_id
-    contains media_id and the default library's owner is a member of
-    source_library_id.
-    """
-
-    __tablename__ = "default_library_closure_edges"
-
-    default_library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    source_library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class DefaultLibraryBackfillJob(Base):
-    """Durable backfill intent for default-library closure materialization.
-
-    Created when an invite is accepted. A worker picks up pending jobs and
-    materializes closure edges + default library entry rows.
-    """
-
-    __tablename__ = "default_library_backfill_jobs"
-
-    default_library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    source_library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
-    last_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed')",
-            name="ck_default_library_backfill_jobs_status",
-        ),
-        CheckConstraint(
-            "attempts >= 0",
-            name="ck_default_library_backfill_jobs_attempts",
-        ),
-        CheckConstraint(
-            "(status IN ('pending', 'running') AND finished_at IS NULL) "
-            "OR (status IN ('completed', 'failed') AND finished_at IS NOT NULL)",
-            name="ck_default_library_backfill_jobs_finished_at_state",
-        ),
-    )
-
-
 # =============================================================================
 # EPUB
 # =============================================================================
@@ -6339,75 +5988,46 @@ class ReaderMediaState(Base):
     media: Mapped["Media"] = relationship("Media")
 
 
-class ReadingSession(Base):
-    """One contiguous reading/listening episode for a user + media.
-
-    Written solely by ``services.attention.record_attention``. Continuity is a
-    30-minute gap rule on ``last_active_at`` (not config); ``spans`` is an
-    append-only jsonb array of touched ranges (no write-time dedup).
+class ReaderEngagementState(Base):
+    """One current row per (user, media): last-touched recency and max
+    whole-document progression, with no session/device/span/dwell history
+    (default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+    §4.4). ``id`` is application-generated (``nexus.ids.new_uuid7``), matching
+    the trusted-id-generation pattern used elsewhere for owner-inserted rows.
+    Sole DML owner: ``services.consumption._reader_engagement_store``.
     """
 
-    __tablename__ = "reading_sessions"
+    __tablename__ = "reader_engagement_states"
 
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_reading_sessions_user"),
+        ForeignKey("users.id", name="fk_reader_engagement_states_user"),
         nullable=False,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_reading_sessions_media"),
+        ForeignKey("media.id", name="fk_reader_engagement_states_media"),
         nullable=False,
     )
-    device_id: Mapped[str] = mapped_column(Text, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
     )
-    last_active_at: Mapped[datetime] = mapped_column(
+    last_engaged_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
-        server_default=text("now()"),
         nullable=False,
     )
-    dwell_ms: Mapped[int] = mapped_column(
-        BigInteger,
-        server_default=text("0"),
-        nullable=False,
-    )
-    max_progression: Mapped[float | None] = mapped_column(Float, nullable=True)
-    spans: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB,
-        server_default=text("'[]'"),
-        nullable=False,
-    )
+    max_total_progression: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("dwell_ms >= 0", name="ck_reading_sessions_dwell_non_negative"),
+        UniqueConstraint("user_id", "media_id", name="uq_reader_engagement_states_user_media"),
         CheckConstraint(
-            "max_progression IS NULL OR (max_progression >= 0.0 AND max_progression <= 1.0)",
-            name="ck_reading_sessions_max_progression",
+            "max_total_progression IS NULL"
+            " OR (max_total_progression >= 0.0 AND max_total_progression <= 1.0)",
+            name="ck_reader_engagement_states_max_total_progression",
         ),
-        CheckConstraint(
-            "jsonb_typeof(spans) = 'array'",
-            name="ck_reading_sessions_spans_array",
-        ),
-        CheckConstraint(
-            "char_length(device_id) <= 128",
-            name="ck_reading_sessions_device_id_len",
-        ),
-        Index(
-            "ix_reading_sessions_user_media_active",
-            "user_id",
-            "media_id",
-            text("last_active_at DESC"),
-        ),
-        Index("ix_reading_sessions_user_started", "user_id", text("started_at DESC")),
     )
 
     user: Mapped["User"] = relationship("User")

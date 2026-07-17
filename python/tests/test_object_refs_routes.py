@@ -93,7 +93,6 @@ def test_contributor_search_hides_zero_work_key_owner(auth_client, direct_db: Di
     direct_db.register_cleanup("contributor_aliases", "alias", hidden_name)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 
     response = auth_client.get(

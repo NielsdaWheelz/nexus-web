@@ -764,9 +764,11 @@ def assert_library_removed_evidence_trace(
                         ) AS removed_library_entry_count,
                         (
                             SELECT count(*)
-                            FROM default_library_intrinsics
-                            WHERE media_id = :media_id
-                        ) AS default_intrinsic_count,
+                            FROM library_entries le
+                            JOIN libraries l ON l.id = le.library_id
+                            WHERE le.media_id = :media_id
+                              AND l.is_default = true
+                        ) AS default_direct_entry_count,
                         (
                             SELECT count(*)
                             FROM media
@@ -793,7 +795,7 @@ def assert_library_removed_evidence_trace(
             .one()
         )
     assert row["removed_library_entry_count"] == 0, row
-    assert row["default_intrinsic_count"] == 1, row
+    assert row["default_direct_entry_count"] == 1, row
     assert row["media_count"] == 1, row
     assert row["chunk_count"] > 0, row
     assert row["evidence_count"] > 0, row
@@ -803,7 +805,7 @@ def assert_library_removed_evidence_trace(
         "media_id": str(media_id),
         "library_id": str(library_id),
         "removed_library_entry_count": row["removed_library_entry_count"],
-        "default_intrinsic_count": row["default_intrinsic_count"],
+        "default_direct_entry_count": row["default_direct_entry_count"],
         "media_count": row["media_count"],
         "chunk_count": row["chunk_count"],
         "evidence_count": row["evidence_count"],

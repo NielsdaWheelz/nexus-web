@@ -163,13 +163,10 @@ def run_web_article_source_fixture_with_dedupe_resolution(
                 """
                 SELECT m.id
                 FROM libraries dl
-                JOIN default_library_intrinsics dli
-                  ON dli.default_library_id = dl.id
                 JOIN library_entries le
                   ON le.library_id = dl.id
-                 AND le.media_id = dli.media_id
                 JOIN media m
-                  ON m.id = dli.media_id
+                  ON m.id = le.media_id
                 JOIN content_index_states mcis
                   ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                 WHERE dl.owner_user_id = :user_id
@@ -449,8 +446,6 @@ def register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> N
     direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_states", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_items", "media_id", media_id)
     direct_db.register_cleanup("reader_apparatus_edges", "media_id", media_id)

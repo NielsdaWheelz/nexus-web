@@ -170,7 +170,15 @@ def coverage_counts(covered_targets: object) -> tuple[int, int, int]:
 def _compute_freshness(
     db: Session, *, library_id: UUID, current_revision_id: UUID
 ) -> tuple[ArtifactStatus, int | None]:
-    live = live_media_fingerprint_map(db, library_id=library_id)
+    # The dossier's media set is viewer-scoped (spec §4.1); the freshness check
+    # must use the SAME viewer the stored fingerprint was built with (the
+    # library's owner_user_id — see artifacts/engine.py's collect_viewer/
+    # _viewer_for_subject library branch), not the current reader's own
+    # viewer_id, or two different members would see divergent staleness for the
+    # one shared head.
+    owner_user_id = artifacts_engine.library_owner_user_id(db, library_id=library_id)
+    assert owner_user_id is not None  # library existence guaranteed by _require_member
+    live = live_media_fingerprint_map(db, library_id=library_id, viewer_id=owner_user_id)
     covered = media_fingerprint_map(
         db.execute(
             text("SELECT covered_targets FROM artifact_revisions WHERE id = :id"),

@@ -6,10 +6,10 @@ claim (:func:`claim_media_teardown`) locks only the media row, checks zero
 committed references, inserts a UUIDv7 teardown intent, and enqueues one
 addressable ``media_teardown`` job in that same transaction. The job
 (:mod:`nexus.tasks.media_teardown`) owns the checkpointed physical deletion and
-storage sweep. Child-state deletion composes the consumption and attention owners
-(never direct consumption/listening DML here). Viewer-scoped removal/hide
-preserves consumption and latent Lectern rows; the visibility projection hides
-them.
+storage sweep. Child-state deletion composes through the consumption owner
+(never direct consumption/listening/engagement DML here). Viewer-scoped
+removal/hide preserves consumption and latent Lectern rows; the visibility
+projection hides them.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media
+from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
 from nexus.db.models import MediaKind
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
@@ -34,7 +34,6 @@ from nexus.schemas.media import (
     MediaRemovedResult,
 )
 from nexus.services import (
-    attention,
     contributors,
     library_entries,
     library_governance,
@@ -42,13 +41,6 @@ from nexus.services import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.default_library_closure import (
-    count_default_references,
-    detach_media_from_default_library,
-    purge_media_default_references,
-    remove_media_from_default_intrinsic,
-    remove_media_from_non_default_closure,
-)
 from nexus.services.document_embeds import detach_document_embed_targets_for_owner
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
@@ -119,28 +111,26 @@ _DOCUMENT_KINDS = {
 
 
 def _total_reference_count(db: Session, media_id: UUID) -> int:
-    """All remaining references to a media across the two owned surfaces: non-default
-    library entries + default-library closure references."""
-    return library_entries.count_entries_for_media(db, media_id) + count_default_references(
-        db, media_id=media_id
-    )
+    """All remaining references to a media (spec S4.3/AC5): physical
+    ``library_entries`` rows are the sole reference count — no closure/intrinsic
+    count survives."""
+    return library_entries.count_entries_for_media(db, media_id)
 
 
-def _viewer_has_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
+def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
+    """True iff the viewer's current memberships reach this media through at least
+    one non-system library (default or otherwise) — a path a viewer delete could
+    actually remove or hide. Its complement is "system-only media" (spec S4.3/S5):
+    when this is False the viewer's only relationship to the media is a system
+    (e.g. Oracle) library they never control and whose corpus data a viewer action
+    never deletes, so a direct delete is a rejection, not a successful no-op.
+
+    Shares the reachability predicate with ``media.py``'s ``can_delete`` column
+    via :func:`nexus.auth.permissions.non_system_media_ref_exists_sql` so the two
+    forms cannot drift."""
     return bool(
         db.execute(
-            text(
-                """
-                SELECT 1
-                FROM library_entries le
-                JOIN libraries l ON l.id = le.library_id
-                JOIN memberships m
-                  ON m.library_id = l.id AND m.user_id = :viewer_id
-                WHERE le.media_id = :media_id
-                  AND l.system_key IS NOT NULL
-                LIMIT 1
-                """
-            ),
+            text(f"SELECT 1 WHERE {non_system_media_ref_exists_sql(':media_id')}"),
             {"viewer_id": viewer_id, "media_id": media_id},
         ).first()
     )
@@ -152,13 +142,18 @@ def delete_document_for_viewer(
     media_id: UUID,
     storage_client: StorageClientBase | None = None,
 ) -> MediaDeleteResult:
-    """Remove a document from the viewer's whole workspace (spec §3.1).
+    """Remove a document from the viewer's whole workspace (spec §4.3).
 
-    Removes the viewer's references, preserves latent consumption/listening rows, then:
-    last reference gone -> claim (intent + job), return ``Deleting``; references
-    remain and the viewer keeps a system-library reference -> ``Removed``; otherwise
-    record the viewer hide marker and return ``Hidden``. Storage and child-state
-    teardown are owned by the ``media_teardown`` job, not this transaction.
+    Truthful viewer deletion: system-only media (the viewer's only path is a
+    system library they never control) is ``E_FORBIDDEN`` with no mutation —
+    corpus data is never deleted through a viewer action. Otherwise removes the
+    viewer's own default/administered-non-default entries, preserves latent
+    consumption/listening rows, then: last physical reference gone -> claim
+    (intent + job), return ``Deleting``; a non-system reference the viewer
+    doesn't control still reaches the media -> record the viewer hide marker and
+    return ``Hidden``; only a system-library reference remains -> ``Removed``
+    without a hide marker. Storage and child-state teardown are owned by the
+    ``media_teardown`` job, not this transaction.
     """
     removed_from_library_ids: list[UUID] = []
 
@@ -174,6 +169,8 @@ def delete_document_for_viewer(
                 ApiErrorCode.E_INVALID_KIND,
                 "Delete document only supports document media",
             )
+        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
 
         default_library = db.execute(
             text("""
@@ -187,8 +184,8 @@ def delete_document_for_viewer(
         ).fetchone()
         if default_library is not None:
             default_library_id = default_library[0]
-            if detach_media_from_default_library(
-                db, default_library_id=default_library_id, media_id=media_id
+            if library_entries.delete_entry(
+                db, default_library_id, library_entries.media_target(media_id)
             ):
                 removed_from_library_ids.append(UUID(str(default_library_id)))
                 library_entries.normalize_positions(db, default_library_id)
@@ -198,7 +195,6 @@ def delete_document_for_viewer(
         )
         for library_id in controlled_libraries:
             library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-            remove_media_from_non_default_closure(db, library_id, media_id)
             library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
@@ -209,7 +205,24 @@ def delete_document_for_viewer(
             claim_media_teardown(db, media_id)
             return MediaDeletingResult()
 
-        if _viewer_has_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+        # The viewer's own document embeds targeting this media now point at a
+        # media they can no longer resolve — mark them unavailable regardless of
+        # whether the outcome is Hidden or Removed (owner-scoped cleanup, not a
+        # tombstone concern).
+        detach_document_embed_targets_for_owner(
+            db, owner_user_id=viewer_id, target_media_id=media_id
+        )
+
+        # A remaining reference the viewer could not remove is either a shared
+        # non-system library still reachable by them (hide it per-viewer) or a
+        # reference they can no longer reach — a system-only library, or another
+        # user's private library (never surfaced to the viewer → nothing to
+        # hide). Branch on whether the viewer retains a reachable NON-SYSTEM
+        # path, not on the presence of a system one: a media with BOTH a system
+        # reference AND a remaining reachable non-system shared reference must
+        # still be Hidden, else it stays visible with no tombstone (AC5
+        # "truthful" violation).
+        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
             return MediaRemovedResult(
                 removed_from_library_ids=removed_from_library_ids,
                 remaining_reference_count=remaining_reference_count,
@@ -232,9 +245,6 @@ def delete_document_for_viewer(
                 """),
                 {"viewer_id": viewer_id, "media_id": media_id},
             )
-        detach_document_embed_targets_for_owner(
-            db, owner_user_id=viewer_id, target_media_id=media_id
-        )
         return MediaHiddenResult(
             removed_from_library_ids=removed_from_library_ids,
             remaining_reference_count=remaining_reference_count,
@@ -269,7 +279,7 @@ def remove_document_from_library(
 
         library = db.execute(
             text("""
-                SELECT l.id, l.is_default, m.role, l.system_key
+                SELECT m.role, l.system_key
                 FROM libraries l
                 JOIN memberships m
                   ON m.library_id = l.id
@@ -281,22 +291,13 @@ def remove_document_from_library(
         ).fetchone()
         if library is None:
             raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-        if library[2] != "admin":
+        if library[0] != "admin":
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-        library_governance.require_not_system(library[3])
+        library_governance.require_not_system(library[1])
 
-        if bool(library[1]):
-            if not remove_media_from_default_intrinsic(
-                db, default_library_id=library_id, media_id=media_id
-            ):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-        else:
-            if not library_entries.entry_exists(
-                db, library_id, library_entries.media_target(media_id)
-            ):
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-            library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-            remove_media_from_non_default_closure(db, library_id, media_id)
+        if not library_entries.entry_exists(db, library_id, library_entries.media_target(media_id)):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
+        library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
 
         library_entries.normalize_positions(db, library_id)
 
@@ -350,7 +351,6 @@ def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return []
 
-    purge_media_default_references(db, media_id)
     affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)
@@ -589,11 +589,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    # Four in-scope child families through their owners (spec §3, §8.15): all users'
-    # Lectern/override/listening rows (consumption owner) and reading-session rows
-    # (attention owner). media_deletion never writes those tables directly.
+    # Four in-scope child families through the one consumption owner (spec §3,
+    # §8.15): all users' Lectern/override/listening/reader-engagement rows.
+    # media_deletion never writes those tables directly.
     consumption_service.delete_media_consumption_state_in_txn(db, media_id=media_id)
-    attention.delete_media_state(db, media_id)
     db.execute(
         text("DELETE FROM reader_media_state WHERE media_id = :media_id"),
         {"media_id": media_id},

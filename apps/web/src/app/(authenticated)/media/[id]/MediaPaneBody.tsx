@@ -186,7 +186,6 @@ import {
   type ReaderLocationTarget,
 } from "@/lib/reader/readerLocationHref";
 import ReaderProgressHandoff from "./ReaderProgressHandoff";
-import { useAttentionTracker } from "@/lib/reader/useAttentionTracker";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {
   type MediaNavigationResponse,
@@ -429,7 +428,7 @@ interface EvidenceResolutionResponse {
 
 const MOBILE_SELECTION_STABILIZATION_DELAY_MS = 180;
 const READER_POSITION_BUCKET_CP = 1024;
-// Matches FINISHED_PROGRESSION in services/attention.py.
+// Matches _FINISHED_PROGRESSION in services/consumption/_projection.py.
 const LECTERN_PROMPT_THRESHOLD = 0.95;
 const METADATA_REENRICHMENT_POLL_INTERVAL_MS = 3000;
 const METADATA_REENRICHMENT_MAX_POLLS = 40;
@@ -652,7 +651,6 @@ export default function MediaPaneBody() {
     setTheme,
     setFocusMode,
   } = useReaderContext();
-  const attentionTracker = useAttentionTracker({ mediaId: id });
   const scrollRestoreAppliedRef = useRef(false);
   const lastSavedTextAnchorOffsetRef = useRef<number | null>(null);
   // One-shot: URL-driven (history/cold-query) navigation seeds the capture
@@ -887,7 +885,6 @@ export default function MediaPaneBody() {
   const readerProgress = useReaderProgress({
     capability: readerCapability,
     isPaneActive: paneRuntime?.isActive ?? true,
-    attention: attentionTracker,
     captureCurrentLocator: useCallback(
       () => captureCurrentLocatorRef.current(),
       [],

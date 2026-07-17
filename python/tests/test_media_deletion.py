@@ -16,7 +16,7 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
     ResourceMutation,
 )
-from nexus.services import contributors
+from nexus.services import contributors, library_entries, library_governance
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_taxonomy import (
     ContributorIdentityKey,
@@ -43,6 +43,23 @@ from tests.support.teardown import drive_media_teardown, install_fake_storage_fo
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _seed_default_library_reachability(
+    direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> None:
+    """Mirror production ingest: give the actor a direct physical reference to
+    ``media_id`` in their own default library before any REST filing call.
+
+    The actor-authorized filing command (spec S4.3 rule 1, F2/F3) requires the
+    filing target to already be membership-reachable to the caller — a
+    precondition that bare ``create_test_media`` rows and raw ``INSERT INTO
+    media`` test rows don't carry, unlike real ingest, which always auto-files
+    new media into the creator's default library first.
+    """
+    with direct_db.session() as session:
+        library_entries.ensure_media_in_default_library(session, user_id, media_id)
+        session.commit()
 
 
 @pytest.fixture(autouse=True)
@@ -119,11 +136,10 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
     direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
 
+    _seed_default_library_reachability(direct_db, owner_id, media_id)
     add_response = auth_client.post(
         f"/libraries/{library_id}/media",
         json={"media_id": str(media_id)},
@@ -202,9 +218,8 @@ def test_delete_document_removes_default_and_administered_libraries(
 
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
 
+    _seed_default_library_reachability(direct_db, user_id, media_id)
     for library_id in (default_id, work_id):
         response = auth_client.post(
             f"/libraries/{library_id}/media",
@@ -234,6 +249,85 @@ def test_delete_document_removes_default_and_administered_libraries(
             {"media_id": media_id},
         ).fetchone()
     assert row is None
+
+
+def test_delete_document_removes_personal_reference_when_system_reference_remains(
+    auth_client, direct_db: DirectSessionManager
+):
+    """Mixed-reference cell (spec S4.3/S5): a viewer holding both a non-system
+    reference (their own default library) and a system-library reference to the
+    same media deletes the personal reference. The system reference is untouched
+    corpus data the viewer never controls, so this is a truthful ``Removed`` —
+    not ``Hidden`` (no tombstone; a live non-viewer-controlled reference remains
+    but it's a system one) and not ``Deleting`` (the system reference keeps the
+    media alive). ``_total_reference_count`` dropped the closure term in S2, so
+    this branch needs direct physical-count coverage."""
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title="Mixed Reference Media")
+        system_library_id = library_governance.ensure_system_library(
+            session,
+            system_key=f"test_mixed_ref_system_{media_id.hex[:12]}",
+            name="Mixed Reference System Library",
+            owner_user_id=user_id,
+        )
+        library_entries.ensure_entry(
+            session, system_library_id, library_entries.media_target(media_id)
+        )
+        session.commit()
+
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("memberships", "library_id", system_library_id)
+    direct_db.register_cleanup("libraries", "id", system_library_id)
+    direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+
+    # The personal (non-system) reference: the viewer's own default library.
+    _seed_default_library_reachability(direct_db, user_id, media_id)
+
+    delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+
+    assert delete_response.status_code == 200, delete_response.json()
+    data = delete_response.json()["data"]
+    assert data["kind"] == "Removed", data
+    assert data["remainingReferenceCount"] == 1, data
+    assert data["removedFromLibraryIds"] == [str(default_id)], data
+
+    with direct_db.session() as session:
+        system_entry = session.execute(
+            text(
+                """
+                SELECT 1 FROM library_entries
+                WHERE library_id = :library_id AND media_id = :media_id
+                """
+            ),
+            {"library_id": system_library_id, "media_id": media_id},
+        ).fetchone()
+        default_entry = session.execute(
+            text(
+                """
+                SELECT 1 FROM library_entries
+                WHERE library_id = :library_id AND media_id = :media_id
+                """
+            ),
+            {"library_id": default_id, "media_id": media_id},
+        ).fetchone()
+        tombstone = session.execute(
+            text(
+                """
+                SELECT 1 FROM user_media_deletions
+                WHERE user_id = :user_id AND media_id = :media_id
+                """
+            ),
+            {"user_id": user_id, "media_id": media_id},
+        ).fetchone()
+    assert system_entry is not None, "system-library reference must survive a personal delete"
+    assert default_entry is None, "the personal default-library reference must be removed"
+    assert tombstone is None, "a personal delete that leaves a live reference records no tombstone"
 
 
 def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
@@ -299,10 +393,10 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
 
     direct_db.register_cleanup("media_source_attempts", "media_id", media_id)
     direct_db.register_cleanup("media_file", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 
+    _seed_default_library_reachability(direct_db, user_id, media_id)
     add_response = auth_client.post(
         f"/libraries/{default_id}/media",
         json={"media_id": str(media_id)},
@@ -394,8 +488,8 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
 
+    _seed_default_library_reachability(direct_db, user_id, media_id)
     add_response = auth_client.post(
         f"/libraries/{default_id}/media",
         json={"media_id": str(media_id)},
@@ -515,6 +609,7 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
     direct_db.register_cleanup("media", "id", parent_id)
     direct_db.register_cleanup("media", "id", child_id)
 
+    _seed_default_library_reachability(direct_db, user_id, parent_id)
     add_response = auth_client.post(
         f"/libraries/{default_id}/media",
         json={"media_id": str(parent_id)},
@@ -624,6 +719,7 @@ def test_delete_document_detaches_document_embed_target_rows(
     direct_db.register_cleanup("media", "id", child_id)
 
     for media_id in (parent_id, child_id):
+        _seed_default_library_reachability(direct_db, user_id, media_id)
         add_response = auth_client.post(
             f"/libraries/{default_id}/media",
             json={"media_id": str(media_id)},
@@ -768,6 +864,7 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
     direct_db.register_cleanup("user_media_deletions", "user_id", user_id)
 
     for media_id in (parent_id, child_id):
+        _seed_default_library_reachability(direct_db, user_id, media_id)
         add_response = auth_client.post(
             f"/libraries/{default_id}/media",
             json={"media_id": str(media_id)},
@@ -778,7 +875,11 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["kind"] == "Hidden"
+    # The viewer's only reachable reference was their own default library, so
+    # after removal they can no longer reach the child (it survives solely in
+    # the other user's private default) — a truthful Removed, no tombstone —
+    # while the viewer's own embed targeting it is still marked unavailable.
+    assert delete_response.json()["data"]["kind"] == "Removed"
     with direct_db.session() as session:
         row = session.execute(
             text(
@@ -1032,11 +1133,11 @@ def test_delete_document_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("content_chunks", "owner_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
+    _seed_default_library_reachability(direct_db, user_id, media_id)
     add_response = auth_client.post(
         f"/libraries/{default_id}/media",
         json={"media_id": str(media_id)},
@@ -1244,8 +1345,6 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
         media_id = create_test_media(session)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     direct_db.register_cleanup("resource_mutations", "user_id", user_id)
 
     keep_key = ContributorIdentityKey(
@@ -1297,6 +1396,7 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
         )
         session.commit()
 
+    _seed_default_library_reachability(direct_db, user_id, media_id)
     auth_client.post(
         f"/libraries/{default_id}/media",
         json={"media_id": str(media_id)},

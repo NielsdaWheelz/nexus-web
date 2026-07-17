@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import (
     Conversation,
     ConversationShare,
-    DefaultLibraryIntrinsic,
     EpubNavLocation,
     EpubTocNode,
     FailureStage,
@@ -313,7 +312,11 @@ def create_test_media(
 
 
 def add_media_to_library(session: Session, library_id: UUID, media_id: UUID) -> None:
-    """Attach media to a library using the mixed library_entries table."""
+    """Attach media to a library using the mixed library_entries table.
+
+    Idempotent physical-entry insert at the next position. Post-cutover, a
+    direct default entry is just a physical `library_entries` row in the
+    user's default library — there is no separate provenance table."""
     existing = session.execute(
         text(
             """
@@ -368,45 +371,6 @@ def add_media_to_library(session: Session, library_id: UUID, media_id: UUID) -> 
             },
         )
 
-    lib = session.get(Library, library_id)
-    if lib and lib.is_default:
-        session.merge(
-            DefaultLibraryIntrinsic(
-                default_library_id=library_id,
-                media_id=media_id,
-            )
-        )
-
-
-def add_library_entry_only(session: Session, library_id: UUID, media_id: UUID) -> None:
-    """Attach media as a library_entries row only — no default-library intrinsic — at the
-    next position. For tests that control intrinsic/closure provenance explicitly (and so
-    must NOT get an implicit intrinsic). Idempotent."""
-    existing = session.execute(
-        text(
-            "SELECT 1 FROM library_entries WHERE library_id = :library_id AND media_id = :media_id"
-        ),
-        {"library_id": library_id, "media_id": media_id},
-    ).scalar_one_or_none()
-    if existing is not None:
-        return
-    next_position = int(
-        session.execute(
-            text(
-                "SELECT COALESCE(MAX(position) + 1, 0) FROM library_entries "
-                "WHERE library_id = :library_id"
-            ),
-            {"library_id": library_id},
-        ).scalar_one()
-    )
-    session.execute(
-        text(
-            "INSERT INTO library_entries (library_id, position, media_id) "
-            "VALUES (:library_id, :position, :media_id)"
-        ),
-        {"library_id": library_id, "position": next_position, "media_id": media_id},
-    )
-
 
 def create_test_media_in_library(
     session: Session,
@@ -416,10 +380,7 @@ def create_test_media_in_library(
     title: str = "Test Article",
     status: str = "ready_for_reading",
 ) -> UUID:
-    """Create media and link it to a specific library.
-
-    Also seeds default_library_intrinsics if the library is a default library.
-    """
+    """Create media and link it to a specific library."""
     media = Media(
         id=uuid4(),
         kind=MediaKind.web_article.value,
@@ -751,9 +712,9 @@ def create_searchable_media_in_library(
 ) -> UUID:
     """Create media with a fragment, linked to a specific non-default library.
 
-    Unlike create_searchable_media, does NOT create intrinsic rows for the
-    user's default library.  Visibility comes solely from membership in
-    the target library.
+    Unlike create_searchable_media, does not also file a direct entry into the
+    user's default library. Visibility comes solely from membership in the
+    target library.
     """
     media = Media(
         id=uuid4(),

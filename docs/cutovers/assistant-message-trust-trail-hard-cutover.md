@@ -5,6 +5,19 @@ Author altitude: SME / staff
 Date: 2026-06-12
 Type: hard cutover - no legacy paths, no fallbacks, no backward compatibility, no compat shims
 
+**Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+(2026-07-17):** `message_retrieval_candidate_ledgers` and
+`message_rerank_ledgers` — named throughout this document (including the
+trust-trail source-row list, the `trust_trail` field inventory, and the
+`TrustAssistantRunOut.candidate_ledgers`/`rerank_ledgers` dataclass fields) —
+are dropped tables/fields as of that cutover. Candidate generation and
+rerank/selection are now transient, in-memory passes with no durable ledger
+row of their own; `message_retrievals` is the sole durable per-result record,
+and the persisted `trust_trail` read model no longer has a candidate/rerank
+section to assemble. Everything else in this document — the citation-edge
+model, the tool-call/prompt-assembly/chat-run inventory, and the streaming
+vs. reload contract — is unchanged.
+
 ---
 
 ## 0. North star

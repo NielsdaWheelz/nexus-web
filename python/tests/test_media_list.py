@@ -48,7 +48,6 @@ class TestListVisibleMedia:
             )
 
         for media_id in (media_a, media_b):
-            direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
@@ -92,7 +91,6 @@ class TestListVisibleMedia:
             session.commit()
 
         for media_id in (article_id, pdf_id):
-            direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
@@ -121,7 +119,6 @@ class TestListVisibleMedia:
             ]
 
         for media_id in media_ids:
-            direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 
@@ -186,7 +183,6 @@ class TestListVisibleMedia:
             )
 
         for media_id in (match_id, non_match_id):
-            direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
             direct_db.register_cleanup("library_entries", "media_id", media_id)
             direct_db.register_cleanup("media", "id", media_id)
 

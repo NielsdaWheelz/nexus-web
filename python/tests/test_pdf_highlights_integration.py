@@ -12,6 +12,7 @@ from sqlalchemy import text
 from nexus.services.content_indexing import repair_ready_media_content_index_now
 from tests.factories import (
     add_context_edge,
+    add_media_to_library,
     create_pdf_media_with_text,
     get_user_default_library,
 )
@@ -55,15 +56,23 @@ DIFFERENT_QUADS = [
 ]
 
 
-def _add_media_to_library(client: TestClient, user_id: UUID, media_id: UUID) -> None:
-    """Add media to a user's default library via API."""
+def _add_media_to_library(
+    client: TestClient, direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> None:
+    """Seed a direct default-library entry for `media_id`.
+
+    Production ingest always auto-files new media into the creator's default
+    library (`ensure_media_in_default_library`), so freshly created media is
+    always reachable there. Fixtures that create a bare `media` row must
+    mirror that by seeding the physical entry directly rather than going
+    through the authorization-gated `POST /libraries/{id}/media` filing
+    endpoint, which requires the media to already be reachable.
+    """
     me_resp = client.get("/me", headers=auth_headers(user_id))
-    library_id = me_resp.json()["data"]["default_library_id"]
-    client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
+    library_id = UUID(me_resp.json()["data"]["default_library_id"])
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _setup_pdf_media(
@@ -263,7 +272,7 @@ class TestCreatePdfHighlight:
         direct_db.register_cleanup("media", "id", mid)
         direct_db.register_cleanup("library_entries", "media_id", mid)
 
-        _add_media_to_library(auth_client, user_id, mid)
+        _add_media_to_library(auth_client, direct_db, user_id, mid)
 
         resp = auth_client.post(
             f"/media/{mid}/pdf-highlights",
@@ -787,7 +796,7 @@ class TestUpdatePdfHighlight:
         direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fid)
         direct_db.register_cleanup("highlights", "anchor_media_id", mid)
 
-        _add_media_to_library(auth_client, user_id, mid)
+        _add_media_to_library(auth_client, direct_db, user_id, mid)
 
         create_resp = auth_client.post(
             f"/fragments/{fid}/highlights",

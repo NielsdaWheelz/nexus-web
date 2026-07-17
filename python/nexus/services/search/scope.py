@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.resource_graph.policy import SEARCH_SCOPE_EDGE_KIND
 from nexus.services.resource_items.capabilities import (
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
@@ -126,6 +127,13 @@ def _sql_values(values: tuple[str, ...]) -> str:
 NOTE_MEDIA_SEARCH_EDGE_ORIGINS_SQL = _sql_values(NOTE_MEDIA_SEARCH_EDGE_ORIGINS)
 CONVERSATION_CONTEXT_EDGE_ORIGINS_SQL = _sql_values(CONVERSATION_CONTEXT_EDGE_ORIGINS)
 
+# The library-set owner (spec §4.1): every matrix cell's own returned params dict
+# only ever carries `scope_id` (see `scope_filter_sql`), and `:viewer_id` is already
+# ambient in every retriever's own top-level params (the same convention
+# `_media_context_ref_scope` below relies on), so the library-id bind is rebound to
+# `:scope_id` via `library_media_ids_cte_sql`'s own `library_param` hook.
+_LIBRARY_MEDIA_IDS_SQL = library_media_ids_cte_sql(library_param=":scope_id")
+
 
 def _media_context_ref_scope(media_id_sql: str) -> str:
     return f"""
@@ -179,9 +187,8 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
                 LEFT JOIN highlights h
                   ON ((e.source_scheme = 'highlight' AND h.id = e.source_id)
                    OR (e.target_scheme = 'highlight' AND h.id = e.target_id))
-                JOIN library_entries le
-                  ON le.library_id = :scope_id AND le.media_id IS NOT NULL
-                 AND ((e.source_scheme = 'media' AND le.media_id = e.source_id)
+                JOIN ({_LIBRARY_MEDIA_IDS_SQL}) le
+                  ON ((e.source_scheme = 'media' AND le.media_id = e.source_id)
                    OR (e.target_scheme = 'media' AND le.media_id = e.target_id)
                    OR le.media_id = h.anchor_media_id)
                 WHERE {edge_match}
@@ -209,14 +216,7 @@ def _note_object_scope(scheme: str, object_id_sql: str) -> dict[str, str | Scope
 _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     "media": {
         "media": "AND m.id = :scope_id",
-        "library": """
-            AND m.id IN (
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :scope_id
-                  AND media_id IS NOT NULL
-            )
-        """,
+        "library": f"AND m.id IN ({_LIBRARY_MEDIA_IDS_SQL})",
         "conversation": f"AND {_media_context_ref_scope('m.id')}",
     },
     "podcast": {
@@ -240,13 +240,8 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     },
     "content_chunk": {
         "media": "AND cc.owner_kind = 'media' AND cc.owner_id = :scope_id",
-        "library": """
-            AND cc.owner_kind = 'media' AND cc.owner_id IN (
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :scope_id
-                  AND media_id IS NOT NULL
-            )
+        "library": f"""
+            AND cc.owner_kind = 'media' AND cc.owner_id IN ({_LIBRARY_MEDIA_IDS_SQL})
         """,
         "conversation": f"""
             AND cc.owner_kind = 'media'
@@ -255,22 +250,13 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     },
     "fragment": {
         "media": "AND f.media_id = :scope_id",
-        "library": """
-            AND f.media_id IN (
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :scope_id
-                  AND media_id IS NOT NULL
-            )
-        """,
+        "library": f"AND f.media_id IN ({_LIBRARY_MEDIA_IDS_SQL})",
         "conversation": UNSUPPORTED,
     },
     "evidence_span": {
         "media": "AND es.owner_kind = 'media' AND es.owner_id = :scope_id",
-        "library": """
-            AND es.owner_kind = 'media' AND es.owner_id IN (
-                SELECT media_id FROM library_entries WHERE library_id = :scope_id
-            )
+        "library": f"""
+            AND es.owner_kind = 'media' AND es.owner_id IN ({_LIBRARY_MEDIA_IDS_SQL})
         """,
         "conversation": f"""
             AND es.owner_kind = 'media'
@@ -279,25 +265,14 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     },
     "reader_apparatus_item": {
         "media": "AND rai.media_id = :scope_id",
-        "library": """
-            AND rai.media_id IN (
-                SELECT media_id FROM library_entries WHERE library_id = :scope_id
-            )
-        """,
+        "library": f"AND rai.media_id IN ({_LIBRARY_MEDIA_IDS_SQL})",
         "conversation": f"AND {_media_context_ref_scope('rai.media_id')}",
     },
     "page": _note_object_scope("page", "p.id"),
     "note_block": _note_object_scope("note_block", "cc.owner_id"),
     "highlight": {
         "media": "AND h.anchor_media_id = :scope_id",
-        "library": """
-            AND h.anchor_media_id IN (
-                SELECT media_id
-                FROM library_entries
-                WHERE library_id = :scope_id
-                  AND media_id IS NOT NULL
-            )
-        """,
+        "library": f"AND h.anchor_media_id IN ({_LIBRARY_MEDIA_IDS_SQL})",
         "conversation": f"""
             AND EXISTS (
                 SELECT 1 FROM resource_edges e
@@ -351,14 +326,9 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     },
     "contributor": {
         "media": "AND cc.media_id = :scope_id",
-        "library": """
+        "library": f"""
             AND (
-                cc.media_id IN (
-                    SELECT media_id
-                    FROM library_entries
-                    WHERE library_id = :scope_id
-                      AND media_id IS NOT NULL
-                )
+                cc.media_id IN ({_LIBRARY_MEDIA_IDS_SQL})
                 OR cc.podcast_id IN (
                     SELECT podcast_id
                     FROM library_entries

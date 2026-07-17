@@ -168,12 +168,25 @@ interface LibraryPaneResource {
   entriesPage: LibraryPageInfo;
 }
 
-function appendUniqueEntries(current: LibraryEntry[], next: LibraryEntry[]): LibraryEntry[] {
-  const seen = new Set(current.map((entry) => entry.id));
+// The default library's read surface is a deduplicated virtual set: the server
+// can hand back a different representative entry id for the same underlying
+// media across paginated fetches, so Default rows/merges key by `media.id`.
+// Non-default libraries key by the physical entry id, unchanged.
+function libraryRowKey(entry: LibraryEntry, isDefaultLibrary: boolean): string {
+  return isDefaultLibrary && entry.kind === "media" ? entry.media.id : entry.id;
+}
+
+function appendUniqueEntries(
+  current: LibraryEntry[],
+  next: LibraryEntry[],
+  keyOf: (entry: LibraryEntry) => string = (entry) => entry.id,
+): LibraryEntry[] {
+  const seen = new Set(current.map(keyOf));
   const merged = [...current];
   for (const entry of next) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
+    const key = keyOf(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
     merged.push(entry);
   }
   return merged;
@@ -215,11 +228,22 @@ export default function LibraryPaneBody() {
       ) as Promise<LibraryPaneResource>,
   });
   const currentLibrary = library?.id === id ? library : null;
-  const sort = paneSearchParams.get("sort") === "resonance" ? "resonance" : "manual";
+  const isDefaultLibrary = currentLibrary?.is_default === true;
+  // Default's read surface is a live, server-ordered virtual set: resonance is
+  // rejected by the endpoint and the UI must never request or offer it, so a
+  // stale/manually-crafted `?sort=resonance` is always forced back to manual.
+  const sort =
+    !isDefaultLibrary && paneSearchParams.get("sort") === "resonance"
+      ? "resonance"
+      : "manual";
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
   const canEditEntries =
     currentLibrary?.role === "admin" && currentLibrary.can_edit_entries === true;
+  // Explicit reorder gate: Default has server-defined ordering and no reorder
+  // UX/endpoint support, independent of canEditEntries (which stays true for
+  // Default's "Add content" capability).
+  const canReorder = canEditEntries && !isDefaultLibrary;
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
@@ -900,7 +924,11 @@ export default function LibraryPaneBody() {
             setResonanceEntries((current) => appendUniqueEntries(current, page.data));
             setResonanceCursor(page.page.next_cursor);
           } else {
-            setEntries((current) => appendUniqueEntries(current, page.data));
+            setEntries((current) =>
+              appendUniqueEntries(current, page.data, (entry) =>
+                libraryRowKey(entry, isDefaultLibrary),
+              ),
+            );
             setEntryCursor(page.page.next_cursor);
           }
         })
@@ -939,6 +967,7 @@ export default function LibraryPaneBody() {
     [
       entryCursor,
       id,
+      isDefaultLibrary,
       manualLoadingMore,
       resonanceCursor,
       resonanceLoadingMore,
@@ -946,7 +975,7 @@ export default function LibraryPaneBody() {
   );
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
-    if (!canEditEntries || entryCursor !== null) {
+    if (!canReorder || entryCursor !== null) {
       return;
     }
     const previousEntries = entries;
@@ -1035,7 +1064,7 @@ export default function LibraryPaneBody() {
     (entry) => !removedEntryIds.ids.has(entry.id),
   );
   const surfacedEntries = visibleEntries.filter((entry) => entry.surfaced_today);
-  const canReorderVisibleEntries = canEditEntries && sort === "manual" && entryCursor === null;
+  const canReorderVisibleEntries = canReorder && sort === "manual" && entryCursor === null;
   const entryFooter =
     sort === "resonance" ? (
       <>
@@ -1129,7 +1158,11 @@ export default function LibraryPaneBody() {
         void handleAddToLectern(item.media.id);
       },
     });
-    return { ...row, id: item.id, relatedMediaId: item.media.id };
+    return {
+      ...row,
+      id: libraryRowKey(item, isDefaultLibrary),
+      relatedMediaId: item.media.id,
+    };
   };
   const visibleEntryRows = visibleEntries.map(entryRowView);
 
@@ -1160,17 +1193,19 @@ export default function LibraryPaneBody() {
             <PaneToolbar
               controls={
                 <>
-                  <SortSelect
-                    label="Sort"
-                    value={sort}
-                    options={[
-                      { value: "manual", label: "Manual" },
-                      { value: "resonance", label: "Resonance" },
-                    ]}
-                    onChange={(value) =>
-                      setSort(value === "resonance" ? "resonance" : "manual")
-                    }
-                  />
+                  {isDefaultLibrary ? null : (
+                    <SortSelect
+                      label="Sort"
+                      value={sort}
+                      options={[
+                        { value: "manual", label: "Manual" },
+                        { value: "resonance", label: "Resonance" },
+                      ]}
+                      onChange={(value) =>
+                        setSort(value === "resonance" ? "resonance" : "manual")
+                      }
+                    />
+                  )}
                   <CollectionDisplayControls
                     value={displayState}
                     onChange={setDisplayState}

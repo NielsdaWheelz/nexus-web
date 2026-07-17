@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from nexus.errors import NotFoundError
 from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
+from nexus.services import library_entries
 from nexus.services.artifacts.base import ArtifactReducer
 from nexus.services.locator_resolver import resolve_evidence_span
 from nexus.services.media_intelligence import (
@@ -100,16 +101,28 @@ class _LiSynthesis(BaseModel):
 # ---------- shared expansion (single owner) ---------------------------------
 
 
-def resolve_library_media_ids(db: Session, *, library_id: UUID) -> list[UUID]:
-    """Expand the library's current entries to a media set (direct + podcast episodes)."""
+def resolve_library_media_ids(db: Session, *, library_id: UUID, viewer_id: UUID) -> list[UUID]:
+    """Expand the library's current entries to a media set: the personal virtual
+    relation (spec §4.1) for direct media, plus the existing podcast-episode
+    expansion (the Default library can never hold a podcast entry per §4.3, so
+    that branch is moot there and unchanged for non-default libraries).
+
+    Ordering: a virtual-media row keeps this SPECIFIC library's own entry
+    position where one exists (the common case — direct filing, and every
+    non-default library, whose virtual set is exactly its own entries); a media
+    id reachable only via a DIFFERENT membership (the Default "personal All"
+    branch) has no native position here and sorts after every positioned entry
+    (NULLS LAST), tie-broken by media_id for determinism.
+    """
     rows = (
         db.execute(
             text(
-                """
+                f"""
                 SELECT media_id FROM (
-                    SELECT le.position AS position, le.media_id AS media_id
-                    FROM library_entries le
-                    WHERE le.library_id = :library_id AND le.media_id IS NOT NULL
+                    SELECT le2.position AS position, virtual_media.media_id AS media_id
+                    FROM ({library_entries.library_media_ids_cte_sql()}) virtual_media
+                    LEFT JOIN library_entries le2
+                        ON le2.library_id = :library_id AND le2.media_id = virtual_media.media_id
                     UNION
                     SELECT le.position AS position, pe.media_id AS media_id
                     FROM library_entries le
@@ -121,7 +134,7 @@ def resolve_library_media_ids(db: Session, *, library_id: UUID) -> list[UUID]:
                 ORDER BY MIN(position), media_id
                 """
             ),
-            {"library_id": library_id},
+            {"library_id": library_id, "viewer_id": viewer_id},
         )
         .mappings()
         .all()
@@ -133,16 +146,22 @@ def resolve_library_media_ids(db: Session, *, library_id: UUID) -> list[UUID]:
 
 
 async def _collect(
-    db: Session, subject_ref: ResourceRef, _viewer_id: UUID | None, llm: ModelRuntime
+    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None, llm: ModelRuntime
 ) -> DossierInputs:
     """Resolve the library to media, build any not-yet-ready unit inline, gather claims.
 
     ``ensure_media_unit`` + ``run_media_unit_build`` are idempotent on the content
     fingerprint and each own their commit, so this stays committed BEFORE the promote
     SERIALIZABLE tx is opened.
+
+    The library dossier's media set is viewer-scoped (spec §4.1) — the engine must
+    always resolve a real viewer (the library's owner) for a ``library`` subject; a
+    missing viewer here is a caller bug, not a legitimate anonymous-collect case.
     """
+    if viewer_id is None:
+        raise ValueError("library_dossier collect requires a resolved viewer_id")
     library_id = subject_ref.id
-    media_ids = resolve_library_media_ids(db, library_id=library_id)
+    media_ids = resolve_library_media_ids(db, library_id=library_id, viewer_id=viewer_id)
     for media_id in media_ids:
         ensure_media_unit(db, media_id=media_id)
         if not isinstance(get_media_unit(db, media_id=media_id), MediaUnit):
@@ -298,9 +317,11 @@ def _fingerprint(db: Session, inputs: DossierInputs) -> list[dict[str, object]]:
 
 
 def _live_fingerprint(
-    db: Session, subject_ref: ResourceRef, _viewer_id: UUID | None
+    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None
 ) -> list[dict[str, object]]:
-    media_ids = resolve_library_media_ids(db, library_id=subject_ref.id)
+    if viewer_id is None:
+        raise ValueError("library_dossier live_fingerprint requires a resolved viewer_id")
+    media_ids = resolve_library_media_ids(db, library_id=subject_ref.id, viewer_id=viewer_id)
     fingerprints = _media_fingerprints(db, media_ids)
     return [
         {"kind": "media", "id": str(media_id), "fingerprint": fingerprints.get(str(media_id))}
@@ -342,8 +363,10 @@ def media_fingerprint_map(covered_targets: object) -> dict[str, str | None]:
     return result
 
 
-def live_media_fingerprint_map(db: Session, *, library_id: UUID) -> dict[str, str | None]:
-    media_ids = resolve_library_media_ids(db, library_id=library_id)
+def live_media_fingerprint_map(
+    db: Session, *, library_id: UUID, viewer_id: UUID
+) -> dict[str, str | None]:
+    media_ids = resolve_library_media_ids(db, library_id=library_id, viewer_id=viewer_id)
     return _media_fingerprints(db, media_ids)
 
 

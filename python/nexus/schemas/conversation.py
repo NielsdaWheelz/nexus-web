@@ -68,7 +68,6 @@ EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "excluded_by_scope",
     "web_result",
 ]
-CANDIDATE_INCLUDED_IN_PROMPT_SOURCES = Literal["candidate_ledger", "linked_retrieval"]
 
 
 # =============================================================================
@@ -395,48 +394,6 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
     raise ValueError("unknown chat-run event type")
 
 
-class MessageRetrievalCandidateLedgerOut(BaseModel):
-    """Retrieval candidate ledger row with honest prompt-inclusion status."""
-
-    id: UUID
-    tool_call_id: UUID
-    retrieval_id: UUID | None = None
-    ordinal: int
-    result_type: SEARCH_RESULT_TYPES
-    source_id: str
-    score: float | None = None
-    selected: bool
-    included_in_prompt: bool
-    ledger_included_in_prompt: bool
-    linked_retrieval_included_in_prompt: bool | None = None
-    included_in_prompt_source: CANDIDATE_INCLUDED_IN_PROMPT_SOURCES
-    included_in_prompt_reconciled: bool
-    selection_status: str
-    selection_reason: str
-    result_ref: RetrievalResultRef
-    locator: RetrievalLocator | None = None
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class MessageRerankLedgerOut(BaseModel):
-    """Selection/rerank pass ledger for one retrieval tool call."""
-
-    id: UUID
-    tool_call_id: UUID
-    strategy: str
-    input_count: int
-    selected_count: int
-    budget_chars: int | None = None
-    selected_chars: int
-    status: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
 TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 
@@ -481,9 +438,7 @@ class TrustRetrievalOut(MessageRetrievalOut):
     cited_edge_id: UUID | None = None
     citation_number: int | None = None
     citation_role: CitationRole | None = None
-    included_in_prompt_source: Literal[
-        "retrieval", "candidate_ledger", "prompt_assembly", "none"
-    ] = "retrieval"
+    included_in_prompt_source: Literal["retrieval", "prompt_assembly", "none"] = "retrieval"
 
 
 class TrustToolCallOut(BaseModel):
@@ -508,8 +463,6 @@ class TrustToolCallOut(BaseModel):
     # reverted (amanuensis §5.6, D-3); the FE greys the row to "Undone".
     reverted_at: datetime | None = None
     retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
-    candidate_ledgers: list[MessageRetrievalCandidateLedgerOut] = Field(default_factory=list)
-    rerank_ledgers: list[MessageRerankLedgerOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -812,8 +765,6 @@ class ChatRunStreamToolCallOut(BaseModel):
     result_count: int = 0
     selected_count: int = 0
     retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
-    candidate_ledgers: list[MessageRetrievalCandidateLedgerOut] = Field(default_factory=list)
-    rerank_ledgers: list[MessageRerankLedgerOut] = Field(default_factory=list)
     input_preview: str | None = None
 
     model_config = ConfigDict(extra="forbid")

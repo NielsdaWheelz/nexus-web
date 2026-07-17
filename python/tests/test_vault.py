@@ -738,7 +738,6 @@ def _register_seed_cleanup(
     direct_db.register_cleanup("highlight_fragment_anchors", "highlight_id", highlight_id)
     direct_db.register_cleanup("highlights", "id", highlight_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
 

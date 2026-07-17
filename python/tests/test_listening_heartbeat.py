@@ -1,16 +1,16 @@
 """Integration tests for the revision-fenced listening heartbeat (spec §5.4).
 
 GET/PUT /media/{id}/listening-state. The PUT is the unreplayable CAS mutation:
-an exact ``(expectedWriteRevision, expectedResetEpoch)`` writes position + dwell
-and advances the revision; a mismatch writes nothing.
+an exact ``(expectedWriteRevision, expectedResetEpoch)`` writes position and
+advances the revision; a mismatch writes nothing.
 """
 
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -42,20 +42,23 @@ def _create_audio_media(direct_db: DirectSessionManager) -> UUID:
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
     return media_id
 
 
-def _add_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, f"add media to library failed: {response.text}"
+def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Seed a physical library_entries row directly, bypassing the REST filing
+    endpoint's membership-reachability gate: bare factory/direct-INSERT media
+    isn't membership-reachable, so POST /libraries/{id}/media 404s on it.
+    Production ingest always auto-files freshly-created media into the
+    creator's default library (ensure_media_in_default_library); this mirrors
+    that reachability for fixture media created via a bare Media row rather
+    than real ingest."""
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _heartbeat_body(
@@ -63,15 +66,12 @@ def _heartbeat_body(
     position_ms: int,
     expected_write_revision: int,
     expected_reset_epoch: int,
-    dwell: int = 0,
     duration_ms: int = 600_000,
 ) -> dict:
     return {
         "positionMs": position_ms,
         "durationMs": {"kind": "Present", "value": duration_ms},
         "playbackSpeed": 1.5,
-        "dwellMsDelta": dwell,
-        "deviceId": "device-audio",
         "expectedWriteRevision": expected_write_revision,
         "expectedResetEpoch": expected_reset_epoch,
         "heartbeatGeneration": str(uuid4()),
@@ -89,25 +89,12 @@ def _get(auth_client, user_id, media_id):
     return auth_client.get(f"/media/{media_id}/listening-state", headers=auth_headers(user_id))
 
 
-def _session_dwell(direct_db: DirectSessionManager, user_id, media_id) -> int:
-    with direct_db.session() as session:
-        return int(
-            session.execute(
-                text(
-                    "SELECT COALESCE(SUM(dwell_ms), 0) FROM reading_sessions "
-                    "WHERE user_id = :u AND media_id = :m"
-                ),
-                {"u": user_id, "m": media_id},
-            ).scalar_one()
-        )
-
-
 class TestGet:
     def test_default_row_when_absent(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         response = _get(auth_client, user_id, media_id)
         assert response.status_code == 200, response.text
@@ -121,20 +108,20 @@ class TestGet:
 
 
 class TestPut:
-    def test_happy_path_increments_revision_and_writes_dwell(
+    def test_happy_path_increments_revision(
         self, auth_client, direct_db: DirectSessionManager
     ):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
         response = _put(
             auth_client,
             user_id,
             media_id,
             _heartbeat_body(
-                position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0, dwell=15_000
+                position_ms=60_000, expected_write_revision=0, expected_reset_epoch=0
             ),
         )
         assert response.status_code == 200, response.text
@@ -143,15 +130,14 @@ class TestPut:
         assert data["listeningState"]["positionMs"] == 60_000
         assert data["listeningState"]["playbackSpeed"] == 1.5
         assert data["heartbeatSequence"] == 7
-        assert _session_dwell(direct_db, user_id, media_id) == 15_000
 
     def test_stale_revision_writes_nothing(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
 
-        # First heartbeat creates the row at revision 1 with 5s dwell.
+        # First heartbeat creates the row at revision 1.
         assert (
             _put(
                 auth_client,
@@ -161,7 +147,6 @@ class TestPut:
                     position_ms=30_000,
                     expected_write_revision=0,
                     expected_reset_epoch=0,
-                    dwell=5_000,
                 ),
             ).status_code
             == 200
@@ -173,25 +158,22 @@ class TestPut:
             user_id,
             media_id,
             _heartbeat_body(
-                position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0, dwell=9_000
+                position_ms=90_000, expected_write_revision=0, expected_reset_epoch=0
             ),
         )
         assert stale.status_code == 409, stale.text
         assert stale.json()["error"]["code"] == "E_STALE_LISTENING_REVISION"
 
-        # Neither position nor dwell moved.
+        # Position did not move.
         current = _get(auth_client, user_id, media_id).json()["data"]
         assert current["positionMs"] == 30_000, "stale PUT must not move position"
         assert current["writeRevision"] == 1
-        assert _session_dwell(direct_db, user_id, media_id) == 5_000, (
-            "stale PUT must not double-count dwell"
-        )
 
     def test_stale_after_setunread_reset(self, auth_client, direct_db: DirectSessionManager):
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         assert (
             _put(
                 auth_client,
@@ -228,7 +210,7 @@ class TestVisibility:
         owner = create_test_user_id()
         owner_library = _bootstrap(auth_client, owner)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, owner, owner_library, media_id)
+        _add_to_library(direct_db, owner_library, media_id)
         other = create_test_user_id()
         _bootstrap(auth_client, other)
 
@@ -254,7 +236,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid() | {"isCompleted": True}
         response = _put(auth_client, user_id, media_id, body)
         # The app maps strict-decode failures to 400 E_INVALID_REQUEST.
@@ -265,7 +247,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid() | {"durationMs": None}
         response = _put(auth_client, user_id, media_id, body)
         assert response.status_code == 400, response.text
@@ -275,7 +257,7 @@ class TestStrictDecode:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         media_id = _create_audio_media(direct_db)
-        _add_to_library(auth_client, user_id, library_id, media_id)
+        _add_to_library(direct_db, library_id, media_id)
         body = self._valid()
         body["position_ms"] = body.pop("positionMs")
         response = _put(auth_client, user_id, media_id, body)

@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from nexus.schemas.attention import AttentionBlock
 from nexus.schemas.resource_graph import ConnectionOut
 from nexus.schemas.resource_items import ResourceActivationOut
 
@@ -294,17 +293,3 @@ class CursorWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     locator: ReaderResumeState
     base_revision: int = Field(ge=0)
-
-
-class ReaderProgressWrite(BaseModel):
-    """The one strict envelope for PUT /media/{id}/reader-state."""
-
-    model_config = ConfigDict(extra="forbid")
-    cursor: CursorWrite | None = None
-    attention: AttentionBlock | None = None
-
-    @model_validator(mode="after")
-    def require_at_least_one_block(self) -> "ReaderProgressWrite":
-        if self.cursor is None and self.attention is None:
-            raise ValueError("cursor or attention is required")
-        return self

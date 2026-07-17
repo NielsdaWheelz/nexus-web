@@ -7,18 +7,16 @@ envelope. All paths are `/media/{media_id}/...`.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.logging import get_logger
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
-from nexus.schemas.reader import ReaderProgressWrite
+from nexus.schemas.reader import CursorWrite
 from nexus.services import (
-    attention,
     epub_read,
     locator_resolver,
     media_file_access,
@@ -26,8 +24,7 @@ from nexus.services import (
     reader_navigation,
 )
 from nexus.services import reader as reader_service
-
-logger = get_logger(__name__)
+from nexus.services.consumption import service as consumption_service
 
 router = APIRouter(tags=["media"])
 
@@ -105,34 +102,19 @@ def get_reader_state(
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
     media_id: UUID,
-    payload: ReaderProgressWrite,
+    payload: CursorWrite,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Conditionally replace the cursor and/or record attention.
+) -> JSONResponse:
+    """Replace the cursor, then record the retry-safe current-state engagement.
 
-    The cursor write commits (or conflicts) first in its own transaction; a
-    cursor conflict writes no attention. The attention attempt then runs in its
-    own transaction and is best effort for a combined request: a committed
-    cursor still returns 200 so the client never retries the ambiguous dwell
-    delta. Attention-only requests validate media visibility themselves and
-    return 204.
+    The cursor write commits (or raises 409 on conflict) first; a conflict
+    records no engagement. On cursor success/idempotent success, the engagement
+    command follows in its own transaction; its failure surfaces (not swallowed)
+    and the same cursor write may be retried safely (spec §4.4).
     """
-    snapshot = None
-    if payload.cursor is not None:
-        snapshot = reader_service.put_reader_cursor(db, viewer.user_id, media_id, payload.cursor)
-    if payload.attention is not None:
-        try:
-            attention.record_attention(db, viewer.user_id, media_id, payload.attention)
-        except Exception:
-            if snapshot is None:
-                raise
-            logger.warning(
-                "reader_attention_write_failed_after_cursor_commit",
-                media_id=str(media_id),
-            )
-    if snapshot is None:
-        return Response(status_code=204)
+    snapshot = reader_service.put_reader_cursor(db, viewer.user_id, media_id, payload)
+    consumption_service.record_reader_engagement(viewer.user_id, media_id, payload.locator)
     return JSONResponse(content=ok(snapshot))
 
 

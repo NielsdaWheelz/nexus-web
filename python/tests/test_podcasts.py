@@ -23,6 +23,7 @@ from nexus.services.net.safe_fetch import SafeFetchResult
 from nexus.services.podcasts.deepgram_adapter import TranscriptionResult
 from nexus.services.podcasts.transcription import TranscriptionRunResult
 from nexus.services.transcript_segments import TranscriptSegmentInput
+from tests.factories import add_media_to_library as seed_media_in_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -3640,19 +3641,8 @@ class TestPodcastTranscriptRequestAdmission:
                     "updated_at": now,
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id, created_at)
-                    VALUES (:default_library_id, :media_id, :created_at)
-                    """
-                ),
-                {
-                    "default_library_id": default_library_id,
-                    "media_id": media_id,
-                    "created_at": now,
-                },
-            )
+            # Direct physical default entry — the whole direct-entry contract.
+            seed_media_in_library(session, default_library_id, media_id)
             session.commit()
 
         invalid_kind = auth_client.post(
@@ -6952,8 +6942,6 @@ upgrade now
                 "positionMs": 900_000,
                 "durationMs": {"kind": "Present", "value": 1_800_000},
                 "playbackSpeed": 1.0,
-                "dwellMsDelta": 0,
-                "deviceId": "podcast-test",
                 "expectedWriteRevision": 0,
                 "expectedResetEpoch": 0,
                 "heartbeatGeneration": str(uuid4()),
@@ -9564,19 +9552,8 @@ class TestPodcastTranscriptStateVersioningAndAudit:
                     "updated_at": now,
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO default_library_intrinsics (default_library_id, media_id, created_at)
-                    VALUES (:default_library_id, :media_id, :created_at)
-                    """
-                ),
-                {
-                    "default_library_id": default_library_id,
-                    "media_id": media_id,
-                    "created_at": now,
-                },
-            )
+            # Direct physical default entry — the whole direct-entry contract.
+            seed_media_in_library(session, default_library_id, media_id)
             session.execute(
                 text(
                     """

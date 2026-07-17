@@ -31,7 +31,6 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.schemas.attention import AttentionBlock
 from nexus.schemas.consumption import (
     ConsumptionCommand,
     ConsumptionRemovedOutcome,
@@ -59,8 +58,14 @@ from nexus.schemas.consumption import (
     StateOnlyOutcome,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
-from nexus.services import attention
-from nexus.services.consumption import _lectern_store, _listening_store, _projection, _state_store
+from nexus.schemas.reader import ReaderResumeState
+from nexus.services.consumption import (
+    _lectern_store,
+    _listening_store,
+    _projection,
+    _reader_engagement_store,
+    _state_store,
+)
 from nexus.services.consumption._lectern_store import (
     SUPPORTED_MEDIA_KINDS,
     LecternRow,
@@ -103,7 +108,7 @@ def media_read_states(
     """Batch collection read-state for arbitrary media (MediaOut/episode surfaces).
 
     The one read boundary adopters use for read-state; the projection owns the
-    explicit-override + listening-threshold + attention-aggregate derivation."""
+    explicit-override + listening-threshold + reader-engagement derivation."""
     return _projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
 
 
@@ -112,6 +117,13 @@ def listening_recency(
 ) -> dict[UUID, datetime]:
     """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
     return _projection.listening_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+def reader_engagement_recency(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, datetime]:
+    """Per-media reader-engagement recency (owner-scoped read for MediaOut)."""
+    return _projection.reader_engagement_recency(db, viewer_id=viewer_id, media_ids=media_ids)
 
 
 def player_descriptors(
@@ -161,6 +173,13 @@ def episode_state_joins_sql(
 def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
     """Scalar subquery -> the viewer's listening-row recency for one media."""
     return _projection.listening_recency_subquery_sql(user_param=user_param, media_expr=media_expr)
+
+
+def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
+    """Scalar subquery -> the viewer's reader-engagement recency for one media."""
+    return _projection.reader_engagement_recency_subquery_sql(
+        user_param=user_param, media_expr=media_expr
+    )
 
 
 def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
@@ -483,7 +502,7 @@ def _capability_matches(activation_kind: str, capability: NextCapability) -> boo
 def record_listening_heartbeat(
     viewer_id: UUID, media_id: UUID, heartbeat: ListeningHeartbeatIn
 ) -> ListeningHeartbeatResult:
-    """Fence, write position/duration/speed, and record dwell in one txn."""
+    """Fence and write position/duration/speed in one txn."""
     fresh = _fresh_session()
     try:
         return retry_serializable(
@@ -515,17 +534,6 @@ def _record_heartbeat_op(
     if row is None:
         db.rollback()
         raise ConflictError(ApiErrorCode.E_STALE_LISTENING_REVISION, "Listening revision is stale")
-    attention.record_attention_in_txn(
-        db,
-        viewer_id,
-        media_id,
-        AttentionBlock(
-            dwell_ms_delta=heartbeat.dwell_ms_delta,
-            device_id=heartbeat.device_id,
-            spans_touched=[],
-            progression=_audio_progression(heartbeat.position_ms, duration_ms),
-        ),
-    )
     db.commit()
     return ListeningHeartbeatResult(
         listening_state=_projection.to_listening_state_out(row),
@@ -534,10 +542,34 @@ def _record_heartbeat_op(
     )
 
 
-def _audio_progression(position_ms: int, duration_ms: int | None) -> float | None:
-    if duration_ms is not None and duration_ms > 0:
-        return min(1.0, position_ms / duration_ms)
-    return None
+# ---------------------------------------------------------------------------
+# Reader engagement (retry-safe current-state upsert; not a replayable command)
+# ---------------------------------------------------------------------------
+
+
+def record_reader_engagement(viewer_id: UUID, media_id: UUID, locator: ReaderResumeState) -> None:
+    """Touch ``reader_engagement_states`` after a successful/idempotent cursor
+    write (route composition, spec §4.4). Fresh session + ``retry_serializable``;
+    no replay memo — this is a plain idempotent upsert, not a replayable command.
+    Failure surfaces to the caller; the same cursor write may be retried safely."""
+    fresh = _fresh_session()
+    try:
+        retry_serializable(
+            fresh,
+            "record_reader_engagement",
+            partial(_record_reader_engagement_op, fresh, viewer_id, media_id, locator),
+        )
+    finally:
+        fresh.close()
+
+
+def _record_reader_engagement_op(
+    db: Session, viewer_id: UUID, media_id: UUID, locator: ReaderResumeState
+) -> None:
+    _reader_engagement_store.record_engagement_in_txn(
+        db, viewer_id=viewer_id, media_id=media_id, locator=locator
+    )
+    db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -604,13 +636,15 @@ def _remove_lectern_item_op(db: Session, viewer_id: UUID, item_id: UUID) -> None
 
 
 def delete_media_consumption_state_in_txn(db: Session, *, media_id: UUID) -> None:
-    """Delete all users' Lectern/override/listening rows for a media (teardown).
+    """Delete all users' Lectern/override/listening/engagement rows for a media
+    (teardown).
 
-    Composed by media teardown inside its owning deletion transaction; the three
+    Composed by media teardown inside its owning deletion transaction; the four
     stores stay the sole DML owners of their tables."""
     _lectern_store.delete_all_users_in_txn(db, media_id=media_id)
     _state_store.delete_all_users_in_txn(db, media_id=media_id)
     _listening_store.delete_all_users_in_txn(db, media_id=media_id)
+    _reader_engagement_store.delete_all_users_in_txn(db, media_id=media_id)
 
 
 # ---------------------------------------------------------------------------
@@ -638,8 +672,12 @@ def _require_readable(db: Session, viewer_id: UUID, media_id: UUID) -> None:
 
 
 def _validate_add_targets(db: Session, viewer_id: UUID, media_ids: list[UUID]) -> None:
+    # include_tearing_down keeps a reachable, non-tombstoned target mid-teardown
+    # visible here so it hits the specific E_MEDIA_DELETING below rather than a
+    # generic not-found; an unreachable or tombstoned target still 404s, so the
+    # teardown state never leaks to a non-member.
     for media_id in media_ids:
-        if not can_read_media(db, viewer_id, media_id):
+        if not can_read_media(db, viewer_id, media_id, include_tearing_down=True):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
     if _lectern_store.teardown_intent_media(db, media_ids=media_ids):
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "A target media is being deleted")

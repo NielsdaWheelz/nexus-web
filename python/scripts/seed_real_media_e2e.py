@@ -256,12 +256,6 @@ def main() -> None:
                                   WHERE le.library_id = :default_library_id
                                     AND le.media_id = m.id
                               )
-                              AND EXISTS (
-                                  SELECT 1
-                                  FROM default_library_intrinsics dli
-                                  WHERE dli.default_library_id = :default_library_id
-                                    AND dli.media_id = m.id
-                              )
                             LIMIT 1
                             """
                         ),
@@ -466,12 +460,6 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                                     WHERE le.library_id = :default_library_id
                                       AND le.media_id = m.id
                                 ) AS has_default_library_entry,
-                                EXISTS(
-                                    SELECT 1
-                                    FROM default_library_intrinsics dli
-                                    WHERE dli.default_library_id = :default_library_id
-                                      AND dli.media_id = m.id
-                                ) AS has_default_intrinsic,
                                 (
                                     SELECT count(*)
                                     FROM content_chunks cc
@@ -516,7 +504,7 @@ def _existing_seed_ready(engine: Engine, user_id: UUID, default_library_id: UUID
                     return False
                 if row["created_by_user_id"] != user_id:
                     return False
-                if not row["has_default_library_entry"] or not row["has_default_intrinsic"]:
+                if not row["has_default_library_entry"]:
                     return False
                 if row["processing_status"] != "ready_for_reading":
                     return False

@@ -387,10 +387,11 @@ def add_media_to_library(
 ) -> dict:
     """Add media to a library.
 
-    Only admins can add media. Enforces default library closure.
+    Only admins can add media. A Default target always creates/keeps a direct
+    physical entry.
     """
-    result = library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
-    return ok(result)
+    outcome = library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
+    return ok(outcome.entry)
 
 
 @router.post("/libraries/{library_id}/podcasts", status_code=201)
@@ -401,8 +402,8 @@ def add_podcast_to_library(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Add a subscribed podcast reference to a non-default library."""
-    result = library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
-    return ok(result)
+    outcome = library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
+    return ok(outcome.entry)
 
 
 @router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)

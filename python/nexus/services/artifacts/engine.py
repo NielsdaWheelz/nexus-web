@@ -232,9 +232,19 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
     subject_ref = ResourceRef(scheme=cast("ResourceScheme", row.subject_scheme), id=row.subject_id)
     owner_id = row.user_id
     reducer = REDUCERS[row.kind]
-    # The reducer viewer: a conversation subject reads the owner's active branch (D-13);
-    # the library dossier ignores it.
-    collect_viewer = owner_id if row.subject_scheme == "conversation" else None
+    # The reducer viewer: a conversation subject reads the owner's active branch
+    # (D-13); a library subject collects the personal virtual media relation
+    # (spec §4.1) anchored on the library's owner_user_id, not the artifact
+    # head's user_id (they can differ for a shared non-default library) — see
+    # `library_owner_user_id`. Scheme-scoped: no other subject kind resolves a
+    # viewer here.
+    collect_viewer = (
+        owner_id
+        if row.subject_scheme == "conversation"
+        else library_owner_user_id(db, library_id=subject_ref.id)
+        if row.subject_scheme == "library"
+        else None
+    )
 
     try:
         resolved_key = resolve_api_key(db, owner_id, reducer.provider, "auto")
@@ -579,7 +589,21 @@ def _viewer_for_subject(db: Session, subject_ref: ResourceRef) -> UUID | None:
             text("SELECT owner_user_id FROM conversations WHERE id = :id"), {"id": subject_ref.id}
         ).scalar_one_or_none()
         return UUID(str(owner)) if owner is not None else None
+    if subject_ref.scheme == "library":
+        return library_owner_user_id(db, library_id=subject_ref.id)
     return None
+
+
+def library_owner_user_id(db: Session, *, library_id: UUID) -> UUID | None:
+    """The library-dossier viewer anchor (spec §4.1): the library's owner, not
+    whichever member triggered generation or is currently reading — deterministic
+    across every member of a shared non-default library. SOLE owner-lookup for
+    library subjects; other artifact modules import this rather than querying
+    ``libraries`` directly."""
+    owner = db.execute(
+        text("SELECT owner_user_id FROM libraries WHERE id = :id"), {"id": library_id}
+    ).scalar_one_or_none()
+    return UUID(str(owner)) if owner is not None else None
 
 
 def revision_orm_or_none(db: Session, *, revision_id: UUID) -> ArtifactRevision | None:

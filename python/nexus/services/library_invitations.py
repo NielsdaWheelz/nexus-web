@@ -1,7 +1,8 @@
 """Library invitations: the `library_invitations` table and its lifecycle.
 
-Owns create/list/accept/decline/revoke. The durable backfill-job upsert that accepting
-an invite triggers is owned by `default_library_closure`; this module calls it.
+Owns create/list/accept/decline/revoke. Membership commit alone changes Default
+list/count/search immediately (spec AC3); no follow-up projection/backfill work
+is required or performed.
 """
 
 from datetime import UTC, datetime
@@ -28,11 +29,6 @@ from nexus.schemas.library import (
     LibraryRole,
 )
 from nexus.services import library_governance as governance
-from nexus.services.default_library_closure import (
-    enqueue_backfill_task,
-    read_backfill_job_status,
-    upsert_backfill_job_pending,
-)
 
 _INVITATION_COLUMNS = (
     "id, library_id, inviter_user_id, invitee_user_id, role, status, created_at, responded_at"
@@ -219,8 +215,9 @@ def list_viewer_invites(
 def accept_library_invite(
     db: Session, viewer_id: UUID, invite_id: UUID
 ) -> AcceptLibraryInviteResponse:
-    """Accept a library invitation: membership upsert → invite update → backfill-job
-    upsert, then a post-commit best-effort worker enqueue."""
+    """Accept a library invitation: membership upsert → invite update. The
+    membership commit alone immediately changes Default list/count/search; no
+    follow-up projection work is required."""
     with transaction(db):
         inv = (
             db.execute(
@@ -247,18 +244,6 @@ def accept_library_invite(
                 text("SELECT role FROM memberships WHERE library_id = :lid AND user_id = :uid"),
                 {"lid": invite_library_id, "uid": viewer_id},
             ).fetchone()
-            default_library_id = governance.find_default_library_id(db, viewer_id)
-            backfill_job_status = "completed"
-            if default_library_id is not None:
-                backfill_job_status = (
-                    read_backfill_job_status(
-                        db,
-                        default_library_id=default_library_id,
-                        source_library_id=invite_library_id,
-                        user_id=viewer_id,
-                    )
-                    or "completed"
-                )
             return AcceptLibraryInviteResponse(
                 invite=_invitation_row_to_out(inv),
                 membership=InviteAcceptMembershipOut(
@@ -267,7 +252,6 @@ def accept_library_invite(
                     role=mem[0] if mem else invite_role,
                 ),
                 idempotent=True,
-                backfill_job_status=backfill_job_status,
             )
 
         if inv["status"] != "pending":
@@ -310,19 +294,6 @@ def accept_library_invite(
             .fetchone()
         )
 
-        default_library_id = governance.find_default_library_id(db, viewer_id)
-        backfill_job_status = "pending"
-        if default_library_id is not None:
-            upsert_backfill_job_pending(
-                db,
-                default_library_id=default_library_id,
-                source_library_id=invite_library_id,
-                user_id=viewer_id,
-            )
-
-    if default_library_id is not None:
-        enqueue_backfill_task(default_library_id, invite_library_id, viewer_id)
-
     return AcceptLibraryInviteResponse(
         invite=_invitation_row_to_out(updated),
         membership=InviteAcceptMembershipOut(
@@ -331,7 +302,6 @@ def accept_library_invite(
             role=invite_role,
         ),
         idempotent=False,
-        backfill_job_status=backfill_job_status,
     )
 
 

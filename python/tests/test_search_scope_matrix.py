@@ -10,16 +10,31 @@ from uuid import uuid4
 
 import pytest
 
-from nexus.services.search.scope import UNSUPPORTED, ScopeUnsupported, scope_filter_sql
+from nexus.services.library_entries import library_media_ids_cte_sql
+from nexus.services.search.scope import (
+    _SCOPE_MATRIX,
+    UNSUPPORTED,
+    ScopeUnsupported,
+    scope_filter_sql,
+)
 
 pytestmark = pytest.mark.unit
 
-ENTITIES = [
+# Enumerated from the code-owned matrix itself (not hand-copied) so a future entity
+# added to `_SCOPE_MATRIX` is automatically covered by every test below instead of
+# silently falling out of coverage the way `reader_apparatus_item` previously did.
+ENTITIES = sorted(_SCOPE_MATRIX)
+
+# The full 13-entity matrix this cutover's blast radius is scoped to (§7). A change
+# to this set is itself a signal the matrix grew/shrank and needs a deliberate look,
+# not just a passive `ENTITIES` follow-along.
+EXPECTED_ENTITIES = {
     "media",
     "podcast",
     "content_chunk",
     "fragment",
     "evidence_span",
+    "reader_apparatus_item",
     "page",
     "note_block",
     "highlight",
@@ -27,7 +42,13 @@ ENTITIES = [
     "conversation",
     "web_result",
     "contributor",
-]
+}
+
+
+def test_scope_matrix_has_exactly_the_thirteen_code_owned_entities() -> None:
+    assert set(_SCOPE_MATRIX) == EXPECTED_ENTITIES
+    assert len(_SCOPE_MATRIX) == 13
+
 
 # (entity, scope_type) cells that yield no results.
 UNSUPPORTED_CELLS = {
@@ -44,6 +65,7 @@ MEDIA_SCOPE_COLUMN = {
     "content_chunk": "cc.owner_kind = 'media' AND cc.owner_id = :scope_id",
     "fragment": "f.media_id = :scope_id",
     "evidence_span": "es.owner_kind = 'media' AND es.owner_id = :scope_id",
+    "reader_apparatus_item": "rai.media_id = :scope_id",
     "highlight": "h.anchor_media_id = :scope_id",
     "contributor": "cc.media_id = :scope_id",
 }
@@ -196,3 +218,97 @@ def test_share_semantics_cells_use_conversation_shares() -> None:
     assert not isinstance(conv, ScopeUnsupported)
     assert "conversation_shares" in conv[0]
     assert "conv.sharing" not in conv[0]
+
+
+# =============================================================================
+# Library-cell delegation to the library-set owner (spec §4.1/§5).
+#
+# Media-derived cells (media, content_chunk, fragment, evidence_span,
+# reader_apparatus_item, page, note_block, highlight) delegate their "library" scope
+# to `library_entries.library_media_ids_cte_sql()` instead of reading raw
+# `library_entries` containment directly. `contributor` delegates only its media
+# branch — the podcast branch stays physical per §5 ("contributor scope composes
+# virtual media plus physical podcasts"). `podcast`/`message`/`conversation`/
+# `web_result` are untouched (podcast stays physical; the conversation-share trio
+# keeps exact `conversation_shares` semantics — AC12: "do not widen").
+#
+# The partition below is asserted against `_SCOPE_MATRIX` itself (not just declared
+# in prose) so this file cannot drift from the live matrix the way the old
+# hand-copied `ENTITIES` list drifted (it silently omitted `reader_apparatus_item`).
+# =============================================================================
+
+DELEGATED_LIBRARY_ENTITIES = {
+    "media",
+    "content_chunk",
+    "fragment",
+    "evidence_span",
+    "reader_apparatus_item",
+    "page",
+    "note_block",
+    "highlight",
+}
+PARTIALLY_DELEGATED_LIBRARY_ENTITIES = {"contributor"}
+UNCHANGED_LIBRARY_ENTITIES = {"podcast", "message", "conversation", "web_result"}
+
+# The exact delegated relation, constructed the same way `scope.py` constructs it
+# (rebinding the CTE's `:library_id` bind to `:scope_id` via `library_param`),
+# squashed for a whitespace-insensitive substring check against the live matrix
+# cell text. This proves actual delegation to the SUT rather than a hand-copied
+# SQL string.
+_LIBRARY_MEDIA_IDS_SQL_SQUASHED = _squash(
+    library_media_ids_cte_sql(library_param=":scope_id")
+)
+
+# The raw physical-containment shape every delegated cell used to emit before this
+# cutover (`FROM library_entries WHERE library_id = :scope_id`, with or without a
+# trailing `AND ..._id IS NOT NULL`) — must be gone from delegated cells.
+_RAW_LIBRARY_CONTAINMENT_PATTERN = "FROM library_entries WHERE library_id = :scope_id"
+
+
+def test_library_cell_partition_covers_the_whole_code_owned_matrix() -> None:
+    assert (
+        DELEGATED_LIBRARY_ENTITIES
+        | PARTIALLY_DELEGATED_LIBRARY_ENTITIES
+        | UNCHANGED_LIBRARY_ENTITIES
+    ) == set(_SCOPE_MATRIX)
+
+
+@pytest.mark.parametrize("entity", sorted(DELEGATED_LIBRARY_ENTITIES))
+def test_library_cell_delegates_to_the_library_media_set_owner(entity: str) -> None:
+    scope_id = uuid4()
+    result = scope_filter_sql("library", scope_id, entity)
+    assert not isinstance(result, ScopeUnsupported)
+    sql, params = result
+    assert params == {"scope_id": scope_id}
+    squashed = _squash(sql)
+    assert _LIBRARY_MEDIA_IDS_SQL_SQUASHED in squashed, (
+        f"{entity}: library cell does not delegate to library_media_ids_cte_sql()"
+    )
+    assert _RAW_LIBRARY_CONTAINMENT_PATTERN not in squashed, (
+        f"{entity}: library cell still reads raw library_entries containment SQL"
+    )
+
+
+def test_contributor_library_cell_composes_virtual_media_and_physical_podcast() -> None:
+    scope_id = uuid4()
+    result = scope_filter_sql("library", scope_id, "contributor")
+    assert not isinstance(result, ScopeUnsupported)
+    sql, params = result
+    assert params == {"scope_id": scope_id}
+    squashed = _squash(sql)
+    assert _LIBRARY_MEDIA_IDS_SQL_SQUASHED in squashed
+    assert (
+        "cc.podcast_id IN ( SELECT podcast_id FROM library_entries "
+        "WHERE library_id = :scope_id AND podcast_id IS NOT NULL )"
+    ) in squashed
+
+
+@pytest.mark.parametrize("entity", sorted(UNCHANGED_LIBRARY_ENTITIES))
+def test_unchanged_library_cells_do_not_delegate(entity: str) -> None:
+    # podcast stays physical (§4.1); message/conversation/web_result keep exact
+    # conversation_shares semantics (§5) — neither reads the library-set owner.
+    scope_id = uuid4()
+    result = scope_filter_sql("library", scope_id, entity)
+    assert not isinstance(result, ScopeUnsupported)
+    squashed = _squash(result[0])
+    assert _LIBRARY_MEDIA_IDS_SQL_SQUASHED not in squashed

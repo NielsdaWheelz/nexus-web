@@ -244,16 +244,17 @@ and whose dense turn-global `[N]` is the edge `ordinal`. The assistant message's
 rendered `citations` are built from those edges by `build_citation_outs`
 (`chat_run_response.py`), uniformly with Oracle and Library Intelligence.
 
-`message_retrievals` stays chat-owned **telemetry**: every candidate/rerank/selected
-decision is still written there, and a cited row points back at its citation edge
-through `cited_edge_id`, set in the same transaction the edge is minted. The
-ordinal lives on the edge, never on the telemetry row.
+`message_retrievals` is chat-owned **telemetry** and the sole durable
+per-result record: candidate generation and rerank/selection are transient,
+in-memory passes over a tool call's results, and only the
+selected/included outcome is ever written as a row. A cited row points back
+at its citation edge through `cited_edge_id`, set in the same transaction the
+edge is minted. The ordinal lives on the edge, never on the telemetry row.
 
 Assistant message reads also carry a backend-built `trust_trail`. It is the
 durable inspector read model over `chat_runs`, prompt assemblies, tool calls,
-retrieval rows, candidate/rerank ledgers, citation edges, and context-ref-added
-events. `message_document` is text-only; tool and retrieval disclosures render
-from `message.trust_trail`.
+retrieval rows, citation edges, and context-ref-added events. `message_document`
+is text-only; tool and retrieval disclosures render from `message.trust_trail`.
 
 ## Backend Validation And Prompt Rendering
 

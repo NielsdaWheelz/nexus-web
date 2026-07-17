@@ -4,6 +4,18 @@ Status: BUILT — resource provenance graph landed; Rev 7 user-graph-tags amendm
 Author: design synthesis, 2026-06-07. Rev 2: 2026-06-09 (13-agent survey + reviewer notes). Rev 3: 2026-06-09 — flat-table restructure: sidecars deleted, relation verbs killed, run telemetry and generated content evicted from the edge model. Rev 4: 2026-06-09 — column-justification pass: locators and `updated_at` dropped; `origin`/`ordinal`/`snapshot` pinned. Rev 5: 2026-06-10 — notes/pages graph amendment: ordered adjacency keys and `note_containment`; its first-class tag-resource language is superseded by `docs/cutovers/user-graph-tags-hard-cutover.md`. Rev 6: 2026-06-12 — `synapse` became a first-class edge origin with a required rationale snapshot; it is not a second graph. Rev 7: 2026-06-17 — user graph tags were removed: no `tags` table and no `tag:<id>` scheme.
 Type: hard cutover - greenfield, one-user prototype, no production data migration, no fallbacks, no backward compatibility, no compatibility shims
 
+**Superseded by default-library-virtualization-and-transient-state-pruning-hard-cutover.md
+(2026-07-17):** Rev 3's "no longer dropped" reversal (below) is reversed
+again — `message_retrieval_candidate_ledgers` and `message_rerank_ledgers`
+are dropped tables as of that later cutover (§2.3's "it stays" analysis, the
+"stores that stay" list, N7's telemetry-parent enumeration, §8.4's chat
+telemetry deltas, and §13.3's alter/untouched note all describe the
+now-superseded shape). `message_retrievals` survives unchanged and is now the
+sole durable per-result record; candidate generation and rerank/selection are
+transient, in-memory passes with no ledger row. This does not touch the
+citation-edge model itself — `resource_edges(origin='citation')` and
+`cited_edge_id` are unaffected.
+
 Rev 3 changes: one flat `resource_edges` table replaces the base-plus-sidecar design (§8); the six workspace relation verbs are deleted — a code census showed they are machine writer-discriminators plus dead values, not user vocabulary, and the real job moves to an `origin` column (§1, §2.5, §5.4); `kind` collapses to the three stances `context | supports | contradicts` and `role` dies (§5, §8.1); `message_retrievals` + `message_retrieval_candidate_ledgers` are **no longer dropped** — they are chat run telemetry, not connections, and stay in the chat domain (§2.3, N7); Oracle marginalia moves to an oracle-owned `oracle_reading_folios` domain table pointing at its citation edge (§5.3, §8.3); deletion rules collapse to two (§9.6). Carried from Rev 2: sequencing gate (§0.1), concordance equivalence contract (§5.3), coverage-is-not-an-edge (§5.6, N8), transaction discipline (§9.0), contributor-merge repoint (§9.6), gate proofs (§17.0).
 
 Rev 4 changes: column-justification pass — every column must name the thing that breaks without it (§8.1). **Dropped:** `source_locator`/`target_locator` (position lives in the target grain: the graph points at `evidence_span`/`content_chunk`/`highlight`/`note_block` objects, which carry their own anchoring; residual jump precision is the snapshot `deep_link`) and `updated_at` (edges are create/delete-only rows — nothing updates). **Kept with pinned justification:** `origin` (writer ownership: note-body replace-set scoping, highlight-note precision, delete guards, `context_ref_added`), `ordinal` (the `[N]` in stored prose — data, not metadata), `snapshot` (the evidence-outlives-target invariant for citations, plus the later synapse rationale carveout). Dropping the ordinal/snapshot pair would not be flatter — it would move citations back into a second table.

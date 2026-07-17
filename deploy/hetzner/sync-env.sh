@@ -13,7 +13,7 @@ SSH_TARGET="${NEXUS_SSH_TARGET:-${DEPLOY_USER}@${HOST}}"
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
-SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_media_source,enrich_metadata,chat_run,library_dossier_generate,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,backfill_default_library_closure_job,oracle_reading_generate,synapse_scan,dawn_write_job,conversation_distill,conversation_distill_sweep,atlas_project_job"
+SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_media_source,enrich_metadata,chat_run,library_dossier_generate,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,oracle_reading_generate,synapse_scan,dawn_write_job,conversation_distill,conversation_distill_sweep,atlas_project_job"
 
 REQUIRED_HETZNER_ENV_KEYS="
 NEXUS_ENV

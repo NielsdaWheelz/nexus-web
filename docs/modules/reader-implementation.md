@@ -396,21 +396,27 @@ pure black/white to reduce halation under long sessions.
   never raw `null`. An unsupported (future) media kind returns
   `400 E_INVALID_REQUEST`; missing/inaccessible media returns masked
   `404 E_MEDIA_NOT_FOUND`.
-- `PUT /api/media/{id}/reader-state` takes the one strict envelope
-  `{cursor?: {locator, base_revision}, attention?}`, requiring at least one
-  block. Extra fields, old bare locators, and a top-level `null` clear are
+- `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite` body
+  (`{locator, base_revision}` — no wrapping envelope, no optional sibling
+  block). Extra fields, old bare locators, and a top-level `null` clear are
   rejected with `400`.
   - Empty + `base_revision: 0` creates revision `1`.
   - A matching `base_revision` replaces the cursor at `revision + 1`.
-  - An equal desired locator is idempotent success at the current revision.
+  - An equal desired locator is idempotent success at the current revision —
+    the cursor is not revised, but the save still counts as engagement (next
+    bullet).
   - A stale `base_revision` returns `409 E_READER_STATE_CONFLICT` with
     `error.details.current` set to the exact current snapshot; nothing is
-    mutated.
-  - Attention-only requests return `204` and never touch the cursor row.
-  - A combined request commits the cursor first in its own transaction, then
-    makes a best-effort attention attempt in its own transaction; a cursor
-    conflict writes no attention, and a committed cursor still returns `200`
-    even if the attention attempt fails.
+    mutated, and no engagement is recorded.
+  - On cursor success — including the idempotent equal-locator case — the
+    route composes one retry-safe reader-engagement command in its own
+    transaction: it touches that (viewer, media) row's recency unconditionally
+    and, for non-PDF locators, advances a monotonic whole-document progression
+    high-water mark. This follow-up write is not swallowed on failure; the
+    same PUT may simply be retried, since both the cursor write and the
+    engagement command are themselves idempotent. There is no longer any
+    request shape that writes engagement without a cursor write alongside it,
+    and no `204` response path.
 - All reader-state responses carry `Cache-Control: private, no-store`, via an
   exact-path FastAPI middleware and the matching header on the Next reader-state
   BFF route.

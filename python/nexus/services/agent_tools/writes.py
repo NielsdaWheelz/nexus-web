@@ -39,7 +39,6 @@ from nexus.services.chat_run_tools import (
     persist_write_tool_call,
 )
 from nexus.services.consumption import service as consumption_service
-from nexus.services.library_governance import lock_library_for_member, require_admin
 from nexus.services.resource_graph.edges import create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -77,7 +76,9 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
             "File a resource into one of the user's libraries when they ask you to "
             "(e.g. 'file this under Criticism'). resource_uri is a media: or podcast: "
             "URI; identify the library by library_id or its exact library_name. Only "
-            "libraries the user administers are writable."
+            "libraries the user administers are writable, and system libraries are "
+            "never writable. A podcast cannot be filed into the Default library. "
+            "Filing a podcast requires an active subscription to it."
         ),
         "parameters": {
             "type": "object",
@@ -369,25 +370,40 @@ def _parse_ref(raw: str, *, allowed: tuple[str, ...]) -> ResourceRef:
 
 
 def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
+    """File a resource into a library through the one actor-authorized filing
+    command REST also uses (spec S4.3), so the agent path has full parity: system-
+    library rejection, podcast-into-Default rejection, active-subscription
+    requirement for podcasts, tombstone-clearing, and an idempotent
+    present/inserted outcome for Undo correctness (AC4).
+
+    Media readable-or-restorable authorization (rule 1) is the shared filing
+    command's own gate (`library_entries.add_media_to_library`) — NOT
+    `assert_ref_visible`, which uses full readable visibility and would 404 a
+    tombstoned media the viewer is trying to restore by re-filing it. Podcasts
+    have no restorable lane, so that branch still asserts visibility here."""
     ref = _parse_ref(_require_str(args, "resource_uri"), allowed=("media", "podcast"))
-    assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
+    if ref.scheme == "podcast":
+        assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
 
     library_id = _resolve_library_id(db, viewer_id, args)
-    membership = lock_library_for_member(db, viewer_id, library_id)
-    require_admin(membership.role)  # AC-8: reject non-admin before mutation
 
-    target = library_entries.EntryTarget(kind=ref.scheme, id=ref.id)  # type: ignore[arg-type]
-    was_inserted = library_entries.ensure_entry(db, library_id, target)
-    db.commit()
+    if ref.scheme == "media":
+        outcome = library_entries.add_media_to_library(db, viewer_id, library_id, ref.id)
+    else:
+        outcome = library_entries.add_podcast_to_library(db, viewer_id, library_id, ref.id)
 
-    if not was_inserted:
+    library_name = db.execute(
+        text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
+    ).scalar_one()
+
+    if not outcome.inserted:
         # Already filed here (by the user earlier, or a prior run). Record NO ref
         # so a later Undo can never delete a filing the assistant did not create
         # (R-5); the tool still reports success to the model.
         return _HandlerResult(
             created_refs=[],
             output={
-                "filed_to": membership.name,
+                "filed_to": library_name,
                 "library_id": str(library_id),
                 "already_present": True,
             },
@@ -398,11 +414,11 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
         "library_id": str(library_id),
         "target_scheme": ref.scheme,
         "target_id": str(ref.id),
-        "label": membership.name,
+        "label": library_name,
     }
     return _HandlerResult(
         created_refs=[created],
-        output={"filed_to": membership.name, "library_id": str(library_id)},
+        output={"filed_to": library_name, "library_id": str(library_id)},
     )
 
 

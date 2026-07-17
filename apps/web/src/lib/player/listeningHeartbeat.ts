@@ -2,14 +2,13 @@
  * Listening heartbeat engine (spec
  * `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §5.4 + §6).
  *
- * A framework-free position/dwell heartbeat for ONE media. It runs at most one
+ * A framework-free position heartbeat for ONE media. It runs at most one
  * in-flight PUT, coalesces later samples to the newest, keys installs by an
  * injected generation + a per-send sequence, and fences every write on the
  * server's `writeRevision`/`resetEpoch`. Timeout, network failure, and a stale
  * `E_STALE_LISTENING_REVISION` (409) never block playback: the engine retires
- * the generation, discards the ambiguous dwell (at-most-once), and re-syncs via
- * GET. A failed GET suspends persistence (playback continues) until a GET-only
- * retry succeeds.
+ * the generation and re-syncs via GET (at-most-once). A failed GET suspends
+ * persistence (playback continues) until a GET-only retry succeeds.
  *
  * Cadence is caller-driven: the provider calls {@link ListeningHeartbeat.tick}
  * on the {@link SYNC_INTERVAL_MS} interval (and on pause / before a track
@@ -32,10 +31,6 @@ export const HEARTBEAT_DEADLINE_MS = 20_000;
  * playing (spec §5.4). The engine does NOT own a timer for it. */
 export const SYNC_INTERVAL_MS = 15_000;
 
-/** Dwell delta is capped so a single heartbeat can never over-report listening
- * time (wire bound `dwellMsDelta: int[0..17000]`). */
-const MAX_DWELL_MS = 17_000;
-
 /** The live playback reading the provider exposes to the engine at send time. */
 export interface HeartbeatSample {
   positionMs: number;
@@ -45,12 +40,9 @@ export interface HeartbeatSample {
 
 export interface ListeningHeartbeatConfig {
   mediaId: MediaId;
-  deviceId: string;
   initial: { writeRevision: number; resetEpoch: number; positionMs: number };
   /** Read the newest live sample. Must return integer millisecond positions. */
   readSample: () => HeartbeatSample;
-  /** Wall clock in ms (injected for deterministic dwell in tests). */
-  now: () => number;
   /** Mint a fresh generation UUID per engine start / recovery / adopt. */
   mintGeneration: () => string;
   /** Adopt a full canonical state; `seek` requests moving playback to it. */
@@ -84,8 +76,6 @@ interface ListeningHeartbeatIn {
   positionMs: number;
   durationMs: Presence<number>;
   playbackSpeed: number;
-  dwellMsDelta: number;
-  deviceId: string;
   expectedWriteRevision: number;
   expectedResetEpoch: number;
   heartbeatGeneration: string;
@@ -174,9 +164,7 @@ interface InFlight {
 
 export function createListeningHeartbeat(config: ListeningHeartbeatConfig): ListeningHeartbeat {
   const {
-    deviceId,
     readSample,
-    now,
     mintGeneration,
     onStateAdopted,
     onPersistenceSuspended,
@@ -191,23 +179,14 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   let lastKnownPositionMs = config.initial.positionMs;
   let generation = mintGeneration();
   let sequence = 0;
-  let dwellAnchorMs = now();
   let inFlight: InFlight | undefined;
   let resendQueued = false;
 
-  function clampDwell(deltaMs: number): number {
-    if (deltaMs <= 0) return 0;
-    if (deltaMs >= MAX_DWELL_MS) return MAX_DWELL_MS;
-    return Math.round(deltaMs);
-  }
-
-  function buildBody(sample: HeartbeatSample, seq: number, dwellMsDelta: number): ListeningHeartbeatIn {
+  function buildBody(sample: HeartbeatSample, seq: number): ListeningHeartbeatIn {
     return {
       positionMs: sample.positionMs,
       durationMs: sample.durationMs,
       playbackSpeed: sample.playbackSpeed,
-      dwellMsDelta,
-      deviceId,
       expectedWriteRevision,
       expectedResetEpoch,
       heartbeatGeneration: generation,
@@ -262,9 +241,8 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
       maybeResend();
       return;
     }
-    // Timeout, network failure, and stale-revision (409) all re-sync via GET.
-    // The dwell for this send is already discarded because the anchor advanced
-    // at send time, so at-most-once holds (spec §5.4).
+    // Timeout, network failure, and stale-revision (409) all re-sync via GET;
+    // this send's ambiguous outcome is discarded (at-most-once, spec §5.4).
     status = "Recovering";
     void recover({ fromSuspended: false });
   }
@@ -272,12 +250,9 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   function performSend(): void {
     const sample = readSample();
     lastKnownPositionMs = sample.positionMs;
-    const at = now();
-    const dwellMsDelta = clampDwell(at - dwellAnchorMs);
-    dwellAnchorMs = at;
     const seq = sequence;
     sequence += 1;
-    const body = buildBody(sample, seq, dwellMsDelta);
+    const body = buildBody(sample, seq);
     const controller = new AbortController();
     const record: InFlight = { generation, sequence: seq, controller, settled: Promise.resolve() };
     inFlight = record;
@@ -344,7 +319,6 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     expectedResetEpoch = state.resetEpoch;
     generation = mintGeneration();
     sequence = 0;
-    dwellAnchorMs = now();
     status = "Active";
     if (options.fromSuspended) onPersistenceResumed();
     maybeResend();
@@ -398,7 +372,6 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
     });
     generation = mintGeneration();
     sequence = 0;
-    dwellAnchorMs = now();
     resendQueued = false;
     status = "Active";
   }
@@ -406,10 +379,8 @@ export function createListeningHeartbeat(config: ListeningHeartbeatConfig): List
   function flushKeepalive(): void {
     if (status === "Stopped") return;
     const sample = readSample();
-    const at = now();
-    const body = buildBody(sample, sequence, clampDwell(at - dwellAnchorMs));
+    const body = buildBody(sample, sequence);
     sequence += 1;
-    dwellAnchorMs = at;
     void apiKeepaliveJson(listeningPath, body).catch(() => {
       // justify-ignore-error: the beforeunload keepalive is best-effort; the page
       // is unloading and there is no install or retry path for its outcome.

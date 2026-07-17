@@ -1,6 +1,8 @@
 """Integration tests for reader profile and per-media reader state."""
 
+import time
 from collections.abc import Callable
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +16,7 @@ from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, Reader
 from nexus.errors import ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.reader import CursorWrite
 from nexus.services import reader as reader_service
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -31,15 +34,20 @@ READER_PROFILE_FIELDS = {
 }
 
 
-def _add_media_to_user_library(auth_client, user_id, media_id):
-    """Bootstrap user and add media to their default library. Returns library_id."""
+def _add_media_to_user_library(auth_client, direct_db: DirectSessionManager, user_id, media_id):
+    """Bootstrap user and seed media into their default library. Returns library_id.
+
+    Seeds a physical `library_entries` row directly, bypassing the REST filing
+    endpoint's membership-reachability gate: bare factory-created media isn't
+    membership-reachable, so POST /libraries/{id}/media 404s on it. Production
+    ingest always auto-files freshly-created media into the creator's default
+    library (ensure_media_in_default_library); this mirrors that reachability
+    for fixture media created via a bare Media row rather than real ingest."""
     me_resp = auth_client.get("/me", headers=auth_headers(user_id))
     library_id = me_resp.json()["data"]["default_library_id"]
-    auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
+    with direct_db.session() as session:
+        add_media_to_library(session, UUID(library_id), media_id)
+        session.commit()
     return library_id
 
 
@@ -80,11 +88,15 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
     """Register cleanup for media-scoped rows created here.
 
     Cleanup runs in reverse registration order; the media row must go last
-    because the reader-state media FK is deliberately non-cascading."""
+    because the reader-state media FK is deliberately non-cascading. Every
+    successful reader-state PUT now also touches `reader_engagement_states`
+    (not kind-gated, spec §4.4), so its cleanup is registered alongside
+    `reader_media_state`."""
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("reader_media_state", "media_id", media_id)
+    direct_db.register_cleanup("reader_engagement_states", "media_id", media_id)
 
 
 def _build_reader_state_payload(media_kind: str, fragment_ids: list[UUID]) -> dict:
@@ -561,30 +573,21 @@ class TestReaderProfileNoStorePrivate:
 
 
 def _cursor_body(locator: dict, base_revision: int) -> dict:
-    return {"cursor": {"locator": locator, "base_revision": base_revision}}
+    return {"locator": locator, "base_revision": base_revision}
 
 
-def _attention_body(
-    dwell_ms: int = 1_000,
-    progression: float | None = 0.5,
-) -> dict:
-    return {
-        "dwell_ms_delta": dwell_ms,
-        "device_id": "device-test",
-        "spans_touched": [],
-        "progression": progression,
-    }
-
-
-def _session_count(direct_db: DirectSessionManager, user_id: UUID, media_id: UUID) -> int:
+def _engagement_row(
+    direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
+) -> tuple[datetime, float | None] | None:
     with direct_db.session() as session:
-        return session.execute(
+        row = session.execute(
             text("""
-                SELECT COUNT(*) FROM reading_sessions
+                SELECT last_engaged_at, max_total_progression FROM reader_engagement_states
                 WHERE user_id = :user_id AND media_id = :media_id
             """),
             {"user_id": user_id, "media_id": media_id},
-        ).scalar_one()
+        ).first()
+    return None if row is None else (row.last_engaged_at, row.max_total_progression)
 
 
 def _cursor_row(
@@ -629,7 +632,7 @@ class TestReaderCursorGet:
             media_id, _ = _create_ready_reader_media(session)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/reader-state",
@@ -651,7 +654,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         with direct_db.session() as session:
             session.add(
@@ -683,7 +686,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         with direct_db.session() as session:
             session.add(
@@ -714,7 +717,7 @@ class TestReaderCursorGet:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         with direct_db.session() as session:
@@ -761,7 +764,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(media_kind, fragment_ids)
 
@@ -802,7 +805,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload_b = {
@@ -840,7 +843,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         auth_client.put(
@@ -863,6 +866,71 @@ class TestReaderCursorPut:
         }
         assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
 
+    def test_put_equal_locator_advances_engagement_without_revising_cursor(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A same-locator save (AC9) touches `reader_engagement_states.last_engaged_at`
+        without changing the cursor's `revision` or `updated_at`."""
+        user_id = create_test_user_id()
+        with direct_db.session() as session:
+            media_id, fragment_ids = _create_ready_reader_media(
+                session,
+                kind=MediaKind.web_article.value,
+            )
+
+        _register_media_cleanup(direct_db, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
+
+        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
+        first = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 0),
+            headers=auth_headers(user_id),
+        )
+        assert first.status_code == 200
+
+        with direct_db.session() as session:
+            cursor_updated_at_before = session.execute(
+                text("""
+                    SELECT updated_at FROM reader_media_state
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        engagement_before = _engagement_row(direct_db, user_id, media_id)
+        assert engagement_before is not None
+        last_engaged_at_before, _progression_before = engagement_before
+
+        time.sleep(0.01)
+
+        retry = auth_client.put(
+            f"/media/{media_id}/reader-state",
+            json=_cursor_body(payload, 999),
+            headers=auth_headers(user_id),
+        )
+
+        assert retry.status_code == 200
+        assert retry.json()["data"] == {
+            "state": "Positioned",
+            "revision": 1,
+            "locator": payload,
+        }
+        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
+        with direct_db.session() as session:
+            cursor_updated_at_after = session.execute(
+                text("""
+                    SELECT updated_at FROM reader_media_state
+                    WHERE user_id = :user_id AND media_id = :media_id
+                """),
+                {"user_id": user_id, "media_id": media_id},
+            ).scalar_one()
+        assert cursor_updated_at_after == cursor_updated_at_before
+
+        engagement_after = _engagement_row(direct_db, user_id, media_id)
+        assert engagement_after is not None
+        last_engaged_at_after, _progression_after = engagement_after
+        assert last_engaged_at_after > last_engaged_at_before
+
     def test_put_stale_base_conflicts_with_current_snapshot_and_mutates_nothing(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -874,7 +942,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload_b = {
@@ -915,7 +983,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         resp = auth_client.put(
@@ -979,7 +1047,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         auth_client.put(
@@ -1011,7 +1079,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.put(
             f"/media/{media_id}/reader-state",
@@ -1045,7 +1113,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         # Astral (non-BMP) characters: the bound counts code points, not bytes.
@@ -1078,7 +1146,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
         payload["text"] = {
@@ -1115,7 +1183,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=media_kind)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         payload = _build_reader_state_payload(payload_kind, fragment_ids)
         resp = auth_client.put(
@@ -1133,7 +1201,7 @@ class TestReaderCursorPut:
             media_id, fragment_ids = _create_ready_reader_media(session)
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.patch(
             f"/media/{media_id}/reader-state",
@@ -1156,7 +1224,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_a, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_a, media_id)
         auth_client.get("/me", headers=auth_headers(user_b))
 
         get_resp = auth_client.get(
@@ -1168,15 +1236,9 @@ class TestReaderCursorPut:
             json=_cursor_body(_build_reader_state_payload(MediaKind.epub.value, fragment_ids), 0),
             headers=auth_headers(user_b),
         )
-        attention_resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={"attention": _attention_body()},
-            headers=auth_headers(user_b),
-        )
 
         assert get_resp.status_code == 404
         assert put_resp.status_code == 404
-        assert attention_resp.status_code == 404
         assert get_resp.headers["cache-control"] == READER_STATE_NO_STORE
         assert put_resp.headers["cache-control"] == READER_STATE_NO_STORE
 
@@ -1195,7 +1257,7 @@ class TestReaderCursorPut:
             )
 
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         # The module-level logger proxy was cached before log_sink reconfigured
         # structlog; rebind so the validation handler routes into the sink.
@@ -1225,190 +1287,6 @@ class TestReaderCursorPut:
         assert sentinel not in str(log_sink)
 
 
-class TestReaderAttentionIsolation:
-    """Attention writes never create, revise, or replace cursor state."""
-
-    def test_attention_only_returns_204_and_never_touches_cursor(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, _ = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={"attention": _attention_body(dwell_ms=5_000)},
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 204
-        assert resp.headers["cache-control"] == READER_STATE_NO_STORE
-        assert _cursor_row(direct_db, user_id, media_id) is None
-        assert _session_count(direct_db, user_id, media_id) == 1
-
-    def test_attention_only_does_not_revise_existing_cursor(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=_cursor_body(payload, 0),
-            headers=auth_headers(user_id),
-        )
-        with direct_db.session() as session:
-            updated_at_before = session.execute(
-                text("""
-                    SELECT updated_at FROM reader_media_state
-                    WHERE user_id = :user_id AND media_id = :media_id
-                """),
-                {"user_id": user_id, "media_id": media_id},
-            ).scalar_one()
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={"attention": _attention_body(dwell_ms=5_000)},
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 204
-        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
-        with direct_db.session() as session:
-            updated_at_after = session.execute(
-                text("""
-                    SELECT updated_at FROM reader_media_state
-                    WHERE user_id = :user_id AND media_id = :media_id
-                """),
-                {"user_id": user_id, "media_id": media_id},
-            ).scalar_one()
-        assert updated_at_after == updated_at_before
-
-    def test_combined_write_records_cursor_and_attention(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={
-                **_cursor_body(payload, 0),
-                "attention": _attention_body(dwell_ms=7_000),
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 200
-        assert resp.json()["data"]["revision"] == 1
-        assert _session_count(direct_db, user_id, media_id) == 1
-
-    def test_combined_write_with_cursor_conflict_records_no_attention(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload_a = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-        payload_b = {
-            **payload_a,
-            "locations": {**payload_a["locations"], "text_offset": 7, "position": 1},
-        }
-        auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json=_cursor_body(payload_a, 0),
-            headers=auth_headers(user_id),
-        )
-
-        resp = auth_client.put(
-            f"/media/{media_id}/reader-state",
-            json={
-                **_cursor_body(payload_b, 0),
-                "attention": _attention_body(dwell_ms=7_000),
-            },
-            headers=auth_headers(user_id),
-        )
-
-        assert resp.status_code == 409
-        assert _session_count(direct_db, user_id, media_id) == 0
-
-    def test_combined_write_returns_cursor_success_when_attention_fails(
-        self, auth_client, direct_db: DirectSessionManager, engine: Engine
-    ):
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            media_id, fragment_ids = _create_ready_reader_media(
-                session,
-                kind=MediaKind.web_article.value,
-            )
-
-        _register_media_cleanup(direct_db, media_id)
-        direct_db.register_cleanup("reading_sessions", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
-
-        payload = _build_reader_state_payload(MediaKind.web_article.value, fragment_ids)
-
-        def fail_attention_write() -> None:
-            raise RuntimeError("injected attention write failure")
-
-        remove_hook = _one_shot_before_execute(
-            engine, "INSERT INTO reading_sessions", fail_attention_write
-        )
-        try:
-            resp = auth_client.put(
-                f"/media/{media_id}/reader-state",
-                json={
-                    **_cursor_body(payload, 0),
-                    "attention": _attention_body(dwell_ms=7_000),
-                },
-                headers=auth_headers(user_id),
-            )
-        finally:
-            remove_hook()
-
-        assert resp.status_code == 200
-        assert resp.json()["data"] == {
-            "state": "Positioned",
-            "revision": 1,
-            "locator": payload,
-        }
-        assert _cursor_row(direct_db, user_id, media_id) == (payload, 1)
-        assert _session_count(direct_db, user_id, media_id) == 0
-
-
 class TestReaderCursorConcurrency:
     """Real concurrent first inserts, updates, and delete-vs-first-save."""
 
@@ -1417,7 +1295,7 @@ class TestReaderCursorConcurrency:
         with direct_db.session() as session:
             media_id, fragment_ids = _create_ready_reader_media(session, kind=kind)
         _register_media_cleanup(direct_db, media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
         return user_id, media_id, fragment_ids
 
     def test_concurrent_first_inserts_same_locator_are_idempotent(

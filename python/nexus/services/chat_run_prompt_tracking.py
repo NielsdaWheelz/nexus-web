@@ -35,41 +35,6 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
             ),
             {"included_ids": included_ids},
         )
-        db.execute(
-            text(
-                """
-                INSERT INTO message_retrieval_candidate_ledgers (
-                    tool_call_id,
-                    retrieval_id,
-                    ordinal,
-                    result_type,
-                    source_id,
-                    score,
-                    selected,
-                    included_in_prompt,
-                    selection_status,
-                    selection_reason,
-                    result_ref,
-                    locator
-                )
-                SELECT tool_call_id,
-                       id,
-                       ordinal,
-                       result_type,
-                       source_id,
-                       score,
-                       selected,
-                       true,
-                       'included_in_prompt',
-                       'prompt_assembly',
-                       result_ref,
-                       locator
-                FROM message_retrievals
-                WHERE id = ANY(:included_ids)
-                """
-            ),
-            {"included_ids": included_ids},
-        )
     if dropped_ids:
         db.execute(
             text(
@@ -77,42 +42,6 @@ def reconcile_prompt_retrievals(db: Session, *, run: ChatRun, assembly: Any) -> 
                 UPDATE message_retrievals
                 SET included_in_prompt = false,
                     retrieval_status = 'excluded_by_budget'
-                WHERE id = ANY(:dropped_ids)
-                  AND selected = true
-                """
-            ),
-            {"dropped_ids": dropped_ids},
-        )
-        db.execute(
-            text(
-                """
-                INSERT INTO message_retrieval_candidate_ledgers (
-                    tool_call_id,
-                    retrieval_id,
-                    ordinal,
-                    result_type,
-                    source_id,
-                    score,
-                    selected,
-                    included_in_prompt,
-                    selection_status,
-                    selection_reason,
-                    result_ref,
-                    locator
-                )
-                SELECT tool_call_id,
-                       id,
-                       ordinal,
-                       result_type,
-                       source_id,
-                       score,
-                       selected,
-                       false,
-                       'excluded_by_budget',
-                       'prompt_assembly',
-                       result_ref,
-                       locator
-                FROM message_retrievals
                 WHERE id = ANY(:dropped_ids)
                   AND selected = true
                 """

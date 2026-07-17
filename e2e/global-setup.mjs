@@ -219,8 +219,8 @@ function databaseHasSeededMedia(dbUrl, ownerUserId) {
         JSON.stringify(
           "select count(distinct media.id) "
             + "from media "
-            + "join default_library_intrinsics intrinsic on intrinsic.media_id = media.id "
-            + "join libraries library on library.id = intrinsic.default_library_id "
+            + "join library_entries entry on entry.media_id = media.id "
+            + "join libraries library on library.id = entry.library_id "
             + "where media.id = any(%s::uuid[]) "
             + "and library.owner_user_id = %s::uuid "
             + "and library.is_default = true",

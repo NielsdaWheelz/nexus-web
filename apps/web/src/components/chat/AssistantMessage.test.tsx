@@ -21,8 +21,6 @@ function writeToolCall(
     result_count: 1,
     selected_count: 0,
     retrievals: [],
-    candidate_ledgers: [],
-    rerank_ledgers: [],
     created_at: "2026-06-03T00:00:00Z",
     updated_at: "2026-06-03T00:00:00Z",
     ...overrides,
@@ -169,7 +167,7 @@ describe("AssistantMessage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders trust-trail tool, retrieval, ledger, citation, context-ref, and notice details", () => {
+  it("renders trust-trail tool, retrieval, citation, context-ref, and integrity-notice details", () => {
     const message = assistantMessage("Answer [1].");
     const citation = {
       ordinal: 1,
@@ -291,57 +289,6 @@ describe("AssistantMessage", () => {
               created_at: "2026-06-03T00:00:00Z",
             },
           ],
-          candidate_ledgers: [
-            {
-              id: "candidate-1",
-              tool_call_id: "tool-1",
-              retrieval_id: "retrieval-1",
-              ordinal: 0,
-              result_type: "media",
-              source_id: "source-1",
-              score: 0.91,
-              selected: true,
-              included_in_prompt: true,
-              ledger_included_in_prompt: true,
-              linked_retrieval_included_in_prompt: true,
-              included_in_prompt_source: "linked_retrieval",
-              included_in_prompt_reconciled: true,
-              selection_status: "selected",
-              selection_reason: "within_context_budget",
-              result_ref: {
-                type: "media",
-                id: "media-1",
-                result_type: "media",
-                source_id: "source-1",
-                title: "Source title",
-                source_label: null,
-                snippet: "Quoted evidence",
-                deep_link: "/reader/source",
-                context_ref: { type: "media", id: "media-1" },
-                locator: null,
-                media_id: "media-1",
-                media_kind: "book",
-                score: 0.91,
-                selected: true,
-              },
-              locator: null,
-              created_at: "2026-06-03T00:00:00Z",
-            },
-          ],
-          rerank_ledgers: [
-            {
-              id: "rerank-1",
-              tool_call_id: "tool-1",
-              strategy: "search_score_then_context_budget",
-              input_count: 1,
-              selected_count: 1,
-              budget_chars: 4000,
-              selected_chars: 15,
-              status: "complete",
-              metadata: {},
-              created_at: "2026-06-03T00:00:00Z",
-            },
-          ],
           created_at: "2026-06-03T00:00:00Z",
           updated_at: "2026-06-03T00:00:00Z",
         },
@@ -378,8 +325,8 @@ describe("AssistantMessage", () => {
       ],
       integrity_notices: [
         {
-          code: "candidate_inclusion_mismatch:candidate-2",
-          message: "Candidate ledger candidate-2 prompt-inclusion flag disagrees.",
+          code: "selected_retrieval_missing_citation",
+          message: "Selected retrieval retrieval-1 has no citation edge.",
         },
       ],
     };
@@ -399,8 +346,6 @@ describe("AssistantMessage", () => {
     expect(screen.getByText("openai/gpt-test")).toBeInTheDocument();
     expect(screen.getByText(/#1 app_search - complete/)).toBeInTheDocument();
     expect(screen.getByText(/retrieval 0: Source title/)).toBeInTheDocument();
-    expect(screen.getByText(/candidate 0: source-1/)).toBeInTheDocument();
-    expect(screen.getByText("search_score_then_context_budget")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /\[1\] Source title/ }));
     expect(onCitationActivate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -413,7 +358,10 @@ describe("AssistantMessage", () => {
       expect.anything(),
     );
     expect(screen.getAllByText("Source title").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Candidate ledger candidate-2/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Selected retrieval retrieval-1 has no citation edge."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("selected_retrieval_missing_citation")).toBeInTheDocument();
   });
 
   it("labels active future tools by tool name", () => {
@@ -437,8 +385,6 @@ describe("AssistantMessage", () => {
           result_count: 0,
           selected_count: 0,
           retrievals: [],
-          candidate_ledgers: [],
-          rerank_ledgers: [],
           created_at: "2026-06-03T00:00:00Z",
           updated_at: "2026-06-03T00:00:00Z",
         },

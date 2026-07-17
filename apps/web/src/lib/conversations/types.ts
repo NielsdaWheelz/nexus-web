@@ -83,11 +83,7 @@ export interface MessageRetrieval {
   cited_edge_id?: string | null;
   citation_number?: number | null;
   citation_role?: "supports" | "contradicts" | "context" | null;
-  included_in_prompt_source?:
-    | "retrieval"
-    | "candidate_ledger"
-    | "prompt_assembly"
-    | "none";
+  included_in_prompt_source?: "retrieval" | "prompt_assembly" | "none";
   created_at?: string;
 }
 
@@ -128,42 +124,6 @@ export interface MessageToolCall {
   created_at?: string;
   updated_at?: string;
   retrievals: MessageRetrieval[];
-  candidate_ledgers: MessageRetrievalCandidateLedger[];
-  rerank_ledgers: MessageRerankLedger[];
-}
-
-export interface MessageRetrievalCandidateLedger {
-  id: string;
-  tool_call_id: string;
-  retrieval_id?: string | null;
-  ordinal: number;
-  result_type: MessageRetrieval["result_type"];
-  source_id: string;
-  score?: number | null;
-  selected: boolean;
-  included_in_prompt: boolean;
-  ledger_included_in_prompt: boolean;
-  linked_retrieval_included_in_prompt?: boolean | null;
-  included_in_prompt_source: "candidate_ledger" | "linked_retrieval";
-  included_in_prompt_reconciled: boolean;
-  selection_status: string;
-  selection_reason: string;
-  result_ref: MessageRetrievalResultRef;
-  locator?: RetrievalLocator | null;
-  created_at: string;
-}
-
-export interface MessageRerankLedger {
-  id: string;
-  tool_call_id: string;
-  strategy: string;
-  input_count: number;
-  selected_count: number;
-  budget_chars?: number | null;
-  selected_chars: number;
-  status: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
 }
 
 export interface MessageDocument {

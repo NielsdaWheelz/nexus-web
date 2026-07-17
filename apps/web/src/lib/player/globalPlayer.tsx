@@ -10,7 +10,7 @@
  *     Every session-replacing move (playAudio / previous / next / natural-end
  *     advance / snapshot origin maintenance) is one of its total functions; this
  *     provider only runs the returned `PlaybackEffect`.
- *   - `listeningHeartbeat.ts` — one position/dwell heartbeat engine per active
+ *   - `listeningHeartbeat.ts` — one position heartbeat engine per active
  *     media (created on session start; ticked on the 15s cadence, on pause, and
  *     on seek; drained + adopted around active-media Unread; keepalive-flushed on
  *     `beforeunload`).
@@ -34,7 +34,6 @@ import {
 } from "react";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { absent, present, presenceValueOr, type Presence } from "@/lib/api/presence";
-import { readDeviceId } from "@/lib/attention";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { clamp } from "@/lib/clamp";
 import { isAbortError } from "@/lib/errors";
@@ -263,7 +262,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   });
   const pendingStartRef = useRef<{ startSeconds: number; playbackRate: number } | null>(null);
   const completionInFlightRef = useRef(false);
-  const deviceIdRef = useRef<string>("");
 
   const latestSnapshot = useCallback((): LecternSnapshot => {
     return lecternResource.status === "ready" ? lecternResource.data : { items: [] };
@@ -540,14 +538,12 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
       });
       heartbeatRef.current = createListeningHeartbeat({
         mediaId: descriptor.mediaId,
-        deviceId: deviceIdRef.current,
         initial: {
           writeRevision: initial.writeRevision,
           resetEpoch: initial.resetEpoch,
           positionMs: startPositionMs,
         },
         readSample,
-        now: () => Date.now(),
         mintGeneration: () => crypto.randomUUID(),
         onStateAdopted: (state, { seek }) => {
           if (seek) seekToSecondsInternal(state.positionMs / 1000);
@@ -935,10 +931,6 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
   // --- Restore persisted volume / effects ------------------------------------
 
   useEffect(() => {
-    deviceIdRef.current = readDeviceId();
-  }, []);
-
-  useEffect(() => {
     try {
       const raw = window.localStorage.getItem(VOLUME_STORAGE_KEY);
       if (raw == null) return;
@@ -1160,7 +1152,7 @@ export function GlobalPlayerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startEpoch, audioElement]);
 
-  // justify-polling: the heartbeat cadence is a fixed-interval position/dwell push
+  // justify-polling: the heartbeat cadence is a fixed-interval position push
   // (spec §5.4), not a data poll; the engine coalesces and single-flights sends.
   useIntervalPoll({
     enabled: isPlaying,

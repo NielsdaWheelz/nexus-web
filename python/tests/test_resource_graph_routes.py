@@ -94,8 +94,6 @@ def _create_media(direct_db: DirectSessionManager, user_id: UUID, title: str) ->
         media_id = create_test_media_in_library(session, user_id, library_id, title=title)
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-    direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
     return media_id
 
 
@@ -1026,14 +1024,6 @@ def test_connection_summary_deleted_peer_comes_back_missing(
     # Delete the peer media out from under the edge (edges have no FKs by design),
     # leaving a dangling edge — the peer must hydrate missing, never leaked.
     with direct_db.session() as session:
-        session.execute(
-            text("DELETE FROM default_library_intrinsics WHERE media_id = :id"),
-            {"id": doomed_peer_id},
-        )
-        session.execute(
-            text("DELETE FROM default_library_closure_edges WHERE media_id = :id"),
-            {"id": doomed_peer_id},
-        )
         session.execute(
             text("DELETE FROM library_entries WHERE media_id = :id"), {"id": doomed_peer_id}
         )

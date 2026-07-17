@@ -254,8 +254,6 @@ function applyToolCall(
       result_count: previous?.result_count ?? 0,
       selected_count: previous?.selected_count ?? 0,
       retrievals: previous?.retrievals ?? [],
-      candidate_ledgers: previous?.candidate_ledgers ?? [],
-      rerank_ledgers: previous?.rerank_ledgers ?? [],
     };
     const toolCalls =
       index >= 0
@@ -313,8 +311,6 @@ function applyToolResult(
       provider_request_ids:
         data.provider_request_ids ?? previous?.provider_request_ids ?? [],
       retrievals,
-      candidate_ledgers: previous?.candidate_ledgers ?? [],
-      rerank_ledgers: previous?.rerank_ledgers ?? [],
     };
     const toolCalls =
       index >= 0

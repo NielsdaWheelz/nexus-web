@@ -94,16 +94,27 @@ def create_media_and_fragment(
     return media_id, fragment_id
 
 
-def add_media_to_library(client: TestClient, user_id: UUID, media_id: UUID) -> None:
-    """Add media to a user's default library."""
+def add_media_to_library(
+    client: TestClient,
+    direct_db: DirectSessionManager,
+    user_id: UUID,
+    media_id: UUID,
+) -> None:
+    """Seed media into a user's default library.
+
+    Filing (`POST /libraries/{id}/media`) requires the target media to already
+    be membership-reachable, which production guarantees via
+    `ensure_media_in_default_library` auto-filing new media on ingest. Bare
+    media rows created directly by test fixtures are never auto-filed, so seed
+    the physical `library_entries` row directly rather than going through the
+    authorization-gated REST endpoint.
+    """
     me_resp = client.get("/me", headers=auth_headers(user_id))
     library_id = me_resp.json()["data"]["default_library_id"]
 
-    client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
+    with direct_db.session() as session:
+        add_media_entry_to_library(session, UUID(library_id), media_id)
+        session.commit()
 
 
 def register_fragment_highlight_cleanup(
@@ -156,7 +167,7 @@ class TestCreateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight
         response = auth_client.post(
@@ -189,7 +200,7 @@ class TestCreateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Try to create with out-of-bounds offset
         response = auth_client.post(
@@ -215,7 +226,7 @@ class TestCreateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create first highlight
         response1 = auth_client.post(
@@ -247,7 +258,7 @@ class TestCreateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create first highlight: "Hello"
         response1 = auth_client.post(
@@ -299,7 +310,7 @@ class TestListHighlights:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight
         create_resp = auth_client.post(
@@ -348,7 +359,7 @@ class TestGetHighlight:
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media to their library and creates highlight
-        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
 
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -393,7 +404,7 @@ class TestUpdateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight
         create_resp = auth_client.post(
@@ -434,7 +445,7 @@ class TestUpdateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight for "Hello"
         create_resp = auth_client.post(
@@ -476,7 +487,7 @@ class TestUpdateHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create two highlights
         auth_client.post(
@@ -535,7 +546,7 @@ class TestDeleteHighlight:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight with linked note
         create_resp = auth_client.post(
@@ -599,7 +610,7 @@ class TestMediaReadiness:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create should fail
         create_resp = auth_client.post(
@@ -640,7 +651,7 @@ class TestMediaReadiness:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         create_resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -667,7 +678,7 @@ class TestMediaReadiness:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight while ready
         create_resp = auth_client.post(
@@ -736,7 +747,7 @@ class TestEmojiCodepointSlicing:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Highlight the emoji character only (codepoint index 6)
         response = auth_client.post(
@@ -785,7 +796,7 @@ class TestLibraryMembership:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Only User A adds to their library
-        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
 
         # Bootstrap User B (but don't add media to their library)
         auth_client.get("/me", headers=auth_headers(user_b))
@@ -831,7 +842,7 @@ class TestLinkedHighlightNotes:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight
         create_resp = auth_client.post(
@@ -885,7 +896,7 @@ class TestLinkedHighlightNotes:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlight
         create_resp = auth_client.post(
@@ -932,7 +943,7 @@ class TestEdgeCases:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Highlight entire text
         response = auth_client.post(
@@ -959,7 +970,7 @@ class TestEdgeCases:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create highlights in reverse order
         auth_client.post(
@@ -1102,8 +1113,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_b))
 
         # Add media to both users' default libraries
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         # Create shared library with both users
         with direct_db.session() as session:
@@ -1154,8 +1165,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1211,8 +1222,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1285,7 +1296,7 @@ class TestHighlightSharedRead:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         for bad_val in ["TRUE", "1", "invalid", "True", "False", "yes", ""]:
             resp = auth_client.get(
@@ -1312,8 +1323,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1356,8 +1367,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1408,8 +1419,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1451,8 +1462,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1493,8 +1504,8 @@ class TestHighlightSharedRead:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -1541,7 +1552,7 @@ class TestHighlightSharedRead:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # CREATE
         create_resp = auth_client.post(
@@ -1597,7 +1608,7 @@ class TestHighlightSharedRead:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Insert canonical fragment highlights with tied start_offset and created_at.
         with direct_db.session() as session:
@@ -1804,7 +1815,7 @@ class TestFragmentHighlightRouteContract:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         # Create
         resp = auth_client.post(
@@ -1867,7 +1878,7 @@ class TestFragmentHighlightCanonicalStorage:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -1918,7 +1929,7 @@ class TestFragmentHighlightCanonicalStorage:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/fragments/{fragment_id}/highlights",
@@ -2166,8 +2177,8 @@ class TestListMediaHighlights:
 
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
-        add_media_to_library(auth_client, user_a, media_id)
-        add_media_to_library(auth_client, user_b, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_b, media_id)
 
         with direct_db.session() as session:
             lib_id = create_shared_library_with_media(session, user_a, user_b, media_id)
@@ -2222,7 +2233,7 @@ class TestListMediaHighlights:
         direct_db.register_cleanup("fragments", "id", fragment_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_library(auth_client, user_id, media_id)
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/highlights?mine_only=yes",
@@ -2244,7 +2255,7 @@ class TestListMediaHighlights:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        add_media_to_library(auth_client, user_a, media_id)
+        add_media_to_library(auth_client, direct_db, user_a, media_id)
         auth_client.get("/me", headers=auth_headers(user_b))
 
         resp = auth_client.get(

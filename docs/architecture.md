@@ -355,11 +355,12 @@ the same chunk/span/embedding pipeline; notes no longer have a parallel
 `highlight_pdf_quads` (page-space geometry).
 
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
-`library_invitations`, `default_library_intrinsics`,
-`default_library_closure_edges`, `default_library_backfill_jobs`, and the
-current **library-intelligence** head/revision subgraph
-(`library_intelligence_artifacts`, `library_intelligence_artifact_revisions`,
-`library_intelligence_revision_events`).
+`library_invitations`, and the current **library-intelligence** head/revision
+subgraph (`library_intelligence_artifacts`,
+`library_intelligence_artifact_revisions`,
+`library_intelligence_revision_events`). There is no separate provenance,
+closure, or backfill-job table: the default library's read surface is a live
+query over `library_entries` + `memberships`, computed at read time (§8.5).
 
 **Contributors** — `contributors` (canonical identity; every row is active,
 there is no self-FK, no merge/split/tombstone, and no status column),
@@ -386,9 +387,11 @@ branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`, `message_llm`, `models` (LLM registry);
 plus the **chat-run** machinery: `chat_runs`,
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
-**retrieval/citation** ledgers: `message_tool_calls`, `message_retrievals`
-(telemetry; carries `cited_edge_id` pointing back at the citation edge),
-`message_retrieval_candidate_ledgers`, `message_rerank_ledgers`. Conversation
+**retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
+sole durable per-result record (telemetry; carries `cited_edge_id` pointing
+back at the citation edge). Candidate generation and rerank/selection are
+transient, in-memory passes over a tool call's results; only the
+selected/included outcome is ever written. Conversation
 context refs are `resource_edges` with `source_scheme='conversation'`. Assistant
 message API responses include a
 `trust_trail` read model assembled from these durable rows; persisted
@@ -404,8 +407,11 @@ message API responses include a
 **Lectern / consumption** — `consumption_queue_items` (the Lectern: one
 ordered, mixed-media list per viewer, membership/order only — completion is
 never stored on the row), `consumption_overrides` (explicit `Unread`/
-`Finished` state), and `media_teardown_intents` (media-deletion claim; see
-§8.8 and [`modules/storage.md`](modules/storage.md)). See
+`Finished` state), `reader_engagement_states` (one current-state row per
+viewer/media: `last_engaged_at` recency and, for non-PDF locators, a
+monotonic `max_total_progression` — no session/device/span/dwell history),
+and `media_teardown_intents` (media-deletion claim; see §8.8 and
+[`modules/storage.md`](modules/storage.md)). See
 [`modules/player.md`](modules/player.md) for the owning
 `services/consumption/` package.
 
@@ -518,8 +524,7 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
-(periodic), `purge_expired_auth_handoff_codes` (periodic),
-`backfill_default_library_closure_job`.
+(periodic), `purge_expired_auth_handoff_codes` (periodic).
 
 Author identity is resolved inline, synchronously, inside each ingest/enrichment
 lane — there is no separate contributor-dedupe job, proposal table, or merge
@@ -619,9 +624,9 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
   for any semantic-capable kind regardless of structured filters. For chat, candidates are
-  selected under a context-char budget and every candidate/rerank/selection
-  decision is written to ledger tables; selected rows become `message_retrievals`
-  telemetry rows via the single validated writer
+  selected under a context-char budget; candidate/rerank/selection is a transient in-memory
+  pass and `message_retrievals` is the sole durable per-result record. Selected rows become
+  `message_retrievals` telemetry rows via the single validated writer
   `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
   citation edge through `cited_edge_id`, §7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a
@@ -874,7 +879,7 @@ indices + prose; all citation text comes from the retrieved candidates (output
 that leaks source text fails the parse). Frontend lives in the separate
 `app/(oracle)/` route group (outside the pane system).
 
-### 8.5 Libraries, sharing & the default-library closure
+### 8.5 Libraries, sharing & the default library's virtual read surface
 
 Content organization + access control, split into three owned modules:
 `services/library_governance.py` (the `libraries`/`memberships` tables: CRUD,
@@ -893,18 +898,36 @@ predicates in `auth/permissions.py`; the search/object readers read
   `position` (a per-library `UNIQUE (library_id, position) DEFERRABLE` DB
   invariant since migration `0131`, with cleanup explicit in app code).
 - **Sharing**: invites (`library_invitations`) and ownership transfer, both
-  admin/owner-gated, with masked-404 for non-members.
+  admin/owner-gated, with masked-404 for non-members. Accepting an invite is a
+  single transaction — membership upsert, then invite status update — and the
+  accept response returns `{invite, membership, idempotent}`. The membership
+  commit alone is what changes the default library's list and count; there is
+  no follow-up backfill worker, projection job, or provenance row to catch up
+  (see [`modules/sharing.md`](modules/sharing.md)).
 - **Writable destinations**: destination pickers use
   `GET /libraries/writable-destinations`; default libraries, member-only
   libraries, duplicate IDs, and inaccessible IDs are not valid write
   destinations.
-- **The default-library closure** (`services/default_library_closure.py`) makes a
-  user's default library reflect everything visible across their shared libraries
-  without duplication. Two provenance tables: `default_library_intrinsics` (direct
-  intent) and `default_library_closure_edges` (visible-because-of-membership). A
-  media row survives in the default library if it has *either*. On invite-accept, a
-  durable `default_library_backfill_jobs` row catches up historical content (the
-  worker honors live revocation by locking the membership row).
+- **The default library's read surface is a live, deduplicated personal
+  "All" query**, not a materialized or backfilled set. It has no closure,
+  intrinsic, or snapshot table and no backfill worker: `GET` against the
+  default library computes, at read time, the distinct media reachable
+  through any of the viewer's *current* non-system memberships (their own
+  default-library entries plus every non-system library they belong to),
+  deduplicated by `media_id` — a direct default entry wins the tie, else the
+  earliest entry. Losing a membership (leave, be removed, library deleted)
+  removes that library's contribution on the next read with no separate
+  cleanup step. Filing media into the default library directly — the one
+  actor-authorized filing command in `library_entries.add_media_to_library`
+  — always inserts (or idempotently keeps) a physical `library_entries` row
+  there; a work already visible virtually through another membership can
+  still be explicitly filed, and that direct entry is what a later
+  membership loss cannot take away. Pagination over any library — default or
+  not — is stateless keyset pagination with three cursor kinds (default-set
+  media-recency, non-default position order, and non-default resonance
+  order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
+  any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
+  reinterpretation.
 - **Library Intelligence** (`services/library_intelligence.py`) is one stable
   synthesis artifact head per library plus immutable generated revisions.
   Citations belong to `library_intelligence_revision:<id>`; the artifact head
@@ -980,10 +1003,12 @@ Playing** is one device-local audio session, not a second durable list.
 canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
 explicit `Unread`/`Finished`), `_listening_store.py` (`podcast_listening_states`
 position/duration/speed + heartbeat fencing tokens `write_revision`/
-`reset_epoch`), and `_projection.py` (the combined explicit + attention-derived
-read model, plus batched `PlayerDescriptor`s reusing `derive_playback_source`).
-`services/attention.py` remains the sole writer of `reading_sessions` and
-exposes only derived session aggregates to the projection. Two bounded
+`reset_epoch`), `_reader_engagement_store.py` (`reader_engagement_states`,
+the sole DML owner of current-state reader recency — `last_engaged_at` plus,
+for non-PDF locators, a monotonic `max_total_progression`; no session,
+device, span, or dwell history), and `_projection.py` (the combined
+explicit-override + reader-engagement read model, plus batched
+`PlayerDescriptor`s reusing `derive_playback_source`). Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
@@ -994,11 +1019,11 @@ heartbeat sit outside that replay ledger. Owned-absence fields on every wire
 shape use `Presence<T>` ([`rules/boundaries.md`](rules/boundaries.md)), never
 `null` or omission.
 
-Media teardown (see [`modules/storage.md`](modules/storage.md)) composes
-`consumption_service.delete_media_consumption_state_in_txn` (all users'
-Lectern/override/listening rows) and `attention.delete_media_state`
-(`reading_sessions`) inside the same deletion transaction —
-`media_deletion.py` never writes those tables directly.
+Media teardown (see [`modules/storage.md`](modules/storage.md)) composes one
+consumption call, `consumption_service.delete_media_consumption_state_in_txn`
+(all users' Lectern/override/listening/reader-engagement rows), inside the
+deletion transaction — `media_deletion.py` never writes those tables
+directly.
 
 Frontend: `AuthenticatedShell` mounts `LecternProvider` (one `AsyncResource` +
 one mutation FIFO, `lib/lectern/`) above `GlobalPlayerProvider` (one
@@ -1287,7 +1312,7 @@ attached-reference citation regression came from breaking this density.
 | Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
 | Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
-| Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,default_library_closure,contributors,notes}.py` |
+| Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py` |
 | Podcasts / playback | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py` |
 | Auth / billing / keys / rate limit | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/` |
 | Frontend BFF / auth / SSE | `apps/web/src/lib/{api,auth,supabase}/` |

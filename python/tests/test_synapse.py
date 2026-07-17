@@ -1192,8 +1192,6 @@ class TestSynapseRoutes:
             media_id = create_test_media_in_library(session, user_id, library_id, title=title)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         return media_id
 
     def test_manual_scan_is_idempotent_while_in_flight(

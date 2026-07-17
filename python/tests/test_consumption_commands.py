@@ -16,6 +16,7 @@ from nexus.db.models import (
     PodcastEpisode,
     ProcessingStatus,
 )
+from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -34,7 +35,6 @@ def _register_media_cleanup(direct_db: DirectSessionManager, media_id: UUID) -> 
         "consumption_queue_items",
         "consumption_overrides",
         "podcast_listening_states",
-        "reading_sessions",
         "library_entries",
     ):
         direct_db.register_cleanup(table, "media_id", media_id)
@@ -101,13 +101,15 @@ def _create_podcast_episode(direct_db: DirectSessionManager, *, title: str = "An
     return media_id
 
 
-def _add_to_library(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, f"add media to library failed: {response.text}"
+def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Seed a physical library_entries row directly, bypassing the REST filing
+    endpoint's membership-reachability gate. Production ingest always auto-files
+    freshly-created media into the creator's default library
+    (ensure_media_in_default_library); this mirrors that reachability for
+    fixture media created via a bare INSERT/factory rather than real ingest."""
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 def _place(auth_client, user_id, media_ids, placement="Last"):
@@ -146,8 +148,6 @@ def _heartbeat(
             "positionMs": position_ms,
             "durationMs": {"kind": "Present", "value": duration_ms},
             "playbackSpeed": 1.0,
-            "dwellMsDelta": 0,
-            "deviceId": "device-1",
             "expectedWriteRevision": expected_write_revision,
             "expectedResetEpoch": expected_reset_epoch,
             "heartbeatGeneration": str(uuid4()),
@@ -170,7 +170,7 @@ class TestFinishLecternItem:
         article = _create_web_article(direct_db, title="Interlude")
         ep2 = _create_podcast_episode(direct_db, title="Ep2")
         for media_id in (ep1, article, ep2):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         items = _place(auth_client, user_id, [ep1, article, ep2])
         ep1_item = _item_by_media(items, ep1)["itemId"]
         ep2_item = _item_by_media(items, ep2)["itemId"]
@@ -204,7 +204,7 @@ class TestFinishLecternItem:
         ep1 = _create_podcast_episode(direct_db, title="Ep1")
         article = _create_web_article(direct_db, title="Interlude")
         for media_id in (ep1, article):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         items = _place(auth_client, user_id, [ep1, article])
         ep1_item = _item_by_media(items, ep1)["itemId"]
         article_item = _item_by_media(items, article)["itemId"]
@@ -234,7 +234,7 @@ class TestFinishLecternItem:
         ep1 = _create_podcast_episode(direct_db, title="Ep1")
         ep2 = _create_podcast_episode(direct_db, title="Ep2")
         for media_id in (ep1, ep2):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         items = _place(auth_client, user_id, [ep1, ep2])
         ep2_item = _item_by_media(items, ep2)["itemId"]
 
@@ -265,7 +265,7 @@ class TestFinishLecternItem:
         ep1 = _create_podcast_episode(direct_db, title="Ep1")
         other = _create_podcast_episode(direct_db, title="Other")
         for media_id in (ep1, other):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         items = _place(auth_client, user_id, [ep1])
         ep1_item = _item_by_media(items, ep1)["itemId"]
 
@@ -306,7 +306,7 @@ class TestFinishLecternItem:
         ep1 = _create_podcast_episode(direct_db, title="Ep1")
         ep2 = _create_podcast_episode(direct_db, title="Ep2")
         for media_id in (ep1, ep2):
-            _add_to_library(auth_client, user_id, library_id, media_id)
+            _add_to_library(direct_db, library_id, media_id)
         items = _place(auth_client, user_id, [ep1, ep2])
         ep1_item = _item_by_media(items, ep1)["itemId"]
         ep2_item = _item_by_media(items, ep2)["itemId"]
@@ -344,7 +344,7 @@ class TestSetUnread:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
 
         # Two heartbeats: create the row (rev 1) then advance position (rev 2).
         assert (
@@ -391,7 +391,7 @@ class TestSetUnread:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         episode = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, episode)
+        _add_to_library(direct_db, library_id, episode)
         assert (
             _heartbeat(
                 auth_client,
@@ -439,7 +439,7 @@ class TestSetBatchState:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         article = _create_web_article(direct_db, title="Doc")
-        _add_to_library(auth_client, user_id, library_id, article)
+        _add_to_library(direct_db, library_id, article)
         result = _consumption(
             auth_client,
             user_id,
@@ -457,7 +457,7 @@ class TestSetBatchState:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         ep = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, ep)
+        _add_to_library(direct_db, library_id, ep)
         _place(auth_client, user_id, [ep])
 
         finished = _consumption(
@@ -500,7 +500,7 @@ class TestEnsureMediaFinished:
         user_id = create_test_user_id()
         library_id = _bootstrap(auth_client, user_id)
         ep = _create_podcast_episode(direct_db, title="Ep")
-        _add_to_library(auth_client, user_id, library_id, ep)
+        _add_to_library(direct_db, library_id, ep)
 
         result = _consumption(
             auth_client,

@@ -7,7 +7,9 @@ from sqlalchemy import text
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.services.atlas_projection import (
+    count_unpositioned,
     fetch_mean_embeddings,
+    list_projectable_user_ids,
     pca_2d,
     repulse,
     run_projection,
@@ -143,13 +145,20 @@ def _bootstrap_default_library(auth_client, user_id: UUID) -> UUID:
     return UUID(response.json()["data"]["default_library_id"])
 
 
-def _add_media(auth_client, user_id: UUID, library_id: UUID, media_id: UUID) -> None:
-    response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        headers=auth_headers(user_id),
-        json={"media_id": str(media_id)},
-    )
-    assert response.status_code == 201, response.text
+def _add_media(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
+    """Attach media to a library as a direct physical entry.
+
+    Fixture setup only — bypasses the actor filing command's
+    readable-or-restorable precondition (spec S4.3 rule 1), which post-cutover
+    means the *first* time media lands anywhere is through ingest, not this
+    endpoint. These tests exercise projection, not filing, so they seed state
+    the way ingest would.
+    """
+    from tests.factories import add_media_to_library
+
+    with direct_db.session() as session:
+        add_media_to_library(session, library_id, media_id)
+        session.commit()
 
 
 @pytest.mark.integration
@@ -161,7 +170,7 @@ class TestRunProjectionIntegration:
             _seed_media_with_embedding(direct_db, axis=i, title=f"Work {i}") for i in range(3)
         ]
         for media_id in media_ids:
-            _add_media(auth_client, user_id, library_id, media_id)
+            _add_media(direct_db, library_id, media_id)
 
         with direct_db.session() as session:
             result = run_projection(session, user_id)
@@ -186,7 +195,7 @@ class TestRunProjectionIntegration:
         user_id = create_test_user_id()
         library_id = _bootstrap_default_library(auth_client, user_id)
         media_id = _seed_media_with_embedding(direct_db, axis=5, title="Solo")
-        _add_media(auth_client, user_id, library_id, media_id)
+        _add_media(direct_db, library_id, media_id)
 
         with direct_db.session() as session:
             run_projection(session, user_id)
@@ -203,7 +212,7 @@ class TestRunProjectionIntegration:
         user_id = create_test_user_id()
         library_id = _bootstrap_default_library(auth_client, user_id)
         visible = _seed_media_with_embedding(direct_db, axis=1, title="Visible")
-        _add_media(auth_client, user_id, library_id, visible)
+        _add_media(direct_db, library_id, visible)
         # An unshared work (no library entry) must not appear.
         _seed_media_with_embedding(direct_db, axis=2, title="Hidden")
 
@@ -217,7 +226,7 @@ class TestRunProjectionIntegration:
         user_id = create_test_user_id()
         library_id = _bootstrap_default_library(auth_client, user_id)
         media_id = _seed_media_with_embedding(direct_db, axis=7, title="Round")
-        _add_media(auth_client, user_id, library_id, media_id)
+        _add_media(direct_db, library_id, media_id)
 
         with direct_db.session() as session:
             written = upsert_positions(session, {media_id: (0.25, 0.75)})
@@ -229,3 +238,116 @@ class TestRunProjectionIntegration:
         assert written == 1
         assert abs(row.x - 0.25) < 1e-5
         assert abs(row.y - 0.75) < 1e-5
+
+
+@pytest.mark.integration
+class TestPersonalDefaultVirtualRelation:
+    """AC2: Oracle system-only works never enter the embedding-aggregation
+    pipeline even when the user holds a system-library membership; the
+    periodic sweep (list_projectable_user_ids) considers non-system
+    membership, not ownership (spec S4.1)."""
+
+    def test_fetch_mean_embeddings_excludes_system_only_media(self, auth_client, direct_db):
+        from nexus.services import library_governance
+
+        user_id = create_test_user_id()
+        _bootstrap_default_library(auth_client, user_id)
+
+        system_media = _seed_media_with_embedding(direct_db, axis=3, title="System Work")
+        with direct_db.session() as session:
+            system_lib = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_atlas_proj_system_{user_id.hex[:12]}",
+                name="Oracle Corpus",
+                owner_user_id=user_id,
+            )
+        direct_db.register_cleanup("memberships", "library_id", system_lib)
+        direct_db.register_cleanup("libraries", "id", system_lib)
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO library_entries (library_id, position, media_id) "
+                    "VALUES (:lib, 0, :media)"
+                ),
+                {"lib": system_lib, "media": system_media},
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            means = fetch_mean_embeddings(session, user_id)
+            unpositioned = count_unpositioned(session, user_id)
+        assert system_media not in {media_id for media_id, _ in means}
+        assert unpositioned == 0
+
+    def test_list_projectable_user_ids_includes_non_owner_membership(self, auth_client, direct_db):
+        """M5: the periodic sweep must not undercount a viewer whose only
+        media access is membership in someone else's shared library — they
+        own no library themselves (beyond their own empty Default) yet still
+        need re-projection when the shared library's contents change."""
+        from tests.factories import add_library_member, create_test_library
+
+        owner_id = create_test_user_id()
+        member_id = create_test_user_id()
+        _bootstrap_default_library(auth_client, owner_id)
+        _bootstrap_default_library(auth_client, member_id)
+
+        with direct_db.session() as session:
+            shared_lib = create_test_library(session, owner_id, "Shared Shelf")
+            add_library_member(session, shared_lib, member_id, role="member")
+        direct_db.register_cleanup("memberships", "library_id", shared_lib)
+        direct_db.register_cleanup("libraries", "id", shared_lib)
+
+        with direct_db.session() as session:
+            projectable = set(list_projectable_user_ids(session))
+
+        # member_id holds zero owned libraries with entries but a non-system
+        # membership — still swept (fixes the pre-cutover owner-only
+        # undercount, M5).
+        assert member_id in projectable
+        assert owner_id in projectable
+
+    def test_list_projectable_user_ids_excludes_system_only_membership(
+        self, auth_client, direct_db
+    ):
+        """AC2: a viewer whose only membership anywhere is a system library
+        (e.g. Oracle Corpus) is never swept — a pure system-library
+        membership grants no personal projectable surface. Bypasses
+        ``/me`` bootstrap deliberately, since every bootstrapped user
+        automatically holds a non-system Default membership, which would
+        mask this exclusion."""
+        from nexus.services import library_governance
+
+        owner_id = create_test_user_id()
+        _bootstrap_default_library(auth_client, owner_id)
+
+        system_only_id = create_test_user_id()
+        with direct_db.session() as session:
+            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": system_only_id})
+            session.commit()
+        direct_db.register_cleanup("users", "id", system_only_id)
+
+        with direct_db.session() as session:
+            system_lib = library_governance.ensure_system_library(
+                session,
+                system_key=f"test_atlas_proj_sweep_system_{owner_id.hex[:12]}",
+                name="Oracle Corpus",
+                owner_user_id=owner_id,
+            )
+        direct_db.register_cleanup("memberships", "library_id", system_lib)
+        direct_db.register_cleanup("libraries", "id", system_lib)
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role)"
+                    " VALUES (:lib, :uid, 'member')"
+                ),
+                {"lib": system_lib, "uid": system_only_id},
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            projectable = set(list_projectable_user_ids(session))
+
+        assert system_only_id not in projectable
+        assert owner_id in projectable

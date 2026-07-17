@@ -38,6 +38,7 @@ from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.web_article_structure import prepare_web_article_fragment
 from nexus.storage.paths import build_epub_asset_storage_path
 from tests.factories import (
+    add_media_to_library,
     create_failed_epub_media,
     create_ready_epub_with_chapters,
     create_seeded_test_media,
@@ -74,15 +75,21 @@ def create_seeded_media(session: Session) -> UUID:
     )
 
 
-def add_media_to_default_library(auth_client, user_id: str, media_id: UUID) -> str:
-    """Bootstrap user and attach media to their default library."""
+def add_media_to_default_library(
+    auth_client, direct_db: DirectSessionManager, user_id: str, media_id: UUID
+) -> str:
+    """Bootstrap user and attach media to their default library.
+
+    Seeds a direct physical `library_entries` row instead of filing through the
+    REST endpoint: filing requires the media to already be membership-reachable,
+    and in production freshly-ingested media is always reachable via
+    `ensure_media_in_default_library`.
+    """
     me_resp = auth_client.get("/me", headers=auth_headers(user_id))
     library_id = me_resp.json()["data"]["default_library_id"]
-    auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
+    with direct_db.session() as session:
+        add_media_to_library(session, UUID(library_id), media_id)
+        session.commit()
     return library_id
 
 
@@ -198,15 +205,7 @@ class TestGetMedia:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add media to user's library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        attach_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert attach_resp.status_code == 201, attach_resp.text
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         # Get media
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
@@ -233,14 +232,7 @@ class TestGetMedia:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add media to user's library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         # Get media
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
@@ -280,14 +272,7 @@ class TestGetMedia:
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media to their library
-        me_resp_a = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp_a.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_a, media_id)
 
         # User B tries to access media (not in their library)
         auth_client.get("/me", headers=auth_headers(user_b))
@@ -310,14 +295,7 @@ class TestGetMedia:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -368,14 +346,7 @@ class TestGetMedia:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_resp.status_code == 201
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert response.status_code == 200
@@ -411,14 +382,7 @@ class TestGetMediaFragments:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         # Get fragments
         response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
@@ -483,7 +447,7 @@ class TestGetMediaFragments:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("document_embed_artifact_states", "media_id", media_id)
         direct_db.register_cleanup("document_embeds", "media_id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200
@@ -538,14 +502,7 @@ class TestGetMediaFragments:
         direct_db.register_cleanup("media", "id", media_id)
 
         # User A adds media
-        me_resp_a = auth_client.get("/me", headers=auth_headers(user_a))
-        library_a = me_resp_a.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_a}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_a, media_id)
 
         # User B tries to access fragments (not in their library)
         auth_client.get("/me", headers=auth_headers(user_b))
@@ -591,14 +548,7 @@ class TestGetMediaFragments:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         # Get fragments
         response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
@@ -631,14 +581,7 @@ class TestGetMediaFragments:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Add to library
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         # Get fragments
         response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
@@ -666,14 +609,7 @@ class TestContentSafety:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
 
@@ -706,14 +642,7 @@ class TestTimestampSerialization:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -739,14 +668,7 @@ class TestTimestampSerialization:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         response = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
 
@@ -780,7 +702,7 @@ class TestEpubChapterFragmentsImmutableAcrossReadsAndHighlightChurn:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         # Snapshot baseline fragment content from DB
         with direct_db.session() as session:
@@ -853,7 +775,7 @@ class TestEpubFragmentContentStableAcrossIndexStatusTransition:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         # Snapshot baseline in ready_for_reading
         with direct_db.session() as session:
@@ -1015,13 +937,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -1106,13 +1022,7 @@ class TestRetryEpubFailedClearsPersistedEpubArtifactsBeforeDispatch:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -1206,15 +1116,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        attach_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert attach_resp.status_code == 201, attach_resp.text
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
         with direct_db.session() as session:
             resource_row = session.execute(
                 text(
@@ -1304,7 +1206,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -1425,7 +1327,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from tests.support.storage import FakeStorageClient
 
@@ -1464,14 +1366,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -1508,7 +1403,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/assets/bad%20key.png",
@@ -1568,7 +1463,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from tests.support.storage import FakeStorageClient
 
@@ -1638,7 +1533,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/assets/styles/book.css",
@@ -1698,7 +1593,7 @@ class TestGetEpubAssetSuccessAndMasking:
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("epub_resources", "media_id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from tests.support.storage import FakeStorageClient
 
@@ -1746,14 +1641,7 @@ class TestGetEpubAssetKindAndReadyGuards:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/assets/test.png",
@@ -1779,14 +1667,7 @@ class TestGetEpubAssetKindAndReadyGuards:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/assets/test.png",
@@ -1849,13 +1730,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -1911,13 +1786,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -1942,13 +1811,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -1968,9 +1831,6 @@ class TestRetryEpubEndpoint:
         auth_client.get("/me", headers=auth_headers(user_a))
         auth_client.get("/me", headers=auth_headers(user_b))
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_a))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
         # non-creator
         with direct_db.session() as session:
             epub_id = _create_failed_epub(session, user_a)
@@ -1979,19 +1839,8 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", epub_id)
         direct_db.register_cleanup("media", "id", epub_id)
 
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(epub_id)},
-            headers=auth_headers(user_a),
-        )
-
-        me_b = auth_client.get("/me", headers=auth_headers(user_b))
-        lib_b = me_b.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{lib_b}/media",
-            json={"media_id": str(epub_id)},
-            headers=auth_headers(user_b),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_a, epub_id)
+        add_media_to_default_library(auth_client, direct_db, user_b, epub_id)
 
         resp = auth_client.post(
             f"/media/{epub_id}/retry",
@@ -2067,13 +1916,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from tests.support.storage import FakeStorageClient
 
@@ -2140,13 +1983,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -2201,13 +2038,7 @@ class TestRetryEpubEndpoint:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -2341,7 +2172,7 @@ class TestRetryWebArticleEndpoint:
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2442,7 +2273,7 @@ class TestRetryWebArticleEndpoint:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
         headers = {**auth_headers(user_id), "Idempotency-Key": "retry-source-key-1"}
 
         first = auth_client.post(
@@ -2508,7 +2339,7 @@ class TestRetryWebArticleEndpoint:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2548,7 +2379,7 @@ class TestRetryBodyValidation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(f"/media/{media_id}/retry", headers=auth_headers(user_id))
         assert resp.status_code in (400, 422), (
@@ -2577,7 +2408,7 @@ class TestRetryBodyValidation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2624,7 +2455,7 @@ class TestRetryMetadataEndpoint:
         direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2694,8 +2525,8 @@ class TestRetryMetadataEndpoint:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, creator, media_id)
-        add_media_to_default_library(auth_client, other, media_id)
+        add_media_to_default_library(auth_client, direct_db, creator, media_id)
+        add_media_to_default_library(auth_client, direct_db, other, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2728,7 +2559,7 @@ class TestRetryMetadataEndpoint:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2752,7 +2583,7 @@ class TestRetryMetadataEndpoint:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2804,7 +2635,7 @@ class TestRetryMetadataEndpoint:
         direct_db.register_cleanup("background_jobs", "payload->>'media_id'", str(media_id))
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -2981,7 +2812,7 @@ class TestRefreshSourceForPodcastMedia:
             )
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
         _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3127,7 +2958,7 @@ class TestRefreshSourceForPodcastMedia:
             session.commit()
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
         _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3202,7 +3033,7 @@ class TestRefreshSourceForPodcastMedia:
             )
         _register_podcast_refresh_cleanup(direct_db, media_id=media_id, podcast_id=podcast_id)
         _grant_test_ai_transcription_entitlement(direct_db, user_id=user_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3266,7 +3097,7 @@ class TestRefreshSourceForFileBackedMedia:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -3318,7 +3149,7 @@ class TestRefreshSourceForFileBackedMedia:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3380,7 +3211,7 @@ class TestRefreshSourceForFileBackedMedia:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -3426,7 +3257,7 @@ class TestRefreshSourceForFileBackedMedia:
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        add_media_to_default_library(auth_client, user_id, media_id)
+        add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3450,7 +3281,7 @@ class TestRefreshSourceForFileBackedMedia:
         direct_db.register_cleanup("media_file", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/refresh",
@@ -3477,16 +3308,9 @@ def _create_ready_epub(session, *, num_chapters=3, with_toc=True):
     )
 
 
-def _add_media_to_user_library(auth_client, user_id, media_id):
+def _add_media_to_user_library(auth_client, direct_db: DirectSessionManager, user_id, media_id):
     """Bootstrap user and add media to their default library. Returns library_id."""
-    me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-    library_id = me_resp.json()["data"]["default_library_id"]
-    auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    return library_id
+    return add_media_to_default_library(auth_client, direct_db, user_id, media_id)
 
 
 class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
@@ -3505,7 +3329,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}/navigation", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -3552,7 +3376,7 @@ class TestGetEpubNavigationReturnsCanonicalSectionsAndTocTargets:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}/navigation", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -3623,7 +3447,7 @@ class TestGetWebArticleNavigation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/navigation",
@@ -3664,7 +3488,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp0 = auth_client.get(
             f"/media/{media_id}/sections/ch0.xhtml", headers=auth_headers(user_id)
@@ -3710,7 +3534,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/sections/ch1.xhtml", headers=auth_headers(user_id)
@@ -3732,7 +3556,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/sections/missing.xhtml", headers=auth_headers(user_id)
@@ -3805,7 +3629,7 @@ class TestGetEpubNavigationTreeOrdering:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}/navigation", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -3833,7 +3657,7 @@ class TestGetEpubReadEndpointsVisibilityMasking:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_a, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_a, media_id)
         auth_client.get("/me", headers=auth_headers(user_b))
 
         for path in [f"/media/{media_id}/navigation", f"/media/{media_id}/sections/ch0.xhtml"]:
@@ -3864,7 +3688,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/sections/ch0.xhtml",
@@ -3892,7 +3716,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(
             f"/media/{media_id}/navigation",
@@ -3918,7 +3742,7 @@ class TestGetEpubReadEndpointsKindAndReadinessGuards:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         for path in [f"/media/{media_id}/navigation", f"/media/{media_id}/sections/ch0.xhtml"]:
             resp = auth_client.get(path, headers=auth_headers(user_id))
@@ -3947,7 +3771,7 @@ class TestGetFragmentsEpubReady:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}/fragments", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -4076,7 +3900,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -4102,7 +3926,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", media_id_ready)
         direct_db.register_cleanup("media", "id", media_id_ready)
 
-        _add_media_to_user_library(auth_client, user_id, media_id_ready)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id_ready)
 
         resp = auth_client.get(f"/media/{media_id_ready}", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -4127,7 +3951,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -4152,7 +3976,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert resp.status_code == 200
@@ -4179,7 +4003,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", mid_no_text)
         direct_db.register_cleanup("media", "id", mid_no_text)
 
-        _add_media_to_user_library(auth_client, uid, mid_no_text)
+        _add_media_to_user_library(auth_client, direct_db, uid, mid_no_text)
 
         resp = auth_client.get(f"/media/{mid_no_text}", headers=auth_headers(uid))
         assert resp.status_code == 200
@@ -4200,7 +4024,7 @@ class TestPdfCapabilityDerivation:
         direct_db.register_cleanup("library_entries", "media_id", mid_full)
         direct_db.register_cleanup("media", "id", mid_full)
 
-        _add_media_to_user_library(auth_client, uid2, mid_full)
+        _add_media_to_user_library(auth_client, direct_db, uid2, mid_full)
 
         resp2 = auth_client.get(f"/media/{mid_full}", headers=auth_headers(uid2))
         assert resp2.status_code == 200
@@ -4227,7 +4051,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -4254,7 +4078,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         resp = auth_client.post(
             f"/media/{media_id}/retry",
@@ -4289,7 +4113,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -4347,7 +4171,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -4422,7 +4246,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -4458,7 +4282,7 @@ class TestPdfRetry:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
-        _add_media_to_user_library(auth_client, user_id, media_id)
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
 
         from unittest.mock import patch
 
@@ -4677,8 +4501,6 @@ class TestFromUrlLibraryIds:
         media_id = UUID(data["media_id"])
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4873,8 +4695,6 @@ class TestFromUrlLibraryIds:
         assert first_data["idempotency_outcome"] == "created"
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         second = auth_client.post(
@@ -4943,8 +4763,6 @@ class TestCaptureLibraryIds:
         direct_db.register_cleanup("fragment_blocks", "fragment_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -4990,8 +4808,6 @@ class TestCaptureLibraryIds:
         )
         empty_media_id = UUID(empty_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", empty_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", empty_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", empty_media_id)
         direct_db.register_cleanup("media_file", "media_id", empty_media_id)
         direct_db.register_cleanup("media", "id", empty_media_id)
 
@@ -5027,8 +4843,6 @@ class TestCaptureLibraryIds:
         )
         single_media_id = UUID(single_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", single_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", single_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", single_media_id)
         direct_db.register_cleanup("media_file", "media_id", single_media_id)
         direct_db.register_cleanup("media", "id", single_media_id)
 
@@ -5066,8 +4880,6 @@ class TestCaptureLibraryIds:
         )
         comma_media_id = UUID(comma_response.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", comma_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", comma_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", comma_media_id)
         direct_db.register_cleanup("media_file", "media_id", comma_media_id)
         direct_db.register_cleanup("media", "id", comma_media_id)
 
@@ -5110,8 +4922,6 @@ class TestCaptureLibraryIds:
         media_id = UUID(response.json()["data"]["media_id"])
 
         direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", media_id)
         direct_db.register_cleanup("media", "id", media_id)
 
         memberships = _library_entries_for_media(direct_db, media_id)
@@ -5169,8 +4979,6 @@ class TestUploadInitLibraryIds:
         )
         pdf_media_id = UUID(pdf_init.json()["data"]["media_id"])
         direct_db.register_cleanup("library_entries", "media_id", pdf_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", pdf_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", pdf_media_id)
         direct_db.register_cleanup("media_file", "media_id", pdf_media_id)
         direct_db.register_cleanup("media", "id", pdf_media_id)
 
@@ -5248,8 +5056,6 @@ class TestUploadInitLibraryIds:
         epub_media_id = UUID(epub_init.json()["data"]["media_id"])
         direct_db.register_cleanup("epub_toc_nodes", "media_id", epub_media_id)
         direct_db.register_cleanup("library_entries", "media_id", epub_media_id)
-        direct_db.register_cleanup("default_library_intrinsics", "media_id", epub_media_id)
-        direct_db.register_cleanup("default_library_closure_edges", "media_id", epub_media_id)
         direct_db.register_cleanup("fragments", "media_id", epub_media_id)
         direct_db.register_cleanup("media_file", "media_id", epub_media_id)
         direct_db.register_cleanup("media", "id", epub_media_id)

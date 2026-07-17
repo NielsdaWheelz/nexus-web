@@ -11,13 +11,17 @@ All functions:
 Query Semantics:
 - Membership role values: 'admin', 'member' (lowercase strings, not enums)
 - LibraryEntry rows with non-null media_id connect libraries and media
-- Media readability is via provenance: non-default membership, intrinsic, or active closure edge
+- Media readability is a single membership-join relation (see below)
 
-Media Provenance Rules (can_read_media):
-- Non-default path: exists non-default library L with viewer membership and library_entries(L, media)
-- Default intrinsic path: viewer owns default library D, row in default_library_intrinsics(D, media)
-- Default closure path: viewer owns default library D, closure edge (D, media, source_L), viewer member of source_L
-- Raw (default_library_id, media_id) in library_entries is NOT sufficient without provenance
+Media Readability Rule (can_read_media / visible_media_ids_cte_sql):
+- A media item is readable iff a current membership reaches a physical
+  library_entries row for that media, in ANY library the viewer belongs to
+  (default, non-default, or system — no is_default distinction), AND the
+  viewer has no user_media_deletions tombstone for it, AND no
+  media_teardown_intents row is armed for it.
+- This is the sole authorization/global-readable relation. It is broader
+  than "My Library": services/library_entries.py:library_media_ids_cte_sql()
+  layers the personal-Default/non-default-library distinction on top of it.
 
 Conversation Visibility (can_read_conversation):
 - Viewer is owner, OR
@@ -37,104 +41,135 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from nexus.db.models import (
     Conversation,
     ConversationShare,
-    DefaultLibraryClosureEdge,
-    DefaultLibraryIntrinsic,
     Highlight,
-    Library,
     LibraryEntry,
-    Media,
+    MediaTeardownIntent,
     Membership,
     UserMediaDeletion,
 )
 
 
-def can_read_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
-    """Check if viewer can read a media item under provenance rules.
-
-    True iff any of:
-    1. Non-default path: exists non-default library L where viewer is member and media is in L
-    2. Default intrinsic path: viewer owns default library D and (D, media) is in default_library_intrinsics
-    3. Default closure path: viewer owns default library D, closure edge (D, media, source_L) exists,
-       and viewer currently has membership in source_L
-
-    Returns False if media_id does not exist (no existence leak).
+def _media_membership_path_exists(viewer_user_id: UUID, media_id: UUID):
+    """Core exists() expression: a current membership reaches a physical
+    library_entries row for this media in any library the viewer belongs to
+    (default, non-default, or system — no is_default distinction). Shared by
+    :func:`can_read_media` and :func:`can_restore_media` so the one
+    reachability rule cannot drift between its readable and restorable forms.
     """
-    # Path 1: non-default library membership
-    non_default = exists().where(
+    return exists().where(
         LibraryEntry.media_id == media_id,
         LibraryEntry.media_id.is_not(None),
         LibraryEntry.library_id == Membership.library_id,
         Membership.user_id == viewer_user_id,
-        LibraryEntry.library_id == Library.id,
-        Library.is_default.is_(False),
     )
 
-    # Path 2: default intrinsic
-    default_intrinsic = exists().where(
-        DefaultLibraryIntrinsic.media_id == media_id,
-        DefaultLibraryIntrinsic.default_library_id == Library.id,
-        Library.owner_user_id == viewer_user_id,
-        Library.is_default.is_(True),
-    )
 
-    # Path 3: default closure edge with active source membership
-    default_closure = exists().where(
-        DefaultLibraryClosureEdge.media_id == media_id,
-        DefaultLibraryClosureEdge.default_library_id == Library.id,
-        Library.owner_user_id == viewer_user_id,
-        Library.is_default.is_(True),
-        DefaultLibraryClosureEdge.source_library_id == Membership.library_id,
-        Membership.user_id == viewer_user_id,
-    )
+def can_read_media(
+    session: Session,
+    viewer_user_id: UUID,
+    media_id: UUID,
+    *,
+    include_tearing_down: bool = False,
+) -> bool:
+    """Check if viewer can read a media item.
+
+    True iff a current membership reaches a physical library_entries row for
+    this media in any library the viewer belongs to (default, non-default, or
+    system — no is_default distinction), AND the viewer has no
+    user_media_deletions tombstone for it, AND no media_teardown_intents row
+    is armed for it.
+
+    ``include_tearing_down=True`` drops only the teardown clause (keeping the
+    tombstone exclusion), so a reachable, non-tombstoned target still mid-
+    teardown passes. A write path uses this to reach the target and then raise
+    the specific ``E_MEDIA_DELETING`` for it, instead of the generic 404 the
+    teardown-excluding read surface returns — while an unreachable or tombstoned
+    target still fails here, so the specific error never leaks to a non-member.
+
+    Returns False if media_id does not exist (no existence leak: a
+    non-existent media_id can never match a library_entries row).
+    """
+    membership_path = _media_membership_path_exists(viewer_user_id, media_id)
 
     not_deleted = ~exists().where(
         UserMediaDeletion.user_id == viewer_user_id,
         UserMediaDeletion.media_id == media_id,
     )
 
-    media_exists = exists().where(Media.id == media_id)
+    predicate = membership_path & not_deleted
+    if not include_tearing_down:
+        predicate = predicate & ~exists().where(MediaTeardownIntent.media_id == media_id)
 
-    query = select(media_exists & (non_default | default_intrinsic | default_closure) & not_deleted)
+    result = session.execute(select(predicate))
+    return bool(result.scalar())
+
+
+def can_restore_media(session: Session, viewer_user_id: UUID, media_id: UUID) -> bool:
+    """Authorize a filing target the way spec S4.3 rule 1 requires: readable OR
+    restorable. Restorable means membership-reachable (including a system
+    library, same reach as :func:`can_read_media`) while ignoring only the
+    viewer's own ``user_media_deletions`` tombstone AND the teardown barrier —
+    a strict superset of ``can_read_media``, so re-filing media the viewer
+    previously deleted is authorized. The more specific media-teardown barrier
+    (``raise_if_media_teardown_pending``) is a separate, later check in the
+    filing command, so reachable-but-tearing-down media raises the more
+    specific ``E_MEDIA_DELETING`` instead of a masked 404 here.
+
+    Returns False if media_id does not exist (no existence leak).
+    """
+    query = select(_media_membership_path_exists(viewer_user_id, media_id))
     result = session.execute(query)
     return bool(result.scalar())
 
 
-def visible_media_ids_cte_sql() -> str:
-    """Return SQL for the canonical visible-media CTE."""
-    return """
-        SELECT visible.media_id
-        FROM (
-            SELECT le.media_id
-            FROM library_entries le
-            JOIN memberships m ON m.library_id = le.library_id
-            JOIN libraries l ON l.id = le.library_id
-            WHERE m.user_id = :viewer_id
-              AND l.is_default = false
-              AND le.media_id IS NOT NULL
+def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewer_id") -> str:
+    """SQL ``EXISTS`` fragment: the viewer has a non-system membership path to
+    a media id. Parameterizable by ``media_expr`` so both a correlated column
+    form (e.g. ``"m.id"``) and a bound-param form (``":media_id"``) can reuse
+    it; ``viewer_param`` defaults to the conventional ``:viewer_id`` bind name
+    but may be overridden (e.g. a correlated column) by callers with a
+    different viewer binding in scope.
 
-            UNION
-
-            SELECT dli.media_id
-            FROM default_library_intrinsics dli
-            JOIN libraries l ON l.id = dli.default_library_id
-            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
-
-            UNION
-
-            SELECT dlce.media_id
-            FROM default_library_closure_edges dlce
-            JOIN libraries l ON l.id = dlce.default_library_id
-            JOIN memberships m ON m.library_id = dlce.source_library_id
-                               AND m.user_id = :viewer_id
-            WHERE l.owner_user_id = :viewer_id AND l.is_default = true
-        ) visible
-        JOIN media md ON md.id = visible.media_id
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM user_media_deletions umd
-            WHERE umd.user_id = :viewer_id
-              AND umd.media_id = visible.media_id
+    The fragment's own table aliases are namespaced (``nsref_*``) so a
+    correlated ``media_expr``/``viewer_param`` using a common single-letter
+    alias (e.g. an outer ``media m`` or ``libraries l``) is never shadowed by
+    this EXISTS subquery's own FROM/JOIN aliases.
+    """
+    return f"""
+        EXISTS (
+            SELECT 1 FROM library_entries nsref_le
+            JOIN libraries nsref_l ON nsref_l.id = nsref_le.library_id
+            JOIN memberships nsref_m
+              ON nsref_m.library_id = nsref_l.id AND nsref_m.user_id = {viewer_param}
+            WHERE nsref_le.media_id = {media_expr} AND nsref_l.system_key IS NULL
         )
+    """
+
+
+def visible_media_ids_cte_sql() -> str:
+    """Return SQL for the canonical visible-media CTE. Binds :viewer_id.
+
+    Sole authorization/global-readable relation: a viewer's current
+    membership reaching a physical library_entries row, minus tombstoned and
+    armed-teardown media. Includes system libraries (no is_default filter).
+    """
+    return """
+        SELECT DISTINCT le.media_id
+        FROM library_entries le
+        JOIN memberships m ON m.library_id = le.library_id
+        WHERE m.user_id = :viewer_id
+          AND le.media_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM user_media_deletions umd
+              WHERE umd.user_id = :viewer_id
+                AND umd.media_id = le.media_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM media_teardown_intents mti
+              WHERE mti.media_id = le.media_id
+          )
     """
 
 

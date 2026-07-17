@@ -10,9 +10,7 @@ from nexus.db.models import (
     ChatPromptAssembly,
     ChatRun,
     ChatRunEvent,
-    MessageRerankLedger,
     MessageRetrieval,
-    MessageRetrievalCandidateLedger,
     MessageToolCall,
     ResourceEdge,
 )
@@ -232,72 +230,6 @@ def test_owned_message_without_ledgers_returns_empty_trail(
     assert trail.citations == []
 
 
-def test_candidate_and_rerank_ledgers_are_nested_under_tool_call(
-    db_session: Session,
-    bootstrapped_user: UUID,
-) -> None:
-    conversation_id, user_message_id, assistant_message_id = _owned_assistant_message(
-        db_session,
-        bootstrapped_user,
-    )
-    tool = MessageToolCall(
-        conversation_id=conversation_id,
-        user_message_id=user_message_id,
-        assistant_message_id=assistant_message_id,
-        tool_name="app_search",
-        tool_call_index=0,
-        scope="all",
-        requested_types=["media"],
-        result_refs=[_result_ref()],
-        selected_context_refs=[],
-        provider_request_ids=[],
-        status="complete",
-    )
-    db_session.add(tool)
-    db_session.flush()
-    db_session.add(
-        MessageRetrievalCandidateLedger(
-            tool_call_id=tool.id,
-            ordinal=0,
-            result_type="media",
-            source_id="media-1",
-            score=0.9,
-            selected=True,
-            included_in_prompt=True,
-            selection_status="included_in_prompt",
-            selection_reason="selected",
-            result_ref=_result_ref(),
-            locator=None,
-        )
-    )
-    db_session.add(
-        MessageRerankLedger(
-            tool_call_id=tool.id,
-            strategy="score",
-            input_count=1,
-            selected_count=1,
-            budget_chars=4000,
-            selected_chars=15,
-            status="complete",
-            metadata_={"reason": "top_result"},
-        )
-    )
-    db_session.commit()
-
-    trail = build_assistant_trust_trail(
-        db_session,
-        viewer_id=bootstrapped_user,
-        assistant_message_id=assistant_message_id,
-    )
-
-    assert len(trail.tool_calls) == 1
-    assert trail.tool_calls[0].tool_name == "app_search"
-    assert len(trail.tool_calls[0].candidate_ledgers) == 1
-    assert trail.tool_calls[0].candidate_ledgers[0].included_in_prompt is True
-    assert len(trail.tool_calls[0].rerank_ledgers) == 1
-    assert trail.tool_calls[0].rerank_ledgers[0].metadata == {"reason": "top_result"}
-
-
 def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
     db_session: Session,
     bootstrapped_user: UUID,
@@ -438,22 +370,6 @@ def test_integrity_notices_are_deterministic(
     )
     db_session.add(retrieval)
     db_session.flush()
-    db_session.add(
-        MessageRetrievalCandidateLedger(
-            tool_call_id=tool.id,
-            retrieval_id=retrieval.id,
-            ordinal=0,
-            result_type="media",
-            source_id="media-1",
-            score=0.9,
-            selected=True,
-            included_in_prompt=True,
-            selection_status="included_in_prompt",
-            selection_reason="selected",
-            result_ref=result_ref,
-            locator=None,
-        )
-    )
     missing_prompt_retrieval_id = uuid4()
     db_session.add(
         ChatPromptAssembly(
@@ -508,7 +424,6 @@ def test_integrity_notices_are_deterministic(
 
     assert [notice.code.split(":")[0] for notice in trail.integrity_notices] == [
         "selected_retrieval_missing_citation",
-        "candidate_inclusion_mismatch",
         "prompt_retrieval_missing",
         "context_ref_missing_citation",
     ]
