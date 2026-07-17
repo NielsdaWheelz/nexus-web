@@ -875,7 +875,11 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
-    assert delete_response.json()["data"]["kind"] == "Hidden"
+    # The viewer's only reachable reference was their own default library, so
+    # after removal they can no longer reach the child (it survives solely in
+    # the other user's private default) — a truthful Removed, no tombstone —
+    # while the viewer's own embed targeting it is still marked unavailable.
+    assert delete_response.json()["data"]["kind"] == "Removed"
     with direct_db.session() as session:
         row = session.execute(
             text(

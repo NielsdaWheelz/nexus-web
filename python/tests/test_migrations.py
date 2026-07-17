@@ -18814,7 +18814,7 @@ class TestMigration0183DefaultLibraryVirtualization:
             reset_test_schema()
             engine.dispose()
 
-    def test_closure_only_default_entry_deleted_while_intrinsic_backed_retained(self):
+    def test_closure_only_live_covered_default_entry_deleted_while_intrinsic_backed_retained(self):
         reset_test_schema()
         engine = create_engine(get_test_database_url())
         try:
@@ -18826,6 +18826,7 @@ class TestMigration0183DefaultLibraryVirtualization:
             source_library_id = uuid4()
             closure_only_entry_id = uuid4()
             closure_only_media_id = uuid4()
+            source_entry_id = uuid4()
             intrinsic_backed_entry_id = uuid4()
             intrinsic_backed_media_id = uuid4()
 
@@ -18845,6 +18846,16 @@ class TestMigration0183DefaultLibraryVirtualization:
                     ),
                     {"id": source_library_id, "owner": owner_id},
                 )
+                # The owner is a live member of the non-default, non-system source
+                # library and it still physically holds the media — so the media
+                # stays virtually visible after the closure-only Default row goes.
+                session.execute(
+                    text(
+                        "INSERT INTO memberships (user_id, library_id, role)"
+                        " VALUES (:u, :lib, 'admin')"
+                    ),
+                    {"u": owner_id, "lib": source_library_id},
+                )
                 self._insert_media(session, closure_only_media_id, "web_article")
                 self._insert_media(session, intrinsic_backed_media_id, "web_article")
 
@@ -18856,6 +18867,17 @@ class TestMigration0183DefaultLibraryVirtualization:
                     {
                         "id": closure_only_entry_id,
                         "lib": default_library_id,
+                        "media": closure_only_media_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (id, library_id, media_id, position)"
+                        " VALUES (:id, :lib, :media, 0)"
+                    ),
+                    {
+                        "id": source_entry_id,
+                        "lib": source_library_id,
                         "media": closure_only_media_id,
                     },
                 )
@@ -18904,12 +18926,99 @@ class TestMigration0183DefaultLibraryVirtualization:
                     text("SELECT 1 FROM library_entries WHERE id = :id"),
                     {"id": intrinsic_backed_entry_id},
                 ).scalar_one_or_none()
+                # The media survives virtually via the source library's own entry.
+                source_entry_survives = session.execute(
+                    text("SELECT 1 FROM library_entries WHERE id = :id"),
+                    {"id": source_entry_id},
+                ).scalar_one_or_none()
 
             assert closure_only_survives is None, (
-                "closure-only physical Default entry must be deleted by step 3"
+                "live-covered closure-only physical Default entry must be deleted by step 3"
             )
             assert intrinsic_backed_survives == 1, (
                 "intrinsic-backed physical Default entry must be retained by step 3"
+            )
+            assert source_entry_survives == 1, (
+                "the source library's own physical entry keeps the media reachable"
+            )
+        finally:
+            reset_test_schema()
+
+    def test_dangling_closure_edge_default_entry_is_retained_not_orphaned(self):
+        """A closure edge with NO live backing membership/entry (e.g. a stale
+        edge left by an old backfill race) must NOT delete the media's sole
+        physical Default reference — that would orphan the media forever
+        (unreachable via the new relation yet never torn down). Step 3 requires
+        live coverage, so the dangling-edge entry is retained."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade 0182 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            default_library_id = uuid4()
+            source_library_id = uuid4()
+            dangling_entry_id = uuid4()
+            dangling_media_id = uuid4()
+
+            with Session(engine) as session:
+                self._insert_user(session, owner_id)
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Default', true)"
+                    ),
+                    {"id": default_library_id, "owner": owner_id},
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                        " VALUES (:id, :owner, 'Shared', false)"
+                    ),
+                    {"id": source_library_id, "owner": owner_id},
+                )
+                self._insert_media(session, dangling_media_id, "web_article")
+                # Sole physical reference: the Default entry. The closure edge
+                # names a source library that does NOT actually hold the media
+                # (no source library_entries row, no membership) — a dangling edge.
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (id, library_id, media_id, position)"
+                        " VALUES (:id, :lib, :media, 0)"
+                    ),
+                    {
+                        "id": dangling_entry_id,
+                        "lib": default_library_id,
+                        "media": dangling_media_id,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO default_library_closure_edges"
+                        " (default_library_id, media_id, source_library_id)"
+                        " VALUES (:lib, :media, :source)"
+                    ),
+                    {
+                        "lib": default_library_id,
+                        "media": dangling_media_id,
+                        "source": source_library_id,
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                survives = session.execute(
+                    text("SELECT 1 FROM library_entries WHERE id = :id"),
+                    {"id": dangling_entry_id},
+                ).scalar_one_or_none()
+
+            assert survives == 1, (
+                "a dangling closure edge must NOT orphan the media: its sole physical"
+                " Default entry must be retained when no live membership covers it"
             )
         finally:
             reset_test_schema()

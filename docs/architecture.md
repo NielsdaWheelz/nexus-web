@@ -624,9 +624,9 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
   for any semantic-capable kind regardless of structured filters. For chat, candidates are
-  selected under a context-char budget and every candidate/rerank/selection
-  decision is written to ledger tables; selected rows become `message_retrievals`
-  telemetry rows via the single validated writer
+  selected under a context-char budget; candidate/rerank/selection is a transient in-memory
+  pass and `message_retrievals` is the sole durable per-result record. Selected rows become
+  `message_retrievals` telemetry rows via the single validated writer
   `retrieval_citation.insert_retrieval_row` (the cited ones link back to their
   citation edge through `cited_edge_id`, §7.7).
 - **The `ResourceRef` grammar** (`services/resource_graph/refs.py`): a

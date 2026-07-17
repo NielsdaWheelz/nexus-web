@@ -177,30 +177,28 @@ def _preflight(bind) -> None:
     classification = {row[0]: row[1] for row in classification_rows}
     _report(f"preflight: Default physical media row classification: {classification}")
 
-    # 5. Oracle/system-only media must be excluded by the new Default relation:
-    # no default physical entry may reference media whose only library
-    # membership is in a system library. A clean/empty DB passes trivially —
-    # the default entry itself is always a non-system membership of its media.
+    # 5. The new Default relation excludes system-only media structurally, by
+    # filtering contributing libraries to system_key IS NULL (spec §4.1, tested
+    # by AC2). That exclusion only holds if the default libraries it reads from
+    # are themselves non-system: a library that is BOTH is_default and a system
+    # library would leak system media into every personal Default surface. This
+    # is the real, checkable data precondition (the previous "no default entry
+    # references system-only media" phrasing was vacuous — a default entry is
+    # itself a non-system reference, so it can never witness its own absence).
     rows = bind.execute(
         sa.text(
-            "SELECT le.id"
-            " FROM library_entries le"
-            " JOIN libraries l ON l.id = le.library_id"
-            " WHERE l.is_default AND le.media_id IS NOT NULL"
-            "   AND NOT EXISTS ("
-            "     SELECT 1 FROM library_entries le2"
-            "     JOIN libraries l2 ON l2.id = le2.library_id"
-            "     WHERE le2.media_id = le.media_id AND l2.system_key IS NULL"
-            "   )"
-            " ORDER BY le.id"
+            "SELECT id FROM libraries"
+            " WHERE is_default AND system_key IS NOT NULL"
+            " ORDER BY id"
         )
     ).fetchall()
     if rows:
         ids = [str(row[0]) for row in rows]
         _fail(
             "preflight",
-            f"{len(ids)} default physical entr{'y' if len(ids) == 1 else 'ies'} reference"
-            f" media reachable only through system libraries: {ids}",
+            f"{len(ids)} librar{'y is' if len(ids) == 1 else 'ies are'} both is_default and a"
+            f" system library, which would leak system media into the personal Default"
+            f" relation: {ids}",
         )
 
 
@@ -289,27 +287,34 @@ def upgrade() -> None:
     )
     _report(f"backfilled {result.rowcount} reader_engagement_states row(s)")
 
-    # --- Step 2: delete non-terminal backfill_default_library_closure_job
-    # background_jobs rows. Terminal rows (succeeded/failed/dead) are inert
-    # historical audit records and are left untouched; a pending/running row
-    # left behind would be claimed by a worker after this deploy and crash
-    # against the tables step 4 is about to drop. ---------------------------
+    # --- Step 2: delete EVERY backfill_default_library_closure_job
+    # background_jobs row, regardless of status. The job kind and its handler
+    # are removed by this cutover, so no row can ever run again — and a
+    # surviving row is not inert: the queue reclaims 'pending'/'failed' rows
+    # (jobs/queue.py claims WHERE status IN ('pending','failed')) and an
+    # operator can requeue a 'dead' row, either of which would dispatch to a
+    # now-deleted handler after this deploy. Historical audit value is nil for
+    # a kind that no longer exists. ----------------------------------------
     deleted_jobs = bind.execute(
         sa.text(
             "DELETE FROM background_jobs"
             " WHERE kind = 'backfill_default_library_closure_job'"
-            "   AND status IN ('pending', 'running')"
         )
     ).rowcount
-    _report(
-        f"deleted {deleted_jobs} non-terminal backfill_default_library_closure_job"
-        " background_jobs row(s)"
-    )
+    _report(f"deleted {deleted_jobs} backfill_default_library_closure_job background_jobs row(s)")
 
-    # --- Step 3: delete physical Default entries proven closure-only. A
-    # closure edge implies a live covering non-default membership, so the
-    # media stays virtually visible after the row is gone; intrinsic-backed,
-    # both-backed, and unclassified rows are retained. -----------------------
+    # --- Step 3: delete physical Default entries proven closure-only AND still
+    # covered by a live non-default, non-system membership of the default's
+    # owner. The coverage is re-derived from LIVE library_entries/memberships,
+    # NOT trusted from default_library_closure_edges: that table has no
+    # constraint tying an edge to a live source row, so a stale/dangling edge
+    # (e.g. from an unlocked closure-backfill read racing a source removal)
+    # could otherwise delete a media's sole physical reference and orphan it
+    # forever (unreachable via the new relation yet never torn down). Requiring
+    # live coverage means a deleted row always stays virtually visible, and a
+    # closure-only entry whose edge is dangling is retained (treated like an
+    # unclassified direct row) rather than silently dropped. Intrinsic-backed,
+    # both-backed, and unclassified rows are retained. ----------------------
     deleted_entries = bind.execute(
         sa.text(
             "DELETE FROM library_entries le"
@@ -325,9 +330,19 @@ def upgrade() -> None:
             "     SELECT 1 FROM default_library_intrinsics i"
             "     WHERE i.default_library_id = l.id AND i.media_id = le.media_id"
             "   )"
+            "   AND EXISTS ("
+            "     SELECT 1"
+            "     FROM library_entries le_cover"
+            "     JOIN libraries l_cover ON l_cover.id = le_cover.library_id"
+            "     JOIN memberships m_cover ON m_cover.library_id = l_cover.id"
+            "     WHERE le_cover.media_id = le.media_id"
+            "       AND l_cover.is_default = false"
+            "       AND l_cover.system_key IS NULL"
+            "       AND m_cover.user_id = l.owner_user_id"
+            "   )"
         )
     ).rowcount
-    _report(f"deleted {deleted_entries} closure-only physical Default library_entries row(s)")
+    _report(f"deleted {deleted_entries} closure-only, live-covered Default library_entries row(s)")
 
     # --- Step 4: drop the eight tables, children before parents. -----------
     for table in _DROPPED_TABLES:

@@ -117,26 +117,6 @@ def _total_reference_count(db: Session, media_id: UUID) -> int:
     return library_entries.count_entries_for_media(db, media_id)
 
 
-def _viewer_has_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
-    return bool(
-        db.execute(
-            text(
-                """
-                SELECT 1
-                FROM library_entries le
-                JOIN libraries l ON l.id = le.library_id
-                JOIN memberships m
-                  ON m.library_id = l.id AND m.user_id = :viewer_id
-                WHERE le.media_id = :media_id
-                  AND l.system_key IS NOT NULL
-                LIMIT 1
-                """
-            ),
-            {"viewer_id": viewer_id, "media_id": media_id},
-        ).first()
-    )
-
-
 def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
     """True iff the viewer's current memberships reach this media through at least
     one non-system library (default or otherwise) — a path a viewer delete could
@@ -225,7 +205,24 @@ def delete_document_for_viewer(
             claim_media_teardown(db, media_id)
             return MediaDeletingResult()
 
-        if _viewer_has_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+        # The viewer's own document embeds targeting this media now point at a
+        # media they can no longer resolve — mark them unavailable regardless of
+        # whether the outcome is Hidden or Removed (owner-scoped cleanup, not a
+        # tombstone concern).
+        detach_document_embed_targets_for_owner(
+            db, owner_user_id=viewer_id, target_media_id=media_id
+        )
+
+        # A remaining reference the viewer could not remove is either a shared
+        # non-system library still reachable by them (hide it per-viewer) or a
+        # reference they can no longer reach — a system-only library, or another
+        # user's private library (never surfaced to the viewer → nothing to
+        # hide). Branch on whether the viewer retains a reachable NON-SYSTEM
+        # path, not on the presence of a system one: a media with BOTH a system
+        # reference AND a remaining reachable non-system shared reference must
+        # still be Hidden, else it stays visible with no tombstone (AC5
+        # "truthful" violation).
+        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
             return MediaRemovedResult(
                 removed_from_library_ids=removed_from_library_ids,
                 remaining_reference_count=remaining_reference_count,
@@ -248,9 +245,6 @@ def delete_document_for_viewer(
                 """),
                 {"viewer_id": viewer_id, "media_id": media_id},
             )
-        detach_document_embed_targets_for_owner(
-            db, owner_user_id=viewer_id, target_media_id=media_id
-        )
         return MediaHiddenResult(
             removed_from_library_ids=removed_from_library_ids,
             remaining_reference_count=remaining_reference_count,
