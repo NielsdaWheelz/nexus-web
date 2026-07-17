@@ -141,39 +141,6 @@ def test_execute_app_search_persists_retrieval_metadata(
         assert content_chunk_row[0]["type"] == "web_text_offsets"
         assert "resolver" not in content_chunk_row[1]
 
-        ledger_row = session.execute(
-            text(
-                """
-                SELECT COUNT(*),
-                       COUNT(*) FILTER (WHERE selected),
-                       bool_and(result_ref ? 'type')
-                FROM message_retrieval_candidate_ledgers
-                WHERE tool_call_id = :tool_call_id
-                """
-            ),
-            {"tool_call_id": run.tool_call_id},
-        ).one()
-        assert ledger_row[0] == len(retrieval_rows)
-        assert ledger_row[1] == len(run.selected_citations)
-        assert ledger_row[2] is True
-
-        rerank_row = session.execute(
-            text(
-                """
-                SELECT strategy, input_count, selected_count, budget_chars, selected_chars, status
-                FROM message_rerank_ledgers
-                WHERE tool_call_id = :tool_call_id
-                """
-            ),
-            {"tool_call_id": run.tool_call_id},
-        ).one()
-        assert rerank_row[0] == "prompt_evidence_then_context_budget"
-        assert rerank_row[1] == len(run.citations)
-        assert rerank_row[2] == len(run.selected_citations)
-        assert rerank_row[3] > 0
-        assert rerank_row[4] == run.context_chars
-        assert rerank_row[5] == run.status
-
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)
     direct_db.register_cleanup("media", "id", media_id)
@@ -755,19 +722,11 @@ def test_scoped_app_search_persists_no_indexed_evidence_as_empty_tool_result(
         assert tool_row[1] == []
         retrieval_count = session.execute(
             text(
-                """
-                SELECT
-                    (SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id),
-                    (
-                        SELECT count(*)
-                        FROM message_retrieval_candidate_ledgers
-                        WHERE tool_call_id = :tool_call_id
-                    )
-                """
+                "SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"
             ),
             {"tool_call_id": run.tool_call_id},
-        ).one()
-        assert tuple(retrieval_count) == (0, 0)
+        ).scalar_one()
+        assert retrieval_count == 0
 
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -841,19 +800,11 @@ def test_scoped_app_search_persists_no_results_as_empty_tool_result(
         assert tool_row[1] == []
         retrieval_count = session.execute(
             text(
-                """
-                SELECT
-                    (SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id),
-                    (
-                        SELECT count(*)
-                        FROM message_retrieval_candidate_ledgers
-                        WHERE tool_call_id = :tool_call_id
-                    )
-                """
+                "SELECT count(*) FROM message_retrievals WHERE tool_call_id = :tool_call_id"
             ),
             {"tool_call_id": run.tool_call_id},
-        ).one()
-        assert tuple(retrieval_count) == (0, 0)
+        ).scalar_one()
+        assert retrieval_count == 0
 
     direct_db.register_cleanup("fragments", "media_id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)

@@ -1860,20 +1860,6 @@ def delete_media_apparatus(db: Session, media_id: UUID) -> None:
     db.execute(
         text(
             """
-            DELETE FROM message_retrieval_candidate_ledgers
-            WHERE result_type = 'reader_apparatus_item'
-              AND source_id IN (
-                  SELECT id::text
-                  FROM reader_apparatus_items
-                  WHERE media_id = :media_id
-              )
-            """
-        ),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text(
-            """
             DELETE FROM resource_versions
             WHERE resource_scheme = 'reader_apparatus_item'
               AND resource_id IN (

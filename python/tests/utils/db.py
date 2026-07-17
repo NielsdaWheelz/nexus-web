@@ -457,34 +457,6 @@ class DirectSessionManager:
                     )
 
                 if table == "users" and column == "id":
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_retrieval_candidate_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                JOIN conversations c ON c.id = mtc.conversation_id
-                                WHERE c.owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_rerank_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                JOIN conversations c ON c.id = mtc.conversation_id
-                                WHERE c.owner_user_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
                     _delete_note_owned_content(
                         session,
                         note_filter="SELECT id FROM note_blocks WHERE user_id = :value",
@@ -841,32 +813,6 @@ class DirectSessionManager:
                     )
                     session.execute(
                         text(
-                            """
-                            DELETE FROM message_retrieval_candidate_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                WHERE mtc.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_rerank_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                WHERE mtc.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
                             "DELETE FROM conversation_active_paths WHERE conversation_id = :value"
                         ),
                         {"value": value},
@@ -917,34 +863,6 @@ class DirectSessionManager:
                             DELETE FROM resource_edges
                             WHERE (source_scheme = 'message' AND source_id = :value)
                                OR (target_scheme = 'message' AND target_id = :value)
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_retrieval_candidate_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT id
-                                FROM message_tool_calls
-                                WHERE user_message_id = :value
-                                   OR assistant_message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_rerank_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT id
-                                FROM message_tool_calls
-                                WHERE user_message_id = :value
-                                   OR assistant_message_id = :value
-                            )
                             """
                         ),
                         {"value": value},
@@ -1030,34 +948,6 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_retrieval_candidate_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT id
-                                FROM message_tool_calls
-                                WHERE user_message_id = :value
-                                   OR assistant_message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_rerank_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT id
-                                FROM message_tool_calls
-                                WHERE user_message_id = :value
-                                   OR assistant_message_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
 
                 if table == "messages" and column == "conversation_id":
                     session.execute(
@@ -1066,32 +956,6 @@ class DirectSessionManager:
                             DELETE FROM resource_edges
                             WHERE source_scheme = 'message' AND source_id IN (
                                 SELECT id FROM messages WHERE conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_retrieval_candidate_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                WHERE mtc.conversation_id = :value
-                            )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM message_rerank_ledgers
-                            WHERE tool_call_id IN (
-                                SELECT mtc.id
-                                FROM message_tool_calls mtc
-                                WHERE mtc.conversation_id = :value
                             )
                             """
                         ),

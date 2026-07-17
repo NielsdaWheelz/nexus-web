@@ -371,47 +371,6 @@ function ToolRow({ tool }: { tool: MessageToolCall }) {
           ))}
         </ol>
       ) : null}
-      {tool.candidate_ledgers.length > 0 ? (
-        <ol className={styles.trustNestedList}>
-          {tool.candidate_ledgers.map((ledger) => (
-            <li key={ledger.id}>
-              <div className={styles.trustLine}>
-                <span>
-                  candidate {ledger.ordinal}: {ledger.source_id}
-                </span>
-                <span className={styles.trustFlags}>
-                  {ledger.selected ? "selected" : "candidate"} /{" "}
-                  {ledger.included_in_prompt ? "included" : "not included"}
-                </span>
-              </div>
-              <div className={styles.trustCode}>
-                {ledger.selection_status} - {ledger.selection_reason}
-                {ledger.score !== null && ledger.score !== undefined
-                  ? ` - score ${ledger.score.toFixed(3)}`
-                  : ""}
-                {!ledger.included_in_prompt_reconciled ? " - mismatch" : ""}
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {tool.rerank_ledgers.length > 0 ? (
-        <ol className={styles.trustNestedList}>
-          {tool.rerank_ledgers.map((ledger) => (
-            <li key={ledger.id}>
-              <div className={styles.trustLine}>
-                <span>{ledger.strategy}</span>
-                <span className={styles.trustFlags}>{ledger.status}</span>
-              </div>
-              <div className={styles.trustCode}>
-                {ledger.selected_count}/{ledger.input_count} selected -{" "}
-                {ledger.selected_chars}
-                {ledger.budget_chars ? `/${ledger.budget_chars}` : ""} chars
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : null}
     </li>
   );
 }

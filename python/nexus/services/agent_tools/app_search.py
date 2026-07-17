@@ -58,7 +58,6 @@ from nexus.services.retrieval_citation import (
     RetrievalCitation,
     citation_from_search_result,
     insert_retrieval_row,
-    strict_citation_locator,
 )
 from nexus.services.search import search
 from nexus.services.search.batch import search_scopes
@@ -642,48 +641,11 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
         )
     run.tool_call_id = tool_call_id
 
-    insert_candidate_ledger = text(
-        """
-        INSERT INTO message_retrieval_candidate_ledgers (
-            tool_call_id,
-            retrieval_id,
-            ordinal,
-            result_type,
-            source_id,
-            score,
-            selected,
-            included_in_prompt,
-            selection_status,
-            selection_reason,
-            result_ref,
-            locator
-        )
-        VALUES (
-            :tool_call_id,
-            :retrieval_id,
-            :ordinal,
-            :result_type,
-            :source_id,
-            :score,
-            :selected,
-            false,
-            :selection_status,
-            :selection_reason,
-            :result_ref,
-            :locator
-        )
-        """
-    ).bindparams(
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
     selected_ids = {citation.source_id for citation in run.selected_citations}
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
         selected = citation.source_id in selected_ids
-        locator = strict_citation_locator(citation)
-        result_ref = retrieval_result_ref_json(citation.result_ref_json())
-        retrieval_id = insert_retrieval_row(
+        insert_retrieval_row(
             db,
             tool_call_id=tool_call_id,
             ordinal=ordinal,
@@ -692,64 +654,10 @@ def persist_app_search_run(db: Session, run: AppSearchRun) -> None:
             scope=run.scope,
             retrieval_status="selected" if selected else "retrieved",
         )
-        db.execute(
-            insert_candidate_ledger,
-            {
-                "tool_call_id": tool_call_id,
-                "retrieval_id": retrieval_id,
-                "ordinal": ordinal,
-                "result_type": citation.result_type,
-                "source_id": citation.source_id,
-                "score": citation.score,
-                "selected": selected,
-                "selection_status": "selected" if selected else "retrieved",
-                "selection_reason": "within_context_budget" if selected else "below_selected_limit",
-                "result_ref": result_ref,
-                "locator": locator,
-            },
-        )
         persisted_count = ordinal + 1
     # Trim over-count rows from a previous attempt, cleaning their citation edges
     # too.
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
-    db.execute(
-        text(
-            """
-            INSERT INTO message_rerank_ledgers (
-                tool_call_id,
-                strategy,
-                input_count,
-                selected_count,
-                budget_chars,
-                selected_chars,
-                status,
-                metadata
-            )
-            VALUES (
-                :tool_call_id,
-                'prompt_evidence_then_context_budget',
-                :input_count,
-                :selected_count,
-                :budget_chars,
-                :selected_chars,
-                :status,
-                :metadata
-            )
-            """
-        ).bindparams(bindparam("metadata", type_=JSONB)),
-        {
-            "tool_call_id": tool_call_id,
-            "input_count": len(run.citations),
-            "selected_count": len(run.selected_citations),
-            "budget_chars": APP_SEARCH_CONTEXT_CHARS,
-            "selected_chars": run.context_chars,
-            "status": run.status,
-            "metadata": {
-                "selected_limit": APP_SEARCH_SELECTED_LIMIT,
-                "scope": run.scope,
-            },
-        },
-    )
     db.commit()
 
 

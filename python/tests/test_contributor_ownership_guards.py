@@ -242,7 +242,6 @@ def test_facade_reads_no_chat_tables_directly() -> None:
     for table in (
         "message_retrievals",
         "message_tool_calls",
-        "message_retrieval_candidate_ledgers",
         "chat_prompt_assemblies",
         "chat_run_events",
     ):

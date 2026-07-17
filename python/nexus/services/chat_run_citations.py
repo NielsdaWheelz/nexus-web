@@ -337,19 +337,6 @@ def prune_tool_call_retrievals(
         if snapshot_id is not None
     ]
 
-    # The candidate ledger FKs message_retrievals; null its pointer before the
-    # delete (app_search/web_search write these; chat-run traces never do, so the
-    # UPDATE is a harmless no-op there).
-    db.execute(
-        text(
-            "UPDATE message_retrieval_candidate_ledgers SET retrieval_id = NULL "
-            "WHERE retrieval_id IN ("
-            "  SELECT id FROM message_retrievals "
-            f"  WHERE tool_call_id = :tool_call_id{ordinal_clause}"
-            ")"
-        ),
-        params,
-    )
     db.execute(
         text(f"DELETE FROM message_retrievals WHERE tool_call_id = :tool_call_id{ordinal_clause}"),
         params,

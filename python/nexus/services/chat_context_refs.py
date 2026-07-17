@@ -1,11 +1,11 @@
 """Sole reader of persisted chat context for contributor references.
 
 Owns every read of the chat-domain ref columns (``message_retrievals``,
-``message_tool_calls``, ``message_retrieval_candidate_ledgers``,
-``chat_prompt_assemblies``, ``chat_run_events``). Other domains ask "is this
-contributor still referenced anywhere in persisted chat context?" and never
-touch the chat tables themselves. The single caller is the orphan-prune
-eligibility check in ``services/contributors`` (spec 2.8, D-41).
+``message_tool_calls``, ``chat_prompt_assemblies``, ``chat_run_events``).
+Other domains ask "is this contributor still referenced anywhere in
+persisted chat context?" and never touch the chat tables themselves. The
+single caller is the orphan-prune eligibility check in
+``services/contributors`` (spec 2.8, D-41).
 """
 
 from __future__ import annotations
@@ -28,10 +28,8 @@ def contributor_is_referenced_in_persisted_context(
 
     - the typed object ``{"type": "contributor", "id": <handle>}`` — the single
       retrieval-citation contract written to ``message_retrievals.context_ref``/
-      ``.result_ref``, each element of ``message_tool_calls.result_refs``/
-      ``.selected_context_refs``, and ``message_retrieval_candidate_ledgers.
-      result_ref`` (whose scalar ``source_id`` carries the same handle for
-      ``result_type = 'contributor'`` rows);
+      ``.result_ref`` and each element of ``message_tool_calls.result_refs``/
+      ``.selected_context_refs``;
     - the ``"contributor:<uuid>"`` URI string nested anywhere inside
       ``chat_prompt_assemblies`` manifests/refs and ``chat_run_events`` payloads
       (``resource_uri``, ``requested_resource_uri``, ``chat_subject.*``,
@@ -50,14 +48,6 @@ def contributor_is_referenced_in_persisted_context(
                 SELECT 1 FROM message_tool_calls mtc
                 WHERE {_array_contains_contributor_ref_sql("mtc.result_refs")}
                    OR {_array_contains_contributor_ref_sql("mtc.selected_context_refs")}
-            )
-            OR EXISTS (
-                SELECT 1 FROM message_retrieval_candidate_ledgers ml
-                WHERE {_contains_contributor_ref_sql("ml.result_ref")}
-                   OR (
-                        ml.result_type = 'contributor'
-                        AND ml.source_id = CAST(:contributor_handle AS text)
-                   )
             )
             OR EXISTS (
                 SELECT 1 FROM chat_prompt_assemblies cpa

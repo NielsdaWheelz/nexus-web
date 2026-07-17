@@ -231,17 +231,13 @@ async def test_chat_execute_web_search_still_persists_snapshots(
 
     # Teardown is LIFO and retrieval FK cascades were removed (migration 0093), so
     # register parents before children: independent user-keyed rows, then the
-    # conversation/messages, then tool-call rows and their ledgers (deleted first).
+    # conversation/messages, then tool-call rows (retrievals deleted first).
     direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("message_tool_calls", "id", run.tool_call_id)
     direct_db.register_cleanup("message_retrievals", "tool_call_id", run.tool_call_id)
-    direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", run.tool_call_id)
-    direct_db.register_cleanup(
-        "message_retrieval_candidate_ledgers", "tool_call_id", run.tool_call_id
-    )
 
     assert run.status == "complete", f"Expected a complete run, got {run.status}"
     assert _count_snapshots(direct_db, user_id) == 1, (

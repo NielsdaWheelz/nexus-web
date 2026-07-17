@@ -474,50 +474,14 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
     if existing is not None:
         prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
 
-    insert_candidate_ledger = text(
-        """
-        INSERT INTO message_retrieval_candidate_ledgers (
-            tool_call_id,
-            retrieval_id,
-            ordinal,
-            result_type,
-            source_id,
-            score,
-            selected,
-            included_in_prompt,
-            selection_status,
-            selection_reason,
-            result_ref,
-            locator
-        )
-        VALUES (
-            :tool_call_id,
-            :retrieval_id,
-            :ordinal,
-            :result_type,
-            :source_id,
-            :score,
-            :selected,
-            false,
-            :selection_status,
-            :selection_reason,
-            :result_ref,
-            :locator
-        )
-        """
-    ).bindparams(
-        bindparam("result_ref", type_=JSONB),
-        bindparam("locator", type_=JSONB),
-    )
     selected_refs = {citation.result_ref for citation in run.selected_citations}
     persisted_count = 0
     for ordinal, citation in enumerate(run.citations):
         selected = citation.result_ref in selected_refs
         score = 1.0 / max(citation.rank, 1)
         source_id = snapshot_ids[citation.result_ref]
-        result_ref = retrieval_result_ref_json(citation.to_json(source_id=source_id))
         locator = citation.locator_json()
-        retrieval_id = insert_retrieval_row(
+        insert_retrieval_row(
             db,
             tool_call_id=tool_call_id,
             ordinal=ordinal,
@@ -543,63 +507,8 @@ def persist_web_search_run(db: Session, run: WebSearchRun) -> None:
             scope="public_web",
             retrieval_status="web_result",
         )
-        db.execute(
-            insert_candidate_ledger,
-            {
-                "tool_call_id": tool_call_id,
-                "retrieval_id": retrieval_id,
-                "ordinal": ordinal,
-                "result_type": "web_result",
-                "source_id": source_id,
-                "score": score,
-                "selected": selected,
-                "selection_status": "web_result" if selected else "retrieved",
-                "selection_reason": "within_context_budget" if selected else "below_selected_limit",
-                "result_ref": result_ref,
-                "locator": locator,
-            },
-        )
         persisted_count = ordinal + 1
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=persisted_count)
-    db.execute(
-        text(
-            """
-            INSERT INTO message_rerank_ledgers (
-                tool_call_id,
-                strategy,
-                input_count,
-                selected_count,
-                budget_chars,
-                selected_chars,
-                status,
-                metadata
-            )
-            VALUES (
-                :tool_call_id,
-                'provider_rank_then_context_budget',
-                :input_count,
-                :selected_count,
-                :budget_chars,
-                :selected_chars,
-                :status,
-                :metadata
-            )
-            """
-        ).bindparams(bindparam("metadata", type_=JSONB)),
-        {
-            "tool_call_id": tool_call_id,
-            "input_count": len(run.citations),
-            "selected_count": len(run.selected_citations),
-            "budget_chars": WEB_SEARCH_CONTEXT_CHARS,
-            "selected_chars": run.context_chars,
-            "status": run.status,
-            "metadata": {
-                "selected_limit": WEB_SEARCH_SELECTED_LIMIT,
-                "result_type": run.result_type,
-                "provider_request_ids": run.provider_request_ids,
-            },
-        },
-    )
     db.commit()
 
 

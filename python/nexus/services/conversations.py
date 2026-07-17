@@ -888,20 +888,6 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
     tool_call_ids = _message_tool_call_ids_for_messages(db, message_ids)
     if tool_call_ids:
         db.execute(
-            text("""
-                DELETE FROM message_retrieval_candidate_ledgers
-                WHERE tool_call_id = ANY(:tool_call_ids)
-            """),
-            {"tool_call_ids": tool_call_ids},
-        )
-        db.execute(
-            text("""
-                DELETE FROM message_rerank_ledgers
-                WHERE tool_call_id = ANY(:tool_call_ids)
-            """),
-            {"tool_call_ids": tool_call_ids},
-        )
-        db.execute(
             text("DELETE FROM message_retrievals WHERE tool_call_id = ANY(:tool_call_ids)"),
             {"tool_call_ids": tool_call_ids},
         )

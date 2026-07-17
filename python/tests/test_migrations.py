@@ -2558,8 +2558,13 @@ class TestMigrationUpgradeDowngrade:
                 )
                 session.commit()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade to head failed: {result.stderr}"
+            # Pinned to 0182 rather than head: 0183 (default-library-virtualization
+            # cutover) is authored in place across multiple slices and eventually
+            # drops message_retrieval_candidate_ledgers/message_rerank_ledgers, which
+            # this test seeds and reads directly below. Historical migration tests
+            # must target the revision they're actually testing, not chase head.
+            result = run_alembic_command("upgrade 0182")
+            assert result.returncode == 0, f"upgrade to 0182 failed: {result.stderr}"
 
             with Session(engine) as session:
                 for table_name, removed_columns in {

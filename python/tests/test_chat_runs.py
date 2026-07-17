@@ -2972,10 +2972,6 @@ class TestCitationEdgeWriteThrough:
         assert tool_call_id is not None
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
-        direct_db.register_cleanup(
-            "message_retrieval_candidate_ledgers", "tool_call_id", tool_call_id
-        )
-        direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", tool_call_id)
         direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
         direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
         direct_db.register_cleanup("chat_run_events", "run_id", run_id)
@@ -3500,10 +3496,6 @@ class TestCitationEdgeWriteThrough:
         tool_call_id = self._tool_call_index_1_id(direct_db, assistant_message_id)
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
-        direct_db.register_cleanup(
-            "message_retrieval_candidate_ledgers", "tool_call_id", tool_call_id
-        )
-        direct_db.register_cleanup("message_rerank_ledgers", "tool_call_id", tool_call_id)
         direct_db.register_cleanup("message_retrievals", "tool_call_id", tool_call_id)
         direct_db.register_cleanup("message_tool_calls", "id", tool_call_id)
         direct_db.register_cleanup("chat_run_events", "run_id", run_id)
