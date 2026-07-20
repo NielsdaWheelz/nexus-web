@@ -22,21 +22,29 @@ describe("resourceKind", () => {
     expect(resourceIconForUri("not-a-ref")).toBe(Link2);
   });
 
-  it("maps linkable resource schemes to object-ref types", () => {
+  it("maps note-reference-target resource schemes to object-ref types", () => {
     expect(resourceObjectTypeForScheme("media")).toBe("media");
     expect(resourceObjectTypeForScheme("library")).toBe("library");
-    expect(resourceObjectTypeForScheme("evidence_span")).toBe("evidence_span");
-    expect(resourceObjectTypeForScheme("content_chunk")).toBe("content_chunk");
     expect(resourceObjectTypeForScheme("oracle_reading")).toBe(
       "oracle_reading",
     );
     expect(resourceObjectTypeForScheme("artifact_revision")).toBe(
       "artifact_revision",
     );
-    expect(resourceObjectTypeForScheme("oracle_passage_anchor")).toBe(
-      "oracle_passage_anchor",
+    expect(resourceObjectTypeForScheme("passage_anchor")).toBe(
+      "passage_anchor",
     );
     expect(resourceObjectTypeForScheme("external_snapshot")).toBeNull();
+  });
+
+  it("treats passage-candidate schemes as non-reference targets", () => {
+    // These schemes have no durable reference identity until a search hit
+    // materializes them into a passage_anchor (Invariant 4).
+    expect(resourceObjectTypeForScheme("evidence_span")).toBeNull();
+    expect(resourceObjectTypeForScheme("content_chunk")).toBeNull();
+    expect(resourceObjectTypeForScheme("fragment")).toBeNull();
+    expect(resourceObjectTypeForScheme("reader_apparatus_item")).toBeNull();
+    expect(resourceObjectTypeForScheme("oracle_passage_anchor")).toBeNull();
   });
 
   it("treats user graph tags as unknown at runtime", () => {

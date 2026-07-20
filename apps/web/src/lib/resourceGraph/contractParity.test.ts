@@ -28,6 +28,18 @@ def camel(name):
     head, *tail = name.split("_")
     return head + "".join(part.title() for part in tail)
 
+# Recursively unwraps a keyword value: a nested dataclass call (e.g.
+# ResourceUserRelationPolicy(...)) becomes a nested camelCase dict instead of
+# failing ast.literal_eval, so the nested user-relation policy round-trips.
+def eval_value(node):
+    if isinstance(node, ast.Call):
+        return {
+            camel(keyword.arg): eval_value(keyword.value)
+            for keyword in node.keywords
+            if keyword.arg is not None
+        }
+    return ast.literal_eval(node)
+
 tree = ast.parse(Path("python/nexus/services/resource_items/capabilities.py").read_text())
 for node in tree.body:
     if isinstance(node, ast.Assign):
@@ -47,7 +59,7 @@ for node in tree.body:
         if not isinstance(row, ast.Call):
             raise AssertionError("capability rows must be ResourceItemCapability calls")
         manifest[ast.literal_eval(key)] = {
-            camel(keyword.arg): ast.literal_eval(keyword.value)
+            camel(keyword.arg): eval_value(keyword.value)
             for keyword in row.keywords
             if keyword.arg is not None
         }

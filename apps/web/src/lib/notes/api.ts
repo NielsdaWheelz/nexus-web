@@ -15,6 +15,7 @@ import type {
   ResourceInspectMode,
   ResourcePromptRenderMode,
   ResourceReadMode,
+  UserLinkTargetMode,
 } from "@/lib/resources/resourceCapabilities.generated";
 import {
   normalizeResourceActivation,
@@ -22,8 +23,17 @@ import {
 } from "@/lib/resources/activation";
 import { isRecord } from "@/lib/validation";
 
+// Wire shape of `ResourceUserRelationPolicyOut`
+// (python/nexus/schemas/resource_items.py) — replaces the scalar `linkable`
+// boolean (universal-link-authoring-hard-cutover.md, Capability Contract).
+export interface ResourceUserRelation {
+  userLinkSource: boolean;
+  userLinkTarget: UserLinkTargetMode;
+  noteReferenceTarget: boolean;
+}
+
 export interface ResourceItemCapabilities {
-  linkable: boolean;
+  userRelation: ResourceUserRelation;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -114,6 +124,21 @@ function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+function normalizeUserRelation(raw: unknown): ResourceUserRelation {
+  const record = requiredRecord(raw, "resource user relation");
+  return {
+    userLinkSource: Boolean(
+      record.userLinkSource ?? record.user_link_source,
+    ),
+    userLinkTarget: String(
+      record.userLinkTarget ?? record.user_link_target ?? "none",
+    ) as UserLinkTargetMode,
+    noteReferenceTarget: Boolean(
+      record.noteReferenceTarget ?? record.note_reference_target,
+    ),
+  };
+}
+
 export function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
   const capabilities = requiredRecord(
     raw.capabilities,
@@ -138,7 +163,9 @@ export function normalizeResourceItem(raw: Record<string, unknown>): ResourceIte
     activation,
     missing: Boolean(raw.missing),
     capabilities: {
-      linkable: Boolean(capabilities.linkable),
+      userRelation: normalizeUserRelation(
+        capabilities.userRelation ?? capabilities.user_relation,
+      ),
       attachable: Boolean(capabilities.attachable),
       chatSubject: String(
         capabilities.chatSubject ?? capabilities.chat_subject ?? "none",

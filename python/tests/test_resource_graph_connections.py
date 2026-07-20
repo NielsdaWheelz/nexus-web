@@ -19,6 +19,7 @@ from nexus.services.resource_graph.schemas import (
 )
 from tests.factories import (
     create_test_fragment,
+    create_test_highlight,
     create_test_library,
     create_test_media_in_library,
     get_user_default_library,
@@ -147,16 +148,21 @@ def test_outgoing_multi_ref_keeps_source_side_direction(
 
 
 def test_owner_rollup_matches_media_child_refs(db_session: Session, bootstrapped_user: UUID):
+    # A highlight is the durable user-linkable media child (derived
+    # fragment/span rows are materialize_passage candidates, never direct user
+    # endpoints): querying the owning media with rollup="owner" must surface
+    # an edge landing on it.
     source = _media(db_session, bootstrapped_user, "source")
     media = _media(db_session, bootstrapped_user, "target media")
-    fragment = ResourceRef(
-        scheme="fragment",
-        id=create_test_fragment(db_session, media.id, "Fragment body"),
+    fragment_id = create_test_fragment(db_session, media.id, "Fragment body")
+    highlight = ResourceRef(
+        scheme="highlight",
+        id=create_test_highlight(db_session, bootstrapped_user, fragment_id),
     )
     edge = create_edge(
         db_session,
         viewer_id=bootstrapped_user,
-        input=EdgeCreate(source=source, target=fragment, kind="context", origin="user"),
+        input=EdgeCreate(source=source, target=highlight, kind="context", origin="user"),
     )
 
     page = query_connections(
@@ -173,7 +179,7 @@ def test_owner_rollup_matches_media_child_refs(db_session: Session, bootstrapped
 
     item = next(item for item in page.items if item.edge_id == edge.id)
     assert item.direction == "incoming"
-    assert item.target_ref == fragment
+    assert item.target_ref == highlight
     assert item.other.ref == source
 
 

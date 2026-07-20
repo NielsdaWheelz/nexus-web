@@ -207,7 +207,7 @@ def test_create_edge_rejects_user_link_to_external_snapshot_target(
 
 
 def _highlight_and_span_refs(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef]:
-    """A user Cite/stance source (highlight in doc A) + a citable target span in doc B."""
+    """A user Link/stance source (highlight in doc A) + a derived span in doc B."""
     source_media = create_searchable_media(db, user_id, title="Cite From Doc")
     fragment_id = db.execute(
         select(Fragment.id).where(Fragment.media_id == source_media)
@@ -234,12 +234,16 @@ def _highlight_and_span_refs(db: Session, user_id: UUID) -> tuple[ResourceRef, R
     )
 
 
-def test_user_cite_and_stance_edges_to_span_carry_no_snapshot(
+def test_user_edges_carry_no_snapshot_and_reject_derived_span_targets(
     db_session: Session, bootstrapped_user: UUID
 ):
-    # AC-5: Cite (kind=context) and stance (supports/contradicts) mint user-origin
-    # highlight→evidence_span edges with no snapshot; the CHECK forbids any.
-    source, target = _highlight_and_span_refs(db_session, bootstrapped_user)
+    # Link (kind=context) and stance (supports/contradicts) mint neutral
+    # user-origin edges with no snapshot; the CHECK forbids any. A derived
+    # evidence_span is a materialize_passage candidate (Invariant 4) that the
+    # Link service must convert into a passage_anchor — never a direct
+    # user-edge endpoint.
+    source, span = _highlight_and_span_refs(db_session, bootstrapped_user)
+    target = _media_ref(db_session, bootstrapped_user, title="Link To Doc")
     for kind in cast("list[EdgeKind]", ["context", "supports", "contradicts"]):
         edge = create_edge(
             db_session,
@@ -250,6 +254,13 @@ def test_user_cite_and_stance_edges_to_span_carry_no_snapshot(
         assert edge.snapshot is None
         assert edge.ordinal is None
         delete_edge(db_session, viewer_id=bootstrapped_user, edge_id=edge.id)
+
+    with pytest.raises(InvalidRequestError):
+        create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(source=source, target=span, kind="context", origin="user"),
+        )
 
     with pytest.raises(InvalidRequestError):
         create_edge(

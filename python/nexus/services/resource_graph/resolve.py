@@ -268,6 +268,8 @@ def load_resource_batch(
             loaded = _load_podcast(db, items, viewer_id=viewer_id)
         elif scheme == "reader_apparatus_item":
             loaded = _load_reader_apparatus_item(db, items, viewer_id=viewer_id)
+        elif scheme == "passage_anchor":
+            loaded = _load_passage_anchor(db, items, viewer_id=viewer_id)
         else:
             assert_never(scheme)
         for entry in loaded:
@@ -1236,6 +1238,34 @@ def _load_reader_apparatus_item(
     return out
 
 
+def _load_passage_anchor(
+    db: Session, items: list[ResourceRef], *, viewer_id: UUID
+) -> list[LoadedResource]:
+    """Passage anchors are user-owned; ``user_id`` equality is the whole visibility
+    gate (Passage Anchor: "Owner visibility ... replace a polymorphic FK" — here
+    the anchor row itself has no owner-side visibility to check beyond its own
+    ``user_id``, since the owner may itself be gone/unresolved and the anchor
+    must still surface as a durable Link endpoint, per Invariant 9).
+    """
+    ids = [ref.id for ref in items]
+    rows = db.execute(
+        text("SELECT id, user_id, selector FROM passage_anchors WHERE id = ANY(:ids)"),
+        {"ids": ids},
+    ).fetchall()
+    by_id = {row[0]: row for row in rows}
+    out: list[LoadedResource] = []
+    for ref in items:
+        row = by_id.get(ref.id)
+        if row is None or row[1] != viewer_id:
+            out.append(_missing(ref.uri, "passage_anchor"))
+            continue
+        selector = row[2] or {}
+        quote = selector.get("quote") if isinstance(selector, dict) else None
+        exact = str(quote.get("exact") or "") if isinstance(quote, dict) else ""
+        out.append(LoadedResource(uri=ref.uri, scheme="passage_anchor", body=exact))
+    return out
+
+
 # ---------- presentation ------------------------------------------------------
 
 
@@ -1420,6 +1450,8 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             inline_body=None,
             fetch_hint="",
         )
+    if scheme == "passage_anchor":
+        return _read_resolved(loaded, label=_first_line(loaded.body or "")[:120] or "Passage")
     if scheme == "reader_apparatus_item":
         body = loaded.body or ""
         source = f" in {loaded.source_label}" if loaded.source_label else ""

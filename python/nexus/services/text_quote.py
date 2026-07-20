@@ -15,6 +15,7 @@ guesses a wrong anchor (amanuensis D-4).
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
@@ -22,7 +23,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Fragment
+from nexus.db.models import Fragment, NoteBlock
+from nexus.services.pdf_quote_match import PREFIX_SUFFIX_WINDOW
 
 
 class QuoteStatus(str, Enum):
@@ -102,3 +104,173 @@ def _find_all_occurrences(text: str, needle: str) -> list[int]:
         positions.append(idx)
         start = idx + 1
     return positions
+
+
+# ---------------------------------------------------------------------------
+# Normalized-space matching for passage anchors
+# (universal-link-authoring-hard-cutover.md, Passage Anchor). Quote identity is
+# normalized (NFC, whitespace runs -> one space, trimmed ends); these helpers
+# match that identity against current owner text and map hits back to raw
+# codepoint offsets.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedText:
+    """Whitespace-collapsed NFC text with per-char raw spans.
+
+    ``spans[i]`` is the ``[start, end)`` codepoint span in the NFC source that
+    normalized char ``i`` came from (a collapsed whitespace run maps to one
+    U+0020). Owner texts (fragment canonical_text, media plain_text, note
+    body_text) are produced NFC, so NFC here is a no-op and raw spans index the
+    stored text directly.
+    """
+
+    text: str
+    spans: tuple[tuple[int, int], ...]
+
+
+def normalize_for_match(text: str) -> NormalizedText:
+    nfc = unicodedata.normalize("NFC", text)
+    chars: list[str] = []
+    spans: list[tuple[int, int]] = []
+    i = 0
+    length = len(nfc)
+    while i < length:
+        if nfc[i].isspace():
+            j = i
+            while j < length and nfc[j].isspace():
+                j += 1
+            chars.append(" ")
+            spans.append((i, j))
+            i = j
+        else:
+            chars.append(nfc[i])
+            spans.append((i, i + 1))
+            i += 1
+    return NormalizedText(text="".join(chars), spans=tuple(spans))
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteCandidate:
+    raw_start: int
+    raw_end: int
+    normalized_start: int
+    normalized_end: int
+
+
+def find_quote_candidates(
+    normalized: NormalizedText,
+    *,
+    exact: str,
+    prefix: str,
+    suffix: str,
+) -> list[QuoteCandidate]:
+    """Occurrences of a normalized quote, narrowed by normalized context.
+
+    ``exact``/``prefix``/``suffix`` must already be normalized (trimmed), so the
+    context comparison tolerates the single collapsed space at each seam.
+    """
+    candidates: list[QuoteCandidate] = []
+    for start in _find_all_occurrences(normalized.text, exact):
+        end = start + len(exact)
+        if prefix and not normalized.text[:start].rstrip().endswith(prefix):
+            continue
+        if suffix and not normalized.text[end:].lstrip().startswith(suffix):
+            continue
+        candidates.append(
+            QuoteCandidate(
+                raw_start=normalized.spans[start][0],
+                raw_end=normalized.spans[end - 1][1],
+                normalized_start=start,
+                normalized_end=end,
+            )
+        )
+    return candidates
+
+
+def context_window(normalized: NormalizedText, *, start: int, end: int) -> tuple[str, str]:
+    """Nearest 64 normalized scalars each side, trimmed (shorter at boundaries)."""
+    prefix = normalized.text[max(0, start - PREFIX_SUFFIX_WINDOW) : start].strip()
+    suffix = normalized.text[end : end + PREFIX_SUFFIX_WINDOW].strip()
+    return prefix, suffix
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerQuoteMatch:
+    status: QuoteStatus
+    fragment_id: UUID | None
+    raw_start: int | None
+    raw_end: int | None
+    prefix: str
+    suffix: str
+    t_start_ms: int | None
+    t_end_ms: int | None
+
+
+_NO_OWNER_MATCH = OwnerQuoteMatch(QuoteStatus.no_match, None, None, None, "", "", None, None)
+
+
+def resolve_owner_quote(
+    db: Session,
+    *,
+    owner_scheme: str,
+    owner_id: UUID,
+    exact: str,
+    prefix: str = "",
+    suffix: str = "",
+) -> OwnerQuoteMatch:
+    """Resolve a normalized quote within one owner's current text.
+
+    Owners are ``media`` (fragment canonical_text; web/EPUB/transcript) or
+    ``note_block`` (body_text). Unique hits carry raw codepoint offsets into the
+    matched text plus the recomputed 64-scalar normalized context. Visibility is
+    the caller's concern.
+    """
+    if not exact:
+        return OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
+
+    if owner_scheme == "note_block":
+        body_text = db.execute(
+            select(NoteBlock.body_text).where(NoteBlock.id == owner_id)
+        ).scalar_one_or_none()
+        if body_text is None:
+            return _NO_OWNER_MATCH
+        sources: list[tuple[UUID | None, str, int | None, int | None]] = [
+            (None, body_text, None, None)
+        ]
+    else:
+        rows = db.execute(
+            select(Fragment.id, Fragment.canonical_text, Fragment.t_start_ms, Fragment.t_end_ms)
+            .where(Fragment.media_id == owner_id)
+            .order_by(Fragment.idx)
+        ).all()
+        sources = [(row[0], row[1], row[2], row[3]) for row in rows]
+
+    hits: list[tuple[UUID | None, int | None, int | None, NormalizedText, QuoteCandidate]] = []
+    for fragment_id, source_text, t_start_ms, t_end_ms in sources:
+        normalized = normalize_for_match(source_text)
+        for candidate in find_quote_candidates(
+            normalized, exact=exact, prefix=prefix, suffix=suffix
+        ):
+            hits.append((fragment_id, t_start_ms, t_end_ms, normalized, candidate))
+
+    if len(hits) > 1:
+        return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
+    if not hits:
+        return _NO_OWNER_MATCH
+
+    fragment_id, t_start_ms, t_end_ms, normalized, candidate = hits[0]
+    context_prefix, context_suffix = context_window(
+        normalized, start=candidate.normalized_start, end=candidate.normalized_end
+    )
+    return OwnerQuoteMatch(
+        status=QuoteStatus.unique,
+        fragment_id=fragment_id,
+        raw_start=candidate.raw_start,
+        raw_end=candidate.raw_end,
+        prefix=context_prefix,
+        suffix=context_suffix,
+        t_start_ms=t_start_ms,
+        t_end_ms=t_end_ms,
+    )

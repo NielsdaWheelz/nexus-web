@@ -176,6 +176,33 @@ def test_retry_serializable_reraises_after_exhausting_integrity_retries() -> Non
     assert db.rollbacks == 3
 
 
+@pytest.mark.parametrize(
+    "constraint_name",
+    [
+        "uq_passage_anchors_identity",
+        "uq_resource_edges_user_context_link_pair",
+        "uq_resource_edges_user_stance_directed_pair",
+        "highlights_pkey",
+    ],
+)
+def test_retry_serializable_retries_link_mutation_first_insert_race(constraint_name: str) -> None:
+    """A concurrent first insert racing the Link mutation's passage-anchor,
+    canonical Link pair, stance pair, or client-minted Highlight id is
+    retryable: the whole attempt reruns so the SELECT observes the winner."""
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error(constraint_name)
+        return "ok"
+
+    assert retry_serializable(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
+
+
 def test_retry_serializable_retries_reader_profile_pkey_race_then_succeeds() -> None:
     """A concurrent first PATCH-insert race on reader_profiles is retryable,
     not a defect: the whole attempt reruns so the SELECT observes the winner."""

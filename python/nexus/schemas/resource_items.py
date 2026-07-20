@@ -224,8 +224,28 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
             raise ValueError(f"{path} must contain only text nodes")
 
 
+class ResourceUserRelationPolicyOut(BaseModel):
+    user_link_source: bool = Field(
+        validation_alias=AliasChoices("user_link_source", "userLinkSource"),
+        serialization_alias="userLinkSource",
+    )
+    user_link_target: Literal["none", "direct", "materialize_passage"] = Field(
+        validation_alias=AliasChoices("user_link_target", "userLinkTarget"),
+        serialization_alias="userLinkTarget",
+    )
+    note_reference_target: bool = Field(
+        validation_alias=AliasChoices("note_reference_target", "noteReferenceTarget"),
+        serialization_alias="noteReferenceTarget",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ResourceItemCapabilitiesOut(BaseModel):
-    linkable: bool
+    user_relation: ResourceUserRelationPolicyOut = Field(
+        validation_alias=AliasChoices("user_relation", "userRelation"),
+        serialization_alias="userRelation",
+    )
     attachable: bool
     chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
         Field(

@@ -21,8 +21,21 @@ export type ResourceExpansionPolicy =
   | "note_block_owned_evidence"
   | "artifact_revisions";
 
+// Mirrors backend `ResourceUserRelationPolicy`
+// (python/nexus/services/resource_items/capabilities.py). Replaces the scalar
+// `linkable` boolean, which could not distinguish a direct durable endpoint
+// from raw material a search hit must materialize into a `passage_anchor`
+// before it can be linked (universal-link-authoring-hard-cutover.md,
+// Invariant 4).
+export type UserLinkTargetMode = "none" | "direct" | "materialize_passage";
+
+export interface ResourceUserRelationPolicy {
+  userLinkSource: boolean;
+  userLinkTarget: UserLinkTargetMode;
+}
+
 export interface ResourceCapabilityProjection {
-  linkable: boolean;
+  userRelation: ResourceUserRelationPolicy;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -48,7 +61,7 @@ export const SYNAPSE_SOURCE_SCHEMES = [
 // apps/web/src/lib/resourceGraph/contractParity.test.ts keeps this aligned.
 export const RESOURCE_CAPABILITIES = {
   media: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "readable",
     readable: "media",
@@ -63,7 +76,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   library: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "scope",
     readable: "scope",
@@ -78,7 +91,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   evidence_span: {
-    linkable: true,
+    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -93,7 +106,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   content_chunk: {
-    linkable: true,
+    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -108,7 +121,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   highlight: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "quote",
     readable: "body",
@@ -123,7 +136,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   page: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -138,7 +151,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   note_block: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -153,7 +166,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   fragment: {
-    linkable: true,
+    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -168,7 +181,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   conversation: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "label",
     readable: "body",
@@ -183,7 +196,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   message: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -198,7 +211,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   oracle_reading: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -213,7 +226,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   oracle_passage_anchor: {
-    linkable: true,
+    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
     attachable: false,
     chatSubject: "none",
     readable: "body",
@@ -228,7 +241,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   artifact: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -243,7 +256,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   artifact_revision: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -258,7 +271,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   external_snapshot: {
-    linkable: false,
+    userRelation: { userLinkSource: false, userLinkTarget: "none" },
     attachable: false,
     chatSubject: "none",
     readable: "none",
@@ -273,7 +286,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: false,
   },
   contributor: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -288,7 +301,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   podcast: {
-    linkable: true,
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -303,7 +316,7 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   reader_apparatus_item: {
-    linkable: true,
+    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -317,13 +330,22 @@ export const RESOURCE_CAPABILITIES = {
     adjacencySource: false,
     adjacencyTarget: true,
   },
+  passage_anchor: {
+    userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    attachable: true,
+    chatSubject: "quote",
+    readable: "body",
+    inspectable: "none",
+    citableResultType: null,
+    appSearchScope: false,
+    conversationSearchScope: false,
+    citationOutputSource: false,
+    promptRender: "quote",
+    expansionPolicy: "none",
+    adjacencySource: false,
+    adjacencyTarget: true,
+  },
 } as const satisfies Record<ResourceScheme, ResourceCapabilityProjection>;
-
-export type LinkableResourceScheme = {
-  [Scheme in ResourceScheme]: (typeof RESOURCE_CAPABILITIES)[Scheme]["linkable"] extends true
-    ? Scheme
-    : never;
-}[ResourceScheme];
 
 export function resourceCapabilityForScheme(
   scheme: ResourceScheme,
@@ -331,10 +353,16 @@ export function resourceCapabilityForScheme(
   return RESOURCE_CAPABILITIES[scheme];
 }
 
-export function resourceSchemeIsLinkable(
+/** Whether `scheme` can be the target of a durable, direct-endpoint Link or
+ * note reference. `materialize_passage` targets are raw material a search hit
+ * must convert into a `passage_anchor` first (Invariant 4); they are never
+ * themselves a direct edge/reference endpoint. Mirrors backend
+ * `resource_can_be_note_reference_target` / the `note_reference_target`
+ * property on `ResourceUserRelationPolicy`. */
+export function resourceCanBeNoteReferenceTarget(
   scheme: ResourceScheme,
-): scheme is LinkableResourceScheme {
-  return RESOURCE_CAPABILITIES[scheme].linkable;
+): boolean {
+  return RESOURCE_CAPABILITIES[scheme].userRelation.userLinkTarget === "direct";
 }
 
 export function resourceSchemeIsAppSearchScope(

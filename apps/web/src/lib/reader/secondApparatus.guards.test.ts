@@ -16,9 +16,12 @@ const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 
 describe("Second Apparatus cutover source gates", () => {
   // §13.2 — Second Apparatus adds no origin. The amanuensis cutover (same batch)
-  // adds exactly one — `assistant`, the house agent's hand — so EDGE_ORIGINS holds
-  // these eight and no others.
-  it("keeps EDGE_ORIGINS to the sanctioned origins (assistant is the only agent add)", () => {
+  // added exactly one — `assistant`, the house agent's hand. Universal Link
+  // Authoring (docs/cutovers/universal-link-authoring-hard-cutover.md, §Graph
+  // Shapes) narrowly supersedes this gate with exactly one further sanctioned
+  // add — `link_note`, the Link-note structural attachment origin — so
+  // EDGE_ORIGINS holds these nine and no others.
+  it("keeps EDGE_ORIGINS to the sanctioned origins (assistant, then link_note, are the only agent adds)", () => {
     const edges = sourceText("src/lib/resourceGraph/edges.ts");
     const block = edges.slice(edges.indexOf("EDGE_ORIGINS = ["));
     const literals = block.slice(0, block.indexOf("]")).match(/"[a-z_]+"/g) ?? [];
@@ -31,6 +34,7 @@ describe("Second Apparatus cutover source gates", () => {
       '"synapse"',
       '"document_embed"',
       '"assistant"',
+      '"link_note"',
     ]);
   });
 

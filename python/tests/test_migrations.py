@@ -3862,7 +3862,14 @@ class TestS2HighlightsNotesConstraints:
             ).scalar_one()
             assert count == 2
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -4032,6 +4039,10 @@ class TestS2HighlightsNotesConstraints:
                 {"note_a_id": note_a_id, "note_b_id": note_b_id},
             )
             session.execute(text("DELETE FROM pages WHERE id = :id"), {"id": page_id})
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                {"id": highlight_id},
+            )
             session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
@@ -4093,7 +4104,14 @@ class TestS2HighlightsNotesConstraints:
             count = result.scalar()
             assert count == len(valid_colors)
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -4172,7 +4190,14 @@ class TestS2HighlightsNotesConstraints:
             )
             assert result.scalar() == 3
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -19050,3 +19075,767 @@ class TestMigration0183DefaultLibraryVirtualization:
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
+
+
+def _load_migration_0184():
+    """Import the 0184 migration file for its frozen inline helpers."""
+    import importlib.util
+    import sys
+
+    name = "migration_0184_universal_link_authoring"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = os.path.join(
+        get_migrations_dir(), "alembic", "versions", "0184_universal_link_authoring.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: dataclass field-type resolution looks the module
+    # up in sys.modules.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestMigration0184InlineHelperParity:
+    """PLAN decision 8: 0184 inlines quote normalization/anchor-key/matching
+    (no service imports); the frozen copies must equal the runtime
+    services/passage_anchors.py + services/text_quote.py outputs on the gold
+    vectors from test_passage_anchors.py."""
+
+    GOLD_TEXTS = [
+        "Café society",
+        "Café  society",  # decomposed e + combining acute, double space
+        "a\r\nb",
+        "a\rb",
+        " \ta 　 b  ",
+        "foo\n\nbar baz",
+        "red one two blue and later green one two yellow",
+        "",
+    ]
+
+    def test_normalize_quote_matches_service(self):
+        from nexus.services import passage_anchors
+
+        mig = _load_migration_0184()
+        for value in self.GOLD_TEXTS:
+            assert mig._normalize_quote(value) == passage_anchors.normalize_quote_text(value), (
+                f"normalization diverged for {value!r}"
+            )
+
+    def test_normalize_with_spans_matches_service(self):
+        from nexus.services.text_quote import normalize_for_match
+
+        mig = _load_migration_0184()
+        for value in self.GOLD_TEXTS:
+            normalized = normalize_for_match(value)
+            text_out, spans_out = mig._normalize_with_spans(value)
+            assert text_out == normalized.text, f"normalized text diverged for {value!r}"
+            assert spans_out == normalized.spans, f"raw spans diverged for {value!r}"
+
+    def test_anchor_key_matches_service_and_pinned_encoding(self):
+        import hashlib as _hashlib
+
+        from nexus.services import passage_anchors
+
+        mig = _load_migration_0184()
+        # The exact canonical-JSON encoding pin from test_passage_anchors.py.
+        pinned = _hashlib.sha256('{"exact":"é x","prefix":"a","suffix":"b"}'.encode()).hexdigest()
+        assert mig._anchor_key(exact="é x", prefix="a", suffix="b") == pinned
+        for exact, prefix, suffix in [
+            ("é x", "a", "b"),
+            ("a", "b", "c"),
+            ("a", "B", "c"),
+            ("kilo lima mike", "india juliet", "november oscar"),
+            ("quote", "", ""),
+        ]:
+            assert mig._anchor_key(
+                exact=exact, prefix=prefix, suffix=suffix
+            ) == passage_anchors.compute_anchor_key(exact=exact, prefix=prefix, suffix=suffix)
+
+    def test_context_window_matches_service(self):
+        from nexus.services.text_quote import context_window, normalize_for_match
+
+        mig = _load_migration_0184()
+        source = (
+            "Alpha bravo charlie delta echo foxtrot golf hotel india juliet "
+            "kilo lima mike november oscar papa quebec romeo sierra tango "
+            "uniform victor whiskey xray yankee zulu."
+        )
+        normalized = normalize_for_match(source)
+        for needle in ("Alpha bravo", "kilo lima mike", "yankee zulu."):
+            start = normalized.text.index(needle)
+            end = start + len(needle)
+            assert mig._context_window(normalized.text, start=start, end=end) == context_window(
+                normalized, start=start, end=end
+            )
+
+
+class TestMigration0184UniversalLinkAuthoring:
+    """0184 materializes passage anchors for derived Link/stance/note-body
+    endpoints, deletes already-lost refs with an exact report, canonicalizes
+    orderless neutral Links (view-state rebind before loser deletion), swaps
+    the broad context-pair index for the three shape-owned indexes, and drops
+    the destructive Highlight trigger/FK cascade."""
+
+    TEXT = (
+        "Alpha bravo charlie delta echo foxtrot golf hotel india juliet "
+        "kilo lima mike november oscar papa quebec romeo sierra tango "
+        "uniform victor whiskey xray yankee zulu."
+    )
+
+    def _insert_user(self, session, user_id):
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+    def _insert_media(self, session, media_id, user_id):
+        session.execute(
+            text(
+                "INSERT INTO media (id, kind, title, processing_status, created_by_user_id)"
+                " VALUES (:id, 'web_article', 'M', 'ready_for_reading', :user_id)"
+            ),
+            {"id": media_id, "user_id": user_id},
+        )
+
+    def _insert_fragment(self, session, fragment_id, media_id, content, idx=0):
+        session.execute(
+            text(
+                "INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)"
+                " VALUES (:id, :media_id, :idx, :content, '<p>f</p>')"
+            ),
+            {"id": fragment_id, "media_id": media_id, "idx": idx, "content": content},
+        )
+
+    def _insert_evidence_span(self, session, span_id, media_id, block_id, span_text):
+        session.execute(
+            text(
+                "INSERT INTO evidence_spans (id, owner_kind, owner_id, start_block_id,"
+                " end_block_id, start_block_offset, end_block_offset, span_text, selector,"
+                " citation_label, resolver_kind)"
+                " VALUES (:id, 'media', :media_id, :block_id, :block_id, 0, 1, :span_text,"
+                " '{}'::jsonb, 'label', 'web')"
+            ),
+            {"id": span_id, "media_id": media_id, "block_id": block_id, "span_text": span_text},
+        )
+
+    def _insert_content_block(self, session, block_id, media_id, canonical_text):
+        session.execute(
+            text(
+                "INSERT INTO content_blocks (id, owner_kind, owner_id, block_idx, block_kind,"
+                " canonical_text, source_start_offset, source_end_offset, heading_path,"
+                " locator, selector, metadata)"
+                " VALUES (:id, 'media', :media_id, 0, 'paragraph', :canonical_text, 0, 1,"
+                " '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)"
+            ),
+            {"id": block_id, "media_id": media_id, "canonical_text": canonical_text},
+        )
+
+    def _insert_note(self, session, note_id, user_id, body_pm_json, body_text):
+        session.execute(
+            text(
+                "INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)"
+                " VALUES (:id, :user_id, CAST(:doc AS jsonb), :body_text)"
+            ),
+            {
+                "id": note_id,
+                "user_id": user_id,
+                "doc": json.dumps(body_pm_json),
+                "body_text": body_text,
+            },
+        )
+
+    def _insert_edge(
+        self,
+        session,
+        edge_id,
+        user_id,
+        source,
+        target,
+        *,
+        kind="context",
+        origin="user",
+        created_at=None,
+        source_order_key=None,
+    ):
+        session.execute(
+            text(
+                "INSERT INTO resource_edges (id, user_id, kind, origin, source_scheme,"
+                " source_id, target_scheme, target_id, source_order_key, created_at)"
+                " VALUES (:id, :user_id, :kind, :origin, :ss, :si, :ts, :ti, :order_key,"
+                " COALESCE(:created_at, now()))"
+            ),
+            {
+                "id": edge_id,
+                "user_id": user_id,
+                "kind": kind,
+                "origin": origin,
+                "ss": source[0],
+                "si": source[1],
+                "ts": target[0],
+                "ti": target[1],
+                "order_key": source_order_key,
+                "created_at": created_at,
+            },
+        )
+
+    def _insert_view_state(
+        self, session, state_id, user_id, surface, edge_id, target, *, updated_at=None
+    ):
+        session.execute(
+            text(
+                "INSERT INTO resource_view_states (id, user_id, surface_scheme, surface_id,"
+                " edge_id, target_scheme, target_id, state, updated_at)"
+                " VALUES (:id, :user_id, :sfs, :sfi, :edge_id, :ts, :ti, '{}'::jsonb,"
+                " COALESCE(:updated_at, now()))"
+            ),
+            {
+                "id": state_id,
+                "user_id": user_id,
+                "sfs": surface[0],
+                "sfi": surface[1],
+                "edge_id": edge_id,
+                "ts": target[0] if target else None,
+                "ti": target[1] if target else None,
+                "updated_at": updated_at,
+            },
+        )
+
+    def _edge_row(self, session, edge_id):
+        return session.execute(
+            text(
+                "SELECT source_scheme, source_id, target_scheme, target_id, kind, origin,"
+                " source_order_key FROM resource_edges WHERE id = :id"
+            ),
+            {"id": edge_id},
+        ).fetchone()
+
+    def test_0184_converts_canonicalizes_and_hardens(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_1 = uuid4()
+            media_2 = uuid4()
+            fragment_1 = uuid4()
+            fragment_dead = uuid4()
+            note_id = uuid4()
+            note_2 = uuid4()
+            block_1 = uuid4()
+            span_unique = uuid4()
+            span_stale = uuid4()
+            highlight_id = uuid4()
+
+            e_link_unique = uuid4()
+            e_link_stale = uuid4()
+            e_note_body = uuid4()
+            e_dead = uuid4()
+            e_dup_a = uuid4()
+            e_dup_b = uuid4()
+            e_flip = uuid4()
+            e_stance = uuid4()
+            e_ordered = uuid4()
+            e_ordered_derived = uuid4()
+
+            vs_dead = uuid4()
+            vs_dup = uuid4()
+            vs_dup_collide = uuid4()
+            vs_conv = uuid4()
+
+            t0 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
+            t1 = datetime(2026, 7, 1, 11, 0, 0, tzinfo=UTC)
+            t2 = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            doc = {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "See "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "evidence_span",
+                                    "objectId": str(span_unique),
+                                    "label": "a span",
+                                },
+                            },
+                            {"type": "text", "text": " and "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "fragment",
+                                    "objectId": str(fragment_dead),
+                                    "label": "lost chip",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_1, user_id)
+                self._insert_media(session, media_2, user_id)
+                self._insert_fragment(session, fragment_1, media_1, self.TEXT)
+                self._insert_note(session, note_id, user_id, doc, "See a span and lost chip")
+                self._insert_note(session, note_2, user_id, {"type": "doc", "content": []}, "")
+                self._insert_content_block(session, block_1, media_1, self.TEXT)
+                self._insert_evidence_span(session, span_unique, media_1, block_1, "kilo lima mike")
+                self._insert_evidence_span(
+                    session, span_stale, media_1, block_1, "totally absent words"
+                )
+
+                note_ref = ("note_block", note_id)
+                self._insert_edge(
+                    session,
+                    e_link_unique,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_unique),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_link_stale,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_stale),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_note_body,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_unique),
+                    origin="note_body",
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_dead,
+                    user_id,
+                    ("media", media_1),
+                    ("fragment", fragment_dead),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session, e_dup_a, user_id, ("media", media_1), note_ref, created_at=t1
+                )
+                self._insert_edge(
+                    session, e_dup_b, user_id, note_ref, ("media", media_1), created_at=t2
+                )
+                # Stored non-canonically (note_block > media): must flip.
+                self._insert_edge(
+                    session, e_flip, user_id, note_ref, ("media", media_2), created_at=t0
+                )
+                # Directional stance: preserved verbatim, never canonicalized.
+                self._insert_edge(
+                    session,
+                    e_stance,
+                    user_id,
+                    ("note_block", note_2),
+                    ("media", media_1),
+                    kind="supports",
+                    created_at=t0,
+                )
+                # Ordered adjacency: untouched.
+                self._insert_edge(
+                    session,
+                    e_ordered,
+                    user_id,
+                    note_ref,
+                    ("note_block", note_2),
+                    created_at=t0,
+                    source_order_key="a0",
+                )
+                # Ordered adjacency with a derived-scheme endpoint: also
+                # untouched — never inventoried, converted, or aborted on
+                # (AC21: the migration never touches ordered adjacency).
+                self._insert_edge(
+                    session,
+                    e_ordered_derived,
+                    user_id,
+                    note_ref,
+                    ("fragment", fragment_1),
+                    created_at=t0,
+                    source_order_key="a1",
+                )
+
+                self._insert_view_state(
+                    session,
+                    vs_dead,
+                    user_id,
+                    ("media", media_1),
+                    e_dead,
+                    ("fragment", fragment_dead),
+                )
+                # Rebind occurrence collision: the loser edge's view state
+                # (vs_dup, freshest) and the winner edge's own view state
+                # (vs_dup_collide, stale) land on the same
+                # (user, surface, edge) occurrence after rebind; the latest
+                # (updated_at, id) must win (spec step 5, matching 0179).
+                self._insert_view_state(
+                    session,
+                    vs_dup,
+                    user_id,
+                    ("media", media_1),
+                    e_dup_b,
+                    ("note_block", note_id),
+                    updated_at=t2,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_dup_collide,
+                    user_id,
+                    ("media", media_1),
+                    e_dup_a,
+                    ("note_block", note_id),
+                    updated_at=t1,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_conv,
+                    user_id,
+                    ("note_block", note_id),
+                    e_link_unique,
+                    ("evidence_span", span_unique),
+                )
+
+                insert_canonical_fragment_highlight(
+                    session,
+                    highlight_id=highlight_id,
+                    user_id=user_id,
+                    media_id=media_1,
+                    fragment_id=fragment_1,
+                    start_offset=0,
+                    end_offset=10,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            assert f"already lost: fragment:{fragment_dead}" in result.stdout
+            assert f"deleted dead edge {e_dead}" in result.stdout
+
+            with Session(engine) as session:
+                # Two anchors: one uniquely resolved, one durable-but-unresolved.
+                anchors = session.execute(
+                    text(
+                        "SELECT id, user_id, owner_scheme, owner_id, selector_version,"
+                        " selector FROM passage_anchors ORDER BY created_at, id"
+                    )
+                ).fetchall()
+                assert len(anchors) == 2
+                by_exact = {row[5]["quote"]["exact"]: row for row in anchors}
+                resolved = by_exact["kilo lima mike"]
+                unresolved = by_exact["totally absent words"]
+                for row in anchors:
+                    assert str(row[1]) == str(user_id)
+                    assert row[2] == "media"
+                    assert str(row[3]) == str(media_1)
+                    assert row[4] == 1
+                assert resolved[5]["quote"]["prefix"] != ""
+                assert resolved[5]["quote"]["suffix"] != ""
+                assert resolved[5]["locator_hint"] == {
+                    "kind": "text",
+                    "fragment_id": str(fragment_1),
+                    "start_offset": self.TEXT.index("kilo lima mike"),
+                    "end_offset": self.TEXT.index("kilo lima mike") + len("kilo lima mike"),
+                }
+                assert unresolved[5]["quote"]["prefix"] == ""
+                assert unresolved[5]["quote"]["suffix"] == ""
+                assert unresolved[5]["locator_hint"] is None
+                anchor_resolved = str(resolved[0])
+                anchor_unresolved = str(unresolved[0])
+
+                # Link + note_body edges rewritten onto the anchors.
+                row = self._edge_row(session, e_link_unique)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_resolved)
+                row = self._edge_row(session, e_link_stale)
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_unresolved)
+                row = self._edge_row(session, e_note_body)
+                assert row[5] == "note_body"
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_resolved)
+
+                # Already-lost endpoint: dead edge + its view state are gone.
+                assert self._edge_row(session, e_dead) is None
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"), {"id": vs_dead}
+                    ).fetchone()
+                    is None
+                )
+
+                # Duplicate neutral Links (reverse orientation): earliest wins,
+                # loser view state rebinds to the winner before deletion. The
+                # rebind collides with the winner's own occurrence on the same
+                # surface: the latest (updated_at, id) — vs_dup — survives and
+                # is rebound; the stale occurrence is deleted.
+                assert self._edge_row(session, e_dup_b) is None
+                row = self._edge_row(session, e_dup_a)
+                assert (row[0], str(row[1])) == ("media", str(media_1))
+                assert (row[2], str(row[3])) == ("note_block", str(note_id))
+                rebound = session.execute(
+                    text("SELECT edge_id FROM resource_view_states WHERE id = :id"),
+                    {"id": vs_dup},
+                ).scalar_one()
+                assert str(rebound) == str(e_dup_a)
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"),
+                        {"id": vs_dup_collide},
+                    ).fetchone()
+                    is None
+                )
+
+                # Non-canonical single Link is flipped into (scheme, id) order.
+                row = self._edge_row(session, e_flip)
+                assert (row[0], str(row[1])) == ("media", str(media_2))
+                assert (row[2], str(row[3])) == ("note_block", str(note_id))
+
+                # Stance keeps its authored direction; ordered adjacency is
+                # untouched.
+                row = self._edge_row(session, e_stance)
+                assert (row[0], str(row[1])) == ("note_block", str(note_2))
+                assert (row[2], str(row[3])) == ("media", str(media_1))
+                assert row[4] == "supports"
+                row = self._edge_row(session, e_ordered)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("note_block", str(note_2))
+                assert row[6] == "a0"
+                # The ordered edge keeps its derived endpoint verbatim: no
+                # abort, no conversion (the len(anchors) == 2 assertion above
+                # already pins that it was never inventoried).
+                row = self._edge_row(session, e_ordered_derived)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("fragment", str(fragment_1))
+                assert row[6] == "a1"
+
+                # Edge-bound view-state resource refs follow the rewrite.
+                vs_row = session.execute(
+                    text(
+                        "SELECT target_scheme, target_id FROM resource_view_states WHERE id = :id"
+                    ),
+                    {"id": vs_conv},
+                ).fetchone()
+                assert (vs_row[0], str(vs_row[1])) == ("passage_anchor", anchor_resolved)
+
+                # Note JSON: live chip rewritten in place, lost chip unwrapped
+                # to its label text; body_text reprojected.
+                note_row = session.execute(
+                    text("SELECT body_pm_json, body_text FROM note_blocks WHERE id = :id"),
+                    {"id": note_id},
+                ).fetchone()
+                inline = note_row[0]["content"][0]["content"]
+                assert inline[1]["type"] == "object_ref"
+                assert inline[1]["attrs"]["objectType"] == "passage_anchor"
+                assert inline[1]["attrs"]["objectId"] == anchor_resolved
+                assert inline[1]["attrs"]["label"] == "a span"
+                assert inline[3] == {"type": "text", "text": "lost chip"}
+                assert "lost chip" in note_row[1]
+
+                # Index swap: broad index gone, three replacements + retained
+                # ordered-adjacency index present.
+                index_names = {
+                    row[0]
+                    for row in session.execute(
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'resource_edges'")
+                    ).fetchall()
+                }
+                assert "uq_resource_edges_context_pair" not in index_names
+                assert "uq_resource_edges_user_context_link_pair" in index_names
+                assert "uq_resource_edges_user_stance_directed_pair" in index_names
+                assert "uq_resource_edges_nonuser_orderless_pair" in index_names
+                assert "uq_resource_edges_source_order" in index_names
+
+                # Trigger + function dropped; fragment cache FK dropped; the
+                # six Highlight-family FKs are non-cascading (NO ACTION).
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT 1 FROM pg_trigger"
+                            " WHERE tgname = 'trg_highlight_fragment_anchor_delete_core'"
+                        )
+                    ).fetchone()
+                    is None
+                )
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT 1 FROM pg_proc"
+                            " WHERE proname = 'delete_fragment_highlight_after_anchor_delete'"
+                        )
+                    ).fetchone()
+                    is None
+                )
+                fk_rows = session.execute(
+                    text(
+                        "SELECT rel.relname, att.attname, con.confdeltype"
+                        " FROM pg_constraint con"
+                        " JOIN pg_class rel ON rel.oid = con.conrelid"
+                        " JOIN pg_attribute att"
+                        "   ON att.attrelid = rel.oid AND att.attnum = con.conkey[1]"
+                        " WHERE con.contype = 'f' AND rel.relname IN"
+                        " ('highlights', 'highlight_fragment_anchors',"
+                        "  'highlight_pdf_anchors', 'highlight_pdf_quads')"
+                    )
+                ).fetchall()
+                fk_map = {(row[0], row[1]): row[2] for row in fk_rows}
+                assert ("highlight_fragment_anchors", "fragment_id") not in fk_map
+                for key in [
+                    ("highlights", "user_id"),
+                    ("highlights", "anchor_media_id"),
+                    ("highlight_fragment_anchors", "highlight_id"),
+                    ("highlight_pdf_anchors", "highlight_id"),
+                    ("highlight_pdf_anchors", "media_id"),
+                    ("highlight_pdf_quads", "highlight_id"),
+                ]:
+                    assert fk_map[key] == "a", f"{key} must be NO ACTION"
+
+            # Behavior: fragment replacement no longer destroys the Highlight
+            # (no FK cascade, no trigger) and anchor-row deletion no longer
+            # deletes the Highlight root.
+            with Session(engine) as session:
+                session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_1})
+                session.commit()
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                        {"id": highlight_id},
+                    ).fetchone()
+                    is not None
+                )
+                session.execute(
+                    text("DELETE FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                    {"id": highlight_id},
+                )
+                session.commit()
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM highlights WHERE id = :id"), {"id": highlight_id}
+                    ).fetchone()
+                    is not None
+                )
+
+            # CHECK vocabulary: link_note origin and passage_anchor scheme are
+            # accepted everywhere the closed contract names them.
+            with Session(engine) as session:
+                self._insert_edge(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("note_block", note_id),
+                    ("media", media_1),
+                    origin="link_note",
+                )
+                self._insert_edge(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("passage_anchor", UUID(anchor_resolved)),
+                    ("media", media_2),
+                )
+                self._insert_view_state(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("media", media_1),
+                    None,
+                    ("passage_anchor", UUID(anchor_resolved)),
+                )
+                session.commit()
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("note_block", note_id),
+                        ("media", media_1),
+                        origin="bogus",
+                    )
+                assert "ck_resource_edges_origin" in str(exc_info.value)
+            with Session(engine) as session:
+                # The new partial unique index enforces one neutral Link per
+                # directed (canonical) pair.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("media", media_1),
+                        ("note_block", note_id),
+                    )
+                assert "uq_resource_edges_user_context_link_pair" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0184_aborts_on_live_unconvertible_ref_with_no_partial_state(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_empty = uuid4()
+            edge_id = uuid4()
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, user_id)
+                # Live fragment with no durable quote identity: readable but
+                # unconvertible — the migration must abort, never guess.
+                self._insert_fragment(session, fragment_empty, media_id, "")
+                self._insert_edge(
+                    session,
+                    edge_id,
+                    user_id,
+                    ("media", media_id),
+                    ("fragment", fragment_empty),
+                )
+                session.commit()
+
+            with Session(engine) as session:
+                counts = {
+                    table: session.execute(
+                        text(f"SELECT count(*) FROM {table}")  # noqa: S608
+                    ).scalar_one()
+                    for table in ("resource_edges", "resource_view_states", "note_blocks")
+                }
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "0184 must abort on a live unconvertible ref"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "unconvertible" in combined
+            assert f"fragment:{fragment_empty}" in combined
+            assert str(edge_id) in combined
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0183", "a failed 0184 must leave the version at 0183"
+                assert (
+                    session.execute(text("SELECT to_regclass('public.passage_anchors')")).scalar()
+                    is None
+                )
+                for table, expected in counts.items():
+                    actual = session.execute(
+                        text(f"SELECT count(*) FROM {table}")  # noqa: S608
+                    ).scalar_one()
+                    assert actual == expected, f"{table} changed during a failed run"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

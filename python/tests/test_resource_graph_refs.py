@@ -99,6 +99,8 @@ def _scheme_is_handled(scheme: ResourceScheme) -> bool:
         return True
     if scheme == "reader_apparatus_item":
         return True
+    if scheme == "passage_anchor":
+        return True
     assert_never(scheme)
 
 

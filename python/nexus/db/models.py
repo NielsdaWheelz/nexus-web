@@ -21,6 +21,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -384,7 +385,7 @@ class ResourceVersion(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_versions_resource_scheme",
@@ -510,7 +511,7 @@ class ResourceViewState(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_view_states_surface_scheme",
@@ -524,7 +525,7 @@ class ResourceViewState(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_view_states_target_scheme",
@@ -596,7 +597,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'synapse', 'document_embed', 'assistant'
+                'synapse', 'document_embed', 'assistant', 'link_note'
             )
             """,
             name="ck_resource_edges_origin",
@@ -610,7 +611,7 @@ class ResourceEdge(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_edges_source_scheme",
@@ -624,7 +625,7 @@ class ResourceEdge(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_edges_target_scheme",
@@ -814,8 +815,47 @@ class ResourceEdge(Base):
             unique=True,
             postgresql_where=text("ordinal IS NOT NULL"),
         ),
+        # One neutral Link per user and directed pair; the service canonicalizes
+        # the pair to total (scheme, id) order before insert, so directed
+        # uniqueness here is unordered uniqueness in practice
+        # (universal-link-authoring-hard-cutover.md, Graph Shapes).
         Index(
-            "uq_resource_edges_context_pair",
+            "uq_resource_edges_user_context_link_pair",
+            "user_id",
+            "source_scheme",
+            "source_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'user' AND kind = 'context' AND ordinal IS NULL"
+                " AND snapshot IS NULL AND source_order_key IS NULL"
+                " AND target_order_key IS NULL"
+            ),
+        ),
+        # One stance per user and directed pair, excluding kind so supports and
+        # contradicts share the slot; the opposite-orientation invariant is
+        # transaction-enforced by the stance service, this index catches
+        # same-orientation races.
+        Index(
+            "uq_resource_edges_user_stance_directed_pair",
+            "user_id",
+            "source_scheme",
+            "source_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'user' AND kind IN ('supports', 'contradicts')"
+                " AND ordinal IS NULL AND snapshot IS NULL"
+                " AND source_order_key IS NULL AND target_order_key IS NULL"
+            ),
+        ),
+        # Directed per-origin dedupe for non-user orderless bare pairs,
+        # replacing the dropped broad uq_resource_edges_context_pair without
+        # colliding ordered adjacency or user-shape rows.
+        Index(
+            "uq_resource_edges_nonuser_orderless_pair",
             "user_id",
             "origin",
             "source_scheme",
@@ -823,7 +863,10 @@ class ResourceEdge(Base):
             "target_scheme",
             "target_id",
             unique=True,
-            postgresql_where=text("ordinal IS NULL"),
+            postgresql_where=text(
+                "origin <> 'user' AND ordinal IS NULL"
+                " AND source_order_key IS NULL AND target_order_key IS NULL"
+            ),
         ),
         Index(
             "uq_resource_edges_source_order",
@@ -883,6 +926,49 @@ class ResourceExternalSnapshot(Base):
         CheckConstraint(
             "jsonb_typeof(source_snapshot) = 'object'",
             name="ck_resource_external_snapshots_source_object",
+        ),
+    )
+
+
+class PassageAnchor(Base):
+    """User-owned durable passage identity within one owner (media or
+    note_block), materialized when a Link/stance targets a derived passage
+    (universal-link-authoring-hard-cutover.md, Passage Anchor). Owner, version,
+    normalized quote, and key are immutable; only the selector's locator_hint
+    is replaceable. ``id`` is application-generated. ``owner_id`` is
+    polymorphic and deliberately has no FK; owner visibility and explicit
+    owner cleanup replace it. Shape is service-validated, not a CHECK/trigger.
+    """
+
+    __tablename__ = "passage_anchors"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_passage_anchors_user"),
+        nullable=False,
+    )
+    owner_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    selector_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # sha256 hex of the canonical normalized quote {exact, prefix, suffix}.
+    anchor_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Quote identity plus non-identity locator_hint.
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "owner_scheme",
+            "owner_id",
+            "selector_version",
+            "anchor_key",
+            name="uq_passage_anchors_identity",
         ),
     )
 
@@ -3522,7 +3608,7 @@ class Highlight(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
 
@@ -3530,7 +3616,7 @@ class Highlight(Base):
     anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     anchor_media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=True,
     )
 
@@ -3565,26 +3651,22 @@ class Highlight(Base):
         ),
     )
 
-    # Relationships
+    # Relationships. No ORM cascade ownership: Highlight deletion is explicit
+    # child-first cleanup (universal-link-authoring-hard-cutover.md, Highlight
+    # Durability).
     fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship(
         "HighlightFragmentAnchor",
         back_populates="highlight",
         uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
         "HighlightPdfAnchor",
         back_populates="highlight",
         uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
         "HighlightPdfQuad",
         back_populates="highlight",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
 
 
@@ -3604,14 +3686,13 @@ class HighlightFragmentAnchor(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
-    fragment_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    # Disposable locator cache pointer: no FK — fragments are replaceable
+    # index rows, and a stale fragment_id is an expected state resolved by
+    # quote (universal-link-authoring-hard-cutover.md, Highlight Durability).
+    fragment_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -3624,7 +3705,11 @@ class HighlightFragmentAnchor(Base):
     )
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
-    fragment: Mapped["Fragment"] = relationship("Fragment")
+    fragment: Mapped["Fragment | None"] = relationship(
+        "Fragment",
+        primaryjoin="foreign(HighlightFragmentAnchor.fragment_id) == Fragment.id",
+        viewonly=True,
+    )
 
 
 class HighlightPdfAnchor(Base):
@@ -3638,12 +3723,12 @@ class HighlightPdfAnchor(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=False,
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -3697,7 +3782,7 @@ class HighlightPdfQuad(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
     quad_idx: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -4858,7 +4943,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_passage_anchor', 'artifact', "
             "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item')",
+            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
         ),
         CheckConstraint(
@@ -4867,7 +4952,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_passage_anchor', 'artifact', "
             "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item')",
+            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
             name="ck_chat_run_turn_contexts_subject_scheme",
         ),
         Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),

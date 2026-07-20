@@ -33,7 +33,10 @@ from nexus.services.resource_graph.schemas import (
     snapshot_from_jsonb,
     snapshot_to_jsonb,
 )
-from nexus.services.resource_items.capabilities import resource_can_link
+from nexus.services.resource_items.capabilities import (
+    resource_can_link_source,
+    resource_can_link_target,
+)
 
 
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
@@ -185,9 +188,9 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
     """Boundary validation plus visibility checks for edge writes."""
     validate_edge_shape(edge)
     if edge.origin == "user":
-        if not resource_can_link(edge.source):
+        if not resource_can_link_source(edge.source):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
-        if not resource_can_link(edge.target):
+        if not resource_can_link_target(edge.target):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
     # Missing targets are rejected unless the target is an external snapshot,
     # which exists to outlive whatever it captured (§7.3).

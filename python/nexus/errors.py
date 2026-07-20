@@ -151,6 +151,12 @@ class ApiErrorCode(str, Enum):
     E_AUTHOR_ALREADY_LISTED = "E_AUTHOR_ALREADY_LISTED"  # 422 - duplicate canonical contributor
     E_AUTHOR_NOT_SELECTABLE = "E_AUTHOR_NOT_SELECTABLE"  # 422 - unknown or invisible handle
 
+    # Link errors (409/422)
+    E_LINK_SELF = "E_LINK_SELF"  # 422 - Link source and target are the same resource
+    E_LINK_CAPABILITY = "E_LINK_CAPABILITY"  # 422 - endpoint not admissible for a user Link
+    E_LINK_TARGET_AMBIGUOUS = "E_LINK_TARGET_AMBIGUOUS"  # 422 - quote not unique within owner
+    E_LINK_TARGET_STALE = "E_LINK_TARGET_STALE"  # 409 - passage candidate row no longer exists
+
     # Ingestion errors (502/504)
     E_INGEST_FAILED = "E_INGEST_FAILED"  # 502
     E_INGEST_TIMEOUT = "E_INGEST_TIMEOUT"  # 504
@@ -300,6 +306,11 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Author errors
     ApiErrorCode.E_AUTHOR_ALREADY_LISTED: 422,
     ApiErrorCode.E_AUTHOR_NOT_SELECTABLE: 422,
+    # Link errors
+    ApiErrorCode.E_LINK_SELF: 422,
+    ApiErrorCode.E_LINK_CAPABILITY: 422,
+    ApiErrorCode.E_LINK_TARGET_AMBIGUOUS: 422,
+    ApiErrorCode.E_LINK_TARGET_STALE: 409,
     # Ingestion errors
     ApiErrorCode.E_INGEST_FAILED: 502,
     ApiErrorCode.E_INGEST_TIMEOUT: 504,

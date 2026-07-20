@@ -31,7 +31,7 @@ import {
   parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
-import { resourceSchemeIsLinkable } from "./resourceCapabilities.generated";
+import { resourceCanBeNoteReferenceTarget } from "./resourceCapabilities.generated";
 
 const RESOURCE_SCHEME_ICONS = {
   media: FileText,
@@ -52,12 +52,18 @@ const RESOURCE_SCHEME_ICONS = {
   contributor: User,
   podcast: Disc3,
   reader_apparatus_item: NotebookTabs,
+  passage_anchor: TextQuote,
 } satisfies Record<ResourceScheme, LucideIcon>;
 
+/** Resource schemes accepted as a note-body `object_ref` reference target
+ * (`ResourceUserRelationPolicy.note_reference_target`). Passage-candidate
+ * schemes (`evidence_span`, `content_chunk`, ...) return `null`: they must
+ * materialize into a `passage_anchor` before they have durable reference
+ * identity. */
 export function resourceObjectTypeForScheme(
   scheme: ResourceScheme,
 ): ObjectType | null {
-  return resourceSchemeIsLinkable(scheme) ? scheme : null;
+  return resourceCanBeNoteReferenceTarget(scheme) ? scheme : null;
 }
 
 export function resourceIconForUri(resourceRef: string): LucideIcon {

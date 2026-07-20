@@ -112,7 +112,11 @@ function mediaResourceItem(id: string): ResourceItem {
     },
     missing: false,
     capabilities: {
-      linkable: true,
+      userRelation: {
+        userLinkSource: true,
+        userLinkTarget: "direct",
+        noteReferenceTarget: true,
+      },
       attachable: true,
       chatSubject: "readable",
       readable: "media",

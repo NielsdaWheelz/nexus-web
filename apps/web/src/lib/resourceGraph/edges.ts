@@ -18,6 +18,7 @@ export const EDGE_ORIGINS = [
   "synapse",
   "document_embed",
   "assistant",
+  "link_note",
 ] as const;
 export type EdgeOrigin = (typeof EDGE_ORIGINS)[number];
 

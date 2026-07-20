@@ -30,6 +30,7 @@ from nexus.db.models import (
     OraclePassageAnchor,
     OracleReading,
     Page,
+    PassageAnchor,
     PdfPageTextSpan,
     Podcast,
     PodcastSubscription,
@@ -42,6 +43,11 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_taxonomy import contributor_match_key
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.passage_anchors import (
+    SELECTOR_VERSION,
+    compute_anchor_key,
+    normalize_quote_text,
+)
 from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.resolve import (
     INLINE_THRESHOLD_CHARS,
@@ -1236,6 +1242,69 @@ def test_resolve_oracle_passage_anchor_unresolved_fails_closed(
 
     assert resolved.missing, "Unresolved passage anchors must not hydrate with an empty body"
     assert href is None, "Unresolved passage anchors must not route into the reader"
+
+
+def _make_passage_anchor(
+    db: Session, user_id: UUID, *, exact: str = "Anchored passage words."
+) -> UUID:
+    """Seed a user-owned passage anchor with the service's canonical selector shape."""
+    media_id = create_test_media(db)
+    exact_norm = normalize_quote_text(exact)
+    anchor = PassageAnchor(
+        id=uuid4(),
+        user_id=user_id,
+        owner_scheme="media",
+        owner_id=media_id,
+        selector_version=SELECTOR_VERSION,
+        anchor_key=compute_anchor_key(exact=exact_norm, prefix="", suffix=""),
+        selector={
+            "quote": {"exact": exact_norm, "prefix": "", "suffix": ""},
+            "locator_hint": None,
+        },
+    )
+    db.add(anchor)
+    db.flush()
+    return anchor.id
+
+
+def test_resolve_passage_anchor_owner_returns_quote_body(
+    db_session: Session, bootstrapped_user: UUID
+):
+    anchor_id = _make_passage_anchor(db_session, bootstrapped_user, exact="Anchored passage words.")
+
+    resolved = _resolve(db_session, f"passage_anchor:{anchor_id}", viewer_id=bootstrapped_user)
+
+    assert not resolved.missing, f"Owner should resolve their passage anchor; got {resolved}"
+    assert resolved.label == "Anchored passage words.", (
+        f"Anchor label should be the quote exact; got {resolved.label!r}"
+    )
+    assert resolved.summary == "Anchored passage words.", (
+        f"Anchor summary should be the quote exact; got {resolved.summary!r}"
+    )
+    assert resolved.inline_body == "Anchored passage words.", (
+        f"Short quotes inline; got {resolved.inline_body!r}"
+    )
+
+
+def test_resolve_passage_anchor_non_owner_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    # PLAN decision 9: viewer-scoped, masked-404 — another user's anchor is
+    # indistinguishable from a nonexistent one.
+    other_user_id = uuid4()
+    ensure_user_and_default_library(db_session, other_user_id)
+    anchor_id = _make_passage_anchor(db_session, other_user_id, exact="Private passage text.")
+
+    resolved = _resolve(db_session, f"passage_anchor:{anchor_id}", viewer_id=bootstrapped_user)
+
+    assert resolved.missing, "Another user's passage anchor must be masked as missing"
+
+
+def test_resolve_passage_anchor_unknown_returns_missing(
+    db_session: Session, bootstrapped_user: UUID
+):
+    resolved = _resolve(db_session, f"passage_anchor:{uuid4()}", viewer_id=bootstrapped_user)
+    assert resolved.missing, "Unknown passage anchor must resolve as missing"
 
 
 def test_resolve_external_snapshot_owner_returns_title_and_snippet(
