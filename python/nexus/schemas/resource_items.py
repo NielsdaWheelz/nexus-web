@@ -46,24 +46,6 @@ class ObjectRef(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class HydratedObjectRef(ObjectRef):
-    label: str
-    route: str | None = None
-    snippet: str | None = None
-    icon: str | None = None
-
-
-class PinnedObjectRefOut(BaseModel):
-    id: UUID
-    object_ref: HydratedObjectRef = Field(serialization_alias="objectRef")
-    surface_key: str = Field(serialization_alias="surfaceKey")
-    order_key: str = Field(serialization_alias="orderKey")
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
 class CreatePinnedObjectRefRequest(ObjectRef):
     surface_key: str = Field(
         "navbar",
@@ -330,6 +312,17 @@ class ResourceItemOut(BaseModel):
         validation_alias=AliasChoices("version_by_lane", "versionByLane"),
         serialization_alias="versionByLane",
     )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class PinnedResourceOut(BaseModel):
+    id: UUID
+    item: ResourceItemOut
+    surface_key: str = Field(serialization_alias="surfaceKey")
+    order_key: str = Field(serialization_alias="orderKey")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
 
     model_config = ConfigDict(populate_by_name=True)
 

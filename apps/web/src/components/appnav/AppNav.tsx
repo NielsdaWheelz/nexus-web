@@ -6,7 +6,7 @@ import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import { useResource } from "@/lib/api/useResource";
-import { pinnedObjectsPath, type PinnedObject } from "@/lib/pinnedObjects";
+import { pinnedObjectsPath, type PinnedResource } from "@/lib/pinnedObjects";
 import { dispatchOpenLauncher, OPEN_LAUNCHER_EVENT } from "@/lib/launcher/launcherEvents";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
@@ -20,7 +20,7 @@ import NavTopBar from "./NavTopBar";
 const COLLAPSE_KEY = "nexus.nav.collapsed.v1";
 
 interface PinnedObjectsResponse {
-  data: { pins: PinnedObject[] };
+  data: { pins: PinnedResource[] };
 }
 
 function toNavItem(destination: NavDestination): NavItem {
@@ -68,9 +68,9 @@ export default function AppNav() {
   const pins = useMemo<NavItem[]>(() => {
     if (pinsResource.status !== "ready") return [];
     return pinsResource.data.data.pins.flatMap((pin) => {
-      const route = pin.objectRef.route;
+      const route = pin.item.route;
       if (!route) return [];
-      return [{ id: pin.id, label: pin.objectRef.label, href: route, icon: getPaneRouteIcon(route) }];
+      return [{ id: pin.id, label: pin.item.label, href: route, icon: getPaneRouteIcon(route) }];
     });
   }, [pinsResource]);
 

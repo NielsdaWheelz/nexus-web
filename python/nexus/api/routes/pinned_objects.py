@@ -14,7 +14,7 @@ from nexus.schemas.resource_items import (
     ObjectRef,
     UpdatePinnedObjectRefRequest,
 )
-from nexus.services.object_refs import (
+from nexus.services.pinned_objects import (
     PinObjectRefInput,
     UpdatePinnedObjectRefPatch,
     list_pinned_object_refs,

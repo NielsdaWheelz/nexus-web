@@ -16,7 +16,7 @@ from nexus.db.models import (
     DailyNotePage,
     NoteBlock,
     Page,
-    PinnedObjectRef,
+    PinnedResource,
     ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
@@ -111,10 +111,10 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     ref = _page_ref(page.id)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "page",
-            PinnedObjectRef.object_id == page.id,
+        delete(PinnedResource).where(
+            PinnedResource.user_id == viewer_id,
+            PinnedResource.object_type == "page",
+            PinnedResource.object_id == page.id,
         )
     )
     db.execute(
@@ -462,10 +462,10 @@ def delete_highlight_note(
     # True owner deletion: passage anchors owned by this block die with it.
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)
     db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "note_block",
-            PinnedObjectRef.object_id == existing.id,
+        delete(PinnedResource).where(
+            PinnedResource.user_id == viewer_id,
+            PinnedResource.object_type == "note_block",
+            PinnedResource.object_id == existing.id,
         )
     )
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)

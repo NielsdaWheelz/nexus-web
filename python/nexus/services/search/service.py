@@ -1,4 +1,10 @@
-"""Search orchestrator, durable-ref resolver, and per-type dispatch."""
+"""Search orchestrator and durable-ref resolver.
+
+Retrieval, ranking, and per-type dispatch live behind the shared pre-projection
+candidate seam (``search.candidates``); this module owns the public ``search``
+contract (gates, pagination, ``SearchResultOut`` projection) and
+``get_search_result`` durable-ref re-resolution.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +16,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
+    highlight_shared_library_exists_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
 from nexus.db.models import NoteBlock
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.schemas.search import (
@@ -26,15 +33,14 @@ from nexus.schemas.search import (
     SearchResultSourceOut,
 )
 from nexus.services import media_intelligence
-from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.search.candidates import discovery_candidates
 from nexus.services.search.constants import (
-    CANDIDATES_PER_TYPE,
     MAX_LIMIT,
     MIN_QUERY_LENGTH,
 )
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
-from nexus.services.search.embedding import _query_has_full_text_terms, build_query_embedding
+from nexus.services.search.embedding import _query_has_full_text_terms
 from nexus.services.search.projection import (
     _direct_fragment_locator,
     _require_resolved_evidence,
@@ -42,13 +48,10 @@ from nexus.services.search.projection import (
     _truncate_snippet,
 )
 from nexus.services.search.query import SearchQuery
-from nexus.services.search.ranking import TYPE_WEIGHTS, _normalize_scores_by_type
 from nexus.services.search.results import (
-    InternalSearchResult,
     _build_search_source,
     _parse_contributor_credits,
     _RankedContentChunkResult,
-    _RankedContributorResult,
     _RankedConversationResult,
     _RankedEvidenceSpanResult,
     _RankedFragmentResult,
@@ -64,21 +67,6 @@ from nexus.services.search.results import (
     _web_result_ref_json,
 )
 from nexus.services.search.retrievers.contributors import _search_contributors
-from nexus.services.search.retrievers.conversations import (
-    _search_conversation_artifacts,
-    _search_conversations,
-    _search_messages,
-)
-from nexus.services.search.retrievers.highlights import _search_highlights
-from nexus.services.search.retrievers.library_content import (
-    _search_content_chunks,
-    _search_evidence_spans,
-    _search_fragments,
-)
-from nexus.services.search.retrievers.media import _search_media, _search_podcasts
-from nexus.services.search.retrievers.notes import _search_note_chunks, _search_pages
-from nexus.services.search.retrievers.reader_apparatus import _search_reader_apparatus_items
-from nexus.services.search.retrievers.web import _search_web_results
 from nexus.services.search.scope import authorize_scope
 from nexus.services.search.sql import contributor_credits_rollup_cte_sql
 from nexus.services.search.telemetry import _log_search
@@ -155,57 +143,19 @@ def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:
         _log_search(viewer_id, q, scope_label, list(result_types), 0, start_time)
         return SearchResponse()
 
-    # Hybrid invariant: build the query embedding once for any semantic-capable kind
-    # (content_chunk via Documents, page/note_block via Notes), regardless of filters.
-    semantic_query_embedding: tuple[str, list[float]] | None = None
-    if has_query and any(
-        result_type in ("content_chunk", "page", "note_block") for result_type in result_types
-    ):
-        semantic_query_embedding = build_query_embedding(
-            db, q, list(result_types), transaction_active_at_entry=transaction_active_at_entry
-        )
-
-    # None = no contributor filter requested; an empty list = requested handles
-    # resolved to nothing (unknown handles drop — D-29), which matches nothing.
-    contributor_ids = (
-        list(resolve_contributor_ids_by_handles(db, contributor_handles).values())
-        if contributor_handles
-        else None
-    )
-
-    # Execute search queries per type and collect results
-    all_results: list[InternalSearchResult] = []
-
-    for result_type in result_types:
-        type_results = _search_type(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            result_type,
-            semantic_query_embedding,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            content_kinds,
-            CANDIDATES_PER_TYPE,
-        )
-        all_results.extend(type_results)
-
-    # Compute weighted scores
-    for result in all_results:
-        result.score.weighted = result.score.raw * TYPE_WEIGHTS[result.result_type]
-
-    # Normalize scores within each type to [0, 1]
-    _normalize_scores_by_type(all_results)
-
-    # Sort by normalized_score DESC, then by id ASC for determinism
-    all_results.sort(
-        key=lambda result: (
-            -result.score.normalized,
-            result.handle if isinstance(result, _RankedContributorResult) else str(result.id),
-        )
+    # Retrieval + ranking live behind the shared pre-projection candidate seam.
+    all_results = discovery_candidates(
+        db,
+        viewer_id,
+        q=q,
+        has_query=has_query,
+        result_types=result_types,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        contributor_handles=contributor_handles,
+        roles=roles,
+        content_kinds=content_kinds,
+        transaction_active_at_entry=transaction_active_at_entry,
     )
 
     # Apply offset pagination
@@ -629,15 +579,7 @@ def get_search_result(
                             )
                         )
                   )
-                  AND EXISTS (
-                        SELECT 1
-                        FROM library_entries le
-                        JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
-                        JOIN memberships author_m ON author_m.library_id = le.library_id
-                        WHERE le.media_id = h.anchor_media_id
-                          AND viewer_m.user_id = :viewer_id
-                          AND author_m.user_id = h.user_id
-                  )
+                  AND {highlight_shared_library_exists_sql("h")}
                 """
             ),
             {"viewer_id": viewer_id, "id": highlight_id},
@@ -965,142 +907,3 @@ def _uuid_from_search_id(result_id: str) -> UUID:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST, "Invalid search result id"
         ) from exc
-
-
-def _search_type(
-    db: Session,
-    viewer_id: UUID,
-    q: str,
-    has_query: bool,
-    result_type: str,
-    semantic_query_embedding: tuple[str, list[float]] | None,
-    scope_type: str,
-    scope_id: UUID | None,
-    contributor_ids: list[UUID] | None,
-    roles: list[str],
-    content_kinds: list[str],
-    limit: int,
-) -> list[InternalSearchResult]:
-    """Search a specific content type with visibility filtering.
-
-    Returns list of dicts with raw results (not yet normalized).
-    """
-    if result_type == "media":
-        return _search_media(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            content_kinds,
-            limit,
-        )
-    if result_type == "episode":
-        if content_kinds and "podcast_episode" not in content_kinds:
-            return []
-        return _search_media(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            ["podcast_episode"],
-            limit,
-            result_type="episode",
-        )
-    if result_type == "video":
-        if content_kinds and "video" not in content_kinds:
-            return []
-        return _search_media(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            ["video"],
-            limit,
-            result_type="video",
-        )
-    if result_type == "podcast":
-        return _search_podcasts(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            content_kinds,
-            limit,
-        )
-    if result_type == "content_chunk":
-        return _search_content_chunks(
-            db,
-            viewer_id,
-            q,
-            semantic_query_embedding,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            content_kinds,
-            limit,
-        )
-    if result_type == "contributor":
-        return _search_contributors(
-            db,
-            viewer_id,
-            q,
-            has_query,
-            scope_type,
-            scope_id,
-            contributor_ids,
-            roles,
-            content_kinds,
-            limit,
-        )
-
-    # Remaining types do not filter by contributor ids, roles, or content_kinds;
-    # any such filter rules out a match entirely.
-    if contributor_ids is not None or roles or content_kinds:
-        return []
-
-    if result_type == "evidence_span":
-        return _search_evidence_spans(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "fragment":
-        return _search_fragments(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "reader_apparatus_item":
-        return _search_reader_apparatus_items(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "page":
-        return _search_pages(
-            db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
-        )
-    if result_type == "note_block":
-        return _search_note_chunks(
-            db, viewer_id, q, semantic_query_embedding, scope_type, scope_id, limit
-        )
-    if result_type == "highlight":
-        return _search_highlights(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "message":
-        return _search_messages(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "conversation":
-        return _search_conversations(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "artifact":
-        return _search_conversation_artifacts(db, viewer_id, q, scope_type, scope_id, limit)
-    if result_type == "web_result":
-        return _search_web_results(db, viewer_id, q, has_query, scope_type, scope_id, limit)
-    # Unreachable: result_types are validated at the edge and derived from the kind
-    # taxonomy, so an unknown type here is an internal dispatch-invariant violation, not
-    # a client error.
-    raise ApiError(ApiErrorCode.E_INTERNAL, f"Unhandled search result type: {result_type}")

@@ -1033,8 +1033,8 @@ class SynapseSuppression(Base):
     )
 
 
-class PinnedObjectRef(Base):
-    """User-pinned navigation item backed by a hydrated ObjectRef."""
+class PinnedResource(Base):
+    """User-pinned navigation item backed by a resource ref (scheme + id)."""
 
     __tablename__ = "user_pinned_objects"
 

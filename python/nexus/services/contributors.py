@@ -51,7 +51,7 @@ from nexus.db.models import (
     ContributorCredit,
     ContributorExternalId,
     Media,
-    PinnedObjectRef,
+    PinnedResource,
     ResourceEdge,
     ResourceMutation,
     ResourceVersion,
@@ -82,7 +82,6 @@ from nexus.schemas.contributors import (
     MediaAuthorsOut,
     MediaAuthorsPutRequest,
 )
-from nexus.schemas.resource_items import HydratedObjectRef
 from nexus.services._contributor_credit_writes import (
     CreditTarget as CreditTarget,
 )
@@ -353,28 +352,6 @@ def resolve_contributor_ref_by_handle(
 ) -> ResourceRef:
     contributor = _load_visible_contributor_by_handle(db, contributor_handle, viewer_id)
     return ResourceRef(scheme="contributor", id=contributor.id)
-
-
-def hydrate_contributor_object_ref(
-    db: Session,
-    viewer_id: UUID,
-    contributor_id: UUID,
-) -> HydratedObjectRef:
-    from nexus.services.resource_items.routing import route_for_ref
-
-    contributor = db.get(Contributor, contributor_id)
-    if contributor is None or not _contributor_visible(db, contributor.id, viewer_id):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Object not found")
-    return HydratedObjectRef(
-        object_type="contributor",
-        object_id=contributor.id,
-        label=contributor.display_name,
-        snippet=contributor.display_name,
-        route=route_for_ref(
-            db, viewer_id=viewer_id, ref=ResourceRef(scheme="contributor", id=contributor.id)
-        ),
-        icon="user-round",
-    )
 
 
 def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> dict[str, UUID]:
@@ -1065,10 +1042,10 @@ def _contributor_is_orphaned(db: Session, contributor: Contributor) -> bool:
         return False
     if (
         db.scalar(
-            select(PinnedObjectRef.id)
+            select(PinnedResource.id)
             .where(
-                PinnedObjectRef.object_type == "contributor",
-                PinnedObjectRef.object_id == contributor_id,
+                PinnedResource.object_type == "contributor",
+                PinnedResource.object_id == contributor_id,
             )
             .limit(1)
         )

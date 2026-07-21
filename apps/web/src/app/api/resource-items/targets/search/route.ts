@@ -4,6 +4,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET(req: Request) {
-  return proxyToFastAPI(req, "/object-refs/search");
+export async function POST(req: Request) {
+  return proxyToFastAPI(req, "/resource-items/targets/search");
 }
