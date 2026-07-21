@@ -1,10 +1,25 @@
 # Reader Document Map / Evidence Trail Hard Cutover
 
-Status: SPEC
+Status: BUILT foundation; Evidence DTO and presentation superseded 2026-07-20
 Author: design synthesis, 2026-06-16
 Type: hard cutover - one-user prototype, production-grade contracts, no legacy
 lanes, no compatibility shims, no fallback readers, no duplicate reader-map
 APIs.
+
+## Current state and supersession
+
+The aggregate `GET /media/{media_id}/document-map`, marker/navigation
+foundation, overview rail, and deletion of the old reader product routes are
+built. The later sidecar consolidation reduced the outer Document Map to
+`Contents | Evidence` and removed the separate Highlights, Citations,
+Connections, Embeds, and Chat surfaces described below.
+
+The approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md)
+is the canonical target for the Evidence DTO, passage/document scope,
+semantic filters, associations, and presentation. The lens/item schemas,
+per-lens component names, and Chat-lens material below are historical design
+context and must not be used as current implementation guidance.
 
 ## 0. One-line
 

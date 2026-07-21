@@ -169,7 +169,13 @@ const rootAssistant = message(
   "Choose a branch",
   "root-user",
 );
-const branchAUser = message("branch-a-user", 3, "user", "Ask A", "root-assistant");
+const branchAUser = message(
+  "branch-a-user",
+  3,
+  "user",
+  "Ask A",
+  "root-assistant",
+);
 const branchAAssistant = message(
   "branch-a-assistant",
   4,
@@ -177,7 +183,13 @@ const branchAAssistant = message(
   "Answer A",
   "branch-a-user",
 );
-const branchBUser = message("branch-b-user", 5, "user", "Ask B", "root-assistant");
+const branchBUser = message(
+  "branch-b-user",
+  5,
+  "user",
+  "Ask B",
+  "root-assistant",
+);
 const branchBAssistant = message(
   "branch-b-assistant",
   6,
@@ -455,7 +467,9 @@ function renderPane(
       paneId="pane-1"
       isActive={true}
       href={href}
-      routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
+      routeId={
+        href === "/conversations/new" ? "conversation-new" : "conversation"
+      }
       routeKey={routeKey}
       canGoBack={false}
       canGoForward={false}
@@ -508,7 +522,9 @@ function installChatGeometry(scrollport: HTMLElement) {
   const topMock = vi
     .spyOn(HTMLElement.prototype, "offsetTop", "get")
     .mockImplementation(function (this: HTMLElement) {
-      return this.dataset.messageId ? messageTop[this.dataset.messageId] ?? 0 : 0;
+      return this.dataset.messageId
+        ? (messageTop[this.dataset.messageId] ?? 0)
+        : 0;
     });
   const heightMock = vi
     .spyOn(HTMLElement.prototype, "offsetHeight", "get")
@@ -564,28 +580,30 @@ describe("Conversation", () => {
   it("posts retry with an idempotency key and tails the returned run", async () => {
     const user = userEvent.setup();
     const retryData = retryRun();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
-        return jsonResponse({ data: failedRootRetryTree() });
-      }
-      if (path === "/api/conversations/conversation-1/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/chat-runs") {
-        return jsonResponse({ data: [] });
-      }
-      if (
-        path === "/api/messages/failed-assistant/retry" &&
-        init?.method === "POST"
-      ) {
-        return jsonResponse({ data: retryData });
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({ data: failedRootRetryTree() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path === "/api/messages/failed-assistant/retry" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({ data: retryData });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
@@ -610,35 +628,40 @@ describe("Conversation", () => {
   it("resends a nonretryable failed root response from the assistant error row", async () => {
     const user = userEvent.setup();
     const resendData = resendRun();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
-        return jsonResponse({ data: failedRootResendTree() });
-      }
-      if (path === "/api/conversations/conversation-1/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/chat-runs") {
-        return jsonResponse({ data: [] });
-      }
-      if (
-        path === "/api/messages/failed-assistant/resend" &&
-        init?.method === "POST"
-      ) {
-        return jsonResponse({ data: resendData });
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({ data: failedRootResendTree() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [] });
+        }
+        if (
+          path === "/api/messages/failed-assistant/resend" &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse({ data: resendData });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
 
     expect(await screen.findByText("Original prompt")).toBeVisible();
-    expect(screen.getByText("Wait for a complete assistant response before sending."))
-      .toBeVisible();
+    expect(
+      screen.getByText(
+        "Wait for a complete assistant response before sending.",
+      ),
+    ).toBeVisible();
     expect(screen.queryByRole("button", { name: "Retry response" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Resend response" }));
 
@@ -691,7 +714,9 @@ describe("Conversation", () => {
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     installChatGeometry(scrollport);
     const composerDock = screen.getByTestId("chat-composer-dock");
     const input = screen.getByRole("textbox", { name: "Ask anything" });
@@ -732,40 +757,258 @@ describe("Conversation", () => {
     expect(scrollport.scrollTop).toBe(60);
   });
 
+  it("keeps an exact-message reveal single-flight and retries after active-path rollback", async () => {
+    const user = userEvent.setup();
+    let resolveFirstActivePath: (response: Response) => void = () => undefined;
+    const firstActivePath = new Promise<Response>((resolve) => {
+      resolveFirstActivePath = resolve;
+    });
+    let treeCalls = 0;
+    let activePathCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") return jsonResponse({ data: MODELS });
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          activePathCalls += 1;
+          return activePathCalls === 1
+            ? firstActivePath
+            : jsonResponse({ data: treeResponse({ selected: "b" }) });
+        }
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=branch-b-user",
+    });
+
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    expect(activePathCalls).toBe(1);
+
+    resolveFirstActivePath(
+      jsonResponse(
+        {
+          error: {
+            code: "E_BRANCH_PATH_INVALID",
+            message: "Could not switch active path",
+          },
+        },
+        500,
+      ),
+    );
+
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(activePathCalls).toBe(2));
+    expect(treeCalls).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    expect(screen.queryByText("Failed to switch fork")).toBeNull();
+  });
+
+  it("recovers an exact-message reveal when refresh observes the committed active path", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    let activePathCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({
+            data: treeResponse({ selected: treeCalls === 1 ? "a" : "b" }),
+          });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") return jsonResponse({ data: MODELS });
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          activePathCalls += 1;
+          // Model a committed server mutation whose response was lost or errored.
+          return jsonResponse(
+            {
+              error: {
+                code: "E_BRANCH_PATH_RESPONSE_LOST",
+                message: "Active-path response unavailable",
+              },
+            },
+            500,
+          );
+        }
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=branch-b-user",
+    });
+
+    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    expect(screen.getByText("Answer A")).toBeVisible();
+    expect(activePathCalls).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(treeCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.queryByText("Failed to switch fork")).toBeNull(),
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(activePathCalls).toBe(1);
+  });
+
+  it("surfaces a missing exact-message target with a refresh-backed Retry action", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") return jsonResponse({ data: MODELS });
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=missing-message",
+    });
+
+    expect(
+      await screen.findByText(
+        "This message is not available in this conversation.",
+      ),
+    ).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(treeCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() =>
+      expect(
+        screen.getByText("This message is not available in this conversation."),
+      ).toBeVisible(),
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          pathOf(input) === "/api/conversations/conversation-1/active-path",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps exact-message Retry available when the refresh itself fails", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return treeCalls === 1
+            ? jsonResponse({ data: treeResponse() })
+            : jsonResponse(
+                {
+                  error: {
+                    code: "E_TREE_REFRESH_FAILED",
+                    message: "Tree refresh unavailable",
+                  },
+                },
+                500,
+              );
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") return jsonResponse({ data: MODELS });
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    renderPane({
+      href: "/conversations/conversation-1?message=missing-message",
+    });
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Failed to refresh forks")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
   it("tails an active sibling run as soon as that cached path becomes visible", async () => {
     const user = userEvent.setup();
     let resolveActivePath: (response: Response) => void = () => undefined;
     const activePathPromise = new Promise<Response>((resolve) => {
       resolveActivePath = resolve;
     });
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
-        return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
-      }
-      if (path === "/api/conversations/conversation-1/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/chat-runs") {
-        return jsonResponse({ data: [activeBranchBRun()] });
-      }
-      if (
-        path === "/api/conversations/conversation-1/active-path" &&
-        init?.method === "POST"
-      ) {
-        return activePathPromise;
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({
+            data: treeResponse({ branchBStatus: "pending" }),
+          });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs") {
+          return jsonResponse({ data: [activeBranchBRun()] });
+        }
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          return activePathPromise;
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
 
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const scrollport = screen.getByRole("region", { name: "Chat conversation" });
+    const scrollport = screen.getByRole("region", {
+      name: "Chat conversation",
+    });
     installChatGeometry(scrollport);
     fireEvent.wheel(scrollport, { deltaY: -10 });
     scrollport.scrollTop = 60;
@@ -781,6 +1024,9 @@ describe("Conversation", () => {
     });
     expect(scrollport.scrollTop).toBe(60);
 
+    const chatRunCallsBeforeResolve = fetchMock.mock.calls.filter(
+      ([input]) => pathOf(input) === "/api/chat-runs",
+    ).length;
     resolveActivePath(
       jsonResponse({
         data: treeResponse({ selected: "b", branchBStatus: "pending" }),
@@ -788,8 +1034,10 @@ describe("Conversation", () => {
     );
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/chat-runs"),
-      ).not.toHaveLength(0);
+        fetchMock.mock.calls.filter(
+          ([input]) => pathOf(input) === "/api/chat-runs",
+        ).length,
+      ).toBeGreaterThan(chatRunCallsBeforeResolve);
     });
     expect(scrollport.scrollTop).toBe(60);
   });
@@ -797,63 +1045,68 @@ describe("Conversation", () => {
   it("creates a conversation on first send and navigates to it without a run param", async () => {
     const user = userEvent.setup();
     const onReplacePane = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/conversations" && init?.method === "POST") {
-        return jsonResponse({ data: { id: "new-conv-id" } });
-      }
-      if (path === "/api/conversations/new-conv-id/tree") {
-        return jsonResponse({
-          data: {
-            ...treeResponse(),
-            conversation: { ...treeResponse().conversation, id: "new-conv-id" },
-          },
-        });
-      }
-      if (path === "/api/chat-runs" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
-        return jsonResponse({
-          data: {
-            run: {
-              id: "run-1",
-              status: "complete",
-              conversation_id: "new-conv-id",
-              user_message_id: "user-message-1",
-              assistant_message_id: "assistant-message-1",
-              model_id: body.model_id,
-              reasoning: body.reasoning,
-              key_mode: body.key_mode,
-              cancel_requested_at: null,
-              started_at: timestamp,
-              completed_at: timestamp,
-              error_code: null,
-              created_at: timestamp,
-              updated_at: timestamp,
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/conversations" && init?.method === "POST") {
+          return jsonResponse({ data: { id: "new-conv-id" } });
+        }
+        if (path === "/api/conversations/new-conv-id/tree") {
+          return jsonResponse({
+            data: {
+              ...treeResponse(),
+              conversation: {
+                ...treeResponse().conversation,
+                id: "new-conv-id",
+              },
             },
-            conversation: {
-              id: "new-conv-id",
-              title: "New chat",
-              sharing: "private",
-              message_count: 2,
-              created_at: timestamp,
-              updated_at: timestamp,
+          });
+        }
+        if (path === "/api/chat-runs" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as ChatRunCreateRequest;
+          return jsonResponse({
+            data: {
+              run: {
+                id: "run-1",
+                status: "complete",
+                conversation_id: "new-conv-id",
+                user_message_id: "user-message-1",
+                assistant_message_id: "assistant-message-1",
+                model_id: body.model_id,
+                reasoning: body.reasoning,
+                key_mode: body.key_mode,
+                cancel_requested_at: null,
+                started_at: timestamp,
+                completed_at: timestamp,
+                error_code: null,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              conversation: {
+                id: "new-conv-id",
+                title: "New chat",
+                sharing: "private",
+                message_count: 2,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              user_message: message("user-message-1", 1, "user", body.content),
+              assistant_message: message(
+                "assistant-message-1",
+                2,
+                "assistant",
+                "Done.",
+                "user-message-1",
+              ),
             },
-            user_message: message("user-message-1", 1, "user", body.content),
-            assistant_message: message(
-              "assistant-message-1",
-              2,
-              "assistant",
-              "Done.",
-              "user-message-1",
-            ),
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${path}`);
-    });
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane({
@@ -873,7 +1126,9 @@ describe("Conversation", () => {
 
     await waitFor(() => {
       expect(
-        fetchMock.mock.calls.some(([input]) => pathOf(input) === "/api/chat-runs"),
+        fetchMock.mock.calls.some(
+          ([input]) => pathOf(input) === "/api/chat-runs",
+        ),
       ).toBe(true);
     });
 
@@ -881,7 +1136,9 @@ describe("Conversation", () => {
       ([input, init]) =>
         pathOf(input) === "/api/chat-runs" && init?.method === "POST",
     );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    const body = JSON.parse(
+      String(chatRunCall?.[1]?.body),
+    ) as ChatRunCreateRequest;
     expect(body.conversation_id).toBe("new-conv-id");
 
     await waitFor(() => {
@@ -895,64 +1152,66 @@ describe("Conversation", () => {
 
   it("sends an existing non-empty conversation with the complete assistant leaf as parent", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/conversations/conversation-1/tree") {
-        return jsonResponse({ data: treeResponse() });
-      }
-      if (path === "/api/conversations/conversation-1/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/chat-runs" && method === "GET") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/chat-runs" && method === "POST") {
-        const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
-        const followUpUser = message(
-          "follow-up-user",
-          7,
-          "user",
-          body.content,
-          body.parent_message_id ?? null,
-        );
-        const followUpAssistant = message(
-          "follow-up-assistant",
-          8,
-          "assistant",
-          "",
-          followUpUser.id,
-          "pending",
-        );
-        return jsonResponse({
-          data: {
-            run: {
-              id: "follow-up-run",
-              status: "running",
-              conversation_id: body.conversation_id,
-              user_message_id: followUpUser.id,
-              assistant_message_id: followUpAssistant.id,
-              model_id: body.model_id,
-              reasoning: body.reasoning,
-              key_mode: body.key_mode ?? "auto",
-              cancel_requested_at: null,
-              started_at: timestamp,
-              completed_at: null,
-              error_code: null,
-              created_at: timestamp,
-              updated_at: timestamp,
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs" && method === "GET") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/chat-runs" && method === "POST") {
+          const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+          const followUpUser = message(
+            "follow-up-user",
+            7,
+            "user",
+            body.content,
+            body.parent_message_id ?? null,
+          );
+          const followUpAssistant = message(
+            "follow-up-assistant",
+            8,
+            "assistant",
+            "",
+            followUpUser.id,
+            "pending",
+          );
+          return jsonResponse({
+            data: {
+              run: {
+                id: "follow-up-run",
+                status: "running",
+                conversation_id: body.conversation_id,
+                user_message_id: followUpUser.id,
+                assistant_message_id: followUpAssistant.id,
+                model_id: body.model_id,
+                reasoning: body.reasoning,
+                key_mode: body.key_mode ?? "auto",
+                cancel_requested_at: null,
+                started_at: timestamp,
+                completed_at: null,
+                error_code: null,
+                created_at: timestamp,
+                updated_at: timestamp,
+              },
+              conversation: treeResponse().conversation,
+              user_message: followUpUser,
+              assistant_message: followUpAssistant,
             },
-            conversation: treeResponse().conversation,
-            user_message: followUpUser,
-            assistant_message: followUpAssistant,
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch call: ${method} ${path}`);
-    });
+          });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
@@ -979,10 +1238,11 @@ describe("Conversation", () => {
 
     const chatRunCall = fetchMock.mock.calls.find(
       ([callInput, callInit]) =>
-        pathOf(callInput) === "/api/chat-runs" &&
-        callInit?.method === "POST",
+        pathOf(callInput) === "/api/chat-runs" && callInit?.method === "POST",
     );
-    const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
+    const body = JSON.parse(
+      String(chatRunCall?.[1]?.body),
+    ) as ChatRunCreateRequest;
     expect(body).toMatchObject({
       conversation_id: "conversation-1",
       content: "Continue from the leaf",
@@ -995,25 +1255,27 @@ describe("Conversation", () => {
   });
 
   it("disables existing conversation sends while the assistant leaf is pending", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/conversations/conversation-1/tree") {
-        return jsonResponse({
-          data: treeResponse({ selected: "b", branchBStatus: "pending" }),
-        });
-      }
-      if (path === "/api/conversations/conversation-1/context-refs") {
-        return jsonResponse({ data: [] });
-      }
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
-      }
-      if (path === "/api/chat-runs" && method === "GET") {
-        return jsonResponse({ data: [activeBranchBRun()] });
-      }
-      throw new Error(`Unexpected fetch call: ${method} ${path}`);
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        const method = init?.method ?? "GET";
+        if (path === "/api/conversations/conversation-1/tree") {
+          return jsonResponse({
+            data: treeResponse({ selected: "b", branchBStatus: "pending" }),
+          });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/models") {
+          return jsonResponse({ data: MODELS });
+        }
+        if (path === "/api/chat-runs" && method === "GET") {
+          return jsonResponse({ data: [activeBranchBRun()] });
+        }
+        throw new Error(`Unexpected fetch call: ${method} ${path}`);
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane();
@@ -1091,9 +1353,7 @@ describe("Conversation", () => {
       await screen.findByText("Failed to load conversation"),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
-    expect(
-      screen.queryByRole("textbox", { name: "Ask anything" }),
-    ).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Ask anything" })).toBeNull();
   });
 
   it("renders the composer immediately on the new route (no loading gate)", async () => {
@@ -1147,7 +1407,9 @@ describe("Conversation", () => {
       visibility: "visible",
     };
 
-    const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
+    const tree = (
+      secondaryPane: WorkspaceAttachedSecondaryPaneState | null,
+    ) => (
       <PaneRuntimeProvider
         paneId="pane-1"
         isActive={true}
@@ -1178,7 +1440,11 @@ describe("Conversation", () => {
             onBack: vi.fn(),
             onForward: vi.fn(),
           }}
-          sizing={paneSizing({ widthPx: 480, minWidthPx: 320, maxWidthPx: 1400 })}
+          sizing={paneSizing({
+            widthPx: 480,
+            minWidthPx: 320,
+            maxWidthPx: 1400,
+          })}
           bodyMode="contained"
           onResizePrimaryPane={vi.fn()}
         >

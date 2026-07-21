@@ -784,8 +784,8 @@ through byte-size-checked storage helpers. EPUB assets are not in Next Image
 selection becomes a stored highlight with a precomputed
 `exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
-text-layer match) — a first-class geometry-only state the Document Map
-Highlights lens renders with an explicit placeholder. The current highlight
+text-layer match) — a first-class geometry-only state Evidence renders with an
+explicit placeholder. The current highlight
 contract lives in [`modules/highlight.md`](modules/highlight.md).
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
@@ -801,17 +801,24 @@ apparatus is capability-gated: native `cite.*` links can be `ready` when
 deterministic reference targets are materialized, marker-only native-link rows
 remain `partial`, synthetic legal-footnote support is narrow, and unsupported
 scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
-from raw layout text. Fixture counts and 20-source support status live in
+from raw layout text. Replacement reconciles rows by `(media_id, stable_key)` so
+surviving resource refs and their graph edges remain stable across refresh.
+Fixture counts and 20-source support status live in
 `python/tests/fixtures/reader_apparatus/corpus_manifest.json`.
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
 `dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Inline
 highlight rendering remains separate for text selection, while the reader
-**Document Map** is the single side instrument for Contents, Highlights,
-Citations, Connections, and Chat. Its desktop overview rail is positioned from
-aggregate owner locators and metadata, never DOM geometry; mobile uses the
-workspace secondary sheet instead of fixed chrome.
+**Document Map** is the single side instrument with exactly `Contents | Evidence`.
+Evidence is a target-centered aggregate of highlights, source references,
+generated citations, links, and Synapses, separated into passage and
+whole-document scopes with typed one-hop associations. `MarginRail` is the
+wide-reader spatial presenter for the same filtered passage facts. The desktop
+overview rail is positioned from aggregate owner locators and metadata, never
+DOM geometry; mobile uses the workspace secondary sheet instead of fixed chrome.
+The contract is
+[`reader-evidence-scope-associations-hard-cutover.md`](cutovers/reader-evidence-scope-associations-hard-cutover.md).
 
 ### 8.3 Chat & conversations
 

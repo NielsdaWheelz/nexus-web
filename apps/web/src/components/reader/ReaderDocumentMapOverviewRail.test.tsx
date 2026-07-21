@@ -2,28 +2,26 @@ import { useRef } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
 import ReaderDocumentMapOverviewRail, {
   DOCUMENT_MAP_MARKER_MIN_GAP_PX,
 } from "./ReaderDocumentMapOverviewRail";
-import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
 
 const RAIL_HEIGHT = 400;
 
 function marker(
   id: string,
   position: number,
-  lens_id: ReaderDocumentMapMarker["lens_id"] = "highlights",
+  kind: ReaderDocumentMapMarker["kind"] = "Highlight",
 ): ReaderDocumentMapMarker {
   return {
     id,
-    item_id: `${lens_id}:${id}`,
-    lens_id,
-    lane: lens_id,
+    item_id: `${kind.toLowerCase()}:${id}`,
+    kind,
     position,
-    status: "exact",
-    tone: lens_id === "citations" ? "citation" : "highlight",
-    label: `${lens_id} ${id}`,
-    preview: `Preview ${id}`,
+    tone: kind === "SourceReference" ? "Citation" : "Highlight",
+    label: `${kind} ${id}`,
+    preview: { kind: "Present", value: `Preview ${id}` },
   };
 }
 
@@ -33,7 +31,7 @@ function RailHarness({
   onOpenMap = () => {},
 }: {
   markers: ReaderDocumentMapMarker[];
-  onActivateMarker?: (itemId: string, lensId: ReaderDocumentMapMarker["lens_id"]) => void;
+  onActivateMarker?: (marker: ReaderDocumentMapMarker) => void;
   onOpenMap?: () => void;
 }) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -52,44 +50,47 @@ function RailHarness({
 }
 
 describe("ReaderDocumentMapOverviewRail", () => {
-  it("renders typed Document Map markers and opens the map", async () => {
-    const user = userEvent.setup();
+  it("renders canonical typed markers and opens the map", async () => {
     const onOpenMap = vi.fn();
     render(
       <RailHarness
-        markers={[marker("h1", 0.1), marker("c1", 0.8, "citations")]}
+        markers={[
+          marker("highlight:h1", 0.1),
+          marker("source-reference:r1", 0.8, "SourceReference"),
+        ]}
         onOpenMap={onOpenMap}
       />,
     );
-
-    expect(screen.getByRole("region", { name: "Document Map overview" })).toBeTruthy();
-    expect(await screen.findByTestId("reader-document-map-marker-h1")).toBeTruthy();
-    expect(screen.getByTestId("reader-document-map-marker-c1")).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Open Document Map" }));
-    expect(onOpenMap).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("region", { name: "Document Map overview" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("reader-document-map-marker-highlight:h1"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Document Map" }),
+    );
+    expect(onOpenMap).toHaveBeenCalledOnce();
   });
 
-  it("activates the first marker in a nearby cluster with its lens id", async () => {
-    const user = userEvent.setup();
+  it("activates the primary canonical marker object in a nearby cluster", async () => {
     const onActivateMarker = vi.fn();
+    const primary = marker("highlight:h1", 0.5);
     const gapFraction = (DOCUMENT_MAP_MARKER_MIN_GAP_PX - 2) / RAIL_HEIGHT;
     render(
       <RailHarness
         markers={[
-          marker("h1", 0.5, "highlights"),
-          marker("c1", 0.5 + gapFraction, "citations"),
+          primary,
+          marker("source-reference:r1", 0.5 + gapFraction, "SourceReference"),
         ]}
         onActivateMarker={onActivateMarker}
       />,
     );
-
-    const tick = await screen.findByTestId("reader-document-map-marker-h1");
+    const tick = await screen.findByTestId(
+      "reader-document-map-marker-highlight:h1",
+    );
     expect(tick).toHaveAccessibleName("2 Document Map markers");
-
-    await user.click(tick);
-    await waitFor(() => {
-      expect(onActivateMarker).toHaveBeenCalledWith("highlights:h1", "highlights");
-    });
+    await userEvent.click(tick);
+    await waitFor(() => expect(onActivateMarker).toHaveBeenCalledWith(primary));
   });
 });

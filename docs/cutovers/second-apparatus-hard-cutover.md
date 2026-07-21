@@ -1,7 +1,18 @@
 # The Second Apparatus — user + machine marginalia inline, passage-grain resonance, cross-document footnotes — Hard Cutover
 
-**Status:** Spec · Rev 1 · 2026-07-07
+**Status:** BUILT · margin/cite/stance foundation complete · 2026-07-20
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior. The margin becomes a real writing surface; the wide-viewport "evidence lives only in a drawer" assumption is deleted, not toggled.
+
+## Current state and supersession
+
+`MarginRail`, shared Evidence filter state, passage-grain Synapse targets, Cite,
+and stance authoring are built. The approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md)
+supersedes this document's storage-shaped Evidence inputs and
+`highlight | apparatus | connection` filter mapping. It keeps MarginRail as the
+wide spatial presenter and does not redesign Cite, stance, or Synapse dismissal.
+Prerequisite and creation-language below records the historical implementation
+plan rather than pending work.
 
 ## One-line
 

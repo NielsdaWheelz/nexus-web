@@ -10,9 +10,11 @@ from dataclasses import dataclass
 from typing import Literal, assert_never
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import highlight_visibility_filter
+from nexus.db.models import Highlight
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeOrigin
 
@@ -442,12 +444,20 @@ def expand_owned_child_refs(
                 ref.id,
             ),
             *_child_refs(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
+            *(
+                ResourceRef(scheme="highlight", id=highlight_id)
+                for highlight_id in db.scalars(
+                    select(Highlight.id)
+                    .where(Highlight.anchor_media_id == ref.id)
+                    .where(highlight_visibility_filter(viewer_id, ref.id))
+                    .distinct()
+                )
+            ),
             *_child_refs(
                 db,
-                "highlight",
-                "SELECT id FROM highlights WHERE user_id = :viewer_id AND anchor_media_id = :id",
+                "reader_apparatus_item",
+                "SELECT id FROM reader_apparatus_items WHERE media_id = :id",
                 ref.id,
-                viewer_id=viewer_id,
             ),
         )
     if policy == "page_note_blocks":

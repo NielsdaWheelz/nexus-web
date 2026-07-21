@@ -1,36 +1,47 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import type {
+  ReaderEvidenceItem,
+  ReaderEvidenceSemanticKind,
+} from "@/lib/reader/documentMap";
+import { semanticKindForEvidenceItem } from "@/lib/reader/documentMap";
 
-/**
- * The kind-filter state shared by the Evidence sidecar (the control owner) and
- * the wide-viewport MarginRail. Lifted out of EvidencePaneSurface-local state so
- * both presenters honor one source of truth (§4.1 / AC-9). The sidecar header is
- * the only writer; the margin only reads.
- */
-export type EvidenceRowKind = "highlight" | "apparatus" | "connection";
+export type EvidenceFilterKind = ReaderEvidenceSemanticKind;
 
-export interface EvidenceFilterState {
-  highlight: boolean;
-  apparatus: boolean;
-  connection: boolean;
-}
+export type EvidenceFilterState = Record<EvidenceFilterKind, boolean>;
 
 export interface EvidenceFilters {
   filter: EvidenceFilterState;
-  toggleFilter: (kind: EvidenceRowKind) => void;
+  toggleFilter: (kind: EvidenceFilterKind) => void;
+  showAll: () => void;
+}
+
+export const ALL_EVIDENCE_FILTERS: EvidenceFilterState = {
+  highlight: true,
+  citation: true,
+  link: true,
+  synapse: true,
+};
+
+export function evidenceItemPassesFilters(
+  item: ReaderEvidenceItem,
+  filters: EvidenceFilterState,
+): boolean {
+  return filters[semanticKindForEvidenceItem(item)];
 }
 
 export function useEvidenceFilters(): EvidenceFilters {
-  const [filter, setFilter] = useState<EvidenceFilterState>({
-    highlight: true,
-    apparatus: true,
-    connection: true,
-  });
+  const [filter, setFilter] =
+    useState<EvidenceFilterState>(ALL_EVIDENCE_FILTERS);
 
-  const toggleFilter = useCallback((kind: EvidenceRowKind) => {
-    setFilter((prev) => ({ ...prev, [kind]: !prev[kind] }));
+  const toggleFilter = useCallback((kind: EvidenceFilterKind) => {
+    setFilter((previous) => ({ ...previous, [kind]: !previous[kind] }));
   }, []);
 
-  return { filter, toggleFilter };
+  const showAll = useCallback(() => {
+    setFilter(ALL_EVIDENCE_FILTERS);
+  }, []);
+
+  return { filter, toggleFilter, showAll };
 }

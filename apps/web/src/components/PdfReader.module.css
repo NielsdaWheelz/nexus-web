@@ -92,6 +92,13 @@
   pointer-events: none;
 }
 
+.highlightOverlayRectHovered,
+.highlightOverlayRect:hover,
+.highlightOverlayRect:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .highlightOverlayRectFocused {
   outline: 2px solid var(--accent);
 }

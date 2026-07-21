@@ -33,7 +33,6 @@ from nexus.services.pdf_highlight_geometry import (
     validate_exact_length,
 )
 from nexus.services.reader_apparatus import (
-    delete_media_apparatus,
     replace_media_apparatus,
     source_fingerprint,
 )
@@ -1737,7 +1736,8 @@ def invalidate_pdf_quote_match_metadata(db: Session, media_id: UUID) -> int:
 def delete_pdf_text_artifacts(db: Session, media_id: UUID) -> None:
     """Delete PDF text artifacts (plain_text, page_count, pdf_page_text_spans).
 
-    Used before text-rebuild retry paths.
+    Used before text-rebuild retry paths. Apparatus remains until the rebuild
+    reconciles it by stable key.
     """
     from nexus.services.content_indexing import (
         IndexOwner,
@@ -1745,7 +1745,6 @@ def delete_pdf_text_artifacts(db: Session, media_id: UUID) -> None:
     )
 
     deactivate_content_index(db, owner=IndexOwner("media", media_id), reason="pdf_text_rebuild")
-    delete_media_apparatus(db, media_id)
     db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
     db.execute(
         text("""

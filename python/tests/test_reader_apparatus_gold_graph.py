@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import io
-import json
 import posixpath
 import re
 import zipfile
 from collections import Counter
-from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
@@ -15,7 +13,6 @@ from xml.etree import ElementTree as ET
 import pytest
 from lxml.html import document_fromstring, tostring
 
-from nexus.schemas.reader_apparatus import ReaderApparatusResponse
 from nexus.services.pdf_ingest import _extract_pdf_native_link_apparatus
 from nexus.services.pdf_scholarly_apparatus import extract_scholarly_tei_apparatus
 from nexus.services.reader_apparatus import (
@@ -26,7 +23,6 @@ from nexus.services.web_article_structure import prepare_web_article_fragment
 from tests.reader_apparatus_corpus import (
     automated_fixtures_by_id,
     fixture_path,
-    frontend_api_payload_fixtures,
     gold_graph_fixtures,
 )
 from tests.reader_apparatus_epub_verifiers import (
@@ -40,12 +36,6 @@ from tests.reader_apparatus_gold_graph import (
 
 pytestmark = pytest.mark.integration
 
-FRONTEND_PAYLOAD_FIXTURE_IDS = {
-    payload["fixture_id"] for payload in frontend_api_payload_fixtures()
-}
-FRONTEND_PAYLOAD_GOLD_GRAPHS = [
-    entry for entry in gold_graph_fixtures() if entry["fixture_id"] in FRONTEND_PAYLOAD_FIXTURE_IDS
-]
 HTML_GOLD_GRAPHS = [
     entry
     for entry in gold_graph_fixtures()
@@ -66,32 +56,6 @@ TEI_GOLD_GRAPHS = [
     for entry in gold_graph_fixtures()
     if automated_fixtures_by_id()[entry["fixture_id"]]["fixture_format"] == "tei"
 ]
-
-
-@pytest.mark.parametrize(
-    "gold_entry",
-    FRONTEND_PAYLOAD_GOLD_GRAPHS,
-    ids=[entry["fixture_id"] for entry in FRONTEND_PAYLOAD_GOLD_GRAPHS],
-)
-def test_reader_apparatus_frontend_payload_matches_gold_graph(
-    gold_entry: dict[str, object],
-):
-    repo_root = Path(__file__).parents[2]
-    payload_fixtures = {
-        payload["fixture_id"]: payload for payload in frontend_api_payload_fixtures()
-    }
-    fixture_id = str(gold_entry["fixture_id"])
-    case = automated_fixtures_by_id()[fixture_id]
-    payload_fixture = payload_fixtures[fixture_id]
-    payload = json.loads((repo_root / payload_fixture["path"]).read_text(encoding="utf-8"))
-    gold_graph = load_reader_apparatus_gold_graph(fixture_id)
-    apparatus = ReaderApparatusResponse.model_validate(payload["apparatus"]).model_dump(mode="json")
-
-    expected_response = gold_graph["expected_response"]
-    assert apparatus["status"] == expected_response["status"]
-    assert apparatus["media_kind"] == case["media_kind"]
-    assert payload["source_fixture_sha256"] == gold_graph["fixture_sha256"]
-    assert_reader_apparatus_matches_gold_graph(apparatus, gold_graph)
 
 
 @pytest.mark.parametrize(

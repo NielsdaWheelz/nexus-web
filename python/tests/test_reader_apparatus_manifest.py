@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from nexus.schemas.reader_apparatus import ReaderApparatusResponse
 from tests.reader_apparatus_corpus import (
     APPARATUS_SUPPORT_BY_FIXTURE_POLICY,
     APPARATUS_SUPPORT_LEVELS,
@@ -18,9 +16,6 @@ from tests.reader_apparatus_corpus import (
     FIXTURE_PROVENANCE_KEYS,
     FIXTURE_PROVENANCE_STATUSES,
     FIXTURES_ROOT,
-    FRONTEND_SURFACE_EXPECTATIONS,
-    FRONTEND_SURFACE_GAP_REASONS,
-    FRONTEND_SURFACE_VERIFICATION_STATUSES,
     MANIFEST_PATH,
     MANUAL_VERIFICATION_CONTRACTS,
     OVERCLAIM_RE,
@@ -45,8 +40,6 @@ from tests.reader_apparatus_corpus import (
     automated_fixtures_by_id,
     fixture_cases_by_real_media_contract,
     fixture_path,
-    frontend_api_payload_fixtures,
-    frontend_surface_contracts,
     gold_graph_fixtures,
     linked_fixture_cases,
     load_reader_apparatus_manifest,
@@ -54,13 +47,6 @@ from tests.reader_apparatus_corpus import (
     source_corpus,
     support_counts,
     verifier_tiers,
-)
-from tests.reader_apparatus_frontend_payloads import (
-    FRONTEND_PAYLOAD_INDEX_PATH,
-    build_frontend_payload_index,
-    frontend_payload_artifacts,
-    frontend_payload_manifest_entries,
-    frontend_surface_contract_entries,
 )
 from tests.reader_apparatus_gold_graph import (
     GOLD_GRAPH_COVERAGE,
@@ -158,11 +144,9 @@ def test_reader_apparatus_manifest_references_only_git_tracked_fixture_files():
     repo_root = Path(__file__).parents[2]
     required_paths = [
         MANIFEST_PATH,
-        FRONTEND_PAYLOAD_INDEX_PATH,
         FIXTURES_ROOT / "reader_apparatus" / "README.md",
         *(fixture_path(case) for case in automated_fixture_cases()),
         *(FIXTURES_ROOT / gold_graph["path"] for gold_graph in gold_graph_fixtures()),
-        *(repo_root / payload["path"] for payload in frontend_api_payload_fixtures()),
     ]
 
     missing = []
@@ -221,122 +205,6 @@ def test_reader_apparatus_manifest_test_selectors_reference_git_tracked_files():
             missing.append(selector)
 
     assert missing == []
-
-
-def test_reader_apparatus_frontend_api_payload_fixtures_match_backend_schema():
-    repo_root = Path(__file__).parents[2]
-    fixture_cases = automated_fixtures_by_id()
-    payload_fixtures = frontend_api_payload_fixtures()
-
-    assert load_reader_apparatus_manifest()["frontend_api_payload_schema_version"] == 1
-    assert {payload["surface_contract"] for payload in payload_fixtures} == {
-        "reader_apparatus_empty_sidecar",
-        "reader_apparatus_sidecar_rows",
-    }
-
-    for payload_fixture in payload_fixtures:
-        fixture_id = payload_fixture["fixture_id"]
-        case = fixture_cases[fixture_id]
-        path = repo_root / payload_fixture["path"]
-        payload_bytes = path.read_bytes()
-        assert hashlib.sha256(payload_bytes).hexdigest() == payload_fixture["payload_sha256"]
-
-        payload = json.loads(payload_bytes)
-        assert set(payload) == {
-            "apparatus",
-            "fixture_id",
-            "source_fixture_path",
-            "source_fixture_sha256",
-        }
-        assert payload["fixture_id"] == fixture_id
-        assert payload["source_fixture_path"] == case["path"]
-        assert payload["source_fixture_sha256"] == payload_fixture["source_fixture_sha256"]
-        assert payload["source_fixture_sha256"] == case["sha256"]
-
-        apparatus = ReaderApparatusResponse.model_validate(payload["apparatus"])
-        expected = case["expected"]
-        assert apparatus.status == expected["status"], fixture_id
-        assert len(apparatus.items) == sum(expected["item_kinds"].values()), fixture_id
-        assert len(apparatus.edges) == sum(expected["edge_relations"].values()), fixture_id
-
-        if payload_fixture["surface_contract"] == "reader_apparatus_empty_sidecar":
-            assert apparatus.items == []
-            assert apparatus.edges == []
-        else:
-            assert apparatus.items
-            assert apparatus.capabilities.has_sidecar_items is True
-
-
-def test_reader_apparatus_frontend_payload_manifest_entries_are_generated():
-    repo_root = Path(__file__).parents[2]
-    artifacts = frontend_payload_artifacts()
-
-    assert frontend_api_payload_fixtures() == frontend_payload_manifest_entries(artifacts)
-    assert frontend_surface_contracts() == frontend_surface_contract_entries(artifacts)
-    assert FRONTEND_PAYLOAD_INDEX_PATH.read_text(encoding="utf-8") == (
-        build_frontend_payload_index(artifacts)
-    )
-
-    stale_payloads = [
-        str(artifact.path.relative_to(repo_root))
-        for artifact in artifacts
-        if not artifact.path.exists() or artifact.path.read_bytes() != artifact.payload_bytes
-    ]
-    assert stale_payloads == []
-
-
-def test_reader_apparatus_manifest_declares_frontend_surface_coverage_for_every_fixture():
-    manifest = load_reader_apparatus_manifest()
-    fixture_cases = automated_fixtures_by_id()
-    payload_fixture_ids = {payload["fixture_id"] for payload in frontend_api_payload_fixtures()}
-    contracts = frontend_surface_contracts()
-
-    assert manifest["frontend_surface_contract_schema_version"] == 3
-    assert {contract["fixture_id"] for contract in contracts} == {
-        case["id"] for case in automated_fixture_cases()
-    }
-    assert payload_fixture_ids == set(fixture_cases)
-
-    unrendered_row_fixtures = []
-    for contract in contracts:
-        fixture_id = contract["fixture_id"]
-        case = fixture_cases[fixture_id]
-        expected = case["expected"]
-
-        assert set(contract) <= {
-            "expected_reader_tools_surface",
-            "fixture_id",
-            "gap_reason",
-            "verification_status",
-            "verified_layers",
-        }, fixture_id
-        assert contract["expected_reader_tools_surface"] in FRONTEND_SURFACE_EXPECTATIONS
-        assert contract["verification_status"] in FRONTEND_SURFACE_VERIFICATION_STATUSES
-
-        expected_surface = (
-            "citations_tab_rows"
-            if expected["status"] in {"partial", "ready"}
-            and sum(expected.get("item_kinds", {}).values()) > 0
-            else "citations_tab_omitted"
-        )
-        assert contract["expected_reader_tools_surface"] == expected_surface, fixture_id
-
-        if fixture_id in payload_fixture_ids:
-            expected_verification_status = (
-                "reader_shell_omission_tested"
-                if expected_surface == "citations_tab_omitted"
-                else "payload_projection_and_direct_surface_tested"
-            )
-            assert contract["verification_status"] == expected_verification_status, fixture_id
-            assert "gap_reason" not in contract, fixture_id
-            continue
-
-        assert contract["verification_status"] == "not_frontend_payload_tested", fixture_id
-        assert contract.get("gap_reason") in FRONTEND_SURFACE_GAP_REASONS, fixture_id
-        if expected_surface == "citations_tab_rows":
-            unrendered_row_fixtures.append(fixture_id)
-
-    assert unrendered_row_fixtures == []
 
 
 def test_reader_apparatus_gold_graph_manifest_entries_match_committed_fixtures():

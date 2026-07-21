@@ -4316,7 +4316,7 @@ class TestPdfRetry:
             assert row == (None, None, 0)
 
     def test_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
-        """Text-rebuild path invalidates quote-match metadata before new artifacts."""
+        """Text rebuild clears text while preserving apparatus for reconciliation."""
         from uuid import uuid4
 
         from sqlalchemy import text
@@ -4368,7 +4368,7 @@ class TestPdfRetry:
                 text("SELECT count(*) FROM reader_apparatus_states WHERE media_id = :id"),
                 {"id": media_id},
             ).scalar_one()
-            == 0
+            == 1
         )
 
     def test_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(

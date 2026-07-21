@@ -46,7 +46,10 @@ import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { addContextRef } from "@/lib/resourceGraph/contextRefs";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
-import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import type {
   BranchDraft,
   BranchGraph,
@@ -108,9 +111,10 @@ interface UseConversationBranch {
   switchToLeaf: (
     leafMessageId: string,
     anchorMessageId: string | null,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   switchToFork: (fork: ForkOption) => Promise<void>;
-  reload: () => Promise<void>;
+  revealMessage: (messageId: string) => Promise<boolean>;
+  reload: () => Promise<boolean>;
 }
 
 interface UseConversation {
@@ -185,7 +189,8 @@ export function useConversation(
   const [pathCacheByLeafId, setPathCacheByLeafId] = useState<
     Record<string, ConversationMessage[]>
   >({});
-  const [branchGraph, setBranchGraph] = useState<BranchGraph>(EMPTY_BRANCH_GRAPH);
+  const [branchGraph, setBranchGraph] =
+    useState<BranchGraph>(EMPTY_BRANCH_GRAPH);
   const [activeLeafMessageId, setActiveLeafMessageId] = useState<string | null>(
     null,
   );
@@ -207,9 +212,14 @@ export function useConversation(
   });
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
+  const revealMessageRequestsRef = useRef<Map<string, Promise<boolean>>>(
+    new Map(),
+  );
   // Single-flight guard for the active-runs fetch so the initial load and the two
   // branch-switch calls share one in-flight GET instead of issuing duplicates.
-  const activeRunsRequestRef = useRef<Promise<ChatRunListResponse> | null>(null);
+  const activeRunsRequestRef = useRef<Promise<ChatRunListResponse> | null>(
+    null,
+  );
   const treeRequestRef = useRef<{
     conversationId: string;
     promise: Promise<{ data: ConversationTreeResponse }>;
@@ -345,41 +355,47 @@ export function useConversation(
     [messageIdsForPath],
   );
 
-  const loadConversationTree = useCallback((id: string, signal?: AbortSignal) => {
-    if (signal) {
-      return apiFetch<{ data: ConversationTreeResponse }>(
-        `/api/conversations/${id}/tree`,
-        { signal },
-      );
-    }
-    if (treeRequestRef.current?.conversationId === id) {
-      return treeRequestRef.current.promise;
-    }
-    const request = apiFetch<{ data: ConversationTreeResponse }>(
-      `/api/conversations/${id}/tree`,
-    );
-    const promise = request.finally(() => {
-      if (treeRequestRef.current?.promise === promise) {
-        treeRequestRef.current = null;
+  const loadConversationTree = useCallback(
+    (id: string, signal?: AbortSignal) => {
+      if (signal) {
+        return apiFetch<{ data: ConversationTreeResponse }>(
+          `/api/conversations/${id}/tree`,
+          { signal },
+        );
       }
-    });
-    treeRequestRef.current = { conversationId: id, promise };
-    return promise;
-  }, []);
+      if (treeRequestRef.current?.conversationId === id) {
+        return treeRequestRef.current.promise;
+      }
+      const request = apiFetch<{ data: ConversationTreeResponse }>(
+        `/api/conversations/${id}/tree`,
+      );
+      const promise = request.finally(() => {
+        if (treeRequestRef.current?.promise === promise) {
+          treeRequestRef.current = null;
+        }
+      });
+      treeRequestRef.current = { conversationId: id, promise };
+      return promise;
+    },
+    [],
+  );
 
   const refreshTreeForConversation = useCallback(
-    async (id: string, reportError: boolean) => {
+    async (id: string, reportError: boolean): Promise<boolean> => {
       try {
         const response = await loadConversationTree(id);
-        if (conversationIdRef.current !== id) return;
+        if (conversationIdRef.current !== id) return false;
         applyConversationTree(response.data);
+        setError(null);
+        return true;
       } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
+        if (handleUnauthenticatedApiError(err)) return false;
         if (reportError) {
           setError(toFeedback(err, { fallback: "Failed to refresh forks" }));
         } else {
           console.error("Failed to refresh conversation tree:", err);
         }
+        return false;
       }
     },
     [applyConversationTree, loadConversationTree],
@@ -435,7 +451,8 @@ export function useConversation(
   );
 
   const shouldLoadConversation =
-    conversationId !== null && !locallyCreatedIdsRef.current.has(conversationId);
+    conversationId !== null &&
+    !locallyCreatedIdsRef.current.has(conversationId);
   const titleResource = useResource<{ data: { title: string } }>({
     cacheKey: shouldLoadConversation && !branching ? conversationId : null,
     path: (id) => `/api/conversations/${id}` as ApiPath,
@@ -461,6 +478,7 @@ export function useConversation(
     routeConversationIdRef.current = initialConversationId;
     conversationIdRef.current = initialConversationId;
     activePathSwitchSeqRef.current += 1;
+    revealMessageRequestsRef.current.clear();
     activeRunsRequestRef.current = null;
     treeRequestRef.current = null;
 
@@ -742,21 +760,21 @@ export function useConversation(
 
   const reloadTree = useCallback(async () => {
     const id = conversationId;
-    if (!id) return;
-    await refreshTreeForConversation(id, true);
+    if (!id) return false;
+    return refreshTreeForConversation(id, true);
   }, [conversationId, refreshTreeForConversation]);
 
   const switchToLeaf = useCallback(
     async (nextLeafId: string, anchorMessageId: string | null) => {
       const id = conversationId;
-      if (!id) return;
+      if (!id) return false;
       const nextPath = pathCacheByLeafId[nextLeafId];
       if (!nextPath) {
         setError({
           severity: "error",
           title: "This fork is not available yet.",
         });
-        return;
+        return false;
       }
 
       const switchSeq = activePathSwitchSeqRef.current + 1;
@@ -798,7 +816,7 @@ export function useConversation(
             body: JSON.stringify({ active_leaf_message_id: nextLeafId }),
           },
         );
-        if (activePathSwitchSeqRef.current !== switchSeq) return;
+        if (activePathSwitchSeqRef.current !== switchSeq) return false;
         scrollRef.current?.captureAnchor(anchorMessageId);
         applyConversationTree(response.data);
         void tailVisibleActiveRuns(
@@ -807,9 +825,10 @@ export function useConversation(
             response.data.active_leaf_message_id,
           ),
         );
+        return true;
       } catch (err) {
-        if (activePathSwitchSeqRef.current !== switchSeq) return;
-        if (handleUnauthenticatedApiError(err)) return;
+        if (activePathSwitchSeqRef.current !== switchSeq) return false;
+        if (handleUnauthenticatedApiError(err)) return false;
         setError(toFeedback(err, { fallback: "Failed to switch fork" }));
         scrollRef.current?.captureAnchor(anchorMessageId);
         dispatchMessages({ type: "set_all", messages: previous.messages });
@@ -821,6 +840,7 @@ export function useConversation(
         setBranchDraft(previous.branchDraft);
         setForkOptionsByParentId(previous.forkOptionsByParentId);
         setBranchGraph(previous.branchGraph);
+        return false;
       }
     },
     [
@@ -844,6 +864,52 @@ export function useConversation(
     [switchToLeaf],
   );
 
+  const revealMessage = useCallback(
+    (messageId: string): Promise<boolean> => {
+      const requestKey = `${conversationId ?? "new"}:${messageId}`;
+      const existingRequest = revealMessageRequestsRef.current.get(requestKey);
+      if (existingRequest) return existingRequest;
+
+      const request = (async () => {
+        if (messages.some((message) => message.id === messageId)) return true;
+
+        const candidate = Object.entries(pathCacheByLeafId)
+          .filter(([, path]) =>
+            path.some((message) => message.id === messageId),
+          )
+          .sort(
+            ([leftLeafId, leftPath], [rightLeafId, rightPath]) =>
+              leftPath.length - rightPath.length ||
+              leftLeafId.localeCompare(rightLeafId),
+          )[0];
+        if (!candidate) {
+          setError({
+            severity: "error",
+            title: "This message is not available in this conversation.",
+          });
+          return false;
+        }
+        return switchToLeaf(candidate[0], null);
+      })();
+
+      revealMessageRequestsRef.current.set(requestKey, request);
+      void request.then(
+        () => {
+          if (revealMessageRequestsRef.current.get(requestKey) === request) {
+            revealMessageRequestsRef.current.delete(requestKey);
+          }
+        },
+        () => {
+          if (revealMessageRequestsRef.current.get(requestKey) === request) {
+            revealMessageRequestsRef.current.delete(requestKey);
+          }
+        },
+      );
+      return request;
+    },
+    [conversationId, messages, pathCacheByLeafId, switchToLeaf],
+  );
+
   const switchableLeafIds = useMemo(
     () => new Set(Object.keys(pathCacheByLeafId)),
     [pathCacheByLeafId],
@@ -861,6 +927,7 @@ export function useConversation(
       setBranchDraft,
       switchToLeaf,
       switchToFork,
+      revealMessage,
       reload: reloadTree,
     };
   }, [
@@ -870,6 +937,7 @@ export function useConversation(
     branching,
     forkOptionsByParentId,
     reloadTree,
+    revealMessage,
     switchToFork,
     switchToLeaf,
     switchableLeafIds,
@@ -880,7 +948,8 @@ export function useConversation(
   // parents while a newer turn is pending, failed, or user-only.
   const replyParentMessageId = useMemo(() => {
     const leaf = messages[messages.length - 1];
-    if (leaf?.role === "assistant" && leaf.status === "complete") return leaf.id;
+    if (leaf?.role === "assistant" && leaf.status === "complete")
+      return leaf.id;
     return null;
   }, [messages]);
 
@@ -890,7 +959,8 @@ export function useConversation(
     if (messages.length === 0) return null;
     if (
       messages.some(
-        (message) => message.role === "assistant" && message.status === "pending",
+        (message) =>
+          message.role === "assistant" && message.status === "pending",
       )
     ) {
       return "Wait for the assistant response to finish before sending.";
@@ -909,13 +979,7 @@ export function useConversation(
       return "Wait for a complete assistant response before sending.";
     }
     return null;
-  }, [
-    branchDraft,
-    conversationId,
-    loading,
-    messages,
-    replyParentMessageId,
-  ]);
+  }, [branchDraft, conversationId, loading, messages, replyParentMessageId]);
 
   return {
     messages,

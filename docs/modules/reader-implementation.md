@@ -35,21 +35,26 @@ contract.
 
 ### Document Map surfaces
 
-The reader has one side instrument: **Document Map**. It contains Contents,
-Highlights, Citations, Connections, and Chat tabs under the existing internal
-`reader-tools` secondary group.
+The reader has one side instrument: **Document Map**. It publishes exactly two
+surfaces under the internal `reader-tools` secondary group: **Contents** and
+**Evidence**.
 
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
   markers from `GET /media/{id}/document-map`, shows whole-document positions
-  for every anchored lens, and opens the Document Map.
-- The tabbed secondary pane is the detail surface. Contents uses
-  `ReaderContentsNav`; Highlights uses `ReaderDocumentMapHighlightsLens`;
-  Citations uses `ReaderDocumentMapCitationsLens`; Connections uses
-  `ReaderDocumentMapConnectionsLens`; Chat uses the reader document-chat
-  owner.
+  for positioned reader facts, and opens the matching Document Map surface.
+- Contents uses `ReaderContentsNav`.
+- Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
+  source-authored apparatus, and resource-graph connections; its wide-reader
+  companion is `MarginRail`.
 - Mobile has no rail. The same Document Map secondary publication renders in
   the workspace mobile secondary sheet.
-- Highlights are one lens of the Document Map, not a separate reader tool.
+- Chat opens in the conversation pane; it is not a Document Map surface.
+
+The canonical contract for explicit `Passages | Whole document` scope,
+semantic filters, and typed related-object disclosures is
+[`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
+Evidence exposes only that target-centered payload; no removed reader lens,
+route, or storage-shaped response remains.
 
 ### quick-note composer
 
@@ -77,7 +82,7 @@ skins.
   save — there is no discard path. an empty composer creates no note; the
   highlight survives in every branch.
 - all note writes flow through the canonical `saveHighlightNote` path used by
-  Document Map Highlights, so composer-written notes appear there with no extra
+  Evidence, so composer-written notes appear there with no extra
   wiring.
 
 the `n` chord is reader-local: `useHighlightNoteChord` fires on bare `n`
@@ -86,7 +91,7 @@ state lives (`MediaPaneBody` and `PdfReader`). it is deliberately not a
 keybindings-registry entry — that registry is app-global and cannot capture
 bare keys.
 
-### contents lens
+### contents surface
 
 The document table of contents (epub + web article) is the Document Map
 "Contents" tab (`ReaderContentsNav`).
@@ -116,10 +121,11 @@ PDF page geometry and publishes the widest rendered page as intrinsic primary
 width; the workspace raises the PDF pane floor to that width.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
-rendered pane width without changing stored primary pane width. Reader
-highlights and resource chat are Document Map secondary surfaces under the
-workspace secondary pane contract ([workspace.md](workspace.md)); their width
-is independent from the primary reader width. Mobile panes ignore desktop
+rendered pane width without changing stored primary pane width. Contents and
+Evidence are Document Map secondary surfaces under the workspace secondary
+pane contract ([workspace.md](workspace.md)); their width is independent from
+the primary reader width. `MarginRail` is wide-reader primary-adjacent evidence
+presentation, not another secondary surface. Mobile panes ignore desktop
 runtime pane sizing and render at viewport width. Mobile workspace mode also
 suppresses fixed primary chrome, desktop-attached secondary columns, and pane
 resize handles; the Document Map reaches mobile through the workspace
@@ -137,12 +143,13 @@ metadata, never from rendered DOM geometry.
   a stored highlight anchors by `fragment_id`, and each navigation section
   carries the `fragment_id` of its one fragment, so highlights position
   directly against the section list
-- pdf: `(page_number - 0.5) / numPages`; markers are page-granular
-- unanchorable items remain in their tabs but do not produce rail markers
+- pdf: exact page geometry when available, normalized within the page and then
+  across `numPages`; page-only markers fall back to the page midpoint
+- items without a resolved reader position do not produce rail markers
 - the viewport band spans the active fragment/section's global offset range
   (`documentSpan`), narrowed by the in-fragment scroll fraction
-- rail activation routes through `MediaPaneBody`, opens the matching Document
-  Map tab, and then delegates to that lens's existing activation path.
+- rail activation routes through `MediaPaneBody`, opens Contents or Evidence,
+  and then delegates to the owning item activation path.
 
 ### highlight read paths
 
@@ -174,11 +181,11 @@ transient `reader_selection` turn anchor for the current chat run.
   same path as web and EPUB so a just-created quote does not depend on a stale
   highlight-list refresh
 
-### anchored highlight projection
+### anchored evidence projection
 
-Anchored projection is the reader-owned bridge from stored highlight anchors to
-visible secondary rows. It is the Highlights lens mechanism only; the overview
-rail never uses it.
+Anchored projection is the reader-owned bridge from target-owned locators to
+visible Evidence and margin rows. The overview rail never uses rendered DOM
+projection; its positions come from aggregate document fractions.
 
 - Reflowable readers project highlights from rendered DOM segments tagged with
   `data-active-highlight-ids`.
@@ -186,7 +193,7 @@ rail never uses it.
   viewport transform.
 - Projection remeasures after reader typography, active fragment/section,
   rendered HTML, PDF zoom/page render epoch, active secondary surface, secondary
-  width, or highlight data changes.
+  width, or evidence data changes.
 - Missing targets are explicit projection state; they are not silently treated
   as visible rows.
 - Projection state is never persisted. It is derived from current rendered
@@ -202,9 +209,10 @@ is not generated chat citation evidence and must not write or read
 - Backend extraction is owned by `reader_apparatus.py` and the relevant ingest
   path before semantic source attributes are sanitized away.
 - Source-authored standalone margin notes are valid target-only apparatus rows:
-  they appear in the Document Map Citations lens and can jump to the note
-  target, but they do not get invented marker edges or hover previews.
-- The reader exposes apparatus in the Document Map `Citations` tab.
+  they appear in Evidence and can jump to the note target, but they do not get
+  invented marker edges or hover previews.
+- Evidence exposes apparatus through its `Citations` filter and distinguishes
+  source references from generated citations in the typed item contract.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.
 - PDF rows are capability-gated. Current PDF support is scoped to native
@@ -223,10 +231,12 @@ separate from source-authored apparatus.
 
 - Backend ownership remains `resource_edges`; the media reader consumes those
   rows only through `GET /media/{id}/document-map`.
-- The reader exposes connections in the Document Map `Connections` tab.
+- Evidence classifies these rows under semantic `Links` and `Synapses` filters;
+  it exposes no storage-shaped `Connections` category.
 - Rows align to the referenced passage when the media-owned endpoint resolves
-  to PDF geometry or exact rendered fragment text offsets. Unanchorable rows
-  stay in the same list below anchored rows instead of inventing locator data.
+  to PDF geometry or exact rendered fragment text offsets. Unavailable passage
+  facts remain in `Passages` under `Needs attention`; they never invent locator
+  data or fall into `Whole document` merely because resolution failed.
 - Activating a row opens the source object; activating its target uses the
   target-owned reader locator. Edges never store reader locators.
 
@@ -607,7 +617,7 @@ supporting test infra:
 ```bash
 cd apps/web && bunx vitest run --project unit src/lib/reader/readerProgress.test.ts src/lib/reader/readerLocationHref.test.ts src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
 cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
-cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/ReaderDocumentMapHighlightsLens.test.tsx
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/EvidencePaneSurface.test.tsx src/components/reader/MarginRail.test.tsx
 make test-e2e PLAYWRIGHT_ARGS='tests/reader-progress-continuity.spec.ts --project=chromium'
 make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```
