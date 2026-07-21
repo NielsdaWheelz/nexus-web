@@ -33,7 +33,6 @@ R2_S3_API_ORIGIN
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 R2_BUCKET
-NEXUS_KEY_ENCRYPTION_KEY
 STREAM_TOKEN_SIGNING_KEY
 STREAM_BASE_URL
 NEXUS_ORACLE_CORPUS_OWNER_USER_ID
@@ -41,6 +40,11 @@ BILLING_ENABLED
 PODCASTS_ENABLED
 YOUTUBE_DATA_API_KEY
 X_API_BEARER_TOKEN
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+MOONSHOT_API_KEY
+NEXUS_FABLE_RETENTION_ACCEPTED_AT
 "
 
 die() {
@@ -237,6 +241,21 @@ reject_removed_x_env_keys() {
   fi
 }
 
+reject_removed_llm_env_keys() {
+  local file="$1"
+  local key value
+
+  if value="$(env_value "NEXUS_KEY_ENCRYPTION_KEY" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+    die "NEXUS_KEY_ENCRYPTION_KEY was removed by the LLM provider-runtime cutover; BYOK API-key encryption no longer exists, so this key can never be set"
+  fi
+
+  for key in CLOUDFLARE_AI_API_TOKEN CLOUDFLARE_AI_ACCOUNT_ID; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} was removed by the LLM provider-runtime cutover; Cloudflare is no longer an LLM provider"
+    fi
+  done
+}
+
 require_safe_worker_defaults() {
   local file="$1"
   local key value
@@ -294,6 +313,7 @@ require_local_database_url "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
+reject_removed_llm_env_keys "$tmp_file"
 require_safe_worker_defaults "$tmp_file"
 
 scp "$tmp_file" "${SSH_TARGET}:${remote_tmp}"

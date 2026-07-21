@@ -3794,40 +3794,6 @@ class BranchAnchorKind(str, PyEnum):
     assistant_selection = "assistant_selection"
 
 
-class LLMProvider(str, PyEnum):
-    """Supported LLM providers."""
-
-    openai = "openai"
-    anthropic = "anthropic"
-    gemini = "gemini"
-    openrouter = "openrouter"
-    cloudflare = "cloudflare"
-
-
-class KeyModeRequested(str, PyEnum):
-    """Requested key mode for LLM calls."""
-
-    auto = "auto"
-    byok_only = "byok_only"
-    platform_only = "platform_only"
-
-
-class KeyModeUsed(str, PyEnum):
-    """Actual key mode used for LLM calls."""
-
-    platform = "platform"
-    byok = "byok"
-
-
-class ApiKeyStatus(str, PyEnum):
-    """Status of a user API key."""
-
-    untested = "untested"
-    valid = "valid"
-    invalid = "invalid"
-    revoked = "revoked"
-
-
 class ContextTargetType(str, PyEnum):
     """Types of universal message context targets."""
 

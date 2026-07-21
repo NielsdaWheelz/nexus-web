@@ -666,24 +666,25 @@ def test_no_event_loop_construction_under_tasks_except_llm_task():
 
 
 # =============================================================================
-# Key spine: no raw settings.<provider>_api_key reads (AC-5)
+# Platform key loader: no raw settings.<provider>_api_key reads outside
+# services/llm_credentials.py (LLM-provider-runtime cutover §9)
 # =============================================================================
 
 
-def test_no_raw_provider_key_reads_outside_key_spine():
-    # The platform-key reads live only in llm_catalog.py (which exposes them via
-    # platform_key_for_provider) and api_key_resolver.py; config.py owns the
-    # settings fields.
-    pattern = (
-        r"settings\.(anthropic|openai|gemini|openrouter)_api_key|settings\.cloudflare_ai_api_token"
-    )
+def test_no_raw_provider_key_reads_outside_llm_credentials():
+    # BYOK / api_key_resolver "key spine" is gone. services/llm_credentials.py is the
+    # SOLE platform-key loader (it reads the five provider keys off Settings and hands
+    # back a runtime ProviderCredential for generation/embedding/transcription);
+    # config.py owns the Settings fields and their staging/prod startup validation. No
+    # other Nexus module may read a raw provider key. (cloudflare_ai_api_token is gone
+    # with Cloudflare LLM; moonshot is added as a primary direct provider.)
+    pattern = r"settings\.(openai|anthropic|gemini|moonshot|openrouter)_api_key"
     hits = _excluding(
         _grep(pattern, _PY_ROOT),
-        "llm_catalog.py",
-        "services/api_key_resolver.py",
+        "services/llm_credentials.py",
         "config.py",
     )
-    assert not hits, f"raw provider-key read outside the key spine:\n{_fmt(hits)}"
+    assert not hits, f"raw provider-key read outside services/llm_credentials.py:\n{_fmt(hits)}"
 
 
 # =============================================================================
@@ -791,6 +792,17 @@ def test_live_provider_gate_includes_shared_llm_provider_matrix():
     assert "python/pyproject.toml" in makefile
     assert "rev-parse HEAD" in makefile
 
+    # LLM-provider-runtime cutover §14: the root Makefile owns the required release
+    # build gate `certify-llm-providers`. It runs the UNFILTERED paid matrix (by
+    # delegating to the shared-matrix target) and REFUSES to run — fail closed — when
+    # any required direct/OpenRouter credential or the Fable retention assertion is
+    # missing, specifically rejecting a missing OPENROUTER_API_KEY.
+    assert "certify-llm-providers:" in makefile
+    assert "REFUSING to run" in makefile
+    assert "MOONSHOT_API_KEY" in makefile
+    assert "OPENROUTER_API_KEY" in makefile
+    assert "NEXUS_FABLE_RETENTION_ACCEPTED_AT" in makefile
+
     workflow = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "test-provider-runtime:" in workflow
     assert "LLM_CALLING_DIR: llm-calling" in workflow
@@ -804,6 +816,19 @@ def test_live_provider_gate_includes_shared_llm_provider_matrix():
     assert "This CI run is not live-provider proof" in workflow
     assert "Test live-provider gate" in workflow
     assert "if: steps.live-provider-secrets.outputs.live_ready == 'true'" in workflow
+
+    # §14: the protected release-promotion job runs the unfiltered certification and
+    # fails closed on missing live secrets, while ordinary deterministic PR CI never
+    # claims paid-live success. It is environment-gated (android-release.yml pattern),
+    # restricted to promotion (push to main), sets the Moonshot key + Fable assertion
+    # the certification needs, and invokes `make certify-llm-providers`.
+    assert "certify-llm-providers:" in workflow
+    assert "environment: llm-live-certification" in workflow
+    assert "if: github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
+    assert "secrets.MOONSHOT_API_KEY" in workflow
+    assert "secrets.NEXUS_FABLE_RETENTION_ACCEPTED_AT" in workflow
+    assert "run: make certify-llm-providers" in workflow
+
     for secret in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -822,19 +847,29 @@ def test_live_provider_gate_includes_shared_llm_provider_matrix():
         assert f"secrets.{secret}" in workflow
 
 
-def test_raw_model_runtime_calls_stay_inside_ledger_or_explicit_exceptions():
-    # Generation paths must call providers through llm_ledger. The explicit
-    # exceptions are structured_synthesis' ledgered interface and saved-key probes.
+def test_generation_runtime_calls_stay_inside_llm_execution():
+    # LLM-provider-runtime hard cutover §9/§14: services/llm_execution.py is the sole
+    # Nexus generation boundary. Only its ProductionExecutionRuntime may call
+    # provider_runtime.ProviderRuntime.generate/stream, and only its
+    # execute_generation/execute_generation_stream may dispatch the ExecutionRuntime
+    # seam (runtime.generate / runtime.stream). No other Nexus module may reach a
+    # generation runtime; the old LedgeredLLM/llm_ledger.generate boundary is gone.
+    #
+    # The ExecutionRuntime Protocol and the real-media fixture DEFINE `async def
+    # generate` / `def stream`; those definitions have no receiver dot and so never
+    # match a `.generate(`/`.stream(` call. Non-generation ports (`.embed(`,
+    # `.transcribe(`) are out of scope and legitimately live in their owners.
     hits = _excluding(
         _grep(
-            r"\b(?:router|llm_router|runtime|llm|model_runtime|provider_runtime|provider_router)\.(?:generate|stream)\(",
+            r"\b(?:provider_runtime|runtime|llm_runtime|model_runtime|provider_router|llm_router)"
+            r"\.(?:generate|stream)\(",
             _PY_ROOT,
         ),
-        "services/llm_ledger.py",
-        "services/structured_synthesis.py",
-        "services/user_keys.py",
+        "services/llm_execution.py",
     )
-    assert not hits, f"raw ModelRuntime generate/stream call outside ledger owners:\n{_fmt(hits)}"
+    assert not hits, (
+        f"generation-runtime generate/stream call outside services/llm_execution.py:\n{_fmt(hits)}"
+    )
 
 
 def test_chat_stream_legacy_event_literals_absent_from_chat_owners():
@@ -1037,21 +1072,30 @@ def test_generation_harness_dead_symbols_absent():
 
 
 # =============================================================================
-# AC-2 — every catalog entry offers "default" reasoning
+# Every profile offers its own default reasoning option
 # =============================================================================
 
 
-def test_every_catalog_model_offers_default_reasoning():
-    # Importing the catalog is allowed (pure data, no DB); the FE defaults to
-    # "default" for every model, so every entry must accept it.
-    from nexus.llm_catalog import MODEL_CATALOG
+def test_every_profile_offers_its_default_reasoning():
+    # The MODEL_CATALOG / curated-model + literal "default" reasoning concept is GONE;
+    # the cutover replaces it with the product profile registry. Importing PROFILES is
+    # allowed (pure data, no DB). Every profile must offer its own
+    # default_reasoning_option_id within its declared reasoning_options — the same
+    # invariant llm_profiles.validate_profiles() enforces at startup, restated here as
+    # an independently CI-assertable §4/§10 gate.
+    from nexus.services.llm_profiles import PROFILES
 
+    assert PROFILES, "llm_profiles.PROFILES is empty"
     missing = [
-        f"{entry.provider}/{entry.model_name}"
-        for entry in MODEL_CATALOG
-        if "default" not in entry.reasoning_modes
+        profile.id
+        for profile in PROFILES
+        if profile.default_reasoning_option_id
+        not in {option.id for option in profile.reasoning_options}
     ]
-    assert not missing, f"catalog entries missing 'default' reasoning mode: {missing}"
+    assert not missing, (
+        f"profiles whose default_reasoning_option_id is not among their own "
+        f"reasoning_options: {missing}"
+    )
 
 
 # =============================================================================
@@ -1083,16 +1127,23 @@ def test_worker_allowlist_kinds_match_registry_and_user_facing_jobs():
 
 def test_generation_harness_must_remain_symbols_present():
     # Both SSE tailers stay (the two-tailer defense in _sse.py); the one token
-    # estimator stays (char *budgets* are domain and orthogonal); chat keeps its
-    # user-copy map. (message_retrievals presence — the one chat-owned telemetry
-    # store that survives — is covered by the parametrized must-REMAIN gate above;
-    # conversation_references/oracle_reading_passages/object_links were folded into
-    # resource_edges by the provenance-graph cutover and are now BANNED by the
-    # §18.3 dropped-symbol gates below.)
+    # estimator stays (char *budgets* are domain and orthogonal). (message_retrievals
+    # presence — the one chat-owned telemetry store that survives — is covered by the
+    # parametrized must-REMAIN gate above; conversation_references/oracle_reading_passages/
+    # object_links were folded into resource_edges by the provenance-graph cutover and are
+    # now BANNED by the §18.3 dropped-symbol gates below.)
+    #
+    # ERROR_CODE_TO_MESSAGE (the old broad "request rejected by the model provider" prose
+    # map) was DELETED by the LLM-provider-runtime cutover (§9 "Delete E_LLM_BAD_REQUEST
+    # and every broad ... mapping"). Its surviving replacement surface — a structured,
+    # run-owned projection — must remain: the closed ExpectedChatFailure tagged union in
+    # schemas/llm.py and its single chat_failure_projection owner in
+    # services/chat_failure.py (§10 failure/rerun).
     for symbol, where in (
         ("tail_cursor_stream", _PY_ROOT),
         ("tail_snapshot_stream", _PY_ROOT),
-        ("ERROR_CODE_TO_MESSAGE", _PY_ROOT),
+        ("ExpectedChatFailure", _PY_ROOT),
+        ("chat_failure_projection", _PY_ROOT),
     ):
         assert _grep(re.escape(symbol), where), f"must-REMAIN symbol {symbol} is absent"
 
@@ -2485,3 +2536,191 @@ def test_default_library_virtualization_ac16_extirpation_gate():
     hits = _excluding(hits, "test_migrations.py", "test_cutover_negative_gates.py")
     hits = [hit for hit in hits if not _ac16_allowed_residual_test_line(hit)]
     assert not hits, f"AC16-dead symbol survives extirpation:\n{_fmt(hits)}"
+
+
+# #############################################################################
+# LLM provider-runtime hard cutover (§14) — dropped-surface negative gates
+#
+# docs/cutovers/llm-provider-runtime-hard-cutover.md §14: "No models/user_api_keys
+# table, /models, /keys, BYOK/key mode, provider enable flag, Cloudflare LLM,
+# active old-model slug, generic provider-branch client, cache stripping, schema
+# mutation, JSON repair, sampling knob, reasoning token budget, stateful cursor, or
+# automatic fallback remains." Same grep idiom as every gate above: scan only
+# python/nexus + apps/web/src and assert the dropped surface is ABSENT (migrations
+# and python/tests/ live outside the roots; only frontend *.test.{ts,tsx} need
+# excluding). These prove the LIVE cutover surface — services, schemas, API routes,
+# tasks, models, config, and the whole frontend — is clean of every dropped symbol.
+# #############################################################################
+
+
+def test_models_and_user_api_keys_orm_tables_absent_from_live_code():
+    # The DB `models` and `user_api_keys` tables and their ORM classes + the runtime
+    # MODEL_CATALOG / nexus.llm_catalog module are gone (profiles replace them). Import
+    # forms only, so the historical prose reference in chat_failure.py does not match.
+    pattern = (
+        r"\bclass Model\(|\bclass UserApiKey\b|"
+        r"__tablename__\s*=\s*['\"](?:models|user_api_keys)['\"]|"
+        r"\bMODEL_CATALOG\b|"
+        r"(?:from|import)\s+nexus\.llm_catalog\b|"
+        r"\bUserApiKey\b|\buser_api_keys\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"models/user_api_keys ORM+catalog surface in live code:\n{_fmt(hits)}"
+
+
+def test_models_and_keys_routes_and_modules_absent():
+    # GET /llm-profiles + the sole profiles router replace GET /models and the key
+    # routes; the encryption/key-resolver services and the frontend BFF + settings pane
+    # are deleted.
+    deleted = [
+        "python/nexus/api/routes/models.py",
+        "python/nexus/api/routes/keys.py",
+        "python/nexus/schemas/models.py",
+        "python/nexus/schemas/keys.py",
+        "python/nexus/services/models.py",
+        "python/nexus/services/user_keys.py",
+        "python/nexus/services/api_key_resolver.py",
+        "python/nexus/services/crypto.py",
+        "apps/web/src/app/api/models",
+        "apps/web/src/app/api/keys",
+        "apps/web/src/components/chat/ModelSettingsPopover.tsx",
+    ]
+    present = [rel for rel in deleted if (_REPO_ROOT / rel).exists()]
+    assert not present, f"deleted model/key route+service+BFF modules still exist: {present}"
+
+    route_hits = _filtered(
+        r"@router\.(?:get|post|put|delete|patch)\(\s*['\"]/(?:models|keys)\b|"
+        r"proxyToFastAPI\([^)\n]*[`'\"]/(?:models|keys)\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not route_hits, f"/models or /keys route literal survives:\n{_fmt(route_hits)}"
+
+
+def test_byok_and_key_mode_absent_from_live_surface():
+    # BYOK / key-mode / per-user key encryption are gone (platform credentials only).
+    # Symbol-precise (not bare prose) so the llm_credentials docstring that names what
+    # it replaced, and unrelated Web Crypto, do not match.
+    pattern = (
+        r"\bKeyModeRequested\b|\bKeyModeUsed\b|\bApiKeyStatus\b|\bbyok_only\b|\bbyok\b|"
+        r"\bencrypt_api_key\b|\bdecrypt_api_key\b|"
+        r"(?:from|import)\s+nexus\.services\.(?:api_key_resolver|user_keys|crypto)\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"BYOK/key-mode/key-encryption surface in live code:\n{_fmt(hits)}"
+
+
+def test_provider_enable_flags_absent_from_live_surface():
+    # §4/§14: missing platform config is a startup error, never a product-portfolio
+    # toggle — there is no per-provider enable flag.
+    pattern = (
+        r"\benable_(?:openai|anthropic|gemini|openrouter|cloudflare|moonshot)\b|"
+        r"\bENABLE_(?:OPENAI|ANTHROPIC|GEMINI|OPENROUTER|CLOUDFLARE|MOONSHOT)\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"provider-enable flag in live code:\n{_fmt(hits)}"
+
+
+def test_cloudflare_llm_absent_from_live_surface():
+    # Cloudflare LLM (Workers AI) is removed. Cloudflare R2 object storage and the
+    # Cloudflare Email Worker ingest are unrelated infrastructure and stay legitimate,
+    # so this bans only the LLM-provider forms.
+    pattern = (
+        r"\bLLMProvider\b|@cf/|\bcloudflare_ai\b|"
+        r"\bCLOUDFLARE_AI_API_TOKEN\b|\bCLOUDFLARE_AI_ACCOUNT_ID\b|\bcloudflare_ai_api_token\b|"
+        r"provider\s*=\s*['\"]cloudflare['\"]"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"Cloudflare LLM surface in live code:\n{_fmt(hits)}"
+
+
+def test_llm_profile_targets_current_and_no_retired_model_slug_active():
+    # §4: the profile registry maps to exactly the seven certified runtime targets…
+    profiles_src = (_PY_ROOT / "services" / "llm_profiles.py").read_text(encoding="utf-8")
+    for slug in (
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "gemini-3.5-flash",
+        "kimi-k3",
+    ):
+        assert slug in profiles_src, f"current runtime target {slug!r} missing from llm_profiles.py"
+
+    # …and no retired GPT/Claude/Gemini/Kimi/Cloudflare/DeepSeek slug is an active target
+    # anywhere in the LLM selection/execution/runtime surface. (redact.py's safe_kv
+    # docstring example is a logging-guard illustration, not an active target, and is not
+    # part of this surface.)
+    retired = r"gpt-4|gpt-3|claude-3|claude-haiku|claude-opus|gemini-1\.|gemini-2\.|kimi-k2|deepseek|@cf/"
+    llm_surface = (
+        _PY_ROOT / "services" / "llm_profiles.py",
+        _PY_ROOT / "services" / "llm_execution.py",
+        _PY_ROOT / "services" / "llm_credentials.py",
+        _PY_ROOT / "schemas" / "llm.py",
+        _PY_ROOT / "api" / "routes" / "llm_profiles.py",
+    )
+    hits = _grep(retired, *llm_surface)
+    assert not hits, f"retired model slug active in the LLM selection/runtime surface:\n{_fmt(hits)}"
+
+
+def test_generic_provider_branch_client_absent_from_live_code():
+    # §7/§12: no generic provider-branching OpenAI-compatible client / adapter runtime.
+    # Moonshot + OpenRouter share only private syntax-only Chat Completions wire parsers
+    # inside the shared runtime package; Nexus never imports a branching client.
+    pattern = (
+        r"\bopenai_compatible\b|\bOpenAICompatible\b|\bopenai_compat\b|"
+        r"\b_adapter_runtime\b|\bProviderBranch\b|\bprovider_branch\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"generic provider-branch client surface in live code:\n{_fmt(hits)}"
+
+
+def test_cache_stripping_schema_mutation_and_json_repair_absent():
+    # §5/§8/§12: schema is validated once and never rewritten; unsupported cache intent
+    # is a planning defect, never silently stripped; there is no JSON/tool-argument
+    # repair and the json-repair dependency is gone.
+    pattern = (
+        r"json[_-]?repair|repair_json|strip_unsupported|strip_cache|strip_cache_control|"
+        r"normalize_schema|force_add_required|add_required_fields"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"cache-stripping / schema-mutation / JSON-repair surface in live code:\n{_fmt(hits)}"
+
+
+def test_sampling_knobs_absent_from_live_code():
+    # §2/§7: sampling is provider-default and not a product setting; Nexus omits native
+    # sampling fields. Word-anchored so substrings like stopPropagation / top_peers /
+    # topPadding do not match.
+    pattern = (
+        r"\btemperature\b|\btop_p\b|\btop_k\b|\bpresence_penalty\b|\bfrequency_penalty\b|"
+        r"\btopP\b|\btopK\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"sampling knob in live code:\n{_fmt(hits)}"
+
+
+def test_reasoning_token_budget_absent_from_live_code():
+    # §2/§9: no generalized reasoning-token budget. The legitimate current concept is
+    # `reasoning_reserve_tokens` (a catalog-declared ledger reservation), which is NOT a
+    # caller-set budget and is deliberately not matched here.
+    pattern = (
+        r"reasoning_token_budget|thinking_budget|thinkingBudget|"
+        r"max_reasoning_tokens|reasoning_max_tokens"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"reasoning-token budget in live code:\n{_fmt(hits)}"
+
+
+def test_automatic_provider_fallback_absent_from_live_code():
+    # §9/§14: no cross-model, cross-provider, or OpenRouter upstream fallback. (The
+    # OpenRouter codec pins allow_fallbacks=false inside the shared runtime package, not
+    # in Nexus.) The generic word "fallback" is intentionally not banned — only the
+    # provider/model-routing forms.
+    pattern = (
+        r"\ballow_fallbacks\b|\bauto_fallback\b|\bautomatic_fallback\b|"
+        r"\bfallback_model\b|\bfallback_provider\b|\bmodel_fallback\b|\bprovider_fallback\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"automatic provider/model fallback in live code:\n{_fmt(hits)}"

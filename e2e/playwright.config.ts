@@ -20,8 +20,6 @@ const READER_PROXY_PORT = process.env.READER_PROXY_PORT ?? "8010";
 const REAL_MEDIA_ENABLED = process.env.E2E_REAL_MEDIA === "1";
 const RUNTIME_ENV = REAL_MEDIA_ENABLED ? "local" : "test";
 
-process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 process.env.RATE_LIMIT_RPM ??= "240";
 process.env.RATE_LIMIT_CONCURRENT ??= "8";
 

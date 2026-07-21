@@ -392,14 +392,6 @@ class Settings(BaseSettings):
     )
 
     # LLM provider feature flags.
-    # Controls whether each provider is available to users
-    # All providers enabled by default; disable in production if needed
-    enable_openai: bool = Field(default=True, alias="ENABLE_OPENAI")
-    enable_anthropic: bool = Field(default=True, alias="ENABLE_ANTHROPIC")
-    enable_gemini: bool = Field(default=True, alias="ENABLE_GEMINI")
-    enable_openrouter: bool = Field(default=True, alias="ENABLE_OPENROUTER")
-    enable_cloudflare: bool = Field(default=True, alias="ENABLE_CLOUDFLARE")
-
     # Rate limiting settings.
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
     rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent

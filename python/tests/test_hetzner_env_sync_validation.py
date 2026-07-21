@@ -38,13 +38,17 @@ _BACKEND_ENV = {
     "R2_SECRET_ACCESS_KEY": "r2-secret",
     "R2_BUCKET": "media",
     "NEXUS_ORACLE_CORPUS_OWNER_USER_ID": "00000000-0000-0000-0000-000000000001",
-    "NEXUS_KEY_ENCRYPTION_KEY": "key",
     "STREAM_TOKEN_SIGNING_KEY": "stream-key",
     "STREAM_BASE_URL": "https://api.nexus.test",
     "BILLING_ENABLED": "false",
     "PODCASTS_ENABLED": "false",
     "YOUTUBE_DATA_API_KEY": "youtube-key",
     "X_API_BEARER_TOKEN": "x-token",
+    "OPENAI_API_KEY": "openai-key",
+    "ANTHROPIC_API_KEY": "anthropic-key",
+    "GEMINI_API_KEY": "gemini-key",
+    "MOONSHOT_API_KEY": "moonshot-key",
+    "NEXUS_FABLE_RETENTION_ACCEPTED_AT": "2026-01-01T00:00:00Z",
 }
 _WORKER_ENV = {
     "WORKER_ALLOWED_JOB_KINDS": _SAFE_WORKER_ALLOWED_JOB_KINDS,
@@ -150,6 +154,87 @@ def test_hetzner_sync_accepts_x_api_bearer_token(tmp_path: Path):
 
     assert "missing or empty" not in result.stderr
     assert "scp must not run" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing_key",
+    [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+    ],
+)
+def test_hetzner_sync_requires_platform_llm_settings(tmp_path: Path, missing_key: str):
+    """The 4 platform LLM keys and the Fable retention assertion are required."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    backend = dict(_BACKEND_ENV)
+    backend[missing_key] = ""
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, backend)
+    _write_env(worker_env, _WORKER_ENV)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert "missing or empty" in result.stderr
+    assert missing_key in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
+def test_hetzner_sync_rejects_key_encryption_key(tmp_path: Path):
+    """NEXUS_KEY_ENCRYPTION_KEY was removed with BYOK; it can never be set again."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    backend = dict(_BACKEND_ENV)
+    backend["NEXUS_KEY_ENCRYPTION_KEY"] = "some-encryption-key"
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, backend)
+    _write_env(worker_env, _WORKER_ENV)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert "NEXUS_KEY_ENCRYPTION_KEY was removed" in result.stderr
+    assert "scp must not run" not in result.stderr
+
+
+@pytest.mark.parametrize("forbidden_key", ["CLOUDFLARE_AI_API_TOKEN", "CLOUDFLARE_AI_ACCOUNT_ID"])
+def test_hetzner_sync_rejects_cloudflare_ai_keys(tmp_path: Path, forbidden_key: str):
+    """Cloudflare AI keys were removed; Cloudflare is no longer an LLM provider."""
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
+
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    backend = dict(_BACKEND_ENV)
+    backend[forbidden_key] = "some-cloudflare-value"
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, backend)
+    _write_env(worker_env, _WORKER_ENV)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert f"{forbidden_key} was removed" in result.stderr
+    assert "scp must not run" not in result.stderr
 
 
 def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):

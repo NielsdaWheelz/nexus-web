@@ -9,6 +9,7 @@
 	_ensure-node-ingest _ensure-e2e-deps _test-back-db-ready \
 	_test-back-integration-raw _test-migrations-raw _test-provider-runtime-raw \
 	_test-supabase-raw _test-real-media-raw _test-real-media-backend-raw _test-live-providers-raw _test-shared-llm-provider-matrix-raw \
+	certify-llm-providers \
 	_seed-real-media-e2e-raw _test-e2e-raw _test-csp-raw _test-real-media-e2e-raw _test-e2e-ui-raw
 
 -include .env
@@ -83,6 +84,7 @@ help:
 	@echo "  make test-real-media    - Strict deterministic real-media backend + Playwright gates"
 	@echo "  make test-provider-runtime - Non-live checks for pinned shared provider runtime"
 	@echo "  make test-live-providers  - Strict live-provider backend gate"
+	@echo "  make certify-llm-providers - Paid unfiltered LLM provider certification (release gate; fails closed)"
 	@echo "  make verify             - check + build + test"
 	@echo "  make verify-full        - verify + real-media + live-provider + default E2E gates"
 	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
@@ -469,6 +471,38 @@ _test-shared-llm-provider-matrix-raw:
 	cd "$(LLM_CALLING_DIR)" && env -u LLM_RUNTIME_LIVE_PROVIDERS LLM_RUNTIME_LIVE=1 uv run pytest -v --tb=short \
 		-m live_provider \
 		tests/live/test_provider_matrix.py
+
+# Required release-build gate for the LLM provider-runtime hard cutover
+# (docs/cutovers/llm-provider-runtime-hard-cutover.md §14). This is the paid,
+# UNFILTERED provider certification: it pins the shared llm-calling revision and
+# invokes the full tests/live/test_provider_matrix.py with LLM_RUNTIME_LIVE=1 and
+# NO provider focus filter (env -u LLM_RUNTIME_LIVE_PROVIDERS, via the shared
+# matrix target), proving every declared reasoning effort (including Kimi
+# low|high|max both direct and routed), cache reads, strict JSON, tools +
+# continuation, usage/request ids, and the pinned OpenRouter upstream.
+#
+# It FAILS CLOSED: unlike the ordinary `test-live-providers` gate (which soft-
+# skips when secrets are absent so deterministic PR CI never claims paid-live
+# success), certification REFUSES to run — exit 1 with a clear message — when any
+# required direct/OpenRouter credential OR the Fable 30-day-retention acceptance
+# assertion is missing. A missing OPENROUTER_API_KEY is rejected here even though
+# no product owner routes through it, because the operator route's certification
+# is part of this gate. The normal deterministic build makes no network calls,
+# but its artifact is not promotable without this current paid certification.
+certify-llm-providers:
+	@missing=""; \
+	[ -n "$$OPENAI_API_KEY" ] || missing="$$missing OPENAI_API_KEY"; \
+	[ -n "$$ANTHROPIC_API_KEY" ] || missing="$$missing ANTHROPIC_API_KEY"; \
+	[ -n "$$GEMINI_API_KEY" ] || missing="$$missing GEMINI_API_KEY"; \
+	[ -n "$$MOONSHOT_API_KEY" ] || missing="$$missing MOONSHOT_API_KEY"; \
+	[ -n "$$OPENROUTER_API_KEY" ] || missing="$$missing OPENROUTER_API_KEY"; \
+	[ -n "$$NEXUS_FABLE_RETENTION_ACCEPTED_AT" ] || missing="$$missing NEXUS_FABLE_RETENTION_ACCEPTED_AT"; \
+	if [ -n "$$missing" ]; then \
+		echo "certify-llm-providers: REFUSING to run — missing required live credentials/assertions:$$missing" >&2; \
+		echo "This is the paid, unfiltered provider certification; it fails closed rather than skipping or claiming paid-live success." >&2; \
+		exit 1; \
+	fi
+	make _test-shared-llm-provider-matrix-raw
 
 test-e2e:
 	make test-e2e-env

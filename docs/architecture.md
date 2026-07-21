@@ -104,7 +104,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / OpenRouter / Cloudflare (LLM + embeddings),
+   External: OpenAI / Anthropic / Gemini / Moonshot (LLM; OpenAI also
+             embeddings + transcription); OpenRouter is a hidden, uncertified
+             operator route only — no product profile targets it,
              Brave (web search), Podcast Index, Deepgram, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
@@ -328,10 +330,11 @@ hashes, fingerprints, or supersession chains.
 
 The tables group into these domains:
 
-**Identity / auth / sessions** — `users` (PK = Supabase `sub`), `user_api_keys`
-(encrypted BYOK), `billing_accounts`, `billing_entitlement_overrides` (+events),
+**Identity / auth / sessions** — `users` (PK = Supabase `sub`),
+`billing_accounts`, `billing_entitlement_overrides` (+events),
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
-`reader_profiles`, `workspace_sessions`, `command_palette_usages`.
+`reader_profiles`, `workspace_sessions`, `command_palette_usages`. LLM access
+runs on platform credentials only — there is no per-user key table.
 
 **Media / ingestion** — `media` (the central readable entity), `media_file`
 (private original-file object metadata), `project_gutenberg_catalog`,
@@ -384,8 +387,11 @@ contract.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`, `message_llm`, `models` (LLM registry);
-plus the **chat-run** machinery: `chat_runs`,
+(per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
+(carries product selection snapshots `profile_id`/`reasoning_option_id` and
+resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
+`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
+gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -540,21 +546,22 @@ rather than proposed and reconciled after the fact.
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation-run harness.** The five LLM generation kinds (`chat_run`,
-`oracle_reading_generate`, `library_intelligence_artifact_generate`,
-`media_unit_build`, `enrich_metadata`) run their bodies inside one shared worker
-envelope, `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop,
-`httpx` client, and `ModelRuntime` construction (including the fixture swap and
-the worker-exception boundary). Ledgered generation calls inside those jobs leave
-one `llm_calls` row via `llm_ledger.observed_generate` /
-`observed_generate_stream`, on success and on failure, and
-`run_kit.mark_terminal` stamps `error_code`/`error_detail` on the run parent —
-so a failed run is diagnosable. Saved-key probes and transcript embeddings are
-explicit exceptions described in [modules/llms.md](modules/llms.md). The worker
-installs the process-global rate limiter at startup so the first job of any kind
-has a working limiter. SERIALIZABLE retries everywhere (including the scheduler
-loop) go through the one helper `db/retries.py:retry_serializable`. See
-[modules/llms.md](modules/llms.md).
+**Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
+`oracle_reading_generate`, `synapse_scan`, `dawn_write`,
+`library_intelligence_artifact_generate` and the conversation-distillate
+reducer under the generic `artifacts` engine, `media_unit_build`,
+`enrich_metadata`) run their bodies inside one shared worker envelope,
+`tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
+client, and `ExecutionRuntime` construction (production or the real-media
+fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
+worker-exception boundary). Every provider call inside a job goes through
+`services/llm_execution.py:execute_generation`/`execute_generation_stream` —
+the sole caller of the ledger — leaving one `llm_calls` row on every terminal
+path (success, defect, or entitlement/budget denial), with the failure
+attributed to the layer that detected it. See [modules/llms.md](modules/llms.md).
+The worker installs the process-global rate limiter at startup so the first job
+of any kind has a working limiter. SERIALIZABLE retries everywhere (including
+the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -575,16 +582,20 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 BYOK keys, billing & entitlements
+### 7.5 Platform LLM credentials, billing & entitlements
 
-- **BYOK** (`services/user_keys.py`, `crypto.py`, `api_key_resolver.py`): user
-  provider keys (openai/anthropic/gemini/openrouter; Cloudflare is platform-only
-  in the current credential contract) are encrypted with XChaCha20-Poly1305
-  (PyNaCl `SecretBox`) under `NEXUS_KEY_ENCRYPTION_KEY`; only a 4-char fingerprint
-  is exposed. Status lifecycle `untested → valid → invalid → revoked` (revoke
-  wipes ciphertext, keeps fingerprint for audit). `key_mode ∈ {auto, byok_only,
-  platform_only}` chooses BYOK-first vs platform; platform use is gated by
-  entitlements.
+- **Platform credentials** (`services/llm_credentials.py`): the sole platform-key
+  reader for every generation, embedding, and transcription call — no BYOK, no
+  per-user key, no DB lookup, no encryption. It reads `OPENAI_API_KEY` /
+  `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `MOONSHOT_API_KEY` straight off
+  `Settings`; a missing key at call time is a `RuntimeDefect` (broken deployment
+  invariant), never a product-facing failure, because presence is enforced at
+  startup by `config.validate_required_settings` for staging/prod (which also
+  requires an RFC 3339 `NEXUS_FABLE_RETENTION_ACCEPTED_AT` deployment
+  assertion — Fable requires 30-day retention and is not ZDR-eligible).
+  `OPENROUTER_API_KEY` is not part of the deployed app's required settings; it
+  belongs only to the separate paid provider-runtime certification command.
+  See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
@@ -835,10 +846,15 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Cancellation/crash**: cancel sets a flag the worker polls; a `delta` without a
-  `done` (crashed mid-stream) is detected and finalized as interrupted/retryable.
-- **Models** (`llm_catalog.py`, `services/models.py`): a curated catalog gates
-  which provider/model/reasoning combos are usable; availability is the
-  intersection of enabled providers and usable keys (BYOK or platform).
+  `done` (crashed mid-stream) is detected and folded into the closed
+  `ExpectedChatFailure` union (`stream_interrupted`), never a bespoke retry code.
+- **Profiles, not a catalog** (`services/llm_profiles.py`): chat sends
+  `profile_id` + `reasoning_option_id` from seven code-defined, startup-validated
+  product profiles (`fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`),
+  each mapped to one certified `provider_runtime.CATALOG` target. There is no
+  provider/model/key picker and no availability intersection to compute — every
+  listed profile is always usable on the platform key. See
+  [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -1235,7 +1251,7 @@ Tiers:
 | E2E env preflight | Supabase env resolver contract | no services | `make test-e2e-env` |
 | E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
 | Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
-| Live-providers | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |
+| Live-providers | real OpenAI/Anthropic/Gemini/Moonshot/OpenRouter (pinned `provider_runtime` matrix), OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |
 
 The **real-media vs live-providers** split is the determinism boundary:
 real-media runs real product code but swaps the *external provider edge* for
