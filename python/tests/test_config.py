@@ -40,11 +40,21 @@ def _make_settings(**overrides) -> Settings:
     return Settings(_env_file=None, **defaults)
 
 
+_REQUIRED_LLM_SETTINGS = {
+    "OPENAI_API_KEY": "sk-test-openai",
+    "ANTHROPIC_API_KEY": "sk-test-anthropic",
+    "GEMINI_API_KEY": "test-gemini",
+    "MOONSHOT_API_KEY": "test-moonshot",
+    "NEXUS_FABLE_RETENTION_ACCEPTED_AT": "2026-07-20T00:00:00Z",
+}
+
+
 def _make_deploy_settings(**overrides) -> Settings:
     values = {
         "NEXUS_ENV": "staging",
         "NEXUS_INTERNAL_SECRET": "secret",
         **_REQUIRED_R2_SETTINGS,
+        **_REQUIRED_LLM_SETTINGS,
     }
     values.update(overrides)
     return _make_settings(**values)
@@ -492,3 +502,44 @@ class TestSupabaseServiceRoleConfiguration:
         settings = _make_settings()
 
         assert not hasattr(settings, "supabase_service_key")
+
+
+class TestPlatformLlmCredentialConfiguration:
+    def test_dev_and_test_settings_construct_without_platform_keys(self):
+        settings = _make_settings(
+            NEXUS_ENV="test",
+            OPENAI_API_KEY=None,
+            ANTHROPIC_API_KEY=None,
+            GEMINI_API_KEY=None,
+            MOONSHOT_API_KEY=None,
+            NEXUS_FABLE_RETENTION_ACCEPTED_AT=None,
+        )
+        assert settings.openai_api_key is None
+        assert settings.moonshot_api_key is None
+        assert settings.nexus_fable_retention_accepted_at is None
+
+    def test_staging_requires_all_four_platform_llm_keys(self):
+        with pytest.raises(ValidationError, match="OPENAI_API_KEY"):
+            _make_deploy_settings(OPENAI_API_KEY="")
+        with pytest.raises(ValidationError, match="ANTHROPIC_API_KEY"):
+            _make_deploy_settings(ANTHROPIC_API_KEY="")
+        with pytest.raises(ValidationError, match="GEMINI_API_KEY"):
+            _make_deploy_settings(GEMINI_API_KEY="")
+        with pytest.raises(ValidationError, match="MOONSHOT_API_KEY"):
+            _make_deploy_settings(MOONSHOT_API_KEY="")
+
+    def test_staging_requires_fable_retention_accepted_at(self):
+        with pytest.raises(ValidationError, match="NEXUS_FABLE_RETENTION_ACCEPTED_AT"):
+            _make_deploy_settings(NEXUS_FABLE_RETENTION_ACCEPTED_AT="")
+
+    def test_staging_rejects_malformed_fable_retention_timestamp(self):
+        with pytest.raises(ValidationError, match="RFC 3339"):
+            _make_deploy_settings(NEXUS_FABLE_RETENTION_ACCEPTED_AT="not-a-timestamp")
+
+    def test_staging_accepts_valid_rfc3339_fable_retention_timestamp(self):
+        settings = _make_deploy_settings(NEXUS_FABLE_RETENTION_ACCEPTED_AT="2026-07-20T00:00:00Z")
+        assert settings.nexus_fable_retention_accepted_at == "2026-07-20T00:00:00Z"
+
+    def test_prod_also_requires_platform_llm_keys(self):
+        with pytest.raises(ValidationError, match="OPENAI_API_KEY"):
+            _make_deploy_settings(NEXUS_ENV="prod", OPENAI_API_KEY="")

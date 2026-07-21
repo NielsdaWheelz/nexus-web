@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy import text
 
 from nexus.config import get_settings
-from tests.factories import create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (
     assert_complete_evidence_trace,
@@ -76,8 +75,6 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     auth_client.get("/me", headers=headers)
     direct_db.register_cleanup("users", "id", user_id)
     grant_ai_plus(direct_db, user_id)
-    with direct_db.session() as session:
-        model_id = create_test_model(session)
 
     create_response = auth_client.post(
         "/media/from_url",
@@ -137,9 +134,8 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
         json={
             "conversation_id": conversation_id,
             "content": "Use this stale evidence.",
-            "model_id": str(model_id),
-            "reasoning": "none",
-            "key_mode": "platform_only",
+            "profile_id": "balanced",
+            "reasoning_option_id": "none",
             "contexts": [
                 {
                     "kind": "object_ref",

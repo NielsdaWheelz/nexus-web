@@ -15,6 +15,7 @@ from nexus.config import clear_settings_cache
 from nexus.db.models import (
     ChatRun,
     ChatRunTurnContext,
+    LLMCall,
     NoteBlock,
     ResourceEdge,
     ResourceExternalSnapshot,
@@ -36,7 +37,6 @@ from tests.factories import (
     create_test_library,
     create_test_media_in_library,
     create_test_message,
-    create_test_model,
 )
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
@@ -87,18 +87,19 @@ def chat_runs_schema(engine: Engine) -> None:
     _require_chat_runs_schema(engine)
 
 
-def _create_run_payload(model_id: UUID, **overrides) -> dict:
+def _create_run_payload(**overrides) -> dict:
     """Build a /chat-runs request body.
 
-    Per spec §7.1 (post-cutover), ChatRunCreateRequest requires
-    ``conversation_id``. Callers must supply it via ``overrides`` (or via the
-    POST /conversations bootstrap pattern these tests use).
+    Per the LLM provider-runtime cutover, ChatRunCreateRequest selects a
+    product profile (``profile_id``) plus a ``reasoning_option_id`` instead of
+    a concrete model row + reasoning/key_mode. ``conversation_id`` is still
+    required and supplied by callers via ``overrides`` (or the POST
+    /conversations bootstrap pattern these tests use).
     """
     payload = {
         "content": "Summarize the current notes.",
-        "model_id": str(model_id),
-        "reasoning": "none",
-        "key_mode": "auto",
+        "profile_id": "balanced",
+        "reasoning_option_id": "medium",
     }
     payload.update(overrides)
     return payload
@@ -166,13 +167,24 @@ def _create_failed_chat_run(
     *,
     user_id: UUID,
     conversation_id: UUID,
-    model_id: UUID,
     user_message_id: UUID,
     assistant_message_id: UUID,
     idempotency_key: str,
-    error_code: str = "E_LLM_TIMEOUT",
+    error_code: str = "timeout",
+    error_origin: str = "transport",
 ) -> UUID:
+    """Seed a terminal ``status='error'`` ChatRun with a coherent
+    ``(error_code, error_origin)`` failure pair from the post-cutover
+    free-string vocabulary (``nexus.services.chat_failure``).
+
+    The default (``timeout``/``transport``) is a transient, rerunnable failure
+    — the successor to the old ``E_LLM_TIMEOUT`` seed. ``profile_id``/
+    ``reasoning_option_id`` are populated because
+    ``chat_failure.rerun_eligibility`` (and thus the ``/rerun`` route) requires
+    a still-active profile snapshot to consider a run rerunnable.
+    """
     run_id = uuid4()
+    direct_db.register_cleanup("llm_calls", "owner_id", run_id)
     with direct_db.session() as session:
         session.add(
             ChatRun(
@@ -184,27 +196,44 @@ def _create_failed_chat_run(
                 idempotency_key=idempotency_key,
                 payload_hash=f"{idempotency_key}-payload",
                 status="error",
-                model_id=model_id,
-                reasoning="none",
-                key_mode="auto",
+                profile_id="balanced",
+                reasoning_option_id="medium",
                 error_code=error_code,
+                error_origin=error_origin,
                 completed_at=datetime.now(UTC),
+            )
+        )
+        # A real terminal failure always leaves an owning `llm_calls` leaf; the
+        # four transient failure cards read `attempt_count` off it
+        # (`chat_failure.compute_terminal_attempts`), so the failure projection
+        # in message/trust-trail hydration needs this row to exist.
+        session.add(
+            LLMCall(
+                owner_kind="chat_run",
+                owner_id=run_id,
+                call_seq=1,
+                provider="openai",
+                model_name="gpt-test",
+                llm_operation="chat",
+                streaming=True,
+                reasoning_effort="medium",
+                cost_status="missing_usage",
+                attempt_count=2,
+                retry_count=1,
+                terminal_attempt_status="terminal_error",
+                outcome="failed",
+                error_origin=error_origin,
+                error_code=error_code,
             )
         )
         session.commit()
     return run_id
 
 
-def _post_retry(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
+def _post_rerun(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
+    """The single rerun verb replacing the old retry/resend pair (§10)."""
     return auth_client.post(
-        f"/messages/{assistant_message_id}/retry",
-        headers={**auth_headers(user_id), "Idempotency-Key": idempotency_key},
-    )
-
-
-def _post_resend(auth_client, user_id: UUID, assistant_message_id: UUID, idempotency_key: str):
-    return auth_client.post(
-        f"/messages/{assistant_message_id}/resend",
+        f"/messages/{assistant_message_id}/rerun",
         headers={**auth_headers(user_id), "Idempotency-Key": idempotency_key},
     )
 
@@ -216,7 +245,8 @@ def _assert_chat_run_meta_payload(
     conversation_id: UUID,
     user_message_id: UUID,
     assistant_message_id: UUID,
-    model_id: UUID,
+    profile_id: str,
+    reasoning_option_id: str,
     chat_subject: dict | None,
 ) -> None:
     assert payload == {
@@ -224,8 +254,8 @@ def _assert_chat_run_meta_payload(
         "conversation_id": str(conversation_id),
         "user_message_id": str(user_message_id),
         "assistant_message_id": str(assistant_message_id),
-        "model_id": str(model_id),
-        "provider": "openai",
+        "profile_id": profile_id,
+        "reasoning_option_id": reasoning_option_id,
         "chat_subject": chat_subject,
     }
 
@@ -239,8 +269,8 @@ def test_chat_run_meta_payload_requires_chat_subject_key():
                 "conversation_id": str(uuid4()),
                 "user_message_id": str(uuid4()),
                 "assistant_message_id": str(uuid4()),
-                "model_id": str(uuid4()),
-                "provider": "openai",
+                "profile_id": "balanced",
+                "reasoning_option_id": "medium",
             },
         )
 
@@ -252,8 +282,6 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -261,7 +289,7 @@ class TestChatRunCreate:
         response = auth_client.post(
             "/chat-runs",
             headers=auth_headers(user_id),
-            json=_create_run_payload(model_id, conversation_id=str(conversation_id)),
+            json=_create_run_payload(conversation_id=str(conversation_id)),
         )
 
         assert response.status_code == 400, (
@@ -275,8 +303,6 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
 
         # New chat lands via POST /conversations + POST /chat-runs with conversation_id.
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
@@ -289,7 +315,7 @@ class TestChatRunCreate:
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(conversation_id=str(conversation_id)),
             idempotency_key="chat-run-new-conversation",
         )
 
@@ -334,7 +360,8 @@ class TestChatRunCreate:
             conversation_id=conversation_id,
             user_message_id=UUID(data["user_message"]["id"]),
             assistant_message_id=UUID(data["assistant_message"]["id"]),
-            model_id=model_id,
+            profile_id="balanced",
+            reasoning_option_id="medium",
             chat_subject=None,
         )
         assert job_count == 1, f"Expected one chat_run background job for run {run_id}"
@@ -350,7 +377,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(
                 session, conversation_id, 1, "user", "Root question."
@@ -395,7 +421,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 content="Continue after failed answer.",
                 parent_message_id=str(complete_assistant_id),
@@ -420,13 +445,12 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(conversation_id=str(conversation_id)),
             idempotency_key="chat-run-empty-conversation",
         )
 
@@ -445,14 +469,13 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             create_test_message(session, conversation_id, 1, "user", "Root")
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(conversation_id=str(conversation_id)),
             idempotency_key="chat-run-existing-requires-parent",
         )
 
@@ -470,7 +493,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -486,7 +508,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
             ),
@@ -496,7 +517,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor={"kind": "none"},
@@ -524,7 +544,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -540,7 +559,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor={
@@ -617,7 +635,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -659,7 +676,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor=branch_anchor,
@@ -682,7 +698,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -698,7 +713,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor=_assistant_message_anchor(uuid4()),
@@ -721,7 +735,6 @@ class TestChatRunCreate:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -747,7 +760,6 @@ class TestChatRunCreate:
                 "assistant",
                 "",
                 status="pending",
-                model_id=model_id,
                 parent_message_id=running_user_id,
             )
             session.add(
@@ -759,9 +771,8 @@ class TestChatRunCreate:
                     idempotency_key="sibling-running-branch",
                     payload_hash="sibling-running-branch",
                     status="running",
-                    model_id=model_id,
-                    reasoning="none",
-                    key_mode="auto",
+                    profile_id="balanced",
+                    reasoning_option_id="medium",
                 )
             )
             session.commit()
@@ -770,7 +781,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor=_assistant_message_anchor(parent_assistant_id),
@@ -792,11 +802,9 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
-        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload = _create_run_payload(conversation_id=str(conversation_id))
 
         first = _post_chat_run(auth_client, user_id, payload, "chat-run-replay")
         second = _post_chat_run(auth_client, user_id, payload, "chat-run-replay")
@@ -818,8 +826,6 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
 
@@ -827,7 +833,7 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id, conversation_id=str(conversation_id), content="First prompt"
+                conversation_id=str(conversation_id), content="First prompt"
             ),
             "chat-run-mismatch",
         )
@@ -835,7 +841,7 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id, conversation_id=str(conversation_id), content="Different prompt"
+                conversation_id=str(conversation_id), content="Different prompt"
             ),
             "chat-run-mismatch",
         )
@@ -858,7 +864,6 @@ class TestChatRunCreate:
         _seed_ai_plus_billing(direct_db, user_id)
         run_id = uuid4()
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(
                 session, conversation_id=conversation_id, seq=1, role="user", content="Root"
@@ -886,7 +891,6 @@ class TestChatRunCreate:
                 role="assistant",
                 content="",
                 status="pending",
-                model_id=model_id,
                 parent_message_id=sibling_user_id,
             )
             session.execute(
@@ -895,12 +899,12 @@ class TestChatRunCreate:
                     INSERT INTO chat_runs (
                         id, owner_user_id, conversation_id, user_message_id,
                         assistant_message_id, idempotency_key, payload_hash, status,
-                        model_id, reasoning, key_mode
+                        profile_id, reasoning_option_id
                     )
                     VALUES (
                         :id, :owner_user_id, :conversation_id, :user_message_id,
                         :assistant_message_id, :idempotency_key, :payload_hash, 'queued',
-                        :model_id, 'none', 'auto'
+                        'balanced', 'medium'
                     )
                     """
                 ),
@@ -912,7 +916,6 @@ class TestChatRunCreate:
                     "assistant_message_id": assistant_message_id,
                     "idempotency_key": "existing-busy-run",
                     "payload_hash": "existing-busy-payload",
-                    "model_id": model_id,
                 },
             )
             session.commit()
@@ -921,7 +924,6 @@ class TestChatRunCreate:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 parent_message_id=str(parent_assistant_id),
                 branch_anchor=_assistant_message_anchor(parent_assistant_id),
@@ -945,15 +947,13 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(conversation_id=str(conversation_id)),
             idempotency_key="chat-run-list-active",
         )
 
@@ -978,15 +978,13 @@ class TestChatRunCreate:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
 
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(model_id, conversation_id=str(conversation_id)),
+            _create_run_payload(conversation_id=str(conversation_id)),
             idempotency_key="chat-run-delete-conversation",
         )
 
@@ -1018,45 +1016,13 @@ class TestChatRunCreate:
 class TestChatRunRequestSchema:
     """Pydantic-level contracts on POST /chat-runs."""
 
-    def test_catalog_drift_defects_instead_of_hiding_model(self, monkeypatch: pytest.MonkeyPatch):
-        """Enabled DB rows outside the curated catalog are operator defects."""
-        monkeypatch.setattr(
-            "nexus.services.chat_run_validation.get_model_by_id",
-            lambda _db, _model_id: SimpleNamespace(
-                provider="openai",
-                model_name="uncataloged-model",
-                is_available=True,
-            ),
-        )
-
-        with pytest.raises(AssertionError, match="uncataloged-model"):
-            validate_pre_phase(
-                db=object(),  # type: ignore[arg-type]
-                viewer_id=uuid4(),
-                conversation_id=uuid4(),
-                parent_message_id=None,
-                branch_anchor=NoBranchAnchorRequest(),
-                chat_subject=None,
-                reader_selection=None,
-                content="hello",
-                model_id=uuid4(),
-                reasoning="none",
-                key_mode="auto",
-                use_platform_key=True,
-            )
-
-    def test_non_chat_capable_catalog_model_is_rejected_before_enqueue(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setattr(
-            "nexus.services.chat_run_validation.get_model_by_id",
-            lambda _db, _model_id: SimpleNamespace(
-                provider="cloudflare",
-                model_name="@cf/openai/gpt-oss-20b",
-                is_available=True,
-            ),
-        )
-
+    def test_unknown_profile_is_rejected_before_enqueue(self):
+        """Pre-cutover this rejected an uncataloged/non-chat-capable model row;
+        post-cutover the product selection is a ``profile_id`` naming a frozen
+        registry entry (``services/llm_profiles.py``), so an unknown profile is
+        the sole "not available" case and ``validate_pre_phase`` fails it with
+        ``E_MODEL_NOT_AVAILABLE`` before any run is enqueued. Profile lookup
+        precedes DB/rate-limiter work, so a stub ``db`` never gets touched."""
         with pytest.raises(ApiError) as exc_info:
             validate_pre_phase(
                 db=object(),  # type: ignore[arg-type]
@@ -1067,44 +1033,25 @@ class TestChatRunRequestSchema:
                 chat_subject=None,
                 reader_selection=None,
                 content="hello",
-                model_id=uuid4(),
-                reasoning="none",
-                key_mode="auto",
-                use_platform_key=True,
+                profile_id="not-a-real-profile",
+                reasoning_option_id="medium",
             )
 
         assert exc_info.value.code == ApiErrorCode.E_MODEL_NOT_AVAILABLE
 
-    @pytest.mark.parametrize("field", ["reasoning", "key_mode"])
+    @pytest.mark.parametrize("field", ["profile_id", "reasoning_option_id"])
     def test_chat_run_request_requires_provider_policy_fields(
         self, auth_client, chat_runs_schema, field: str
     ):
-        """Reasoning and key mode are explicit post-cutover request fields."""
+        """Profile and reasoning option are explicit, required post-cutover
+        request fields."""
         user_id = create_test_user_id()
-        payload = _create_run_payload(uuid4(), conversation_id=str(uuid4()))
+        payload = _create_run_payload(conversation_id=str(uuid4()))
         payload.pop(field)
 
         response = auth_client.post(
             "/chat-runs",
             headers={**auth_headers(user_id), "Idempotency-Key": f"chat-run-missing-{field}"},
-            json=payload,
-        )
-
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
-
-    def test_chat_run_request_rejects_unknown_key_mode(self, auth_client, chat_runs_schema):
-        """The request body owns key-mode validation before service-layer routing."""
-        user_id = create_test_user_id()
-        payload = _create_run_payload(
-            uuid4(),
-            conversation_id=str(uuid4()),
-            key_mode="byok",
-        )
-
-        response = auth_client.post(
-            "/chat-runs",
-            headers={**auth_headers(user_id), "Idempotency-Key": "chat-run-rejects-key-mode"},
             json=payload,
         )
 
@@ -1121,13 +1068,11 @@ class TestChatRunRequestSchema:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload = _create_run_payload(conversation_id=str(conversation_id))
         payload["web_search"] = {"mode": "auto"}
 
         response = auth_client.post(
@@ -1150,13 +1095,11 @@ class TestChatRunRequestSchema:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
 
-        payload = _create_run_payload(model_id, conversation_id=str(conversation_id))
+        payload = _create_run_payload(conversation_id=str(conversation_id))
         payload["conversation_scope"] = {"type": "general"}
 
         response = auth_client.post(
@@ -1182,7 +1125,7 @@ class TestChatRunTooling:
         from nexus.services.agent_tools.inspect_resource import INSPECT_RESOURCE_TOOL_DEFINITION
         from nexus.services.agent_tools.read_resource import READ_RESOURCE_TOOL_DEFINITION
         from nexus.services.agent_tools.web_search import WEB_SEARCH_TOOL_DEFINITION
-        from nexus.services.chat_runs import _CHAT_TOOL_SPECS
+        from nexus.services.chat_runs import _chat_tool_specs
 
         definitions = {
             APP_SEARCH_TOOL_DEFINITION["name"]: APP_SEARCH_TOOL_DEFINITION,
@@ -1190,11 +1133,18 @@ class TestChatRunTooling:
             READ_RESOURCE_TOOL_DEFINITION["name"]: READ_RESOURCE_TOOL_DEFINITION,
             INSPECT_RESOURCE_TOOL_DEFINITION["name"]: INSPECT_RESOURCE_TOOL_DEFINITION,
         }
-        assert {tool.name for tool in _CHAT_TOOL_SPECS} == set(definitions)
-        for tool in _CHAT_TOOL_SPECS:
-            assert tool.strict is True
-            assert tool.parameters == definitions[tool.name]["parameters"]
-            _assert_openai_strict_schema(tool.parameters, path=f"$.tools.{tool.name}")
+        # Post-cutover the chat tool set is compiled once by ``_chat_tool_specs``
+        # into ``provider_runtime.CanonicalTool`` values (no ``strict`` field;
+        # ``parameters`` is a compiled ``CanonicalJsonSchema``, not the raw
+        # dict). The four read tools are always exposed; the assistant write
+        # tools may also appear depending on ASSISTANT_WRITE_TOOLS_ENABLED, so
+        # we assert the read tools are a subset. The OpenAI-strict shape is a
+        # property of the source tool definitions the compile consumes, so we
+        # validate those directly.
+        spec_names = {tool.name for tool in _chat_tool_specs()}
+        assert set(definitions) <= spec_names
+        for name, definition in definitions.items():
+            _assert_openai_strict_schema(definition["parameters"], path=f"$.tools.{name}")
 
         app_props = APP_SEARCH_TOOL_DEFINITION["parameters"]["properties"]
         assert {
@@ -1365,7 +1315,6 @@ class TestChatRunTooling:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             library_id = create_test_library(session, user_id, "Reader Hint Library")
             media_id = create_test_media_in_library(
                 session, user_id, library_id, title="Reader Hint Doc"
@@ -1380,7 +1329,6 @@ class TestChatRunTooling:
         direct_db.register_cleanup("libraries", "id", library_id)
 
         payload = _create_run_payload(
-            model_id,
             conversation_id=str(conversation_id),
             chat_subject={"resource_ref": f"media:{media_id}"},
         )
@@ -1443,7 +1391,8 @@ class TestChatRunTooling:
             conversation_id=conversation_id,
             user_message_id=UUID(data["user_message"]["id"]),
             assistant_message_id=UUID(data["assistant_message"]["id"]),
-            model_id=model_id,
+            profile_id="balanced",
+            reasoning_option_id="medium",
             chat_subject={
                 "requested_resource_ref": f"media:{media_id}",
                 "resource_ref": f"media:{media_id}",
@@ -1464,8 +1413,6 @@ class TestChatRunTooling:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
@@ -1474,7 +1421,6 @@ class TestChatRunTooling:
             auth_client,
             user_id,
             _create_run_payload(
-                model_id,
                 conversation_id=str(conversation_id),
                 reader_context={"media_id": str(uuid4())},
             ),
@@ -1496,7 +1442,6 @@ class TestChatResponseRetry:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             source_user_id = create_test_message(
                 session,
@@ -1512,7 +1457,6 @@ class TestChatResponseRetry:
                 "assistant",
                 "The model timed out while responding. Please try again.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
             session.commit()
@@ -1520,13 +1464,12 @@ class TestChatResponseRetry:
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=source_user_id,
             assistant_message_id=failed_assistant_id,
             idempotency_key="failed-root-source",
         )
 
-        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-root")
+        response = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-root")
 
         assert response.status_code == 200, f"Expected retry to succeed: {response.text}"
         data = response.json()["data"]
@@ -1536,8 +1479,8 @@ class TestChatResponseRetry:
         _register_run_cleanup(direct_db, retry_run_id, conversation_id)
 
         assert data["run"]["status"] == "queued"
-        assert data["run"]["model_id"] == str(model_id)
-        assert data["run"]["reasoning"] == "none"
+        assert data["run"]["profile_id"] == "balanced"
+        assert data["run"]["reasoning_option_id"] == "medium"
         assert data["user_message"]["message_document"]["blocks"][0]["text"] == (
             "Why did the first answer fail?"
         )
@@ -1604,7 +1547,8 @@ class TestChatResponseRetry:
             conversation_id=conversation_id,
             user_message_id=retry_user_id,
             assistant_message_id=retry_assistant_id,
-            model_id=model_id,
+            profile_id="balanced",
+            reasoning_option_id="medium",
             chat_subject=None,
         )
         assert job_count == 1
@@ -1616,7 +1560,6 @@ class TestChatResponseRetry:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
             parent_assistant_id = create_test_message(
@@ -1656,7 +1599,6 @@ class TestChatResponseRetry:
                 "assistant",
                 "Provider unavailable.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
             session.commit()
@@ -1664,14 +1606,14 @@ class TestChatResponseRetry:
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=source_user_id,
             assistant_message_id=failed_assistant_id,
             idempotency_key="failed-followup-source",
-            error_code="E_LLM_PROVIDER_DOWN",
+            error_code="provider_unavailable",
+            error_origin="provider_http",
         )
 
-        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-followup")
+        response = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-followup")
 
         assert response.status_code == 200, f"Expected follow-up retry to succeed: {response.text}"
         data = response.json()["data"]
@@ -1718,7 +1660,6 @@ class TestChatResponseRetry:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             source_user_id = create_test_message(session, conversation_id, 1, "user", "First")
             failed_assistant_id = create_test_message(
@@ -1728,7 +1669,6 @@ class TestChatResponseRetry:
                 "assistant",
                 "Timed out.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
             other_user_id = create_test_message(session, conversation_id, 3, "user", "Second")
@@ -1739,14 +1679,12 @@ class TestChatResponseRetry:
                 "assistant",
                 "Timed out again.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=other_user_id,
             )
         _create_failed_chat_run(
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=source_user_id,
             assistant_message_id=failed_assistant_id,
             idempotency_key="failed-replay-source",
@@ -1755,15 +1693,14 @@ class TestChatResponseRetry:
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=other_user_id,
             assistant_message_id=other_failed_assistant_id,
             idempotency_key="failed-mismatch-source",
         )
 
-        first = _post_retry(auth_client, user_id, failed_assistant_id, "retry-replay")
-        second = _post_retry(auth_client, user_id, failed_assistant_id, "retry-replay")
-        mismatch = _post_retry(auth_client, user_id, other_failed_assistant_id, "retry-replay")
+        first = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-replay")
+        second = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-replay")
+        mismatch = _post_rerun(auth_client, user_id, other_failed_assistant_id, "retry-replay")
 
         assert first.status_code == 200, f"Initial retry failed: {first.text}"
         assert second.status_code == 200, f"Retry replay failed: {second.text}"
@@ -1782,7 +1719,6 @@ class TestChatResponseRetry:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             source_user_id = create_test_message(session, conversation_id, 1, "user", "Retry?")
             failed_assistant_id = create_test_message(
@@ -1792,14 +1728,12 @@ class TestChatResponseRetry:
                 "assistant",
                 "Timed out.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
         _create_failed_chat_run(
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=source_user_id,
             assistant_message_id=failed_assistant_id,
             idempotency_key="failed-capability-source",
@@ -1812,12 +1746,12 @@ class TestChatResponseRetry:
 
         assert listed.status_code == 200, f"Expected messages list: {listed.text}"
         messages = listed.json()["data"]
-        retryable = {row["id"]: row["can_retry_response"] for row in messages}
-        resendable = {row["id"]: row["can_resend_response"] for row in messages}
-        assert retryable[str(source_user_id)] is False
-        assert retryable[str(failed_assistant_id)] is True
-        assert resendable[str(source_user_id)] is False
-        assert resendable[str(failed_assistant_id)] is True
+        # Retry/resend merged into one rerun verb (§10): the message row carries
+        # a single `can_rerun` flag. The failed assistant seeded with a
+        # transient (rerunnable) code is rerunnable; its source user turn is not.
+        rerunnable = {row["id"]: row["can_rerun"] for row in messages}
+        assert rerunnable[str(source_user_id)] is False
+        assert rerunnable[str(failed_assistant_id)] is True
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
@@ -1827,7 +1761,6 @@ class TestChatResponseRetry:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             source_user_id = create_test_message(
                 session, conversation_id, 1, "user", "Bad request?"
@@ -1839,21 +1772,20 @@ class TestChatResponseRetry:
                 "assistant",
                 "The request was rejected by the model provider.",
                 status="error",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
         _create_failed_chat_run(
             direct_db,
             user_id=user_id,
             conversation_id=conversation_id,
-            model_id=model_id,
             user_message_id=source_user_id,
             assistant_message_id=failed_assistant_id,
             idempotency_key="failed-nonretryable-source",
-            error_code="E_LLM_BAD_REQUEST",
+            error_code="refused",
+            error_origin="provider_http",
         )
 
-        response = _post_retry(auth_client, user_id, failed_assistant_id, "retry-nonretryable")
+        response = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-nonretryable")
 
         assert response.status_code == 409, (
             f"Expected nonretryable retry to fail, got {response.status_code}: {response.text}"
@@ -1862,178 +1794,6 @@ class TestChatResponseRetry:
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
-    def test_retry_and_resend_recheck_current_model_availability(
-        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
-            conversation_id = create_test_conversation(session, user_id)
-            retry_user_id = create_test_message(session, conversation_id, 1, "user", "Retry?")
-            retry_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                2,
-                "assistant",
-                "Timed out.",
-                status="error",
-                model_id=model_id,
-                parent_message_id=retry_user_id,
-            )
-            resend_user_id = create_test_message(
-                session, conversation_id, 3, "user", "Bad request?"
-            )
-            resend_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                4,
-                "assistant",
-                "The request was rejected by the model provider.",
-                status="error",
-                model_id=model_id,
-                parent_message_id=resend_user_id,
-            )
-        _create_failed_chat_run(
-            direct_db,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            model_id=model_id,
-            user_message_id=retry_user_id,
-            assistant_message_id=retry_assistant_id,
-            idempotency_key="retry-unavailable-source",
-        )
-        _create_failed_chat_run(
-            direct_db,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            model_id=model_id,
-            user_message_id=resend_user_id,
-            assistant_message_id=resend_assistant_id,
-            idempotency_key="resend-unavailable-source",
-            error_code="E_LLM_BAD_REQUEST",
-        )
-        with direct_db.session() as session:
-            session.execute(
-                text("UPDATE models SET is_available = false WHERE id = :model_id"),
-                {"model_id": model_id},
-            )
-            run_count_before = session.execute(
-                text("SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"),
-                {"conversation_id": conversation_id},
-            ).scalar_one()
-            session.commit()
-
-        try:
-            retry_response = _post_retry(
-                auth_client, user_id, retry_assistant_id, "retry-unavailable"
-            )
-            resend_response = _post_resend(
-                auth_client, user_id, resend_assistant_id, "resend-unavailable"
-            )
-
-            assert retry_response.status_code == 400
-            assert retry_response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
-            assert resend_response.status_code == 400
-            assert resend_response.json()["error"]["code"] == "E_MODEL_NOT_AVAILABLE"
-            with direct_db.session() as session:
-                run_count_after = session.execute(
-                    text("SELECT COUNT(*) FROM chat_runs WHERE conversation_id = :conversation_id"),
-                    {"conversation_id": conversation_id},
-                ).scalar_one()
-            assert run_count_after == run_count_before
-        finally:
-            with direct_db.session() as session:
-                session.execute(
-                    text("UPDATE models SET is_available = true WHERE id = :model_id"),
-                    {"model_id": model_id},
-                )
-                session.commit()
-        direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-
-    def test_resend_nonretryable_failed_root_response_creates_new_attempt(
-        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            model_id = create_test_model(session)
-            conversation_id = create_test_conversation(session, user_id)
-            source_user_id = create_test_message(
-                session, conversation_id, 1, "user", "Bad request?"
-            )
-            failed_assistant_id = create_test_message(
-                session,
-                conversation_id,
-                2,
-                "assistant",
-                "The request was rejected by the model provider.",
-                status="error",
-                model_id=model_id,
-                parent_message_id=source_user_id,
-            )
-        _create_failed_chat_run(
-            direct_db,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            model_id=model_id,
-            user_message_id=source_user_id,
-            assistant_message_id=failed_assistant_id,
-            idempotency_key="failed-resend-source",
-            error_code="E_LLM_BAD_REQUEST",
-        )
-
-        response = _post_resend(auth_client, user_id, failed_assistant_id, "resend-bad-request")
-
-        assert response.status_code == 200, f"Expected resend to succeed: {response.text}"
-        data = response.json()["data"]
-        resend_run_id = UUID(data["run"]["id"])
-        resend_user_id = UUID(data["user_message"]["id"])
-        resend_assistant_id = UUID(data["assistant_message"]["id"])
-        _register_run_cleanup(direct_db, resend_run_id, conversation_id)
-
-        assert data["run"]["status"] == "queued"
-        assert data["run"]["model_id"] == str(model_id)
-        assert data["user_message"]["message_document"]["blocks"][0]["text"] == "Bad request?"
-        assert data["user_message"]["parent_message_id"] is None
-        assert data["assistant_message"]["status"] == "pending"
-        assert data["assistant_message"]["parent_message_id"] == str(resend_user_id)
-
-        with direct_db.session() as session:
-            failed_status = session.execute(
-                text("SELECT status FROM messages WHERE id = :message_id"),
-                {"message_id": failed_assistant_id},
-            ).scalar_one()
-            active_leaf_id = session.execute(
-                text(
-                    """
-                    SELECT active_leaf_message_id
-                    FROM conversation_active_paths
-                    WHERE conversation_id = :conversation_id
-                      AND viewer_user_id = :viewer_user_id
-                    """
-                ),
-                {"conversation_id": conversation_id, "viewer_user_id": user_id},
-            ).scalar_one()
-            job_count = session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM background_jobs
-                    WHERE kind = 'chat_run'
-                      AND payload->>'run_id' = :run_id
-                    """
-                ),
-                {"run_id": str(resend_run_id)},
-            ).scalar_one()
-
-        assert failed_status == "error"
-        assert active_leaf_id == resend_assistant_id
-        assert job_count == 1
-
     def test_resend_cancelled_response_creates_new_attempt(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
@@ -2041,7 +1801,6 @@ class TestChatResponseRetry:
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             source_user_id = create_test_message(session, conversation_id, 1, "user", "Again?")
             cancelled_assistant_id = create_test_message(
@@ -2051,7 +1810,6 @@ class TestChatResponseRetry:
                 "assistant",
                 "Request cancelled.",
                 status="cancelled",
-                model_id=model_id,
                 parent_message_id=source_user_id,
             )
             run_id = uuid4()
@@ -2065,15 +1823,14 @@ class TestChatResponseRetry:
                     idempotency_key="cancelled-resend-source",
                     payload_hash="cancelled-resend-source-payload",
                     status="cancelled",
-                    model_id=model_id,
-                    reasoning="none",
-                    key_mode="auto",
+                    profile_id="balanced",
+                    reasoning_option_id="medium",
                     completed_at=datetime.now(UTC),
                 )
             )
             session.commit()
 
-        response = _post_resend(auth_client, user_id, cancelled_assistant_id, "resend-cancelled")
+        response = _post_rerun(auth_client, user_id, cancelled_assistant_id, "resend-cancelled")
 
         assert response.status_code == 200, f"Expected cancelled resend: {response.text}"
         data = response.json()["data"]
@@ -2105,7 +1862,6 @@ class TestCitationEdgeWriteThrough:
         conversation_id: UUID,
         user_message_id: UUID,
         assistant_message_id: UUID,
-        model_id: UUID,
     ) -> UUID:
         run_id = uuid4()
         with direct_db.session() as session:
@@ -2119,9 +1875,8 @@ class TestCitationEdgeWriteThrough:
                     idempotency_key=f"write-through-{run_id}",
                     payload_hash="hash",
                     status="running",
-                    model_id=model_id,
-                    reasoning="none",
-                    key_mode="auto",
+                    profile_id="balanced",
+                    reasoning_option_id="medium",
                 )
             )
             session.commit()
@@ -2232,7 +1987,6 @@ class TestCitationEdgeWriteThrough:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             media_id = create_searchable_media(session, user_id, title="Cited Source")
             chunk_id = session.execute(
@@ -2254,7 +2008,6 @@ class TestCitationEdgeWriteThrough:
             )
         return (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -2295,7 +2048,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -2308,7 +2060,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -2469,7 +2220,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -2482,7 +2232,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -2546,7 +2295,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -2559,7 +2307,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -2600,7 +2347,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -2613,7 +2359,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -2704,7 +2449,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             _chunk_id,
@@ -2717,7 +2461,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -2810,7 +2553,6 @@ class TestCitationEdgeWriteThrough:
         auth_client.get("/me", headers=auth_headers(user_id))
         body = "Note citation body"
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
             assistant_message_id = create_test_message(
@@ -2861,7 +2603,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         direct_db.register_cleanup("resource_edges", "user_id", user_id)
         direct_db.register_cleanup("note_blocks", "id", note_block_id)
@@ -2921,7 +2662,6 @@ class TestCitationEdgeWriteThrough:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
             assistant_message_id = create_test_message(
@@ -2938,7 +2678,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
 
         def web_citation(rank: int, *, selected: bool) -> WebSearchCitation:
@@ -3089,7 +2828,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -3102,7 +2840,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -3171,7 +2908,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -3184,7 +2920,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -3234,7 +2969,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             _chunk_id,
@@ -3247,7 +2981,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         self._register_cleanups(
             direct_db,
@@ -3344,7 +3077,6 @@ class TestCitationEdgeWriteThrough:
 
         (
             user_id,
-            model_id,
             conversation_id,
             media_id,
             chunk_id,
@@ -3357,7 +3089,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
         tool_call_id = self._seed_tool_call_with_chunk_row(
             direct_db,
@@ -3445,7 +3176,6 @@ class TestCitationEdgeWriteThrough:
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
             assistant_message_id = create_test_message(
@@ -3462,7 +3192,6 @@ class TestCitationEdgeWriteThrough:
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
         )
 
         def web_citation(rank: int) -> WebSearchCitation:

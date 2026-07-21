@@ -27,56 +27,47 @@ from enum import Enum
 from typing import Any, Literal, assert_never, cast
 from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
-from provider_runtime.types import ModelCall
+from provider_runtime import Succeeded
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
+from nexus.config import get_settings
 from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
-    ApiErrorCode,
     NotFoundError,
-    api_error_code_for_model_call,
-    exception_error_detail,
 )
 from nexus.jobs.queue import enqueue_unique_job
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.media import MediaSummarizeOut, MediaUnitStatus
-from nexus.services.api_key_resolver import ResolvedKey, resolve_api_key, update_user_key_status
-from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
-from nexus.services.prompt_budget import estimate_tokens
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
-    SynthesisRequest,
+    build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
+    decode_structured_synthesis,
     ground_indices,
-    run_structured_synthesis,
+    outcome_failure_facts,
 )
 
 logger = get_logger(__name__)
 
-MEDIA_UNIT_MODEL_NAME = "claude-haiku-4-5-20251001"
-MEDIA_UNIT_PROVIDER = "anthropic"
+MEDIA_UNIT_OPERATION = "media_summary"
 MEDIA_UNIT_MAX_OUTPUT_TOKENS = 2000
-MEDIA_UNIT_LLM_TIMEOUT_SECONDS = 45
 # Budget the candidate context to leave output headroom inside the model window.
 # Approximated in characters (~4 chars/token); chunks past the budget are dropped
 # with a warning rather than silently capped.
 MEDIA_UNIT_INPUT_CHAR_BUDGET = 60_000
-
-# The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
-require_catalog_model(MEDIA_UNIT_PROVIDER, MEDIA_UNIT_MODEL_NAME)
 
 
 # ---------- public contract -------------------------------------------------
@@ -242,7 +233,7 @@ def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
             ),
             {
                 "fingerprint": fingerprint,
-                "model_name": MEDIA_UNIT_MODEL_NAME,
+                "model_name": operation_profile(MEDIA_UNIT_OPERATION).target.model,
                 "summary_id": summary_id,
             },
         )
@@ -264,7 +255,7 @@ def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
             {
                 "media_id": media_id,
                 "fingerprint": fingerprint,
-                "model_name": MEDIA_UNIT_MODEL_NAME,
+                "model_name": operation_profile(MEDIA_UNIT_OPERATION).target.model,
             },
         ).scalar_one()
         summary_id = UUID(str(summary_id))
@@ -413,20 +404,20 @@ class _Candidate:
 
 
 async def run_media_unit_build(
-    db: Session, *, media_id: UUID, llm: ModelRuntime
+    db: Session, *, media_id: UUID, runtime: ExecutionRuntime
 ) -> Literal["ok", "failed"]:
     """Worker body: synthesize the summary + grounded claims for one media unit.
 
     Replay-safe: an ``ok`` no-op when the head is missing, not ``building``, or
     when the recomputed fingerprint no longer matches the head (a fresher
-    dedupe_key job owns that version). Expected failures — no candidates, no
-    resolvable key, rate-limit/budget rejections, LLM/synthesis errors — set the
+    dedupe_key job owns that version). Expected failures — no candidates,
+    entitlement/rate-limit/budget rejections, LLM/synthesis errors — set the
     head ``failed`` with the error floor (``error_code``/``error_detail``)
     without raising and return ``failed`` so the queue records a real failure;
     the worker boundary handles only unexpected exceptions.
 
-    The provider call is attributed to the media owner (``resolve_api_key``,
-    BYOK-first) and runs inside the rate-limit/budget envelope; each attempt is
+    The provider call is attributed to the media owner and runs on the
+    platform credential inside the rate-limit envelope; each attempt is
     ledgered as one ``llm_calls`` row (owner ``media_summary`` = the head id).
     """
     summary = media_summary_orm_or_none(db, media_id=media_id)
@@ -449,26 +440,11 @@ async def run_media_unit_build(
         fail_media_unit(
             db,
             summary_id=summary_id,
-            error_code=ApiErrorCode.E_LLM_NO_KEY.value,
-            error_detail="media has no owning user to resolve an API key for",
+            error_code="no_owner",
+            error_detail="media has no owning user to attribute the provider call to",
         )
         return "failed"
     owner_user_id = UUID(str(owner_row))
-    try:
-        resolved_key = resolve_api_key(db, owner_user_id, MEDIA_UNIT_PROVIDER, "auto")
-    except ApiError as exc:
-        fail_media_unit(
-            db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
-        )
-        return "failed"
-    except ModelCallError as exc:
-        fail_media_unit(
-            db,
-            summary_id=summary_id,
-            error_code=api_error_code_for_model_call(exc.error_code).value,
-            error_detail=exception_error_detail(exc),
-        )
-        return "failed"
 
     rate_limiter = get_rate_limiter()
     try:
@@ -478,8 +454,6 @@ async def run_media_unit_build(
             db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
         )
         return "failed"
-    budget_reserved = False
-    estimated_tokens = 0
     try:
         candidates = _load_candidates(db, media_id=media_id)
         if not candidates:
@@ -491,91 +465,71 @@ async def run_media_unit_build(
             )
             return "failed"
 
-        request = _build_llm_request(candidates)
-        if resolved_key.mode == "platform":
-            estimated_tokens = (
-                estimate_tokens("\n".join(turn.content for turn in request.messages))
-                + MEDIA_UNIT_MAX_OUTPUT_TOKENS
-            )
-            try:
-                rate_limiter.reserve_token_budget(owner_user_id, summary_id, estimated_tokens)
-                budget_reserved = True
-            except ApiError as exc:
-                fail_media_unit(
-                    db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
-                )
-                return "failed"
-
+        user_content = _build_media_unit_user_content(candidates)
+        profile = operation_profile(MEDIA_UNIT_OPERATION)
+        intent = build_synthesis_intent(
+            profile=profile,
+            system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
+            user_content=user_content,
+            max_output_tokens=MEDIA_UNIT_MAX_OUTPUT_TOKENS,
+            schema=MediaUnitSynthesis,
+        )
         try:
-            result = await run_structured_synthesis(
-                llm=LedgeredLLM(
-                    db=db,
-                    owner=LlmCallOwner(kind="media_summary", id=summary_id),
-                    router=llm,
-                    llm_operation="media_unit",
-                    key_mode_requested="auto",
-                    key_mode_used=resolved_key.mode,
+            call = await execute_generation(
+                GenerationRequest(
+                    owner=LlmCallOwner(kind="media_summary", id=summary_id, user_id=owner_user_id),
+                    operation=MEDIA_UNIT_OPERATION,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
                 ),
-                request=SynthesisRequest(
-                    provider=MEDIA_UNIT_PROVIDER,
-                    llm_request=request,
-                    api_key=resolved_key.api_key,
-                    timeout_s=MEDIA_UNIT_LLM_TIMEOUT_SECONDS,
-                ),
-                schema=MediaUnitSynthesis,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                settings=get_settings(),
             )
-        except ModelCallError as exc:
-            error_code = api_error_code_for_model_call(exc.error_code).value
-            logger.warning(
-                "media_unit_build.llm_failure", media_id=str(media_id), error_code=error_code
-            )
-            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, resolved_key.user_key_id, "invalid")
+        except ApiError as exc:
             fail_media_unit(
-                db,
-                summary_id=summary_id,
-                error_code=error_code,
-                error_detail=exception_error_detail(exc),
+                db, summary_id=summary_id, error_code=exc.code.value, error_detail=exc.message
             )
             return "failed"
+
+        if not isinstance(call.outcome, Succeeded):
+            code, detail = outcome_failure_facts(call.outcome)
+            logger.warning("media_unit_build.llm_failure", media_id=str(media_id), error_code=code)
+            fail_media_unit(db, summary_id=summary_id, error_code=code, error_detail=detail)
+            return "failed"
+
+        try:
+            value = decode_structured_synthesis(call.outcome, schema=MediaUnitSynthesis)
         except StructuredSynthesisError as exc:
             logger.warning(
                 "media_unit_build.llm_failure",
                 media_id=str(media_id),
-                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_code="invalid_structured_output",
             )
             fail_media_unit(
                 db,
                 summary_id=summary_id,
-                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
-                error_detail=exception_error_detail(exc),
+                error_code="invalid_structured_output",
+                error_detail=str(exc),
             )
             return "failed"
 
         # Commit the per-attempt llm_calls rows now so they survive whatever the
         # promote does (a later worker-boundary rollback must not erase them).
         db.commit()
-        grounded = _map_claims_to_spans(result.value, candidates)
+        grounded = _map_claims_to_spans(value, candidates)
         _persist_unit(
             db,
             media_id=media_id,
             owner_user_id=owner_user_id,
             summary_id=summary_id,
-            summary_md=result.value.summary_md,
+            summary_md=value.summary_md,
             expected_fingerprint=current_fingerprint,
             grounded=grounded,
-            resolved_key=resolved_key,
         )
-        if budget_reserved:
-            actual_tokens = usage_tokens(result.usage)["total_tokens"]
-            rate_limiter.commit_token_budget(
-                owner_user_id, summary_id, actual_tokens or estimated_tokens
-            )
-            budget_reserved = False
         return "ok"
     finally:
-        if budget_reserved:
-            rate_limiter.release_token_budget(owner_user_id, summary_id)
         rate_limiter.release_inflight_slot(owner_user_id)
 
 
@@ -716,7 +670,6 @@ def _persist_unit(
     summary_md: str,
     expected_fingerprint: str,
     grounded: list[tuple[str, UUID, int]],
-    resolved_key: ResolvedKey,
 ) -> None:
     def op() -> None:
         # Gate the promote on the build's generation. A concurrent re-ingest
@@ -787,9 +740,6 @@ def _persist_unit(
                     "ordinal": ordinal,
                 },
             )
-        # BYOK key-status feedback rides the terminal write (chat precedent).
-        if resolved_key.mode == "byok":
-            update_user_key_status(db, resolved_key.user_key_id, "valid")
         db.commit()
 
     retry_serializable(db, "_persist_unit", op)
@@ -866,16 +816,12 @@ _MEDIA_UNIT_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(candidates: list[_Candidate]) -> ModelCall:
+def _build_media_unit_user_content(candidates: list[_Candidate]) -> str:
     rendered = "\n\n".join(
         f"[{index}] {candidate.text}" for index, candidate in enumerate(candidates)
     )
-    return build_synthesis_request(
-        provider=MEDIA_UNIT_PROVIDER,
-        system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=None,
-        model_name=MEDIA_UNIT_MODEL_NAME,
-        max_tokens=MEDIA_UNIT_MAX_OUTPUT_TOKENS,
     )

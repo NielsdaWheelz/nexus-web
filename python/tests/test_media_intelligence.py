@@ -4,21 +4,35 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.types import ModelResponse
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Failed,
+    PossiblyBillable,
+    Present,
+    ProviderHttpUnavailable,
+    ResponsePayload,
+    StructuredContent,
+    Succeeded,
+    TokenUsage,
+    TransientExhausted,
+)
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import LLMCall
-from nexus.services.api_key_resolver import ResolvedKey
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.media_intelligence import (
+    MEDIA_UNIT_OPERATION,
     MediaUnit,
     MediaUnitClaimOut,
     MediaUnitSynthesis,
@@ -30,9 +44,13 @@ from nexus.services.media_intelligence import (
     get_media_unit,
     run_media_unit_build,
 )
+from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.services.search.query import SearchQuery
 from nexus.tasks.media_unit_build import _fail_unit_after_worker_exception
 from tests.helpers import auth_headers, create_test_user_id
+from tests.utils.db import task_session_factory
+
+_PROFILE = operation_profile(MEDIA_UNIT_OPERATION)
 
 # =============================================================================
 # Unit tests (pure helper + schema) — AC-2 grounding map
@@ -103,51 +121,147 @@ class TestMediaUnitSynthesisSchema:
 
 
 # =============================================================================
-# Integration tests (real DB, fake LLM at the external boundary)
+# Integration tests (real DB, fake ExecutionRuntime at the external boundary)
 # =============================================================================
 
 
 @pytest.fixture(autouse=True)
-def anthropic_platform_key(monkeypatch):
-    """resolve_api_key needs a configured platform key for the pinned provider."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-platform-anthropic")
+def platform_key(monkeypatch):
+    """generation_credential needs a configured platform key for the pinned provider.
+
+    MEDIA_UNIT_OPERATION ("media_summary") resolves to the "fast" profile,
+    whose target provider is openai (see llm_profiles.PROFILES) — the key
+    must be OPENAI_API_KEY, not an anthropic key.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-platform-openai")
     clear_settings_cache()
     yield
     clear_settings_cache()
 
 
-class _RecordingRateLimiter:
-    """Records the worker budget-envelope calls (the rate-limit boundary fake)."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
-
-    def acquire_inflight_slot(self, user_id: UUID) -> None:
-        self.events.append(("acquire_inflight_slot", user_id, None, None))
-
-    def release_inflight_slot(self, user_id: UUID) -> None:
-        self.events.append(("release_inflight_slot", user_id, None, None))
-
-    def reserve_token_budget(
-        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
-    ) -> None:
-        self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
-
-    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
-        self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
-
-    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
-        self.events.append(("release_token_budget", user_id, reservation_id, None))
-
-    def event_names(self) -> list[str]:
-        return [event[0] for event in self.events]
+@pytest.fixture(autouse=True)
+def _media_intelligence_session_factory(monkeypatch, db_session):
+    """Route the owner's internal ``get_session_factory()`` call onto this
+    test's savepoint connection (same pattern as tests/test_llm_task.py
+    `_task_db`), so execute_generation's entitlement/ledger reads see the
+    grants and rows this test sets up on ``db_session``.
+    """
+    monkeypatch.setattr(
+        "nexus.services.media_intelligence.get_session_factory",
+        lambda: task_session_factory(db_session),
+    )
 
 
 @pytest.fixture(autouse=True)
+def _rate_limiter(db_session):
+    """Install the real RateLimiter as the global singleton so execute_generation's
+    reservation/commit/release ledger flow runs for real against this test's DB.
+    """
+    previous = get_rate_limiter()
+    set_rate_limiter(RateLimiter(session_factory=task_session_factory(db_session)))
+    yield
+    set_rate_limiter(previous)
+
+
+class _RecordingRateLimiter:
+    """Records only the worker-level inflight-slot envelope (the concurrency
+    guard run_media_unit_build itself acquires/releases). Reservation/charge/
+    release of the *token budget* now happens inside execute_generation
+    against the real global rate limiter (see the _rate_limiter fixture
+    above), so this fake no longer sees those calls — that's a genuine
+    architecture change, not a test simplification.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def acquire_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append("acquire_inflight_slot")
+
+    def release_inflight_slot(self, user_id: UUID) -> None:
+        self.events.append("release_inflight_slot")
+
+
+@pytest.fixture
 def unit_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
     limiter = _RecordingRateLimiter()
     monkeypatch.setattr("nexus.services.media_intelligence.get_rate_limiter", lambda: limiter)
     return limiter
+
+
+@dataclass
+class _ScriptedRuntime:
+    """A fake `ExecutionRuntime`: scripts one outcome (non-stream) or raises on
+    dispatch. Copied from tests/test_llm_execution.py `_ScriptedRuntime`
+    (stream() is unused by media_intelligence, which never streams)."""
+
+    outcome: object = None
+    generate_error: BaseException | None = None
+    calls: list[str] = field(default_factory=list)
+
+    async def generate(self, intent, plan, credential) -> object:
+        self.calls.append("generate")
+        if self.generate_error is not None:
+            raise self.generate_error
+        assert self.outcome is not None
+        return self.outcome
+
+    def stream(self, intent, plan, credential, *, cancel):  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+def _meta(**overrides: object) -> CallMeta:
+    fields: dict[str, object] = {
+        "provider": _PROFILE.target.provider,
+        "model": _PROFILE.target.model,
+        "provider_request_id": Present("req-abc"),
+        "upstream_provider": Absent(),
+        "usage": Present(
+            TokenUsage(
+                input_tokens=50,
+                output_tokens=20,
+                total_tokens=70,
+                reasoning_tokens=Absent(),
+                cache_read_input_tokens=Absent(),
+                cache_write_input_tokens=Absent(),
+            )
+        ),
+        "attempt_trace": (),
+        "billability": PossiblyBillable(),
+    }
+    fields.update(overrides)
+    return CallMeta(**fields)  # type: ignore[arg-type]
+
+
+def _succeeded_unit_outcome(*, summary_md: str, claims: list[tuple[str, int]]) -> Succeeded:
+    """A Succeeded outcome carrying a StructuredContent payload the owner decodes
+    into MediaUnitSynthesis — the fake-runtime analog of the old _UnitRouter."""
+    payload = {
+        "summary_md": summary_md,
+        "claims": [{"claim_text": text_, "candidate_index": idx} for text_, idx in claims],
+    }
+    return Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text=json.dumps(payload)),
+            continuation=Absent(),
+        ),
+    )
+
+
+def _succeeded_invalid_payload_outcome() -> Succeeded:
+    """A Succeeded outcome whose StructuredContent payload does not validate
+    against MediaUnitSynthesis — the fake-runtime analog of the old
+    _RawTextRouter (non-JSON text), now expressed as a decode failure rather
+    than a provider-level refusal since the model call itself succeeded."""
+    payload = {"not": "the expected shape"}
+    return Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text="not the expected shape"),
+            continuation=Absent(),
+        ),
+    )
 
 
 def _grant_platform_llm(db: Session, user_id: UUID) -> None:
@@ -155,10 +269,10 @@ def _grant_platform_llm(db: Session, user_id: UUID) -> None:
     grant_entitlement_override(
         db,
         user_id=user_id,
-        plan_tier="ai_plus",
-        platform_token_quota_mode="plan",
+        plan_tier="ai_pro",
+        platform_token_quota_mode="unlimited",
         platform_token_limit_monthly=None,
-        transcription_quota_mode="plan",
+        transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
         reason="media unit test platform access",
@@ -174,42 +288,6 @@ def _llm_call_rows(db: Session, *, owner_kind: str, owner_id: UUID) -> list[LLMC
             .order_by(LLMCall.call_seq)
         )
     )
-
-
-class _UnitRouter:
-    """Fake ModelRuntime returning a fixed unit synthesis (the external boundary)."""
-
-    def __init__(self, *, summary_md: str, claims: list[tuple[str, int]]) -> None:
-        self._payload = {
-            "summary_md": summary_md,
-            "claims": [
-                {"claim_text": claim_text, "candidate_index": idx} for claim_text, idx in claims
-            ],
-        }
-        self.calls = 0
-
-    async def generate(self, _request, *, key, timeout_s):
-        self.calls += 1
-        return ModelResponse(
-            text=json.dumps(self._payload),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _RawTextRouter:
-    """Fake router returning non-JSON text (drives StructuredSynthesisError)."""
-
-    async def generate(self, _request, *, key, timeout_s):
-        return ModelResponse(
-            text="not json at all",
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
 
 
 def _seed_unit_media(db: Session, *, title: str = "Unit Doc") -> UUID:
@@ -313,7 +391,8 @@ class TestEnsureMediaUnit:
 
         # Drive the build to failure, then complete its queue row as a real worker
         # would (SUCCEEDED holds the partial-unique dedupe_key forever).
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_RawTextRouter()))
+        runtime = _ScriptedRuntime(outcome=_succeeded_invalid_payload_outcome())
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()
         assert get_media_unit(db_session, media_id=media_id) is NotReady.Failed
         db_session.execute(
@@ -342,9 +421,11 @@ class TestRunMediaUnitBuild:
     def test_persists_summary_and_grounded_claims(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
         ref = ensure_media_unit(db_session, media_id=media_id)
-        router = _UnitRouter(summary_md="An abstract.", claims=[("Claim one.", 0)])
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_unit_outcome(summary_md="An abstract.", claims=[("Claim one.", 0)])
+        )
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()
 
         unit = get_media_unit(db_session, media_id=media_id)
@@ -364,67 +445,74 @@ class TestRunMediaUnitBuild:
         # AC-3: the one provider call is ledgered against the unit head.
         rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
         assert [row.call_seq for row in rows] == [1], (
-            f"expected exactly one ledgered call, got {[(r.call_seq, r.error_class) for r in rows]}"
+            f"expected exactly one ledgered call, got {[(r.call_seq, r.outcome) for r in rows]}"
         )
-        assert rows[0].llm_operation == "media_unit"
-        assert rows[0].error_class is None
+        assert rows[0].llm_operation == MEDIA_UNIT_OPERATION
+        assert rows[0].outcome == "succeeded"
 
     def test_build_runs_inside_the_budget_envelope(
         self, db_session: Session, unit_rate_limiter: _RecordingRateLimiter
     ) -> None:
         media_id = _seed_unit_media(db_session)
         ref = ensure_media_unit(db_session, media_id=media_id)
-        router = _UnitRouter(summary_md="An abstract.", claims=[("Claim one.", 0)])
-
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
-
-        assert unit_rate_limiter.event_names() == [
-            "acquire_inflight_slot",
-            "reserve_token_budget",
-            "commit_token_budget",
-            "release_inflight_slot",
-        ], f"unexpected envelope: {unit_rate_limiter.events}"
-        reserve = unit_rate_limiter.events[1]
-        assert reserve[2] == ref.summary_id, "reservation must be keyed on the unit head id"
-        assert reserve[3] is not None and reserve[3] > 2000, (
-            "estimate must cover the rendered prompt plus max output tokens"
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_unit_outcome(summary_md="An abstract.", claims=[("Claim one.", 0)])
         )
 
-    def test_envelope_releases_reservation_on_failure(
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
+
+        # The worker's own concurrency guard still brackets the call.
+        assert unit_rate_limiter.events == ["acquire_inflight_slot", "release_inflight_slot"]
+
+        # The token budget reservation/charge is now owned inside execute_generation
+        # (against the real global rate limiter installed by the _rate_limiter
+        # fixture) rather than being visible on this worker-level hook — verify it
+        # directly against the ledger row instead.
+        db_session.expire_all()
+        rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
+        assert len(rows) == 1
+        charge = db_session.execute(
+            text("SELECT charged_tokens FROM token_budget_charges WHERE reservation_id = :id"),
+            {"id": rows[0].id},
+        ).first()
+        assert charge is not None and charge[0] == 70
+
+    def test_envelope_releases_inflight_slot_on_provider_failure(
         self, db_session: Session, unit_rate_limiter: _RecordingRateLimiter
     ) -> None:
         media_id = _seed_unit_media(db_session)
         ensure_media_unit(db_session, media_id=media_id)
+        failure = TransientExhausted(attempts=1, cause=ProviderHttpUnavailable())
+        runtime = _ScriptedRuntime(outcome=Failed(meta=_meta(usage=Absent()), failure=failure))
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_RawTextRouter()))
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
 
-        assert unit_rate_limiter.event_names() == [
-            "acquire_inflight_slot",
-            "reserve_token_budget",
-            "release_token_budget",
-            "release_inflight_slot",
-        ], f"unexpected envelope: {unit_rate_limiter.events}"
+        # The inflight slot is always released, success or failure.
+        assert unit_rate_limiter.events == ["acquire_inflight_slot", "release_inflight_slot"]
 
     def test_drops_claim_with_unresolvable_index(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
         ensure_media_unit(db_session, media_id=media_id)
         # index 999 is out of range → must be dropped (AC-2 end-to-end).
-        router = _UnitRouter(summary_md="s", claims=[("kept", 0), ("dropped", 999)])
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_unit_outcome(summary_md="s", claims=[("kept", 0), ("dropped", 999)])
+        )
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()
 
         unit = get_media_unit(db_session, media_id=media_id)
         assert isinstance(unit, MediaUnit)
         assert [c.claim_text for c in unit.claims] == ["kept"]
 
-    def test_llm_failure_marks_failed_with_error_floor_and_ledgered_attempts(
+    def test_invalid_structured_output_marks_failed_with_error_floor(
         self, db_session: Session
     ) -> None:
         media_id = _seed_unit_media(db_session)
         ref = ensure_media_unit(db_session, media_id=media_id)
+        runtime = _ScriptedRuntime(outcome=_succeeded_invalid_payload_outcome())
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_RawTextRouter()))
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()
         assert get_media_unit(db_session, media_id=media_id) is NotReady.Failed
         # The error floor lands on the head row.
@@ -432,13 +520,37 @@ class TestRunMediaUnitBuild:
             text("SELECT error_code, error_detail FROM media_summaries WHERE id = :sid"),
             {"sid": ref.summary_id},
         ).one()
-        assert head.error_code == "E_LLM_BAD_REQUEST", f"got {head.error_code!r}"
+        assert head.error_code == "invalid_structured_output", f"got {head.error_code!r}"
         assert head.error_detail, "error_detail must carry the operator-facing reason"
-        # AC-3: the failed synthesis still ledgers both attempts (one repair round).
+        # The provider call itself succeeded (only the decode failed downstream),
+        # so exactly one attempt is ledgered — there is no repair-round retry in
+        # the new architecture (run_media_unit_build calls execute_generation
+        # exactly once and fails immediately on a decode error).
         rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
-        assert [row.call_seq for row in rows] == [1, 2], (
-            f"expected attempt + repair rows, got {[(r.call_seq, r.error_class) for r in rows]}"
+        assert [row.call_seq for row in rows] == [1], (
+            f"expected exactly one ledgered call, got {[(r.call_seq, r.outcome) for r in rows]}"
         )
+        assert rows[0].outcome == "succeeded"
+
+    def test_provider_failure_marks_failed_with_error_floor(self, db_session: Session) -> None:
+        media_id = _seed_unit_media(db_session)
+        ref = ensure_media_unit(db_session, media_id=media_id)
+        failure = TransientExhausted(attempts=1, cause=ProviderHttpUnavailable())
+        runtime = _ScriptedRuntime(outcome=Failed(meta=_meta(usage=Absent()), failure=failure))
+
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
+        db_session.expire_all()
+        assert get_media_unit(db_session, media_id=media_id) is NotReady.Failed
+        head = db_session.execute(
+            text("SELECT error_code, error_detail FROM media_summaries WHERE id = :sid"),
+            {"sid": ref.summary_id},
+        ).one()
+        assert head.error_code == "provider_unavailable", f"got {head.error_code!r}"
+        rows = _llm_call_rows(db_session, owner_kind="media_summary", owner_id=ref.summary_id)
+        assert [row.call_seq for row in rows] == [1]
+        assert rows[0].outcome == "failed"
+        assert rows[0].error_origin == "provider_http"
+        assert rows[0].error_code == "provider_unavailable"
 
     def test_replay_guard_noop_when_not_building(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
@@ -448,10 +560,12 @@ class TestRunMediaUnitBuild:
             {"sid": ref.summary_id},
         )
         db_session.commit()
-        router = _UnitRouter(summary_md="should-not-run", claims=[])
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_unit_outcome(summary_md="should-not-run", claims=[])
+        )
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
-        assert router.calls == 0
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
+        assert runtime.calls == []
 
     def test_persist_is_noop_when_fingerprint_superseded(self, db_session: Session) -> None:
         # Mid-flight re-ingest TOCTOU: a build whose generation no longer matches the
@@ -480,7 +594,6 @@ class TestRunMediaUnitBuild:
             summary_md="superseded summary",
             expected_fingerprint="a-different-generation-fingerprint",
             grounded=[("stale claim", UUID(str(span_id)), 0)],
-            resolved_key=ResolvedKey(api_key="k", mode="platform", provider="anthropic"),
         )
         db_session.expire_all()
 
@@ -536,9 +649,9 @@ class TestFailAfterWorkerException:
 
     def test_noop_when_already_ready(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
-        router = _UnitRouter(summary_md="kept", claims=[("c", 0)])
+        runtime = _ScriptedRuntime(outcome=_succeeded_unit_outcome(summary_md="kept", claims=[("c", 0)]))
         ensure_media_unit(db_session, media_id=media_id)
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=router))
+        asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()
         _fail_unit_after_worker_exception(db_session, RuntimeError("late"), media_id=media_id)
         db_session.expire_all()

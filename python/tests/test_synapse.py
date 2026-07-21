@@ -1,12 +1,20 @@
 """Integration tests for the synapse resonance engine (synapse spec §11).
 
-Real DB, fake LLM at the external boundary (the test_media_intelligence
-pattern): router fakes drive ``run_synapse_scan`` directly via ``asyncio.run``.
-Tests run without an OPENAI key, so retrieval is lexical-only with websearch
-AND-semantics — every non-stopword lexeme of the scan query (the dossier head)
-must appear in a candidate chunk. The seeded corpora therefore share one
-distinctive token stem per scenario, including the quoted anchor-title phrase
-a highlight dossier embeds.
+Real DB, fake ``ExecutionRuntime`` at the generation boundary. ``run_synapse_scan``
+now receives a ``runtime: ExecutionRuntime`` and drives the real
+``execute_generation`` ledger/budget path against the DB — so each test grants an
+AI entitlement, installs a real ``RateLimiter`` on the transactional session (the
+inflight-slot envelope and the token-budget envelope both flow through it), and
+points the owners' ``get_session_factory`` at the fixture connection. The fake
+runtime scripts one ``provider_runtime`` ``CallOutcome``: a ``Succeeded`` carrying
+a strict-JSON ``StructuredContent`` payload for the happy/decode paths, or a
+non-``Succeeded`` outcome for the failure paths.
+
+Retrieval is deterministic-hash under ``NEXUS_ENV=test`` (the ``test_hash_v2``
+embedding provider is key-independent and never hits the network), so the seeded
+corpora share one distinctive token stem per scenario — including the quoted
+anchor-title phrase a highlight dossier embeds — and are retrieved by both the
+lexical and semantic arms of the hybrid query.
 """
 
 from __future__ import annotations
@@ -14,11 +22,24 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass, field
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.types import ModelResponse
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Failed,
+    PossiblyBillable,
+    Present,
+    ProviderHttpUnavailable,
+    ResponsePayload,
+    StructuredContent,
+    Succeeded,
+    TokenUsage,
+    TransientExhausted,
+)
 from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -38,9 +59,11 @@ from nexus.schemas.highlights import CreateHighlightRequest, CreatePdfHighlightR
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.highlights import create_highlight_for_fragment
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.media_intelligence import run_media_unit_build
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.pdf_highlights import create_pdf_highlight
+from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     create_edge,
@@ -79,64 +102,54 @@ pytestmark = pytest.mark.integration
 
 
 # =============================================================================
-# Fixtures: platform key, rate-limit boundary fake
+# Fixtures: platform credential, transactional session factory + rate limiter
 # =============================================================================
 
 
 @pytest.fixture(autouse=True)
 def synapse_platform_key(monkeypatch):
-    """Platform key for the pinned provider; no OPENAI key keeps retrieval
-    deterministically lexical-only (the embedding builder degrades typed)."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-platform-anthropic")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    """Provide the platform credential the synapse/media-unit profile resolves.
+
+    Both operations pin the ``openai`` provider, so ``execute_generation``'s
+    ``generation_credential`` reads ``settings.openai_api_key``. Retrieval stays
+    deterministic-hash regardless (``NEXUS_ENV=test`` ⇒ ``test_hash_v2`` embedding
+    provider, no network), so the key is inert to search."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-platform-openai")
     clear_settings_cache()
     yield
     clear_settings_cache()
 
 
-class _RecordingRateLimiter:
-    """Records the worker budget-envelope calls (the rate-limit boundary fake)."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
-
-    def acquire_inflight_slot(self, user_id: UUID) -> None:
-        self.events.append(("acquire_inflight_slot", user_id, None, None))
-
-    def release_inflight_slot(self, user_id: UUID) -> None:
-        self.events.append(("release_inflight_slot", user_id, None, None))
-
-    def reserve_token_budget(
-        self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
-    ) -> None:
-        self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
-
-    def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
-        self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
-
-    def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
-        self.events.append(("release_token_budget", user_id, reservation_id, None))
-
-    def event_names(self) -> list[str]:
-        return [event[0] for event in self.events]
+@pytest.fixture(autouse=True)
+def _session_factory(db_session: Session, monkeypatch):
+    """Point the owners' ``execute_generation`` at the fixture connection so the
+    ledger + budget writes ride the test transaction (and roll back with it)."""
+    factory = task_session_factory(db_session)
+    monkeypatch.setattr("nexus.services.synapse.get_session_factory", lambda: factory)
+    monkeypatch.setattr("nexus.services.media_intelligence.get_session_factory", lambda: factory)
 
 
 @pytest.fixture(autouse=True)
-def synapse_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
-    limiter = _RecordingRateLimiter()
-    monkeypatch.setattr("nexus.services.synapse.get_rate_limiter", lambda: limiter)
-    return limiter
+def _rate_limiter(db_session: Session):
+    """Install a real DB-backed limiter on the transactional session. Both the
+    owner inflight-slot envelope and ``execute_generation``'s token-budget
+    envelope resolve it through the module-global ``get_rate_limiter``."""
+    previous = get_rate_limiter()
+    set_rate_limiter(RateLimiter(session_factory=task_session_factory(db_session)))
+    yield
+    set_rate_limiter(previous)
 
 
 def _grant_platform_llm(db: Session, user_id: UUID) -> None:
-    """Entitle the user to the platform key (resolve_api_key auto -> platform)."""
+    """Entitle the user to the platform LLM with an unlimited token budget so the
+    budget reservation inside ``execute_generation`` is never denied."""
     grant_entitlement_override(
         db,
         user_id=user_id,
-        plan_tier="ai_plus",
-        platform_token_quota_mode="plan",
+        plan_tier="ai_pro",
+        platform_token_quota_mode="unlimited",
         platform_token_limit_monthly=None,
-        transcription_quota_mode="plan",
+        transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
         reason="synapse test platform access",
@@ -145,108 +158,154 @@ def _grant_platform_llm(db: Session, user_id: UUID) -> None:
 
 
 # =============================================================================
-# Router fakes (the external LLM boundary)
+# Fake ExecutionRuntime (the generation boundary)
 # =============================================================================
 
 
 _CANDIDATE_LINE = re.compile(r"^\[\d+\] .*$", flags=re.MULTILINE)
+_SYNAPSE_TARGET = operation_profile("synapse").target
 
 
-class _SynapseRouter:
-    """Fake router proposing every candidate line it is shown.
+def _candidate_lines(intent) -> list[str]:
+    """The ``[i] label: snippet`` candidate lines the scan rendered into the user
+    turn — the fake judge inspects them exactly as the model would."""
+    user_text = "\n".join(block.text for block in intent.messages[-1].blocks)
+    return _CANDIDATE_LINE.findall(user_text)
 
-    ``marker`` restricts proposals to candidates whose rendered
-    ``[i] label: snippet`` line contains it (drives the replace-set test).
-    """
 
-    def __init__(
-        self,
-        *,
-        kind: str = "context",
-        rationale: str = "It names the same resonance.",
-        marker: str | None = None,
-    ) -> None:
-        self._kind = kind
-        self._rationale = rationale
-        self._marker = marker
-        self.calls = 0
-        self.seen_lines: list[list[str]] = []
+def _meta() -> CallMeta:
+    return CallMeta(
+        provider=_SYNAPSE_TARGET.provider,
+        model=_SYNAPSE_TARGET.model,
+        provider_request_id=Present("req-synapse"),
+        upstream_provider=Absent(),
+        usage=Present(
+            TokenUsage(
+                input_tokens=40,
+                output_tokens=15,
+                total_tokens=55,
+                reasoning_tokens=Absent(),
+                cache_read_input_tokens=Absent(),
+                cache_write_input_tokens=Absent(),
+            )
+        ),
+        attempt_trace=(),
+        billability=PossiblyBillable(),
+    )
 
-    async def generate(self, request, *, key, timeout_s):
+
+def _structured_success(payload: dict[str, object]) -> Succeeded:
+    return Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text=json.dumps(payload)),
+            continuation=Absent(),
+        ),
+    )
+
+
+@dataclass
+class _SynapseRuntime:
+    """Fake judge proposing every candidate line it is shown.
+
+    ``marker`` restricts proposals to candidates whose rendered ``[i] label:
+    snippet`` line contains it (drives the replace-set test)."""
+
+    kind: str = "context"
+    rationale: str = "It names the same resonance."
+    marker: str | None = None
+    calls: int = 0
+    seen_lines: list[list[str]] = field(default_factory=list)
+
+    async def generate(self, intent, plan, credential) -> Succeeded:
         self.calls += 1
-        lines = _CANDIDATE_LINE.findall(request.messages[-1].content)
+        lines = _candidate_lines(intent)
         self.seen_lines.append(lines)
         connections = [
-            {"candidate_index": index, "kind": self._kind, "rationale": self._rationale}
+            {"candidate_index": index, "kind": self.kind, "rationale": self.rationale}
             for index, line in enumerate(lines)
-            if self._marker is None or self._marker in line
+            if self.marker is None or self.marker in line
         ]
-        return ModelResponse(
-            text=json.dumps({"connections": connections}),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
+        return _structured_success({"connections": connections})
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("synapse scan never streams")
+
+
+@dataclass
+class _SchemaDefectRuntime:
+    """Fake runtime whose ``Succeeded`` payload does not validate into
+    ``SynapseSynthesis`` — the decode step raises ``StructuredSynthesisError``
+    (a terminal defect; there is no repair round)."""
+
+    calls: int = 0
+
+    async def generate(self, intent, plan, credential) -> Succeeded:
+        self.calls += 1
+        return _structured_success({"unexpected": "not a connections list"})
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("synapse scan never streams")
+
+
+@dataclass
+class _FailingRuntime:
+    """Fake runtime returning a non-``Succeeded`` outcome — the ledger records the
+    failure and the scan maps it through ``outcome_failure_facts``."""
+
+    outcome: object = field(
+        default_factory=lambda: Failed(
+            meta=_meta(), failure=TransientExhausted(attempts=1, cause=ProviderHttpUnavailable())
         )
+    )
+    calls: int = 0
+
+    async def generate(self, intent, plan, credential) -> object:
+        self.calls += 1
+        return self.outcome
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("synapse scan never streams")
 
 
-class _RawTextRouter:
-    """Fake router returning non-JSON text (drives StructuredSynthesisError)."""
-
-    async def generate(self, _request, *, key, timeout_s):
-        return ModelResponse(
-            text="not json at all",
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _MediaUnitRouter:
-    """Fake router for run_media_unit_build (the promote-path trigger and the
+@dataclass
+class _MediaUnitRuntime:
+    """Fake runtime for ``run_media_unit_build`` (the promote-path trigger and the
     media-dossier seed)."""
 
-    def __init__(self, summary_md: str = "An abstract.") -> None:
-        self._summary_md = summary_md
+    summary_md: str = "An abstract."
 
-    async def generate(self, _request, *, key, timeout_s):
-        return ModelResponse(
-            text=json.dumps({"summary_md": self._summary_md, "claims": []}),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
+    async def generate(self, intent, plan, credential) -> Succeeded:
+        return _structured_success({"summary_md": self.summary_md, "claims": []})
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("media-unit build never streams")
 
 
-class _DismissingRouter:
+@dataclass
+class _DismissingRuntime:
     """Fake judge that proposes every candidate while a dismissal lands mid-call.
 
     Inserting the suppression row from inside ``generate`` simulates a user
-    dismiss committed during the provider call — after the pre-LLM exclusion
-    read, before the write (the fix-2 race seam)."""
+    dismiss committed during the provider call — after the pre-LLM exclusion read,
+    before the write (the fix-2 race seam)."""
 
-    def __init__(self, db: Session, suppression: SynapseSuppression) -> None:
-        self._db = db
-        self._suppression = suppression
-        self.calls = 0
+    db: Session
+    suppression: SynapseSuppression
+    calls: int = 0
 
-    async def generate(self, request, *, key, timeout_s):
+    async def generate(self, intent, plan, credential) -> Succeeded:
         self.calls += 1
-        self._db.add(self._suppression)
-        lines = _CANDIDATE_LINE.findall(request.messages[-1].content)
+        self.db.add(self.suppression)
+        lines = _candidate_lines(intent)
         connections = [
             {"candidate_index": index, "kind": "context", "rationale": "It restates the claim."}
             for index in range(len(lines))
         ]
-        return ModelResponse(
-            text=json.dumps({"connections": connections}),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
+        return _structured_success({"connections": connections})
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("synapse scan never streams")
 
 
 # =============================================================================
@@ -329,8 +388,8 @@ def _add_note_page(
     return page.id, block_ids
 
 
-def _scan(db: Session, *, user_id: UUID, ref: ResourceRef, router) -> str:
-    return asyncio.run(run_synapse_scan(db, user_id=user_id, ref=ref, llm=router))
+def _scan(db: Session, *, user_id: UUID, ref: ResourceRef, runtime) -> str:
+    return asyncio.run(run_synapse_scan(db, user_id=user_id, ref=ref, runtime=runtime))
 
 
 def _synapse_edges(db: Session, *, user_id: UUID, ref: ResourceRef) -> list[EdgeOut]:
@@ -431,6 +490,21 @@ def _llm_call_rows(db: Session, *, owner_id: UUID) -> list[LLMCall]:
     )
 
 
+def _reservation_count(db: Session, generation_id: UUID) -> int:
+    return db.execute(
+        text("SELECT COUNT(*) FROM token_budget_reservations WHERE reservation_id = :id"),
+        {"id": generation_id},
+    ).scalar_one()
+
+
+def _charge_amount(db: Session, generation_id: UUID) -> int | None:
+    row = db.execute(
+        text("SELECT charged_tokens FROM token_budget_charges WHERE reservation_id = :id"),
+        {"id": generation_id},
+    ).first()
+    return None if row is None else int(row[0])
+
+
 def _suppression_rows(db: Session, user_id: UUID) -> list[SynapseSuppression]:
     return list(db.scalars(select(SynapseSuppression).where(SynapseSuppression.user_id == user_id)))
 
@@ -442,7 +516,7 @@ def _suppression_rows(db: Session, user_id: UUID) -> list[SynapseSuppression]:
 
 class TestRunSynapseScan:
     def test_highlight_scan_writes_edges_with_rationale_and_excludes_own_media(
-        self, db_session: Session, synapse_rate_limiter: _RecordingRateLimiter
+        self, db_session: Session
     ) -> None:
         user_id, ref, anchor_id, alpha_id, beta_id = _seed_highlight_corpus(db_session)
         # Non-vacuity guard: the anchor's own chunk matches the dossier query,
@@ -464,9 +538,9 @@ class TestRunSynapseScan:
         assert {anchor_id, alpha_id, beta_id} <= retrieved_media, (
             f"corpus must be lexically retrievable; got {retrieved_media}"
         )
-        router = _SynapseRouter(kind="supports", rationale="Shares the spooky-action claim.")
+        runtime = _SynapseRuntime(kind="supports", rationale="Shares the spooky-action claim.")
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
         edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
@@ -485,26 +559,20 @@ class TestRunSynapseScan:
             assert edge.snapshot is not None
             assert edge.snapshot.excerpt == "Shares the spooky-action claim."
             assert edge.snapshot.title is not None and edge.snapshot.title.startswith(_HL_STEM)
-        # AC8: the one provider call is ledgered against the source object.
+        # AC8: the one provider call is ledgered against the source object as a
+        # succeeded generation.
         rows = _llm_call_rows(db_session, owner_id=ref.id)
-        assert [(row.call_seq, row.llm_operation, row.error_class) for row in rows] == [
-            (1, "synapse_scan", None)
-        ], f"got {[(r.call_seq, r.llm_operation, r.error_class) for r in rows]}"
-        # Platform-mode budget envelope: reserve -> commit -> release.
-        assert synapse_rate_limiter.event_names() == [
-            "acquire_inflight_slot",
-            "reserve_token_budget",
-            "commit_token_budget",
-            "release_inflight_slot",
-        ], f"unexpected envelope: {synapse_rate_limiter.events}"
+        assert [(row.call_seq, row.owner_kind, row.outcome) for row in rows] == [
+            (1, "synapse_scan", "succeeded")
+        ], f"got {[(r.call_seq, r.owner_kind, r.outcome) for r in rows]}"
+        assert rows[0].error_code is None
+        # Platform-mode budget envelope: the reservation was made, committed to
+        # the actual tokens, and settled (no dangling reservation).
+        generation_id = rows[0].id
+        assert _charge_amount(db_session, generation_id) == 55
+        assert _reservation_count(db_session, generation_id) == 0
 
-    def test_media_scan_writes_edges_and_never_proposes_itself(
-        self, db_session: Session, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(
-            "nexus.services.media_intelligence.get_rate_limiter",
-            lambda: _RecordingRateLimiter(),
-        )
+    def test_media_scan_writes_edges_and_never_proposes_itself(self, db_session: Session) -> None:
         user_id = _seed_user(db_session)
         source_id = create_searchable_media(db_session, user_id, title=_MEDIA_UNIT_STEM)
         other_id = create_searchable_media(db_session, user_id, title=f"{_MEDIA_UNIT_STEM} Other")
@@ -513,7 +581,7 @@ class TestRunSynapseScan:
                 run_media_unit_build(
                     db_session,
                     media_id=source_id,
-                    llm=_MediaUnitRouter(summary_md=f"{_MEDIA_UNIT_STEM.lower()}."),
+                    runtime=_MediaUnitRuntime(summary_md=f"{_MEDIA_UNIT_STEM.lower()}."),
                 )
             )
             == "ok"
@@ -538,9 +606,9 @@ class TestRunSynapseScan:
         assert {source_id, other_id} <= retrieved_media, (
             f"corpus must be lexically retrievable; got {retrieved_media}"
         )
-        router = _SynapseRouter(rationale="Same refraction claim.")
+        runtime = _SynapseRuntime(rationale="Same refraction claim.")
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
         edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
@@ -561,9 +629,9 @@ class TestRunSynapseScan:
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
         )
         ref = ResourceRef(scheme="page", id=page_id)
-        router = _SynapseRouter()
+        runtime = _SynapseRuntime()
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
         targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=ref))
@@ -602,16 +670,16 @@ class TestRunSynapseScan:
             f"corpus must be lexically retrievable; got {retrieved_blocks}"
         )
         ref = ResourceRef(scheme="note_block", id=source_block)
-        router = _SynapseRouter()
+        runtime = _SynapseRuntime()
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
         targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=ref))
         assert targets == {f"note_block:{sibling_block}", f"note_block:{other_block}"}, (
             f"self must be excluded, but page siblings are ordinary graph items; got {targets}"
         )
-        assert [len(lines) for lines in router.seen_lines] == [2]
+        assert [len(lines) for lines in runtime.seen_lines] == [2]
 
     def test_rescan_replace_sets_and_leaves_other_origins_untouched(
         self, db_session: Session
@@ -638,7 +706,7 @@ class TestRunSynapseScan:
             ),
         )
 
-        first = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter())
+        first = _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime())
         assert first == "ok"
         assert _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)) == {
             f"note_block:{other_block}",
@@ -646,7 +714,9 @@ class TestRunSynapseScan:
             f"media:{beta_id}",
         }
 
-        second = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter(marker="Alpha"))
+        second = _scan(
+            db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime(marker="Alpha")
+        )
 
         assert second == "ok"
         targets = _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref))
@@ -677,13 +747,13 @@ class TestRunSynapseScan:
                 origin="user",
             ),
         )
-        assert _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter()) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime()) == "ok"
         assert _synapse_edges(db_session, user_id=user_id, ref=ref), (
             "happy-path seed must write at least one edge"
         )
-        judge = _SynapseRouter(marker="No Such Candidate Line")
+        judge = _SynapseRuntime(marker="No Such Candidate Line")
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=judge)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=judge)
 
         assert status == "ok"
         assert judge.calls == 1, "candidates must reach the judge (post-LLM empty path)"
@@ -713,7 +783,7 @@ class TestRunSynapseScan:
             ),
         )
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter())
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime())
 
         assert status == "ok"
         targets = _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref))
@@ -733,8 +803,8 @@ class TestRunSynapseScan:
         )
         source_ref = ResourceRef(scheme="note_block", id=source_block)
         other_ref = ResourceRef(scheme="note_block", id=other_block)
-        router = _SynapseRouter()
-        assert _scan(db_session, user_id=user_id, ref=source_ref, router=router) == "ok"
+        runtime = _SynapseRuntime()
+        assert _scan(db_session, user_id=user_id, ref=source_ref, runtime=runtime) == "ok"
         edge = next(
             edge
             for edge in _synapse_edges(db_session, user_id=user_id, ref=source_ref)
@@ -752,15 +822,15 @@ class TestRunSynapseScan:
 
         # Forward re-scan: the suppressed pair stays excluded, but the page
         # sibling remains an ordinary note candidate.
-        assert _scan(db_session, user_id=user_id, ref=source_ref, router=router) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=source_ref, runtime=runtime) == "ok"
         assert _targets(_synapse_edges(db_session, user_id=user_id, ref=source_ref)) == {
             f"note_block:{sibling_block}"
         }
-        assert router.calls == 2
+        assert runtime.calls == 2
 
         # Reverse scan: the dismissed source is excluded too; the un-suppressed
         # page-sibling of the original source still resonates.
-        assert _scan(db_session, user_id=user_id, ref=other_ref, router=router) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=other_ref, runtime=runtime) == "ok"
         reverse_targets = _targets(_synapse_edges(db_session, user_id=user_id, ref=other_ref))
         assert reverse_targets == {f"note_block:{sibling_block}"}, (
             f"suppression must hold in both directions (AC3); got {reverse_targets}"
@@ -770,8 +840,8 @@ class TestRunSynapseScan:
         # AC6 / S2: dismissing a span-grain synapse gloss writes a media-pair
         # suppression; a re-scan proposes no span of that work.
         user_id, ref, _anchor_id, alpha_id, beta_id = _seed_highlight_corpus(db_session)
-        router = _SynapseRouter(rationale="Shares the spooky-action claim.")
-        assert _scan(db_session, user_id=user_id, ref=ref, router=router) == "ok"
+        runtime = _SynapseRuntime(rationale="Shares the spooky-action claim.")
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=runtime) == "ok"
         edges = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert _work_targets(db_session, edges) == {f"media:{alpha_id}", f"media:{beta_id}"}
         alpha_edge = next(
@@ -792,7 +862,7 @@ class TestRunSynapseScan:
         assert suppression.target_id == alpha_id
         assert (suppression.source_scheme, suppression.source_id) == (ref.scheme, ref.id)
         # Re-scan proposes no span of the dismissed work — only beta survives.
-        assert _scan(db_session, user_id=user_id, ref=ref, router=router) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=runtime) == "ok"
         assert _work_targets(db_session, _synapse_edges(db_session, user_id=user_id, ref=ref)) == {
             f"media:{beta_id}"
         }, "a dismissed work's spans stay silenced (AC6)"
@@ -806,12 +876,12 @@ class TestRunSynapseScan:
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
         )
         ref = ResourceRef(scheme="note_block", id=source_block)
-        assert _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter()) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime()) == "ok"
         assert _targets(_synapse_edges(db_session, user_id=user_id, ref=ref)) == {
             f"note_block:{other_block}"
         }
         # Stored reverse (other -> source) to pin the both-directions re-check.
-        router = _DismissingRouter(
+        runtime = _DismissingRuntime(
             db_session,
             SynapseSuppression(
                 user_id=user_id,
@@ -822,63 +892,82 @@ class TestRunSynapseScan:
             ),
         )
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
-        assert router.calls == 1, "the pair must reach the judge (pre-LLM exclusion ran before)"
+        assert runtime.calls == 1, "the pair must reach the judge (pre-LLM exclusion ran before)"
         assert _synapse_edges(db_session, user_id=user_id, ref=ref) == [], (
             "a dismissal landing mid-scan must win over the scan's own pick"
         )
         assert len(_suppression_rows(db_session, user_id)) == 1
 
-    def test_llm_failure_preserves_prior_edges(
-        self, db_session: Session, synapse_rate_limiter: _RecordingRateLimiter
-    ) -> None:
+    def test_decode_failure_preserves_prior_edges(self, db_session: Session) -> None:
+        # A provider Succeeded whose strict-JSON payload does not validate into
+        # SynapseSynthesis is a terminal decode defect (no repair round): the scan
+        # returns "failed" and leaves the prior edge set intact (AC5).
         user_id = _seed_user(db_session)
         _page1, (source_block,) = _add_note_page(
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
         )
         _add_note_page(db_session, user_id, title="Resonance", bodies=[_NOTE_BODY])
         ref = ResourceRef(scheme="note_block", id=source_block)
-        assert _scan(db_session, user_id=user_id, ref=ref, router=_SynapseRouter()) == "ok"
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime()) == "ok"
         before = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert before, "happy-path seed must write at least one edge"
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=_RawTextRouter())
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=_SchemaDefectRuntime())
 
         assert status == "failed"
         after = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert {edge.id for edge in after} == {edge.id for edge in before}, (
             "a failed scan must leave the previous synapse edge set intact (AC5)"
         )
-        # The failed synthesis still ledgers both attempts (one repair round).
+        # The seed's succeeded call + this attempt: two per-attempt ledger rows,
+        # call_seq [1, 2]. (Previously [1, 2, 3] included a repair round; the
+        # repair mechanism is gone — strict JSON is enforced at the wire.) The
+        # provider itself Succeeded, so this row's outcome is "succeeded"; the
+        # scan failed downstream at decode.
         rows = _llm_call_rows(db_session, owner_id=ref.id)
-        assert [row.call_seq for row in rows] == [1, 2, 3], (
-            f"expected success + attempt + repair rows, got "
-            f"{[(r.call_seq, r.error_class) for r in rows]}"
+        assert [row.call_seq for row in rows] == [1, 2], (
+            f"expected seed + attempt rows, got {[(r.call_seq, r.outcome) for r in rows]}"
         )
-        # The failed attempt releases its envelope: reserved budget given back,
-        # in-flight slot freed.
-        assert synapse_rate_limiter.event_names()[-4:] == [
-            "acquire_inflight_slot",
-            "reserve_token_budget",
-            "release_token_budget",
-            "release_inflight_slot",
-        ], f"unexpected envelope: {synapse_rate_limiter.events}"
-        # Per-attempt reservation ids: a stable id (the ref) would dedupe the
-        # budget charge across rescans, making them free.
-        first_reserved, second_reserved = [
-            event[2] for event in synapse_rate_limiter.events if event[0] == "reserve_token_budget"
-        ]
-        assert first_reserved != second_reserved
-        assert ref.id not in (first_reserved, second_reserved)
-        committed = [
-            event[2] for event in synapse_rate_limiter.events if event[0] == "commit_token_budget"
-        ]
-        released = [
-            event[2] for event in synapse_rate_limiter.events if event[0] == "release_token_budget"
-        ]
-        assert committed == [first_reserved] and released == [second_reserved]
+        assert rows[1].outcome == "succeeded"
+        # Per-generation reservation ids: distinct across attempts, never the
+        # owner ref id (a stable id would dedupe the budget charge across rescans).
+        assert rows[0].id != rows[1].id
+        assert ref.id not in (rows[0].id, rows[1].id)
+        # Both attempts settled their reservations (no dangling reservation).
+        assert _reservation_count(db_session, rows[0].id) == 0
+        assert _reservation_count(db_session, rows[1].id) == 0
+
+    def test_provider_failure_preserves_prior_edges(self, db_session: Session) -> None:
+        # A non-Succeeded outcome (transient provider failure) → the scan maps it
+        # through outcome_failure_facts, ledgers the failure, and leaves prior
+        # edges intact (AC5).
+        user_id = _seed_user(db_session)
+        _page1, (source_block,) = _add_note_page(
+            db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
+        )
+        _add_note_page(db_session, user_id, title="Resonance", bodies=[_NOTE_BODY])
+        ref = ResourceRef(scheme="note_block", id=source_block)
+        assert _scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime()) == "ok"
+        before = _synapse_edges(db_session, user_id=user_id, ref=ref)
+        assert before, "happy-path seed must write at least one edge"
+
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=_FailingRuntime())
+
+        assert status == "failed"
+        after = _synapse_edges(db_session, user_id=user_id, ref=ref)
+        assert {edge.id for edge in after} == {edge.id for edge in before}, (
+            "a failed scan must leave the previous synapse edge set intact (AC5)"
+        )
+        rows = _llm_call_rows(db_session, owner_id=ref.id)
+        assert [row.call_seq for row in rows] == [1, 2]
+        # The failed attempt records the runtime's fixed failure floor (the
+        # outcome_failure_facts code for TransientExhausted(ProviderHttpUnavailable)).
+        assert rows[1].outcome == "failed"
+        assert rows[1].error_origin == "provider_http"
+        assert rows[1].error_code == "provider_unavailable"
 
     def test_zero_candidates_replace_sets_to_empty_without_judging(
         self, db_session: Session
@@ -909,12 +998,12 @@ class TestRunSynapseScan:
                 )
             ],
         )
-        router = _SynapseRouter()
+        runtime = _SynapseRuntime()
 
-        status = _scan(db_session, user_id=user_id, ref=ref, router=router)
+        status = _scan(db_session, user_id=user_id, ref=ref, runtime=runtime)
 
         assert status == "ok"
-        assert router.calls == 0, "zero candidates must not reach the judge"
+        assert runtime.calls == 0, "zero candidates must not reach the judge"
         assert _synapse_edges(db_session, user_id=user_id, ref=ref) == [], (
             "current-only doctrine: a successful empty scan clears the set"
         )
@@ -998,7 +1087,7 @@ class TestQueueSynapseScan:
         assert _scan_job_rows(db_session, user_id, ref) == []
         assert (
             asyncio.run(
-                run_synapse_scan(db_session, user_id=user_id, ref=ref, llm=_SynapseRouter())
+                run_synapse_scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime())
             )
             == "skipped"
         )
@@ -1150,16 +1239,14 @@ class TestSynapseTriggers:
         assert rows[0]["payload"]["reason"] == "note_reindex"
 
     def test_media_unit_promote_enqueues_one_scan(
-        self, db_session: Session, bootstrapped_user: UUID, monkeypatch
+        self, db_session: Session, bootstrapped_user: UUID
     ) -> None:
-        monkeypatch.setattr(
-            "nexus.services.media_intelligence.get_rate_limiter",
-            lambda: _RecordingRateLimiter(),
-        )
         _grant_platform_llm(db_session, bootstrapped_user)
         media_id = create_searchable_media(db_session, bootstrapped_user, title="Promote Doc")
 
-        asyncio.run(run_media_unit_build(db_session, media_id=media_id, llm=_MediaUnitRouter()))
+        asyncio.run(
+            run_media_unit_build(db_session, media_id=media_id, runtime=_MediaUnitRuntime())
+        )
 
         rows = _scan_job_rows(
             db_session, bootstrapped_user, ResourceRef(scheme="media", id=media_id)

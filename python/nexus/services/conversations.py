@@ -32,7 +32,6 @@ from nexus.db.models import (
     Message,
 )
 from nexus.errors import (
-    CHAT_RESPONSE_RETRYABLE_ERROR_CODES,
     ApiErrorCode,
     InvalidRequestError,
     NotFoundError,
@@ -48,6 +47,8 @@ from nexus.schemas.conversation import (
     MessagePageInfo,
     PageInfo,
 )
+from nexus.services.chat_failure import compute_has_write_tool_attempt, rerun_eligibility
+from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
@@ -218,8 +219,7 @@ def conversation_to_out(
 
 def message_to_out(
     message: Message,
-    can_retry_response: bool = False,
-    can_resend_response: bool = False,
+    can_rerun: bool = False,
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
@@ -241,59 +241,58 @@ def message_to_out(
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
         branch_anchor=branch_anchor,
         status=message.status,
-        error_code=message.error_code,
-        can_retry_response=can_retry_response,
-        can_resend_response=can_resend_response,
+        can_rerun=can_rerun,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
 
 
-def retryable_assistant_message_ids(
+def rerunnable_assistant_message_ids(
     db: Session,
     *,
     viewer_id: UUID,
     assistant_message_ids: Sequence[UUID],
 ) -> set[UUID]:
+    """The subset of ``assistant_message_ids`` whose latest chat run is
+    terminal-failed/cancelled and eligible for rerun (`chat_failure.
+    rerun_eligibility`, the one policy owner). One read per message: each
+    message's *latest* run only — an earlier failed run superseded by a
+    completed rerun is not itself rerunnable."""
     if not assistant_message_ids:
         return set()
 
-    rows = db.scalars(
-        select(ChatRun.assistant_message_id)
-        .join(Message, Message.id == ChatRun.assistant_message_id)
-        .where(
-            ChatRun.owner_user_id == viewer_id,
-            ChatRun.assistant_message_id.in_(assistant_message_ids),
-            ChatRun.status == "error",
-            ChatRun.error_code.in_(CHAT_RESPONSE_RETRYABLE_ERROR_CODES),
-            Message.role == "assistant",
-            Message.status == "error",
+    runs = (
+        db.execute(
+            select(ChatRun)
+            .where(
+                ChatRun.owner_user_id == viewer_id,
+                ChatRun.assistant_message_id.in_(assistant_message_ids),
+                ChatRun.status.in_(("error", "cancelled")),
+            )
+            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
         )
+        .scalars()
+        .all()
     )
-    return set(rows)
+    latest_by_message_id: dict[UUID, ChatRun] = {}
+    for run in runs:
+        latest_by_message_id.setdefault(run.assistant_message_id, run)
 
-
-def resendable_assistant_message_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_ids: Sequence[UUID],
-) -> set[UUID]:
-    if not assistant_message_ids:
-        return set()
-
-    rows = db.scalars(
-        select(ChatRun.assistant_message_id)
-        .join(Message, Message.id == ChatRun.assistant_message_id)
-        .where(
-            ChatRun.owner_user_id == viewer_id,
-            ChatRun.assistant_message_id.in_(assistant_message_ids),
-            ChatRun.status.in_(("error", "cancelled")),
-            Message.role == "assistant",
-            Message.status.in_(("error", "cancelled")),
-        )
-    )
-    return set(rows)
+    rerunnable: set[UUID] = set()
+    for message_id, run in latest_by_message_id.items():
+        error_code = "cancelled" if run.status == "cancelled" else run.error_code
+        if error_code is None:
+            continue
+        profile_active = run.profile_id is not None and lookup_profile(run.profile_id) is not None
+        has_write_tool_attempt = compute_has_write_tool_attempt(db, run)
+        if rerun_eligibility(
+            error_code=error_code,
+            run_status=run.status,
+            profile_active=profile_active,
+            has_write_tool_attempt=has_write_tool_attempt,
+        ):
+            rerunnable.add(message_id)
+    return rerunnable
 
 
 # =============================================================================
@@ -676,12 +675,7 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=assistant_message_ids,
     )
-    retryable_message_ids = retryable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    resendable_message_ids = resendable_assistant_message_ids(
+    rerunnable_message_ids = rerunnable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
@@ -694,17 +688,15 @@ def list_messages(
                 id=row[0],
                 seq=row[1],
                 role=row[2],
-                message_document=MessageDocument.model_validate(row[12]),
-                parent_message_id=row[8],
-                branch_root_message_id=row[9],
-                branch_anchor_kind=row[10],
-                branch_anchor={"kind": row[10], **(row[11] or {})},
+                message_document=MessageDocument.model_validate(row[11]),
+                parent_message_id=row[7],
+                branch_root_message_id=row[8],
+                branch_anchor_kind=row[9],
+                branch_anchor={"kind": row[9], **(row[10] or {})},
                 status=row[4],
-                error_code=row[5],
-                can_retry_response=row[0] in retryable_message_ids,
-                can_resend_response=row[0] in resendable_message_ids,
-                created_at=row[6],
-                updated_at=row[7],
+                can_rerun=row[0] in rerunnable_message_ids,
+                created_at=row[5],
+                updated_at=row[6],
                 trust_trail=trust_trail,
                 citations=(
                     [trust_citation.citation for trust_citation in trust_trail.citations]
@@ -764,7 +756,7 @@ def _selected_path_message_rows(db: Session, viewer_id: UUID, conversation_id: U
                     JOIN path child ON child.parent_message_id = parent.id
                     WHERE parent.conversation_id = :conversation_id
                 )
-                SELECT m.id, m.seq, m.role, m.content, m.status, m.error_code,
+                SELECT m.id, m.seq, m.role, m.content, m.status,
                        m.created_at, m.updated_at, m.parent_message_id,
                        m.branch_root_message_id, m.branch_anchor_kind, m.branch_anchor,
                        m.message_document

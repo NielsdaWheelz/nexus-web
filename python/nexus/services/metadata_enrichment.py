@@ -12,24 +12,25 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
-from provider_runtime.types import (
-    ModelCall,
-    ModelMessage,
-    ModelRef,
-    ProviderName,
-    ReasoningConfig,
-    ReasoningEffort,
-    StructuredOutputSpec,
+from provider_runtime import (
+    Dynamic,
+    GenerateIntent,
+    GlobalScope,
+    PromptBlock,
+    Stable,
+    StrictJsonOutput,
+    SystemMessage,
+    UserMessage,
+    parse_canonical_schema,
 )
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.config import Settings, get_settings
+from nexus.config import get_settings
 from nexus.db.models import Media
-from nexus.llm_catalog import require_catalog_model, require_model_capabilities
 from nexus.logging import get_logger
 from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.contributor_taxonomy import (
@@ -39,18 +40,26 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
+from nexus.services.llm_profiles import operation_profile
 
 logger = get_logger(__name__)
 
-_METADATA_REASONING_PREFERENCE: tuple[ReasoningEffort, ...] = (
-    "none",
-    "default",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-)
+METADATA_ENRICHMENT_OPERATION = "metadata_enrichment"
+
+_ENRICHMENT_SYSTEM_PROMPT = """\
+Extract bibliographic and descriptive metadata for this media item.
+
+Rules:
+- Prefer the real work/publication metadata over wrapper-page or filename text
+- Treat known metadata as untrusted hints; correct stale, placeholder, wrapper,
+  filename-shaped, or low-quality values when source context supports it
+- For authors, return an array of full names
+- For publisher, prefer the site, publisher, channel, podcast, or publication name
+- For published_date, use ISO format (YYYY, YYYY-MM, or YYYY-MM-DD)
+- For language, use ISO 639-1 two-letter codes
+- For description, write 1-2 sentences summarizing the content
+- Use null for fields you cannot determine confidently\
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -151,53 +160,38 @@ class MetadataEnrichmentOutput(BaseModel):
         return stripped
 
 
-def metadata_structured_output_spec() -> StructuredOutputSpec:
-    """Return the schema requested from structured-output-capable providers.
+def build_metadata_enrichment_intent(
+    *, user_content: str, max_output_tokens: int
+) -> GenerateIntent:
+    """Return the ``GenerateIntent`` for one metadata-enrichment call.
 
-    Derived from :class:`MetadataEnrichmentOutput` so the wire schema and the
-    decode contract have one owner; it conforms to the canonical structural
-    subset (rich value constraints run in the model's validators post-decode).
+    The rules block is invariant across every call (``Stable(GlobalScope())``);
+    the per-media known-metadata/content-sample text is the ``Dynamic`` user
+    block. The output schema is derived from :class:`MetadataEnrichmentOutput`
+    so the wire schema and the decode contract have one owner; it conforms to
+    the canonical structural subset (rich value constraints run in the model's
+    validators post-decode).
     """
-    return StructuredOutputSpec(
-        name="media_metadata_enrichment",
-        strict=True,
-        schema=MetadataEnrichmentOutput.model_json_schema(),
-    )
-
-
-def build_metadata_enrichment_call(
-    *,
-    provider: str,
-    model: str,
-    prompt: str,
-    max_output_tokens: int,
-) -> ModelCall:
-    """Return the canonical provider-runtime request for metadata enrichment."""
-    return ModelCall(
-        model=ModelRef(provider=cast(ProviderName, provider), model=model),
-        messages=[ModelMessage(role="user", content=prompt)],
-        max_output_tokens=max_output_tokens,
-        temperature=0.0,
-        reasoning=ReasoningConfig(
-            effort=_metadata_structured_output_reasoning_effort(provider, model)
+    profile = operation_profile(METADATA_ENRICHMENT_OPERATION)
+    return GenerateIntent(
+        target=profile.target,
+        messages=(
+            SystemMessage(
+                blocks=(
+                    PromptBlock(text=_ENRICHMENT_SYSTEM_PROMPT, stability=Stable(GlobalScope())),
+                )
+            ),
+            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
         ),
-        structured_output=metadata_structured_output_spec(),
+        max_output_tokens=max_output_tokens,
+        reasoning=profile.default_reasoning_option_id,
+        tools=(),
+        tool_choice="none",
+        output=StrictJsonOutput(
+            name="media_metadata_enrichment",
+            schema=parse_canonical_schema(MetadataEnrichmentOutput.model_json_schema()),
+        ),
     )
-
-
-def _metadata_structured_output_reasoning_effort(
-    provider: str,
-    model: str,
-) -> ReasoningEffort:
-    """Pick the lowest-cost catalog-valid reasoning mode for provider-native JSON."""
-    capabilities = require_model_capabilities(provider, model)
-    if not capabilities.structured_output:
-        raise AssertionError(f"{provider}/{model} does not support structured output")
-    allowed_modes = capabilities.structured_output_reasoning_modes or capabilities.reasoning_modes
-    for effort in _METADATA_REASONING_PREFERENCE:
-        if effort in allowed_modes:
-            return effort
-    raise AssertionError(f"{provider}/{model} has no usable structured-output reasoning mode")
 
 
 # ---------------------------------------------------------------------------
@@ -366,12 +360,16 @@ def _json_prompt_value(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_enrichment_prompt(
+def build_enrichment_user_content(
     db: Session,
     media: Media,
     content_sample: str,
 ) -> str:
-    """Build context for structured metadata extraction."""
+    """Build the per-media dynamic user-turn text for structured metadata extraction.
+
+    The invariant rules block lives in ``_ENRICHMENT_SYSTEM_PROMPT`` (the
+    ``Stable`` system block); this is every call-varying fact.
+    """
     kind_rule = {
         "epub": (
             "Saved item is an EPUB/book work. Prefer the work title and creators over "
@@ -449,9 +447,7 @@ def build_enrichment_prompt(
     metadata_block = "\n".join(metadata_lines)
     content_block = _clean_sample_text(content_sample) or "(no media text available)"
 
-    prompt = f"""Extract bibliographic and descriptive metadata for this media item.
-
-Known metadata:
+    return f"""Known metadata:
 {metadata_block}
 
 Media-kind target:
@@ -460,20 +456,7 @@ Media-kind target:
 Early extracted text:
 ---
 {content_block}
----
-
-Rules:
-- Prefer the real work/publication metadata over wrapper-page or filename text
-- Treat known metadata as untrusted hints; correct stale, placeholder, wrapper,
-  filename-shaped, or low-quality values when source context supports it
-- For authors, return an array of full names
-- For publisher, prefer the site, publisher, channel, podcast, or publication name
-- For published_date, use ISO format (YYYY, YYYY-MM, or YYYY-MM-DD)
-- For language, use ISO 639-1 two-letter codes
-- For description, write 1-2 sentences summarizing the content
-- Use null for fields you cannot determine confidently"""
-
-    return prompt
+---"""
 
 
 def get_current_author_names(db: Session, media: Media) -> list[str]:
@@ -582,34 +565,4 @@ def merge_enrichment(
     return MetadataMergeResult(
         accepted_fields=tuple(accepted_fields),
         author_observation=author_observation,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Provider selection
-# ---------------------------------------------------------------------------
-
-
-def select_enrichment_model(
-    settings: Settings,
-) -> tuple[str, str] | None:
-    """Return the single configured metadata-enrichment provider/model.
-
-    Key availability is resolved by ``resolve_api_key`` in the task. The model
-    setting is asserted catalog-valid here, at task use.
-    """
-    if not settings.metadata_enrichment_enabled:
-        return None
-
-    provider = settings.metadata_enrichment_provider
-    enabled = {
-        "openai": settings.enable_openai,
-        "anthropic": settings.enable_anthropic,
-        "gemini": settings.enable_gemini,
-    }[provider]
-    if not enabled:
-        return None
-    return (
-        provider,
-        require_catalog_model(provider, settings.metadata_enrichment_model).model_name,
     )

@@ -1,4 +1,17 @@
-"""Deterministic LLM boundary for real-media fixture runs."""
+"""Deterministic ``ExecutionRuntime`` for real-media fixture runs.
+
+Implements the structural ``ExecutionRuntime`` seam
+(``nexus.services.llm_execution.ExecutionRuntime``) that
+``nexus.tasks.llm_task`` constructs in place of
+``ProductionExecutionRuntime`` when ``settings.real_media_provider_fixtures``
+is set. Unlike the production runtime, which ignores ``intent`` and dispatches
+the finalized ``plan``, this fixture scripts its outcome from the *typed*
+``GenerateIntent`` — content-conditional canned responses keyed on system
+prompt markers and app-search tool-call state, restoring the pre-cutover
+``RealMediaFixtureModelRuntime`` ergonomics against the new type surface.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -7,144 +20,89 @@ import re
 from collections.abc import AsyncIterator, Awaitable
 from typing import cast
 
-from provider_runtime import ProviderApiKey
-from provider_runtime.types import ModelCall, ModelResponse, ModelStreamEvent, TokenUsage, ToolCall
+from provider_runtime import (
+    Absent,
+    AssistantMessage,
+    CallMeta,
+    CallOutcome,
+    CancelSignal,
+    FinalizedProviderCall,
+    GenerateIntent,
+    PossiblyBillable,
+    Present,
+    PromptMessage,
+    ProviderCredential,
+    ResponsePayload,
+    RuntimeStreamEvent,
+    StrictJsonOutput,
+    StructuredContent,
+    Succeeded,
+    SystemMessage,
+    TerminalEvent,
+    TextContent,
+    TextDelta,
+    ToolCall,
+    ToolCallDone,
+    ToolCallStart,
+    ToolResultMessage,
+    UserMessage,
+)
+from provider_runtime import Cancelled as CancelledOutcome
+from provider_runtime import TokenUsage as _TokenUsage
 
 
-class RealMediaFixtureModelRuntime:
-    def __init__(
-        self,
-        *,
-        enable_openai: bool = True,
-        enable_anthropic: bool = True,
-        enable_gemini: bool = True,
-        enable_openrouter: bool = True,
-        enable_cloudflare: bool = True,
-    ) -> None:
-        self._enabled = {
-            "openai": enable_openai,
-            "anthropic": enable_anthropic,
-            "gemini": enable_gemini,
-            "openrouter": enable_openrouter,
-            "cloudflare": enable_cloudflare,
-        }
-
-    def is_provider_available(self, provider: str) -> bool:
-        return bool(self._enabled.get(provider, False))
+class RealMediaFixtureExecutionRuntime:
+    """The fixture ``ExecutionRuntime``: scripts outcomes from ``intent``,
+    ignoring ``plan``/``credential`` (never reaches a real provider)."""
 
     async def generate(
         self,
-        req: ModelCall,
-        *,
-        key: ProviderApiKey,
-        timeout_s: float,
-    ) -> ModelResponse:
-        _ = key
-        text = _synthesis_response(req) or REAL_MEDIA_FIXTURE_RESPONSE
-        return ModelResponse(
-            text=text,
-            usage=_usage_for(req, text),
-            provider_request_id="real-media-fixture",
-            status="completed",
-        )
-
-    async def stream(
-        self,
-        req: ModelCall,
-        *,
-        key: ProviderApiKey,
-        timeout_s: float,
-        cancel: object | None = None,
-    ) -> AsyncIterator[ModelStreamEvent]:
-        _ = key, timeout_s
-        if _should_request_app_search(req):
-            query = _latest_user_query(req)
-            yield ModelStreamEvent(
-                type="tool_call_start",
-                sequence=1,
-                provider=req.model.provider,
-                model=req.model.model,
-                route=req.model.route,
-                tool_call_id="real-media-fixture-app-search",
-                tool_name=APP_SEARCH_TOOL_NAME,
-            )
-            if await _cancelled_during_fixture_delay(cancel):
-                yield _cancelled_event(req, 2)
-                return
-            yield ModelStreamEvent(
-                type="tool_call_delta",
-                sequence=2,
-                provider=req.model.provider,
-                model=req.model.model,
-                route=req.model.route,
-                tool_call_id="real-media-fixture-app-search",
-                tool_name=APP_SEARCH_TOOL_NAME,
-                tool_arguments_delta=query,
-                tool_arguments_partial={"query": query},
-            )
-            if await _cancelled_during_fixture_delay(cancel):
-                yield _cancelled_event(req, 3)
-                return
-            yield ModelStreamEvent(
-                type="tool_call_done",
-                sequence=3,
-                provider=req.model.provider,
-                model=req.model.model,
-                route=req.model.route,
-                tool_call_id="real-media-fixture-app-search",
-                tool_call=ToolCall(
-                    id="real-media-fixture-app-search",
-                    name=APP_SEARCH_TOOL_NAME,
-                    arguments={"query": query},
+        intent: GenerateIntent,
+        plan: FinalizedProviderCall,
+        credential: ProviderCredential,
+    ) -> CallOutcome:
+        _ = plan, credential
+        if isinstance(intent.output, StrictJsonOutput):
+            # Production plans output_kind="strict_json" to StructuredContent on
+            # every Succeeded outcome (decode_structured_synthesis asserts on
+            # it) — the fixture must uphold the same contract. A marker miss
+            # here means a structured-synthesis owner reaches generate() with
+            # no canned payload for it; that is a coverage gap in
+            # `_SYNTHESIS_MARKERS`, not a runtime the caller should silently
+            # fall back from.
+            canned_json = _synthesis_response(intent)
+            if canned_json is None:
+                raise AssertionError(
+                    "real-media fixture: no _SYNTHESIS_MARKERS entry matched a "
+                    "StrictJsonOutput intent's system prompt"
+                )
+            return Succeeded(
+                meta=_meta(intent, canned_json),
+                response=ResponsePayload(
+                    content=StructuredContent(
+                        payload=json.loads(canned_json), text=canned_json
+                    ),
+                    continuation=Absent(),
                 ),
             )
-            yield ModelStreamEvent(
-                type="completed",
-                sequence=4,
-                provider=req.model.provider,
-                model=req.model.model,
-                route=req.model.route,
-                usage=_usage_for(req, ""),
-                provider_request_id="real-media-fixture",
-                status="completed",
-            )
-            return
+        text = _synthesis_response(intent) or REAL_MEDIA_FIXTURE_RESPONSE
+        return Succeeded(
+            meta=_meta(intent, text),
+            response=ResponsePayload(
+                content=TextContent(text=text, tool_calls=()), continuation=Absent()
+            ),
+        )
 
-        response = (
-            REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
-            if _has_citable_tool_result(req) or _has_numbered_prompt_resource(req)
-            else REAL_MEDIA_FIXTURE_RESPONSE
-        )
-        parts = [
-            "The source says SOFIA ",
-            "helped confirm water on the Moon ",
-            "by detecting a water signature ",
-            "in Clavius Crater.",
-        ]
-        if response.endswith(" [1]"):
-            parts[-1] += " [1]"
-        for index, text in enumerate(parts, start=1):
-            yield ModelStreamEvent(
-                type="text_delta",
-                sequence=index,
-                provider=req.model.provider,
-                model=req.model.model,
-                route=req.model.route,
-                text=text,
-            )
-            if await _cancelled_during_fixture_delay(cancel):
-                yield _cancelled_event(req, index + 1)
-                return
-        yield ModelStreamEvent(
-            type="completed",
-            sequence=len(parts) + 1,
-            provider=req.model.provider,
-            model=req.model.model,
-            route=req.model.route,
-            usage=_usage_for(req, response),
-            provider_request_id="real-media-fixture",
-            status="completed",
-        )
+    def stream(
+        self,
+        intent: GenerateIntent,
+        plan: FinalizedProviderCall,
+        credential: ProviderCredential,
+        *,
+        cancel: CancelSignal | None,
+    ) -> AsyncIterator[RuntimeStreamEvent]:
+        _ = plan, credential
+        return _stream(intent, cancel)
 
 
 APP_SEARCH_TOOL_NAME = "app_search"
@@ -160,7 +118,10 @@ REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION = REAL_MEDIA_FIXTURE_RESPONSE + " [1]"
 # every call site guarantees: oracle fails the reading before synthesis when
 # fewer than 3 candidates exist (its validator demands 3 distinct in-range
 # indices), and LI reduce / media-unit build fail before synthesis on an empty
-# candidate list, so index 0 always grounds.
+# candidate list, so index 0 always grounds. metadata_enrichment has no
+# candidate-count gate at all (see below); synapse_scan grounds nothing
+# (its canned response is the empty-connections list its own domain rules
+# call "a good answer").
 ORACLE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
     {
         "argument": (
@@ -222,6 +183,30 @@ MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
         ],
     }
 )
+# enrich_metadata calls execute_generation unconditionally (no candidate-count
+# gate — see nexus/tasks/enrich_metadata.py), so every real-media ingest
+# reaches this marker. Fields satisfy MetadataEnrichmentOutput's validators
+# (non-empty strings, ISO published_date, ISO 639-1 language).
+METADATA_ENRICHMENT_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
+    {
+        "title": "SOFIA Confirms Water on the Sunlit Moon",
+        "authors": ["NASA"],
+        "publisher": "NASA",
+        "description": (
+            "SOFIA detected a water signature in Clavius Crater, confirming "
+            "that water exists on the sunlit surface of the Moon."
+        ),
+        "published_date": "2020-10",
+        "language": "en",
+    }
+)
+# synapse_scan skips synthesis on an empty candidate list (nexus/services/
+# synapse.py) but the seeded real-media corpus (epub/pdf/podcast/video/
+# web_article, ingested together) gives every scanned item sibling
+# candidates, so this marker is reachable. "An empty list is a good answer"
+# is an explicit domain rule, so the canned response needs no candidate
+# grounding.
+SYNAPSE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps({"connections": []})
 _SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
     ("You are the Black Forest Oracle", ORACLE_SYNTHESIS_FIXTURE_RESPONSE),
     (
@@ -229,43 +214,140 @@ _SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
         LIBRARY_REDUCE_SYNTHESIS_FIXTURE_RESPONSE,
     ),
     ("building a reusable unit for one document", MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE),
+    (
+        "Extract bibliographic and descriptive metadata for this media item",
+        METADATA_ENRICHMENT_SYNTHESIS_FIXTURE_RESPONSE,
+    ),
+    (
+        "You are the resonance engine of a personal knowledge system",
+        SYNAPSE_SYNTHESIS_FIXTURE_RESPONSE,
+    ),
 )
 
 
-def _synthesis_response(req: ModelCall) -> str | None:
-    system = next((turn.content for turn in req.messages if turn.role == "system"), "")
+async def _stream(
+    intent: GenerateIntent, cancel: CancelSignal | None
+) -> AsyncIterator[RuntimeStreamEvent]:
+    if _should_request_app_search(intent):
+        query = _latest_user_query(intent)
+        yield RuntimeStreamEvent(
+            seq=1,
+            event=ToolCallStart(call_id="real-media-fixture-app-search", name=APP_SEARCH_TOOL_NAME),
+        )
+        if await _cancelled_during_fixture_delay(cancel):
+            yield RuntimeStreamEvent(seq=2, event=TerminalEvent(outcome=_cancelled(intent)))
+            return
+        yield RuntimeStreamEvent(
+            seq=2,
+            event=ToolCallDone(
+                tool_call=ToolCall(
+                    id="real-media-fixture-app-search",
+                    name=APP_SEARCH_TOOL_NAME,
+                    arguments={"query": query},
+                )
+            ),
+        )
+        yield RuntimeStreamEvent(seq=3, event=TerminalEvent(outcome=_succeeded(intent, "")))
+        return
+
+    response = (
+        REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION
+        if _has_citable_tool_result(intent) or _has_numbered_prompt_resource(intent)
+        else REAL_MEDIA_FIXTURE_RESPONSE
+    )
+    parts = [
+        "The source says SOFIA ",
+        "helped confirm water on the Moon ",
+        "by detecting a water signature ",
+        "in Clavius Crater.",
+    ]
+    if response.endswith(" [1]"):
+        parts[-1] += " [1]"
+    seq = 1
+    for text in parts:
+        yield RuntimeStreamEvent(seq=seq, event=TextDelta(text=text))
+        seq += 1
+        if await _cancelled_during_fixture_delay(cancel):
+            yield RuntimeStreamEvent(seq=seq, event=TerminalEvent(outcome=_cancelled(intent)))
+            return
+    yield RuntimeStreamEvent(seq=seq, event=TerminalEvent(outcome=_succeeded(intent, response)))
+
+
+def _succeeded(intent: GenerateIntent, text: str) -> Succeeded:
+    return Succeeded(
+        meta=_meta(intent, text),
+        response=ResponsePayload(
+            content=TextContent(text=text, tool_calls=()), continuation=Absent()
+        ),
+    )
+
+
+def _cancelled(intent: GenerateIntent) -> CancelledOutcome:
+    return CancelledOutcome(meta=_meta(intent, ""))
+
+
+def _meta(intent: GenerateIntent, response_text: str) -> CallMeta:
+    return CallMeta(
+        provider=intent.target.provider,
+        model=intent.target.model,
+        provider_request_id=Present("real-media-fixture"),
+        upstream_provider=Absent(),
+        usage=Present(_usage_for(intent, response_text)),
+        attempt_trace=(),
+        billability=PossiblyBillable(),
+    )
+
+
+def _message_text(message: PromptMessage) -> str:
+    if isinstance(message, SystemMessage | UserMessage):
+        return " ".join(block.text for block in message.blocks)
+    if isinstance(message, AssistantMessage):
+        return message.text
+    return message.output  # ToolResultMessage
+
+
+def _synthesis_response(intent: GenerateIntent) -> str | None:
+    system_text = "\n".join(
+        _message_text(message) for message in intent.messages if isinstance(message, SystemMessage)
+    )
     for marker, response in _SYNTHESIS_MARKERS:
-        if marker in system:
+        if marker in system_text:
             return response
     return None
 
 
-def _should_request_app_search(req: ModelCall) -> bool:
+def _should_request_app_search(intent: GenerateIntent) -> bool:
     return (
-        not _has_tool_result(req)
-        and any(tool.name == APP_SEARCH_TOOL_NAME for tool in req.tools)
-        and bool(_latest_user_query(req).strip())
+        not _has_tool_result(intent)
+        and any(tool.name == APP_SEARCH_TOOL_NAME for tool in intent.tools)
+        and bool(_latest_user_query(intent).strip())
     )
 
 
-def _has_tool_result(req: ModelCall) -> bool:
-    return any(turn.role == "tool" and turn.tool_results for turn in req.messages)
+def _has_tool_result(intent: GenerateIntent) -> bool:
+    return any(isinstance(message, ToolResultMessage) for message in intent.messages)
 
 
-def _has_citable_tool_result(req: ModelCall) -> bool:
-    for turn in req.messages:
-        if turn.role != "tool":
+def _has_citable_tool_result(intent: GenerateIntent) -> bool:
+    for message in intent.messages:
+        if not isinstance(message, ToolResultMessage) or message.is_error:
             continue
-        for result in turn.tool_results:
-            if result.is_error:
-                continue
-            if _tool_output_has_numbered_result(result.output):
-                return True
+        if _tool_output_has_numbered_result(message.output):
+            return True
     return False
 
 
-def _has_numbered_prompt_resource(req: ModelCall) -> bool:
-    return any(re.search(r'<resource\b[^>]*\bn="\d+"', turn.content) for turn in req.messages)
+def _has_numbered_prompt_resource(intent: GenerateIntent) -> bool:
+    # Production renders `<resource n="..">` blocks into a SystemMessage
+    # (context_assembler._build_resources_block -> chat_prompt
+    # dynamic_system_blocks), not a UserMessage — scan both.
+    for message in intent.messages:
+        if not isinstance(message, SystemMessage | UserMessage):
+            continue
+        for block in message.blocks:
+            if re.search(r'<resource\b[^>]*\bn="\d+"', block.text):
+                return True
+    return False
 
 
 def _tool_output_has_numbered_result(output: str) -> bool:
@@ -287,54 +369,46 @@ def _tool_output_has_numbered_result(output: str) -> bool:
     return False
 
 
-def _latest_user_query(req: ModelCall) -> str:
-    for turn in reversed(req.messages):
-        if turn.role == "user" and turn.content.strip():
-            content = turn.content.strip()
-            match = _ABOUT_QUERY_RE.search(content)
-            if match:
-                return match.group(1).strip()
-            return content
+def _latest_user_query(intent: GenerateIntent) -> str:
+    for message in reversed(intent.messages):
+        if not isinstance(message, UserMessage):
+            continue
+        content = " ".join(block.text for block in message.blocks).strip()
+        if not content:
+            continue
+        match = _ABOUT_QUERY_RE.search(content)
+        if match:
+            return match.group(1).strip()
+        return content
     return "attached evidence"
 
 
-async def _cancelled_during_fixture_delay(cancel: object | None) -> bool:
+async def _cancelled_during_fixture_delay(cancel: CancelSignal | None) -> bool:
     raw_delay = os.environ.get("REAL_MEDIA_FIXTURE_STREAM_DELAY_MS")
     if raw_delay is None:
         return False
     delay = max(0.0, float(raw_delay) / 1000)
     if delay == 0:
         return False
-    wait = getattr(cancel, "wait", None)
-    if callable(wait):
-        try:
-            await asyncio.wait_for(cast(Awaitable[object], wait()), timeout=delay)
-            return True
-        except TimeoutError:
-            return False
-    await asyncio.sleep(delay)
-    is_set = getattr(cancel, "is_set", None)
-    return bool(is_set()) if callable(is_set) else False
+    if cancel is None:
+        await asyncio.sleep(delay)
+        return False
+    try:
+        await asyncio.wait_for(cast(Awaitable[object], cancel.wait()), timeout=delay)
+        return True
+    except TimeoutError:
+        return False
 
 
-def _cancelled_event(req: ModelCall, sequence: int) -> ModelStreamEvent:
-    return ModelStreamEvent(
-        type="cancelled",
-        sequence=sequence,
-        provider=req.model.provider,
-        model=req.model.model,
-        route=req.model.route,
-        usage=_usage_for(req, ""),
-        provider_request_id="real-media-fixture",
-    )
-
-
-def _usage_for(req: ModelCall, response: str) -> TokenUsage:
-    input_tokens = max(1, sum(len(turn.content) for turn in req.messages) // 4)
+def _usage_for(intent: GenerateIntent, response: str) -> _TokenUsage:
+    prompt_chars = sum(len(_message_text(message)) for message in intent.messages)
+    input_tokens = max(1, prompt_chars // 4)
     output_tokens = max(1, len(response) // 4)
-    return TokenUsage(
+    return _TokenUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
-        reasoning_tokens=0,
+        reasoning_tokens=Absent(),
+        cache_read_input_tokens=Absent(),
+        cache_write_input_tokens=Absent(),
     )

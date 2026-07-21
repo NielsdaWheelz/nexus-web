@@ -17,6 +17,7 @@ Supabase service-role keys are not application runtime settings.
 """
 
 import os
+from datetime import datetime
 from enum import Enum
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -357,19 +358,19 @@ class Settings(BaseSettings):
         alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
     )
 
-    # Key encryption for BYOK API keys.
-    # Base64-encoded 32-byte key for XChaCha20-Poly1305 encryption
-    # Required in staging/prod, optional in local/test (uses deterministic test key)
-    nexus_key_encryption_key: str | None = Field(default=None, alias="NEXUS_KEY_ENCRYPTION_KEY")
-
     # Platform API keys for LLM providers.
     # If set, models from that provider are available to all users
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
-    cloudflare_ai_api_token: str | None = Field(default=None, alias="CLOUDFLARE_AI_API_TOKEN")
-    cloudflare_ai_account_id: str | None = Field(default=None, alias="CLOUDFLARE_AI_ACCOUNT_ID")
+    moonshot_api_key: str | None = Field(default=None, alias="MOONSHOT_API_KEY")
+
+    # Explicit RFC 3339 deployment assertion: Fable (the platform LLM runtime)
+    # requires 30-day retention and is not ZDR-eligible, so a human operator
+    # must record when that tradeoff was accepted. Required in staging/prod.
+    nexus_fable_retention_accepted_at: str | None = Field(
+        default=None, alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT"
+    )
 
     # Public web search provider settings.
     # Brave is the first production web-search provider. If no API key is
@@ -752,6 +753,36 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
                 )
+
+        if self.nexus_env in (Environment.STAGING, Environment.PROD):
+            missing_llm_keys: list[str] = []
+            if not self.openai_api_key:
+                missing_llm_keys.append("OPENAI_API_KEY")
+            if not self.anthropic_api_key:
+                missing_llm_keys.append("ANTHROPIC_API_KEY")
+            if not self.gemini_api_key:
+                missing_llm_keys.append("GEMINI_API_KEY")
+            if not self.moonshot_api_key:
+                missing_llm_keys.append("MOONSHOT_API_KEY")
+            if missing_llm_keys:
+                raise ValueError(
+                    "Platform LLM provider keys are required in staging/prod: "
+                    f"{', '.join(missing_llm_keys)}"
+                )
+            if not self.nexus_fable_retention_accepted_at:
+                raise ValueError(
+                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required for "
+                    f"NEXUS_ENV={self.nexus_env.value}: Fable requires 30-day retention "
+                    "and is not ZDR-eligible, so a deploy must explicitly record (RFC "
+                    "3339) when that tradeoff was accepted."
+                )
+            try:
+                datetime.fromisoformat(self.nexus_fable_retention_accepted_at)
+            except ValueError as exc:
+                raise ValueError(
+                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
+                    f"got {self.nexus_fable_retention_accepted_at!r}"
+                ) from exc
         if self.ingest_reconcile_schedule_seconds < 0:
             raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
         if self.ingest_stale_extracting_seconds < 1:

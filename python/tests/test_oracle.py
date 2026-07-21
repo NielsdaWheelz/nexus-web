@@ -16,8 +16,25 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-from provider_runtime.types import ModelResponse, TokenUsage
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Failed,
+    Incomplete,
+    PossiblyBillable,
+    Present,
+    ProviderContextTooLarge,
+    ProviderHttpUnavailable,
+    ProviderRateLimit,
+    ProviderStreamInterrupted,
+    ProviderTimeout,
+    Refused,
+    ResponsePayload,
+    StructuredContent,
+    Succeeded,
+    TokenUsage,
+    TransientExhausted,
+)
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -39,6 +56,7 @@ from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.oracle import (
     ORACLE_THEMES,
@@ -49,6 +67,7 @@ from nexus.services.oracle import (
     execute_reading,
     get_reading_detail,
 )
+from nexus.services.rate_limit import get_rate_limiter, set_rate_limiter
 from nexus.services.search import search as run_search
 from nexus.services.search.query import SearchQuery, SearchScope
 from nexus.services.semantic_chunks import (
@@ -56,6 +75,7 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
+from nexus.services.structured_synthesis import outcome_failure_facts
 from nexus.tasks.oracle_reading import oracle_reading_generate
 from tests.factories import create_searchable_media
 from tests.helpers import auth_headers
@@ -67,10 +87,17 @@ pytestmark = pytest.mark.integration
 # (corpus retrieval dedupes to one candidate per source/work).
 ORACLE_TEST_WORK_COUNT = 4
 
+# The oracle operation's provider profile (post-cutover: openai/gpt-5.6-luna). Its
+# target names the platform credential execute_generation resolves and the
+# provider/model the llm_calls ledger row records.
+_ORACLE_PROFILE = operation_profile("oracle")
+
 
 @pytest.fixture(autouse=True)
-def anthropic_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
+def platform_llm_key(monkeypatch):
+    # execute_generation resolves the oracle profile's platform credential from
+    # Settings; without it, credential resolution raises credential_missing.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
     clear_settings_cache()
     yield
     clear_settings_cache()
@@ -226,15 +253,16 @@ def _register_oracle_corpus_cleanup(direct_db: DirectSessionManager, viewer_id: 
 
 
 def _grant_platform_llm(db: Session, user_id: UUID) -> None:
-    """execute_reading resolves keys via resolve_api_key(mode="auto"); platform-key
-    use requires the ai_plus entitlement (chat parity). Upsert; commits."""
+    """execute_generation checks the platform-LLM entitlement before any ledger row;
+    grant the AI tier (unlimited quota so the budget reservation always clears).
+    Upsert; commits."""
     grant_entitlement_override(
         db,
         user_id=user_id,
-        plan_tier="ai_plus",
-        platform_token_quota_mode="plan",
+        plan_tier="ai_pro",
+        platform_token_quota_mode="unlimited",
         platform_token_limit_monthly=None,
-        transcription_quota_mode="plan",
+        transcription_quota_mode="unlimited",
         transcription_minutes_limit_monthly=None,
         expires_at=None,
         reason="oracle test access",
@@ -316,25 +344,34 @@ def _owner_chunk_target_ids(db: Session, owner_kind: str, owner_id: UUID) -> set
     return {row["primary_evidence_span_id"] or row["id"] for row in rows}
 
 
-def _candidate_indices(request) -> dict[int, str]:
-    # The candidates turn is the first user turn (index 1) in both the original
-    # request and the repair-round request (repair appends turns after it).
-    user_message = request.messages[1].content
+# The oracle owner now calls the LLM through `execute_generation(..., runtime=...)`,
+# so a test's fake `ExecutionRuntime` receives the built `GenerateIntent` instead of
+# a raw provider request. The two-block synthesis intent (structured_synthesis.
+# build_synthesis_intent) carries the system prompt as messages[0] and the rendered
+# candidates/question as the sole `Dynamic` user block messages[1].blocks[0].text.
+
+
+def _intent_user_content(intent) -> str:
+    return intent.messages[1].blocks[0].text
+
+
+def _candidate_indices(intent) -> dict[int, str]:
+    user_message = _intent_user_content(intent)
     return {
         int(match.group(1)): match.group(2)
         for match in re.finditer(r"^\[(\d+)] source_kind=([a-z_]+)", user_message, re.MULTILINE)
     }
 
 
-def _candidate_text(request, index: int) -> str:
-    user_message = request.messages[1].content
+def _candidate_text(intent, index: int) -> str:
+    user_message = _intent_user_content(intent)
     pattern = rf"^\[{index}] source_kind=.*?^passage_text: (.*?)(?:\n\n\[|\n\nQUESTION:)"
     match = re.search(pattern, user_message, re.MULTILINE | re.DOTALL)
     assert match is not None, f"expected candidate {index} text in prompt: {user_message}"
     return match.group(1).strip()
 
 
-def _reading_json(
+def _reading_payload(
     *,
     descent: int,
     ordeal: int,
@@ -343,47 +380,103 @@ def _reading_json(
     folio_motto: str = "Audentes Fortuna Iuvat",
     folio_motto_gloss: str | None = "Fortune favors the bold.",
     folio_theme: str = "Of Courage",
-) -> str:
-    return json.dumps(
-        {
-            "argument": (
-                "Of the lamp kept burning through the closed forest, and the road "
-                "that answers after dread."
-            ),
-            "folio_motto": folio_motto,
-            "folio_motto_gloss": folio_motto_gloss,
-            "folio_theme": folio_theme,
-            "passages": [
-                {
-                    "phase": "descent",
-                    "candidate_index": descent,
-                    "marginalia": "The descent gathers the question into shadow.",
-                },
-                {
-                    "phase": "ordeal",
-                    "candidate_index": ordeal,
-                    "marginalia": "The ordeal holds the image at its threshold.",
-                },
-                {
-                    "phase": "ascent",
-                    "candidate_index": ascent,
-                    "marginalia": "The ascent opens the image toward morning.",
-                },
-            ],
-            "interpretation": "I saw a road bending into shadow, and the lamp's small flame thrown forward.",
-            "omens": omens
-            if omens is not None
-            else ["a lamp in rain", "a door unlatched", "dawn under branches"],
-        }
+) -> dict[str, Any]:
+    """The oracle synthesis object the owner decodes into `_OracleSynthesisOutput`.
+
+    Post-cutover the runtime enforces strict JSON at the wire, so a `Succeeded`
+    outcome carries a `StructuredContent(payload=<this dict>, ...)`; the owner reads
+    `outcome.response.content.payload`, never re-parses text."""
+    return {
+        "argument": (
+            "Of the lamp kept burning through the closed forest, and the road "
+            "that answers after dread."
+        ),
+        "folio_motto": folio_motto,
+        "folio_motto_gloss": folio_motto_gloss,
+        "folio_theme": folio_theme,
+        "passages": [
+            {
+                "phase": "descent",
+                "candidate_index": descent,
+                "marginalia": "The descent gathers the question into shadow.",
+            },
+            {
+                "phase": "ordeal",
+                "candidate_index": ordeal,
+                "marginalia": "The ordeal holds the image at its threshold.",
+            },
+            {
+                "phase": "ascent",
+                "candidate_index": ascent,
+                "marginalia": "The ascent opens the image toward morning.",
+            },
+        ],
+        "interpretation": (
+            "I saw a road bending into shadow, and the lamp's small flame thrown forward."
+        ),
+        "omens": omens
+        if omens is not None
+        else ["a lamp in rain", "a door unlatched", "dawn under branches"],
+    }
+
+
+def _oracle_meta(*, usage: TokenUsage | None = None) -> CallMeta:
+    """A provider `CallMeta` for a scripted oracle outcome, tagged with the oracle
+    profile's provider/model and a nominal token usage (fed to the budget commit
+    and to the reading result's input/output token fields)."""
+    return CallMeta(
+        provider=_ORACLE_PROFILE.target.provider,
+        model=_ORACLE_PROFILE.target.model,
+        provider_request_id=Present("req-oracle"),
+        upstream_provider=Absent(),
+        usage=Present(
+            usage
+            if usage is not None
+            else TokenUsage(
+                input_tokens=40,
+                output_tokens=20,
+                total_tokens=60,
+                reasoning_tokens=Absent(),
+                cache_read_input_tokens=Absent(),
+                cache_write_input_tokens=Absent(),
+            )
+        ),
+        attempt_trace=(),
+        billability=PossiblyBillable(),
     )
 
 
-class _SelectLibraryRouter:
+def _structured_outcome(payload: dict[str, Any], *, usage: TokenUsage | None = None) -> Succeeded:
+    return Succeeded(
+        meta=_oracle_meta(usage=usage),
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text=json.dumps(payload)),
+            continuation=Absent(),
+        ),
+    )
+
+
+class _OracleRuntime:
+    """Base fake `ExecutionRuntime` for the oracle owner: scripts the single
+    `generate` outcome from the built intent. The owner never streams, so `stream`
+    is a hard failure."""
+
+    async def generate(self, intent, plan, credential):
+        return self._respond(intent)
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise AssertionError("oracle synthesis never streams")
+
+    def _respond(self, intent):
+        raise NotImplementedError
+
+
+class _SelectLibraryRuntime(_OracleRuntime):
     def __init__(self) -> None:
         self.indices: dict[int, str] = {}
 
-    async def generate(self, request, *, key, timeout_s):
-        self.indices = _candidate_indices(request)
+    def _respond(self, intent):
+        self.indices = _candidate_indices(intent)
         user_indices = [
             idx for idx, source_kind in self.indices.items() if source_kind == "user_media"
         ]
@@ -392,32 +485,22 @@ class _SelectLibraryRouter:
         ]
         assert user_indices, "expected at least one indexed user-library candidate"
         assert len(public_indices) >= 2, f"expected two public candidates, got {self.indices}"
-        return ModelResponse(
-            text=_reading_json(
+        return _structured_outcome(
+            _reading_payload(
                 descent=public_indices[0],
                 ordeal=user_indices[0],
                 ascent=public_indices[1],
-            ),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
+            )
         )
 
 
-class _UnexpectedRouter:
+class _UnexpectedRuntime(_OracleRuntime):
     def __init__(self) -> None:
         self.called = False
 
-    async def generate(self, request, *, key, timeout_s):
+    def _respond(self, intent):
         self.called = True
-        return ModelResponse(
-            text=_reading_json(descent=0, ordeal=1, ascent=2),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
+        return _structured_outcome(_reading_payload(descent=0, ordeal=1, ascent=2))
 
 
 class _RecordingRateLimiter:
@@ -465,19 +548,46 @@ class _RecordingRateLimiter:
 
 @pytest.fixture(autouse=True)
 def oracle_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
+    """One recording limiter backs BOTH sides of a reading: the oracle owner's own
+    pre-enqueue/inflight-slot calls (via the module `get_rate_limiter` binding) and
+    `execute_generation`'s ledger reserve/commit/release (via the process-global
+    limiter). Recording (not the real DB path) so budget reserve/commit remain
+    observable as calls — the ported successor to the old LedgeredLLM recording —
+    while entitlement is still checked for real against the DB."""
     limiter = _RecordingRateLimiter()
     monkeypatch.setattr("nexus.services.oracle.get_rate_limiter", lambda: limiter)
-    return limiter
+    previous = get_rate_limiter()
+    set_rate_limiter(limiter)
+    try:
+        yield limiter
+    finally:
+        set_rate_limiter(previous)
 
 
-class _ObservingRouter:
+@pytest.fixture(autouse=True)
+def _oracle_ledger_session_factory(request, monkeypatch):
+    """`execute_generation` writes the `llm_calls` ledger through the oracle owner's
+    `get_session_factory()`. For savepoint-isolated `db_session` tests, rebind it to a
+    factory sharing the fixture connection so those rows are visible to the test's
+    queries and roll back with it. `direct_db` tests keep the real factory (real
+    independent connections, cleaned up explicitly)."""
+    if "db_session" in request.fixturenames:
+        db_session = request.getfixturevalue("db_session")
+        monkeypatch.setattr(
+            "nexus.services.oracle.get_session_factory",
+            lambda: task_session_factory(db_session),
+        )
+    yield
+
+
+class _ObservingRuntime(_OracleRuntime):
     def __init__(self, direct_db: DirectSessionManager, reading_id: UUID) -> None:
         self.direct_db = direct_db
         self.reading_id = reading_id
         self.events_seen_during_generate: list[str] = []
         self.image_id_seen_during_generate: UUID | None = None
 
-    async def generate(self, request, *, key, timeout_s):
+    def _respond(self, intent):
         with self.direct_db.session() as observer:
             self.events_seen_during_generate = list(
                 observer.execute(
@@ -502,188 +612,127 @@ class _ObservingRouter:
                 ),
                 {"reading_id": self.reading_id},
             ).scalar_one()
-        indices = _candidate_indices(request)
+        indices = _candidate_indices(intent)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
         ]
         assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return ModelResponse(
-            text=_reading_json(
-                descent=public_indices[0],
-                ordeal=public_indices[1],
-                ascent=public_indices[2],
-            ),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _PublicOnlyRouter:
-    async def generate(self, request, *, key, timeout_s):
-        indices = _candidate_indices(request)
-        public_indices = [
-            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
-        ]
-        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return ModelResponse(
-            text=_reading_json(
-                descent=public_indices[0],
-                ordeal=public_indices[1],
-                ascent=public_indices[2],
-            ),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _ProviderErrorRouter:
-    def __init__(self, error_code: ModelCallErrorCode = ModelCallErrorCode.BAD_REQUEST) -> None:
-        self.error_code = error_code
-
-    async def generate(self, request, *, key, timeout_s):
-        raise ModelCallError(
-            self.error_code,
-            "raw anthropic invalid_request_error provider detail",
-            provider="anthropic",
-        )
-
-
-class _InvalidOmensRouter:
-    def __init__(self, omens: list[object]) -> None:
-        self.omens = omens
-
-    async def generate(self, request, *, key, timeout_s):
-        indices = _candidate_indices(request)
-        public_indices = [
-            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
-        ]
-        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        return ModelResponse(
-            text=_reading_json(
-                descent=public_indices[0],
-                ordeal=public_indices[1],
-                ascent=public_indices[2],
-                omens=self.omens,
-            ),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _InvalidCitationOutputRouter:
-    def __init__(self, *, interpretation: str | None = None, marginalia: str | None = None) -> None:
-        self.interpretation = interpretation
-        self.marginalia = marginalia
-
-    async def generate(self, request, *, key, timeout_s):
-        indices = _candidate_indices(request)
-        public_indices = [
-            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
-        ]
-        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        payload = json.loads(
-            _reading_json(
+        return _structured_outcome(
+            _reading_payload(
                 descent=public_indices[0],
                 ordeal=public_indices[1],
                 ascent=public_indices[2],
             )
         )
+
+
+class _PublicOnlyRuntime(_OracleRuntime):
+    def _respond(self, intent):
+        indices = _candidate_indices(intent)
+        public_indices = [
+            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
+        ]
+        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
+        return _structured_outcome(
+            _reading_payload(
+                descent=public_indices[0],
+                ordeal=public_indices[1],
+                ascent=public_indices[2],
+            )
+        )
+
+
+class _ProviderFailureRuntime(_OracleRuntime):
+    """Scripts a non-`Succeeded` provider outcome. The owner maps it to its failure
+    code via `outcome_failure_facts` (refused / incomplete / a runtime failure code)
+    — the successor to the old raised `ModelCallError`, which no longer exists."""
+
+    def __init__(self, outcome) -> None:
+        self.outcome = outcome
+
+    def _respond(self, intent):
+        return self.outcome
+
+
+class _InvalidOmensRuntime(_OracleRuntime):
+    def __init__(self, omens: list[object]) -> None:
+        self.omens = omens
+
+    def _respond(self, intent):
+        indices = _candidate_indices(intent)
+        public_indices = [
+            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
+        ]
+        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
+        return _structured_outcome(
+            _reading_payload(
+                descent=public_indices[0],
+                ordeal=public_indices[1],
+                ascent=public_indices[2],
+                omens=self.omens,
+            )
+        )
+
+
+class _InvalidCitationOutputRuntime(_OracleRuntime):
+    def __init__(self, *, interpretation: str | None = None, marginalia: str | None = None) -> None:
+        self.interpretation = interpretation
+        self.marginalia = marginalia
+
+    def _respond(self, intent):
+        indices = _candidate_indices(intent)
+        public_indices = [
+            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
+        ]
+        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
+        payload = _reading_payload(
+            descent=public_indices[0],
+            ordeal=public_indices[1],
+            ascent=public_indices[2],
+        )
         if self.interpretation is not None:
             payload["interpretation"] = (
-                _candidate_text(request, public_indices[0])
+                _candidate_text(intent, public_indices[0])
                 if self.interpretation == "__FIRST_PASSAGE_TEXT__"
                 else self.interpretation
             )
         if self.marginalia is not None:
             payload["passages"][0]["marginalia"] = self.marginalia
-        return ModelResponse(
-            text=json.dumps(payload),
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
+        return _structured_outcome(payload)
 
 
-class _InvalidJsonShapeRouter:
+class _InvalidSchemaRuntime(_OracleRuntime):
+    """A strict-JSON payload the owner's schema/semantic decode rejects. Post-cutover
+    the runtime guarantees a well-formed JSON object at the wire (a `StructuredContent`
+    payload dict), so text-level malformations (fenced code, trailing prose) are no
+    longer representable; the surviving rejections are schema (extra keys) and semantic
+    (short argument, off-list theme) — all terminal `invalid_structured_output`."""
+
     def __init__(self, variant: str) -> None:
         self.variant = variant
 
-    async def generate(self, request, *, key, timeout_s):
-        indices = _candidate_indices(request)
+    def _respond(self, intent):
+        indices = _candidate_indices(intent)
         public_indices = [
             idx for idx, source_kind in indices.items() if source_kind == "public_domain"
         ]
         assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        payload = json.loads(
-            _reading_json(
-                descent=public_indices[0],
-                ordeal=public_indices[1],
-                ascent=public_indices[2],
-            )
+        payload = _reading_payload(
+            descent=public_indices[0],
+            ordeal=public_indices[1],
+            ascent=public_indices[2],
         )
-        if self.variant == "fenced":
-            text_value = f"```json\n{json.dumps(payload)}\n```"
-        elif self.variant == "extra_root_key":
+        if self.variant == "extra_root_key":
             payload["citation"] = "Inferno I.1"
-            text_value = json.dumps(payload)
         elif self.variant == "extra_passage_key":
-            payload["passages"][0]["quote"] = _candidate_text(request, public_indices[0])
-            text_value = json.dumps(payload)
+            payload["passages"][0]["quote"] = _candidate_text(intent, public_indices[0])
         elif self.variant == "short_argument":
             payload["argument"] = "Of the lamp."
-            text_value = json.dumps(payload)
         elif self.variant == "bad_theme":
             payload["folio_theme"] = "Of Mischief"
-            text_value = json.dumps(payload)
         else:
-            raise AssertionError(f"unknown invalid JSON shape variant: {self.variant}")
-        return ModelResponse(
-            text=text_value,
-            usage=None,
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
-
-
-class _SemanticRepairRouter:
-    """First response violates oracle semantics (four omens); the repaired
-    second attempt is valid. Captures both requests; reports summable usage."""
-
-    def __init__(self) -> None:
-        self.requests: list = []
-
-    async def generate(self, request, *, key, timeout_s):
-        self.requests.append(request)
-        indices = _candidate_indices(request)
-        public_indices = [
-            idx for idx, source_kind in indices.items() if source_kind == "public_domain"
-        ]
-        assert len(public_indices) >= 3, f"expected three public candidates, got {indices}"
-        omens = (
-            ["a lamp in rain", "a door unlatched", "dawn under branches", "a fourth sign"]
-            if len(self.requests) == 1
-            else None
-        )
-        return ModelResponse(
-            text=_reading_json(
-                descent=public_indices[0],
-                ordeal=public_indices[1],
-                ascent=public_indices[2],
-                omens=omens,
-            ),
-            usage=TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15),
-            provider_request_id=None,
-            status=None,
-            incomplete_details=None,
-        )
+            raise AssertionError(f"unknown invalid schema variant: {self.variant}")
+        return _structured_outcome(payload)
 
 
 def test_create_reading_accepts_when_corpus_library_is_seeded(
@@ -1530,8 +1579,8 @@ def test_execute_reading_uses_indexed_user_library_content_chunks(
         question="Where does the lantern lead?",
     )
 
-    router = _SelectLibraryRouter()
-    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
+    router = _SelectLibraryRuntime()
+    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=router))
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
     assert any(source_kind == "user_media" for source_kind in router.indices.values()), (
@@ -1596,7 +1645,7 @@ def test_execute_reading_cites_content_chunk_when_user_chunk_has_no_span(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
     )
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
@@ -1633,9 +1682,9 @@ def test_execute_reading_user_media_passage_carries_citation_out(
         question="Where does the lantern lead?",
     )
 
-    # _SelectLibraryRouter puts the user-media candidate in the ORDEAL phase.
+    # _SelectLibraryRuntime puts the user-media candidate in the ORDEAL phase.
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
     )
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
 
@@ -1688,7 +1737,7 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
     )
 
     asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
     )
 
     events = (
@@ -1743,7 +1792,7 @@ def test_execute_reading_note_owned_passage_carries_note_citation_out(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
     )
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
 
@@ -1798,7 +1847,7 @@ def test_execute_reading_public_only_passages_cite_resolved_anchors(
         question="What does the lamp reveal?",
     )
 
-    asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter()))
+    asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=_PublicOnlyRuntime()))
 
     detail = get_reading_detail(db_session, viewer_id=user_id, reading_id=reading_id)
     assert detail.passages, "expected three persisted passages"
@@ -1836,9 +1885,9 @@ def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
         question="Where does the lantern lead?",
     )
 
-    # _SelectLibraryRouter puts the user-media (span-owning) candidate in ORDEAL.
+    # _SelectLibraryRuntime puts the user-media (span-owning) candidate in ORDEAL.
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
     )
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
 
@@ -1879,15 +1928,22 @@ def test_get_reading_detail_degrades_citation_to_none_when_backing_span_is_gone(
     )
 
 
-def test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attempts(
+# NOTE: `test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attempts`
+# was DELETED in the provider-runtime cutover. The bounded semantic-repair round it
+# pinned no longer exists — the runtime enforces strict JSON at the wire, so a semantic
+# rejection is now terminal `invalid_structured_output` (covered by the omens / citation
+# / non-strict-JSON tests). With no repair there is no second attempt, no repair-turn
+# transcript, and no summed-usage budget commit to assert.
+
+
+def test_execute_reading_completes_and_writes_interpretation_to_canonical_column(
     db_session: Session,
     oracle_schema,
-    oracle_rate_limiter: _RecordingRateLimiter,
 ) -> None:
-    """AC-11: a semantic rejection triggers the ONE bounded repair round; the
-    reading completes on application attempt 2, llm_calls carries one row per
-    application generate call, and the budget commit uses usage summed across
-    attempts."""
+    """A completed reading writes its interpretation to the canonical
+    `oracle_readings.interpretation_text` column at generation time (the delta event is
+    a replay of it). Preserves the canonical-column assertion the deleted repair test
+    used to carry."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     _seed_oracle_corpus(db_session, viewer_id=user_id)
@@ -1897,54 +1953,11 @@ def test_execute_reading_repairs_semantic_rejection_once_and_ledgers_both_attemp
         question="What does the lamp reveal?",
     )
 
-    router = _SemanticRepairRouter()
-    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
-
-    assert result["status"] == "complete", f"expected repaired reading to complete, got {result}"
-    assert len(router.requests) == 2, "semantic rejection must trigger exactly one repair round"
-    repair_turns = list(router.requests[1].messages[-2:])
-    assert [turn.role for turn in repair_turns] == ["assistant", "user"]
-    assert "the JSON violates the reading rules" in repair_turns[1].content
-
-    ledger = (
-        db_session.execute(
-            text(
-                """
-                SELECT call_seq, error_class, llm_operation
-                FROM llm_calls
-                WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
-                ORDER BY call_seq
-                """
-            ),
-            {"reading_id": reading_id},
-        )
-        .mappings()
-        .all()
+    result = asyncio.run(
+        execute_reading(db_session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
     )
-    assert [row["call_seq"] for row in ledger] == [1, 2], (
-        f"one llm_calls row per attempt, got {[dict(r) for r in ledger]}"
-    )
-    assert all(row["error_class"] is None for row in ledger), (
-        "a semantic rejection is not a provider error; both attempts succeed at the provider"
-    )
-    assert all(row["llm_operation"] == "oracle_reading" for row in ledger)
 
-    done_payload = db_session.execute(
-        text(
-            """
-            SELECT payload FROM oracle_reading_events
-            WHERE reading_id = :reading_id AND event_type = 'done'
-            """
-        ),
-        {"reading_id": reading_id},
-    ).scalar_one()
-    assert done_payload == {"status": "complete", "error_code": None}
-
-    commit_event = next(
-        event for event in oracle_rate_limiter.events if event[0] == "commit_token_budget"
-    )
-    assert commit_event[3] == 30, "budget commit uses usage summed across both attempts"
-
+    assert result["status"] == "complete", f"expected reading to complete, got {result}"
     interpretation_text = db_session.execute(
         text("SELECT interpretation_text FROM oracle_readings WHERE id = :reading_id"),
         {"reading_id": reading_id},
@@ -1959,8 +1972,11 @@ def test_execute_reading_fails_without_platform_llm_entitlement(
     db_session: Session,
     oracle_schema,
 ) -> None:
-    """resolve_api_key(mode="auto") gates platform-key use on entitlements; the
-    failure routes through the normalized done grammar with the error floor set."""
+    """execute_generation gates platform-LLM use on the AI entitlement; an unentitled
+    user's reading fails through the normalized done grammar with the E_BILLING_REQUIRED
+    floor. Post-cutover the entitlement check lives inside execute_generation (after the
+    owner has emitted its `meta` event and dispatched no provider call), so the reading
+    briefly enters streaming and the terminal is `meta` then `done`."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     _seed_oracle_corpus(db_session, viewer_id=user_id)
@@ -1973,9 +1989,9 @@ def test_execute_reading_fails_without_platform_llm_entitlement(
     )
     db_session.add(reading)
     db_session.commit()
-    router = _UnexpectedRouter()
+    router = _UnexpectedRuntime()
 
-    result = asyncio.run(execute_reading(db_session, reading_id=reading.id, llm_router=router))
+    result = asyncio.run(execute_reading(db_session, reading_id=reading.id, runtime=router))
 
     row = (
         db_session.execute(
@@ -2006,13 +2022,13 @@ def test_execute_reading_fails_without_platform_llm_entitlement(
     )
 
     assert result == {"status": "failed", "error_code": "E_BILLING_REQUIRED"}
-    assert router.called is False, "key resolution must fail before any LLM call"
+    assert router.called is False, "entitlement denial precedes any provider dispatch"
     assert row["status"] == "failed"
     assert row["failed_at"] is not None
     assert row["error_code"] == "E_BILLING_REQUIRED"
     assert row["error_detail"], "the error floor persists operator-facing detail"
-    assert [event["event_type"] for event in events] == ["done"]
-    assert events[0]["payload"] == {"status": "failed", "error_code": "E_BILLING_REQUIRED"}
+    assert [event["event_type"] for event in events] == ["meta", "done"]
+    assert events[-1]["payload"] == {"status": "failed", "error_code": "E_BILLING_REQUIRED"}
 
 
 def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
@@ -2042,9 +2058,9 @@ def test_execute_reading_fails_when_required_user_embeddings_are_unavailable(
         user_id=user_id,
         question="Where does the lantern lead?",
     )
-    router = _UnexpectedRouter()
+    router = _UnexpectedRuntime()
 
-    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
+    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=router))
 
     events = list(
         db_session.execute(
@@ -2083,11 +2099,11 @@ def test_execute_reading_requires_user_passage_when_visible_media_is_searchable(
         user_id=user_id,
         question="Where does the lantern lead?",
     )
-    router = _UnexpectedRouter()
+    router = _UnexpectedRuntime()
 
     monkeypatch.setattr("nexus.services.oracle._personal_candidates", lambda *a, **k: [])
 
-    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
+    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=router))
 
     row = (
         db_session.execute(
@@ -2147,10 +2163,10 @@ def test_execute_reading_has_no_provider_or_corpus_identity_columns(
         folio_number=2,
     )
 
-    router = _PublicOnlyRouter()
-    first = asyncio.run(execute_reading(db_session, reading_id=first_reading_id, llm_router=router))
+    router = _PublicOnlyRuntime()
+    first = asyncio.run(execute_reading(db_session, reading_id=first_reading_id, runtime=router))
     second = asyncio.run(
-        execute_reading(db_session, reading_id=second_reading_id, llm_router=router)
+        execute_reading(db_session, reading_id=second_reading_id, runtime=router)
     )
 
     columns = {column["name"] for column in inspect(db_session.bind).get_columns("oracle_readings")}
@@ -2195,10 +2211,13 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
     )
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
+    # The owner brackets the reading with inflight acquire/release; execute_generation
+    # reserves-then-commits the token budget in between (keyed on the generation id it
+    # allocates, not the reading id), and a succeeded call commits — never releases.
     event_names = oracle_rate_limiter.event_names()
     assert event_names[0] == "acquire_inflight"
     assert "reserve_token_budget" in event_names
@@ -2211,8 +2230,10 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
     commit_event = next(
         event for event in oracle_rate_limiter.events if event[0] == "commit_token_budget"
     )
-    assert reserve_event[2] == reading_id
-    assert commit_event[2] == reading_id
+    assert reserve_event[2] is not None and reserve_event[2] == commit_event[2], (
+        "reserve and commit settle the same generation reservation"
+    )
+    assert reserve_event[2] != reading_id, "the reservation id is the generation id, not the reading"
     assert reserve_event[3] is not None and reserve_event[3] >= 2000
 
 
@@ -2236,7 +2257,7 @@ def test_execute_reading_persists_folio_and_citation_edge_per_phase(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
     )
 
     rows = _folio_edge_rows(db_session, reading_id)
@@ -2377,7 +2398,7 @@ def test_get_oracle_reading_returns_proxied_plate_urls(
             question="What does the lamp reveal?",
         )
         result = asyncio.run(
-            execute_reading(session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+            execute_reading(session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
         )
         reading = session.get(OracleReading, reading_id)
         assert reading is not None and reading.image_id is not None, (
@@ -2434,7 +2455,7 @@ def test_reading_detail_renders_passages_from_folio_and_edge_field_for_field(
             question="What does the lamp reveal?",
         )
         result = asyncio.run(
-            execute_reading(session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+            execute_reading(session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
         )
 
     direct_db.register_cleanup("users", "id", user_id)
@@ -2443,6 +2464,7 @@ def test_reading_detail_renders_passages_from_folio_and_edge_field_for_field(
     direct_db.register_cleanup("resource_edges", "source_id", reading_id)
     direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
     response = auth_client.get(
         f"/oracle/readings/{reading_id}",
@@ -2502,7 +2524,7 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
         execute_reading(
             db_session,
             reading_id=reading_id,
-            llm_router=_InvalidOmensRouter(omens),
+            runtime=_InvalidOmensRuntime(omens),
         )
     )
 
@@ -2534,9 +2556,9 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
         ).scalars()
     )
 
-    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    assert result == {"status": "failed", "error_code": "invalid_structured_output"}
     assert row["status"] == "failed"
-    assert row["error_code"] == "E_LLM_BAD_REQUEST"
+    assert row["error_code"] == "invalid_structured_output"
     assert "omens" not in events, f"invalid omen output should not be emitted, got {events}"
     assert events.count("done") == 1 and "error" not in events, (
         f"failed readings should emit one terminal done event, got {events}"
@@ -2545,13 +2567,17 @@ def test_execute_reading_rejects_omens_unless_exactly_three_nonblank_lines(
 
 @pytest.mark.parametrize(
     "variant",
-    ["fenced", "extra_root_key", "extra_passage_key", "short_argument", "bad_theme"],
+    ["extra_root_key", "extra_passage_key", "short_argument", "bad_theme"],
 )
 def test_execute_reading_rejects_non_strict_provider_json(
     db_session: Session,
     oracle_schema,
     variant: str,
 ) -> None:
+    """A strict-JSON payload the schema/semantic decode rejects is terminal
+    (`invalid_structured_output`) — no repair round; the runtime already enforced
+    JSON well-formedness at the wire, so only key-set and value-semantic violations
+    remain to reject here."""
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     _seed_oracle_corpus(db_session, viewer_id=user_id)
@@ -2565,7 +2591,7 @@ def test_execute_reading_rejects_non_strict_provider_json(
         execute_reading(
             db_session,
             reading_id=reading_id,
-            llm_router=_InvalidJsonShapeRouter(variant),
+            runtime=_InvalidSchemaRuntime(variant),
         )
     )
 
@@ -2583,7 +2609,7 @@ def test_execute_reading_rejects_non_strict_provider_json(
         ).scalars()
     )
 
-    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    assert result == {"status": "failed", "error_code": "invalid_structured_output"}
     assert events.count("done") == 1 and "error" not in events, (
         f"strict JSON rejection should emit one terminal done event, got {events}"
     )
@@ -2595,6 +2621,11 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
     direct_db: DirectSessionManager,
     oracle_schema,
 ) -> None:
+    """A non-`Succeeded` provider outcome (here a `Refused`) fails the reading through
+    the normalized done grammar: the owner records `outcome_failure_facts`'s code and
+    safe detail operator-side, the wire carries only the error code, and the ledger
+    row terminalizes failed — never repaired."""
+    safe_detail = "the provider declined the oracle synthesis request"
     user_id = uuid4()
     with direct_db.session() as db_session:
         db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
@@ -2605,8 +2636,11 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             question="What does the lamp reveal?",
         )
 
+        outcome = Refused(meta=_oracle_meta(), safe_detail=safe_detail)
         result = asyncio.run(
-            execute_reading(db_session, reading_id=reading_id, llm_router=_ProviderErrorRouter())
+            execute_reading(
+                db_session, reading_id=reading_id, runtime=_ProviderFailureRuntime(outcome)
+            )
         )
 
         row = (
@@ -2641,7 +2675,7 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             db_session.execute(
                 text(
                     """
-                    SELECT call_seq, provider, model_name, llm_operation, streaming, error_class
+                    SELECT call_seq, provider, model_name, llm_operation, streaming, outcome
                     FROM llm_calls
                     WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
                     ORDER BY call_seq
@@ -2651,6 +2685,9 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             )
             .mappings()
             .all()
+        )
+        assert safe_detail in str(row["error_detail"]), (
+            "error_detail is the operator-facing safe failure detail"
         )
         db_session.execute(
             text(
@@ -2677,52 +2714,84 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
         headers=auth_headers(user_id),
     )
 
-    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    assert result == {"status": "failed", "error_code": "refused"}
     assert response.status_code == 200, response.text
     detail = response.json()["data"]
     assert row["status"] == "failed"
-    assert row["error_code"] == "E_LLM_BAD_REQUEST"
-    assert "raw anthropic invalid_request_error" in str(row["error_detail"]), (
-        "error_detail is the operator-facing exception detail"
-    )
+    assert row["error_code"] == "refused"
     assert "error_message" not in detail, "failure copy is FE-owned, keyed on error_code"
     assert "error_detail" not in detail, "operator detail never reaches the wire"
-    assert detail["error_code"] == "E_LLM_BAD_REQUEST"
-    assert "raw anthropic invalid_request_error" not in json.dumps(detail)
+    assert detail["error_code"] == "refused"
+    assert safe_detail not in json.dumps(detail), "safe detail is operator-only, not on the wire"
     assert "raw persisted provider detail" not in json.dumps(detail)
-    assert "raw anthropic invalid_request_error" not in serialized_events
+    assert safe_detail not in serialized_events
     assert events[-1]["event_type"] == "done"
-    assert events[-1]["payload"] == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
-    # Provider errors are never repaired: exactly one ledgered call, failed.
+    assert events[-1]["payload"] == {"status": "failed", "error_code": "refused"}
+    # Provider failures are never repaired: exactly one ledgered call, terminalized refused.
     assert len(ledger) == 1, f"expected one llm_calls row, got {[dict(r) for r in ledger]}"
     assert dict(ledger[0]) == {
         "call_seq": 1,
-        "provider": "anthropic",
-        "model_name": "claude-haiku-4-5-20251001",
-        "llm_operation": "oracle_reading",
+        "provider": _ORACLE_PROFILE.target.provider,
+        "model_name": _ORACLE_PROFILE.target.model,
+        "llm_operation": "oracle",
         "streaming": False,
-        "error_class": "E_LLM_BAD_REQUEST",
+        "outcome": "refused",
     }
 
 
 @pytest.mark.parametrize(
-    ("llm_error_code", "api_error_code"),
+    "outcome",
     [
-        (ModelCallErrorCode.INVALID_KEY, "E_LLM_INVALID_KEY"),
-        (ModelCallErrorCode.RATE_LIMIT, "E_LLM_RATE_LIMIT"),
-        (ModelCallErrorCode.CONTEXT_TOO_LARGE, "E_LLM_CONTEXT_TOO_LARGE"),
-        (ModelCallErrorCode.TIMEOUT, "E_LLM_TIMEOUT"),
-        (ModelCallErrorCode.PROVIDER_DOWN, "E_LLM_PROVIDER_DOWN"),
-        (ModelCallErrorCode.BAD_REQUEST, "E_LLM_BAD_REQUEST"),
-        (ModelCallErrorCode.MODEL_NOT_AVAILABLE, "E_MODEL_NOT_AVAILABLE"),
+        Refused(meta=_oracle_meta(), safe_detail="the provider declined"),
+        Incomplete(
+            meta=_oracle_meta(),
+            reason="content_filter_partial",
+            status="refused",
+            safe_detail=Present("stopped on a content filter"),
+        ),
+        Incomplete(
+            meta=_oracle_meta(),
+            reason="max_output_tokens",
+            status="provider_incomplete",
+            safe_detail=Present("ran out of output budget"),
+        ),
+        Failed(
+            meta=_oracle_meta(),
+            failure=TransientExhausted(attempts=3, cause=ProviderRateLimit(retry_after=Absent())),
+        ),
+        Failed(meta=_oracle_meta(), failure=TransientExhausted(attempts=3, cause=ProviderTimeout())),
+        Failed(
+            meta=_oracle_meta(),
+            failure=TransientExhausted(attempts=3, cause=ProviderHttpUnavailable()),
+        ),
+        Failed(
+            meta=_oracle_meta(),
+            failure=TransientExhausted(
+                attempts=3, cause=ProviderStreamInterrupted(partial_output=False)
+            ),
+        ),
+        Failed(meta=_oracle_meta(), failure=ProviderContextTooLarge()),
+    ],
+    ids=[
+        "refused",
+        "incomplete_refused",
+        "incomplete",
+        "rate_limited",
+        "timeout",
+        "provider_unavailable",
+        "stream_interrupted",
+        "context_too_large",
     ],
 )
 def test_execute_reading_maps_provider_error_codes_explicitly(
     db_session: Session,
     oracle_schema,
-    llm_error_code: ModelCallErrorCode,
-    api_error_code: str,
+    outcome,
 ) -> None:
+    """Each non-`Succeeded` provider outcome maps to the shared
+    `outcome_failure_facts` code the owner records — the successor to the old fixed
+    ModelCallErrorCode->E_LLM_* table."""
+    expected_code, expected_detail = outcome_failure_facts(outcome)
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
     _seed_oracle_corpus(db_session, viewer_id=user_id)
@@ -2736,7 +2805,7 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
         execute_reading(
             db_session,
             reading_id=reading_id,
-            llm_router=_ProviderErrorRouter(llm_error_code),
+            runtime=_ProviderFailureRuntime(outcome),
         )
     )
 
@@ -2768,11 +2837,12 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
         ).scalars()
     )
 
-    assert result == {"status": "failed", "error_code": api_error_code}
+    assert result == {"status": "failed", "error_code": expected_code}
     assert row["status"] == "failed"
-    assert row["error_code"] == api_error_code
-    assert row["error_detail"], f"expected operator-facing detail for {api_error_code}"
-    assert event_payloads[-1] == {"status": "failed", "error_code": api_error_code}
+    assert row["error_code"] == expected_code
+    if expected_detail is not None:
+        assert row["error_detail"] == expected_detail, "operator detail is the outcome's safe detail"
+    assert event_payloads[-1] == {"status": "failed", "error_code": expected_code}
 
 
 def test_execute_reading_fails_closed_before_meta_when_corpus_not_ready(
@@ -2799,12 +2869,12 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_not_ready(
         question="What does the lamp reveal?",
     )
 
-    router = _UnexpectedRouter()
+    router = _UnexpectedRuntime()
     result = asyncio.run(
         execute_reading(
             db_session,
             reading_id=reading_id,
-            llm_router=router,
+            runtime=router,
         )
     )
 
@@ -2830,16 +2900,16 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_not_ready(
 @pytest.mark.parametrize(
     "router",
     [
-        _InvalidCitationOutputRouter(
+        _InvalidCitationOutputRuntime(
             interpretation="The answer is carried at Inferno I.1-3, if read closely."
         ),
-        _InvalidCitationOutputRouter(
+        _InvalidCitationOutputRuntime(
             marginalia="The source can be checked at https://example.com/citation."
         ),
-        _InvalidCitationOutputRouter(
+        _InvalidCitationOutputRuntime(
             interpretation="__FIRST_PASSAGE_TEXT__",
         ),
-        _InvalidCitationOutputRouter(
+        _InvalidCitationOutputRuntime(
             interpretation="The forest lamp descends through the matter as a hidden answer.",
         ),
     ],
@@ -2847,7 +2917,7 @@ def test_execute_reading_fails_closed_before_meta_when_corpus_not_ready(
 def test_execute_reading_rejects_model_minted_citation_details(
     db_session: Session,
     oracle_schema,
-    router: _InvalidCitationOutputRouter,
+    router: _InvalidCitationOutputRuntime,
 ) -> None:
     user_id = uuid4()
     db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
@@ -2858,7 +2928,7 @@ def test_execute_reading_rejects_model_minted_citation_details(
         question="What does the lamp reveal?",
     )
 
-    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, llm_router=router))
+    result = asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=router))
 
     events = list(
         db_session.execute(
@@ -2894,7 +2964,7 @@ def test_execute_reading_rejects_model_minted_citation_details(
         {"reading_id": reading_id},
     ).scalar_one()
 
-    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    assert result == {"status": "failed", "error_code": "invalid_structured_output"}
     assert events.count("done") == 1 and "error" not in events, (
         f"citation rejection should emit a single terminal done, got {events}"
     )
@@ -2933,9 +3003,9 @@ def test_execute_reading_emits_events_in_eternal_order(
     direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
     direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
-    router = _ObservingRouter(direct_db, reading_id)
+    router = _ObservingRuntime(direct_db, reading_id)
     with direct_db.session() as db:
-        result = asyncio.run(execute_reading(db, reading_id=reading_id, llm_router=router))
+        result = asyncio.run(execute_reading(db, reading_id=reading_id, runtime=router))
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
     assert router.events_seen_during_generate == ["meta"], (
@@ -2987,7 +3057,7 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_do
         question="What happens when the worker breaks?",
     )
 
-    async def fail_unexpectedly(_db, *, reading_id, llm_router):
+    async def fail_unexpectedly(_db, *, reading_id, runtime):
         raise RuntimeError("raw worker stack detail")
 
     monkeypatch.setattr(
@@ -3041,76 +3111,89 @@ def test_oracle_task_unexpected_failure_marks_reading_failed_and_emits_single_do
 
 
 def test_post_synthesis_fault_keeps_synthesis_llm_call_through_worker_rollback(
-    db_session: Session,
+    direct_db: DirectSessionManager,
     oracle_schema,
     monkeypatch,
 ) -> None:
-    """F04/AC-3: LedgeredLLM only flushes the synthesis llm_calls row, and the
-    worker boundary (fail_run_after_worker_exception) rolls back first. A fault in
-    post-synthesis finalization must therefore find the row already committed, so
-    the boundary's E_INTERNAL failure leaves >=1 oracle_reading llm_calls row."""
+    """F04/AC-3: execute_generation commits the synthesis llm_calls row in its own
+    (independent) session, and the worker boundary (fail_run_after_worker_exception)
+    rolls back the owner session first. A fault in post-synthesis finalization must
+    therefore find the ledger row already committed, so the boundary's E_INTERNAL
+    failure leaves exactly one oracle_reading llm_calls row. Uses direct_db so the
+    ledger's independent-connection commit is real (a savepoint-shared factory would
+    be rolled back with the owner session and defeat the test)."""
     user_id = uuid4()
-    db_session.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
-    _seed_oracle_corpus(db_session, viewer_id=user_id)
-    reading_id = _insert_pending_reading(
-        db_session,
-        user_id=user_id,
-        question="What survives the worker rollback?",
-    )
+    with direct_db.session() as db:
+        db.execute(text("INSERT INTO users (id) VALUES (:user_id)"), {"user_id": user_id})
+        _seed_oracle_corpus(db, viewer_id=user_id)
+        reading_id = _insert_pending_reading(
+            db,
+            user_id=user_id,
+            question="What survives the worker rollback?",
+        )
+
+    direct_db.register_cleanup("users", "id", user_id)
+    _register_oracle_corpus_cleanup(direct_db, user_id)
+    direct_db.register_cleanup("oracle_readings", "id", reading_id)
+    direct_db.register_cleanup("resource_edges", "source_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_folios", "reading_id", reading_id)
+    direct_db.register_cleanup("oracle_reading_events", "reading_id", reading_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", reading_id)
 
     real_append_event = run_kit.append_event
 
     def _append_event(db, *, stream, event_type, payload):
         if event_type == "bind":
-            # The first finalization append, right after the F04 synthesis commit.
+            # The first finalization append, right after the synthesis commit.
             raise RuntimeError("post-synthesis finalization fault")
         return real_append_event(db, stream=stream, event_type=event_type, payload=payload)
 
     monkeypatch.setattr(run_kit, "append_event", _append_event)
 
-    with pytest.raises(RuntimeError, match="post-synthesis finalization fault"):
-        asyncio.run(
-            execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+    with direct_db.session() as db:
+        with pytest.raises(RuntimeError, match="post-synthesis finalization fault"):
+            asyncio.run(execute_reading(db, reading_id=reading_id, runtime=_PublicOnlyRuntime()))
+
+        # Drive the real shared worker boundary exactly as nexus.tasks.oracle_reading does.
+        reading, failed_now = run_kit.fail_run_after_worker_exception(
+            db,
+            load_parent=lambda session: session.get(
+                OracleReading, reading_id, populate_existing=True
+            ),
+            is_terminal=lambda r: r.status
+            in run_kit.terminal_statuses(run_kit.RunStreamKind.OracleReading),
+            write_failure=lambda session, r: run_kit.mark_terminal(
+                session,
+                stream=run_kit.oracle_reading_stream(r),
+                status="failed",
+                done_payload=oracle_done_payload(status="failed", error_code="E_INTERNAL"),
+                error_code="E_INTERNAL",
+                error_detail="RuntimeError: post-synthesis finalization fault",
+            ),
         )
+        assert failed_now and reading is not None
 
-    # Drive the real shared worker boundary exactly as nexus.tasks.oracle_reading does.
-    reading, failed_now = run_kit.fail_run_after_worker_exception(
-        db_session,
-        load_parent=lambda session: session.get(OracleReading, reading_id, populate_existing=True),
-        is_terminal=lambda r: r.status
-        in run_kit.terminal_statuses(run_kit.RunStreamKind.OracleReading),
-        write_failure=lambda session, r: run_kit.mark_terminal(
-            session,
-            stream=run_kit.oracle_reading_stream(r),
-            status="failed",
-            done_payload=oracle_done_payload(status="failed", error_code="E_INTERNAL"),
-            error_code="E_INTERNAL",
-            error_detail="RuntimeError: post-synthesis finalization fault",
-        ),
-    )
-    assert failed_now and reading is not None
-
-    db_session.expire_all()
-    row = (
-        db_session.execute(
-            text("SELECT status, error_code FROM oracle_readings WHERE id = :reading_id"),
+    with direct_db.session() as db:
+        row = (
+            db.execute(
+                text("SELECT status, error_code FROM oracle_readings WHERE id = :reading_id"),
+                {"reading_id": reading_id},
+            )
+            .mappings()
+            .one()
+        )
+        call_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM llm_calls
+                WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
+                """
+            ),
             {"reading_id": reading_id},
-        )
-        .mappings()
-        .one()
-    )
+        ).scalar_one()
+
     assert row["status"] == "failed"
     assert row["error_code"] == "E_INTERNAL", "the boundary writes the E_INTERNAL floor"
-
-    call_count = db_session.execute(
-        text(
-            """
-            SELECT COUNT(*) FROM llm_calls
-            WHERE owner_kind = 'oracle_reading' AND owner_id = :reading_id
-            """
-        ),
-        {"reading_id": reading_id},
-    ).scalar_one()
     assert call_count == 1, (
         "the committed synthesis llm_calls row must survive the boundary rollback"
     )
@@ -3129,35 +3212,11 @@ def test_execute_reading_rejects_out_of_list_theme(
         question="What does the lamp reveal?",
     )
 
-    class _BadThemeRouter:
-        async def generate(self, request, *, key, timeout_s):
-            indices = _candidate_indices(request)
-            public_indices = [
-                idx for idx, source_kind in indices.items() if source_kind == "public_domain"
-            ]
-            payload = json.loads(
-                _reading_json(
-                    descent=public_indices[0],
-                    ordeal=public_indices[1],
-                    ascent=public_indices[2],
-                    folio_theme="Of Mischief",
-                )
-            )
-            from provider_runtime.types import ModelResponse
-
-            return ModelResponse(
-                text=json.dumps(payload),
-                usage=None,
-                provider_request_id=None,
-                status=None,
-                incomplete_details=None,
-            )
-
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_BadThemeRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_InvalidSchemaRuntime("bad_theme"))
     )
 
-    assert result == {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+    assert result == {"status": "failed", "error_code": "invalid_structured_output"}
 
 
 def test_execute_reading_sortes_attribution_format(
@@ -3174,7 +3233,7 @@ def test_execute_reading_sortes_attribution_format(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, llm_router=_PublicOnlyRouter())
+        execute_reading(db_session, reading_id=reading_id, runtime=_PublicOnlyRuntime())
     )
 
     assert result["status"] == "complete", f"expected reading to complete, got {result}"
@@ -3226,7 +3285,7 @@ def test_concordance_ordering_by_score(
         folio_number=1,
     )
     asyncio.run(
-        execute_reading(db_session, reading_id=ref_reading_id, llm_router=_PublicOnlyRouter())
+        execute_reading(db_session, reading_id=ref_reading_id, runtime=_PublicOnlyRuntime())
     )
 
     # Fetch the image_id used by the reference reading
@@ -3247,7 +3306,7 @@ def test_concordance_ordering_by_score(
         question=question,
         folio_number=2,
     )
-    asyncio.run(execute_reading(db_session, reading_id=folio2_id, llm_router=_PublicOnlyRouter()))
+    asyncio.run(execute_reading(db_session, reading_id=folio2_id, runtime=_PublicOnlyRuntime()))
     # Force same image and theme as reference
     db_session.execute(
         text(
@@ -3268,7 +3327,7 @@ def test_concordance_ordering_by_score(
         question=question,
         folio_number=3,
     )
-    asyncio.run(execute_reading(db_session, reading_id=folio3_id, llm_router=_PublicOnlyRouter()))
+    asyncio.run(execute_reading(db_session, reading_id=folio3_id, runtime=_PublicOnlyRuntime()))
     db_session.execute(
         text("UPDATE oracle_readings SET folio_theme = 'Of Solitude' WHERE id = :id"),
         {"id": folio3_id},
@@ -3383,13 +3442,13 @@ def test_concordance_parity_shared_corpus_span_and_reindex_fixture(
         db_session, user_id=user_id, question=question, folio_number=1
     )
     result_a = asyncio.run(
-        execute_reading(db_session, reading_id=reading_a, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_a, runtime=_SelectLibraryRuntime())
     )
     reading_b = _insert_pending_reading(
         db_session, user_id=user_id, question=question, folio_number=2
     )
     result_b = asyncio.run(
-        execute_reading(db_session, reading_id=reading_b, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_b, runtime=_SelectLibraryRuntime())
     )
 
     # Reindex the media between B and C: spans/chunks are deleted and recreated
@@ -3410,7 +3469,7 @@ def test_concordance_parity_shared_corpus_span_and_reindex_fixture(
         db_session, user_id=user_id, question=question, folio_number=3
     )
     result_c = asyncio.run(
-        execute_reading(db_session, reading_id=reading_c, llm_router=_SelectLibraryRouter())
+        execute_reading(db_session, reading_id=reading_c, runtime=_SelectLibraryRuntime())
     )
     assert (result_a["status"], result_b["status"], result_c["status"]) == (
         "complete",

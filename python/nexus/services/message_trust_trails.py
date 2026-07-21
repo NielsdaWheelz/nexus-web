@@ -19,7 +19,6 @@ from nexus.db.models import (
     Message,
     MessageRetrieval,
     MessageToolCall,
-    Model,
     ResourceEdge,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
@@ -33,6 +32,11 @@ from nexus.schemas.conversation import (
     TrustRetrievalOut,
     TrustRunOut,
     TrustToolCallOut,
+)
+from nexus.services.chat_failure import (
+    chat_failure_projection,
+    compute_has_write_tool_attempt,
+    compute_terminal_attempts,
 )
 from nexus.services.resource_graph.citations import build_citation_outs_for_sources
 from nexus.services.resource_graph.refs import ResourceRef
@@ -92,17 +96,20 @@ def build_assistant_trust_trails(
             )
         )
     }
-    run_rows = db.execute(
-        select(ChatRun, Model)
-        .join(Model, Model.id == ChatRun.model_id)
-        .where(ChatRun.assistant_message_id.in_(message_ids))
-        .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
-    ).all()
-    runs_by_message: dict[UUID, tuple[ChatRun, Model]] = {}
-    for run, model in run_rows:
-        runs_by_message.setdefault(run.assistant_message_id, (run, model))
+    run_rows = (
+        db.execute(
+            select(ChatRun)
+            .where(ChatRun.assistant_message_id.in_(message_ids))
+            .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
+        )
+        .scalars()
+        .all()
+    )
+    runs_by_message: dict[UUID, ChatRun] = {}
+    for run in run_rows:
+        runs_by_message.setdefault(run.assistant_message_id, run)
 
-    run_ids = [run.id for run, _ in runs_by_message.values()]
+    run_ids = [run.id for run in runs_by_message.values()]
     done_payloads: dict[UUID, dict[str, Any]] = {}
     if run_ids:
         for event in db.scalars(
@@ -303,9 +310,7 @@ def build_assistant_trust_trails(
 
     trails: dict[UUID, AssistantTrustTrailOut] = {}
     for message in messages:
-        run_row = runs_by_message.get(message.id)
-        run = run_row[0] if run_row is not None else None
-        model = run_row[1] if run_row is not None else None
+        run = runs_by_message.get(message.id)
         prompt = prompt_by_message.get(message.id)
         citation_by_ordinal = citation_outs_by_message.get(message.id, {})
         trust_citations: list[TrustCitationOut] = []
@@ -415,20 +420,25 @@ def build_assistant_trust_trails(
             run=(
                 TrustRunOut(
                     run_id=run.id,
-                    model_id=run.model_id,
-                    provider=model.provider,
-                    model_name=model.model_name,
-                    reasoning_mode=run.reasoning,
-                    key_mode=run.key_mode,
+                    profile_id=run.profile_id,
+                    reasoning_option_id=run.reasoning_option_id,
+                    provider=run.provider,
+                    model_name=run.model_name,
                     status=cast(Any, "pending" if run.status == "queued" else run.status),
                     usage=cast(dict[str, Any] | None, done_payload.get("usage")),
                     error_code=run.error_code,
+                    error_origin=run.error_origin,
+                    failure=chat_failure_projection(
+                        run,
+                        has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
+                        attempts=compute_terminal_attempts(db, run),
+                    ),
                     final_chars=cast(int | None, done_payload.get("final_chars")),
                     started_at=run.started_at,
                     completed_at=run.completed_at,
                     total_cost_usd_micros=cost_by_run.get(run.id),
                 )
-                if run is not None and model is not None
+                if run is not None
                 else None
             ),
             prompt=(

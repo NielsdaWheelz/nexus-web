@@ -24,9 +24,8 @@ def test_build_prompt_budget_reserves_output_and_reasoning_tokens():
     budget = build_prompt_budget(
         max_context_tokens=10000,
         max_output_tokens=1000,
-        provider="openai",
-        model_name="gpt-5.5",
         reasoning="medium",
+        reasoning_reserve_tokens=4096,
     )
 
     assert budget.reserved_output_tokens == 1000
@@ -34,24 +33,24 @@ def test_build_prompt_budget_reserves_output_and_reasoning_tokens():
     assert budget.input_budget_tokens == 4904
 
 
-def test_build_prompt_budget_rejects_unknown_openai_reasoning():
-    with pytest.raises(ValueError, match="Unknown reasoning mode for openai/gpt-5.5"):
-        build_prompt_budget(
-            max_context_tokens=10000,
-            max_output_tokens=1000,
-            provider="openai",
-            model_name="gpt-5.5",
-            reasoning="xhigh",
-        )
+def test_build_prompt_budget_never_reserves_for_reasoning_none():
+    budget = build_prompt_budget(
+        max_context_tokens=10000,
+        max_output_tokens=1000,
+        reasoning="none",
+        reasoning_reserve_tokens=4096,
+    )
+
+    assert budget.reserved_reasoning_tokens == 0
+    assert budget.input_budget_tokens == 9000
 
 
 def test_allocate_budget_drops_optional_items_by_lane_budget():
     budget = build_prompt_budget(
         max_context_tokens=240,
         max_output_tokens=40,
-        provider="openai",
-        model_name="gpt-5.5",
         reasoning="none",
+        reasoning_reserve_tokens=0,
     )
     selection = allocate_budget(
         [
@@ -122,9 +121,8 @@ def test_allocate_budget_raises_when_mandatory_item_cannot_fit():
     budget = build_prompt_budget(
         max_context_tokens=120,
         max_output_tokens=40,
-        provider="openai",
-        model_name="gpt-5.5",
         reasoning="none",
+        reasoning_reserve_tokens=0,
     )
 
     with pytest.raises(ContextBudgetError) as exc_info:

@@ -23,7 +23,6 @@ from tests.factories import (
     create_test_library,
     create_test_media_in_library,
     create_test_message,
-    create_test_model,
     get_user_default_library,
     share_conversation_to_library,
 )
@@ -79,7 +78,6 @@ def _seed_cited_run(
     assistant_message_id: UUID,
 ) -> tuple[UUID, UUID, UUID, UUID]:
     now = datetime.now(UTC)
-    model_id = create_test_model(db_session)
     library_id = get_user_default_library(db_session, owner_id)
     assert library_id is not None
     media_id = create_test_media_in_library(
@@ -96,9 +94,7 @@ def _seed_cited_run(
         idempotency_key=f"trust-{uuid4()}",
         payload_hash="hash",
         status="complete",
-        model_id=model_id,
-        reasoning="medium",
-        key_mode="auto",
+        reasoning_option_id="medium",
         started_at=now,
         completed_at=now,
     )
@@ -163,7 +159,6 @@ def _seed_cited_run(
             chat_run_id=run.id,
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
             cacheable_input_tokens_estimate=20,
             prompt_block_manifest={"blocks": 1},
             max_context_tokens=1000,
@@ -254,7 +249,7 @@ def test_trust_trail_links_run_prompt_retrieval_citation_and_reference(
 
     assert trail.chat_run_id == run_id
     assert trail.run is not None
-    assert trail.run.reasoning_mode == "medium"
+    assert trail.run.reasoning_option_id == "medium"
     assert trail.run.status == "complete"
     assert trail.prompt is not None
     assert trail.prompt.included_retrieval_ids == [str(retrieval_id)]
@@ -316,7 +311,6 @@ def test_integrity_notices_are_deterministic(
         db_session,
         bootstrapped_user,
     )
-    model_id = create_test_model(db_session)
     run = ChatRun(
         owner_user_id=bootstrapped_user,
         conversation_id=conversation_id,
@@ -325,9 +319,7 @@ def test_integrity_notices_are_deterministic(
         idempotency_key=f"trust-{uuid4()}",
         payload_hash="hash",
         status="complete",
-        model_id=model_id,
-        reasoning="default",
-        key_mode="auto",
+        reasoning_option_id="default",
     )
     db_session.add(run)
     db_session.flush()
@@ -376,7 +368,6 @@ def test_integrity_notices_are_deterministic(
             chat_run_id=run.id,
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
-            model_id=model_id,
             cacheable_input_tokens_estimate=20,
             prompt_block_manifest={},
             max_context_tokens=1000,

@@ -15,7 +15,6 @@ dependencies = [
     "structlog>=24.1.0",
     "lxml>=5.0.0",
     "pillow>=10.0.0",
-    "pynacl>=1.5.0",
     "PyMuPDF>=1.24.0",
     "python-multipart>=0.0.27",
     "youtube-transcript-api>=1.2.4",
@@ -53,7 +52,7 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "7c06fe905e48fc718254df13c9e4daf7a0f1c2ef" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling", rev = "11c4083fab8b979276aa0c5cf78ddab456adba6c" }
 web-search-tool = { git = "https://github.com/NielsdaWheelz/web-search-tool", rev = "ce911344a2e31900eaee3039b5d61109ef54bcb1" }
 
 [tool.ruff]
@@ -101,7 +100,6 @@ include = [
     "nexus/middleware/request_id.py",
     "nexus/responses.py",
     "nexus/services/agent_tools",
-    "nexus/services/api_key_resolver.py",
     "nexus/services/artifacts",
     "nexus/services/atlas_projection.py",
     "nexus/services/attention.py",
@@ -119,7 +117,6 @@ include = [
     "nexus/services/contributor_credits.py",
     "nexus/services/contributor_taxonomy.py",
     "nexus/services/contributors.py",
-    "nexus/services/crypto.py",
     "nexus/services/dawn_write.py",
     "nexus/services/email_ingest_service.py",
     "nexus/services/epub_ingest.py",
@@ -163,7 +160,6 @@ include = [
     "nexus/services/locator_resolver.py",
     "nexus/services/transcript_segments.py",
     "nexus/services/url_normalize.py",
-    "nexus/services/user_keys.py",
     "nexus/services/vault.py",
     "nexus/services/vault_contracts.py",
     "nexus/services/web_article_structure.py",

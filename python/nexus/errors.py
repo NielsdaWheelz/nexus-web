@@ -6,8 +6,6 @@ All API errors are defined here with their corresponding HTTP status codes.
 from enum import Enum
 from typing import Any
 
-from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-
 _ERROR_DETAIL_MAX_CHARS = 1000
 
 
@@ -83,17 +81,6 @@ class ApiErrorCode(str, Enum):
     E_KEY_NOT_FOUND = "E_KEY_NOT_FOUND"  # 404 - Key doesn't exist or not owned by viewer
 
     # LLM errors
-    E_LLM_NO_KEY = "E_LLM_NO_KEY"  # 400 - No API key available for provider
-    E_LLM_RATE_LIMIT = "E_LLM_RATE_LIMIT"  # 429 - Provider rate limit exceeded
-    E_LLM_QUOTA_EXCEEDED = (
-        "E_LLM_QUOTA_EXCEEDED"  # 429 - Provider quota/billing exhausted; not retryable
-    )
-    E_LLM_INVALID_KEY = "E_LLM_INVALID_KEY"  # 400 - API key is invalid or revoked
-    E_LLM_PROVIDER_DOWN = "E_LLM_PROVIDER_DOWN"  # 503 - Provider service unavailable
-    E_LLM_BAD_REQUEST = "E_LLM_BAD_REQUEST"  # 400 - Provider rejected the request
-    E_LLM_TIMEOUT = "E_LLM_TIMEOUT"  # 504 - Provider request timed out
-    E_LLM_CONTEXT_TOO_LARGE = "E_LLM_CONTEXT_TOO_LARGE"  # 400 - Context too large for model
-    E_LLM_INCOMPLETE = "E_LLM_INCOMPLETE"  # 400 - Provider hit output token budget
     E_APP_SEARCH_FAILED = "E_APP_SEARCH_FAILED"  # 500 - Required in-app retrieval failed
     E_MESSAGE_TOO_LONG = "E_MESSAGE_TOO_LONG"  # 400 - Message exceeds 20,000 char limit
     E_CONTEXT_TOO_LARGE = "E_CONTEXT_TOO_LARGE"  # 400 - Context exceeds 25,000 char limit
@@ -119,7 +106,6 @@ class ApiErrorCode(str, Enum):
     E_STREAM_TOKEN_REPLAYED = "E_STREAM_TOKEN_REPLAYED"  # 401 jti already used
     E_STREAM_TOKEN_INVALID = "E_STREAM_TOKEN_INVALID"  # 401 signature or claims failed
     E_CANCELLED = "E_CANCELLED"  # explicit chat-run cancellation
-    E_LLM_INTERRUPTED = "E_LLM_INTERRUPTED"  # worker crashed after partial provider output
     E_PODCAST_QUOTA_EXCEEDED = (
         "E_PODCAST_QUOTA_EXCEEDED"  # 429 monthly transcription quota exceeded
     )
@@ -177,19 +163,6 @@ class ApiErrorCode(str, Enum):
     E_BILLING_NOT_CONFIGURED = "E_BILLING_NOT_CONFIGURED"  # 500
 
 
-CHAT_RESPONSE_RETRYABLE_ERROR_CODES = frozenset(
-    {
-        ApiErrorCode.E_INTERNAL.value,
-        ApiErrorCode.E_LLM_PROVIDER_DOWN.value,
-        ApiErrorCode.E_LLM_TIMEOUT.value,
-        ApiErrorCode.E_LLM_RATE_LIMIT.value,
-        ApiErrorCode.E_LLM_INTERRUPTED.value,
-        ApiErrorCode.E_RATE_LIMITED.value,
-        ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE.value,
-    }
-)
-
-
 # Error code to HTTP status mapping
 ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     # Authentication errors
@@ -245,15 +218,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_KEY_INVALID_FORMAT: 400,
     ApiErrorCode.E_KEY_NOT_FOUND: 404,
     # LLM errors
-    ApiErrorCode.E_LLM_NO_KEY: 400,
-    ApiErrorCode.E_LLM_RATE_LIMIT: 429,
-    ApiErrorCode.E_LLM_QUOTA_EXCEEDED: 429,
-    ApiErrorCode.E_LLM_INVALID_KEY: 400,
-    ApiErrorCode.E_LLM_PROVIDER_DOWN: 503,
-    ApiErrorCode.E_LLM_BAD_REQUEST: 400,
-    ApiErrorCode.E_LLM_TIMEOUT: 504,
-    ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE: 400,
-    ApiErrorCode.E_LLM_INCOMPLETE: 400,
     ApiErrorCode.E_APP_SEARCH_FAILED: 500,
     ApiErrorCode.E_MESSAGE_TOO_LONG: 400,
     ApiErrorCode.E_CONTEXT_TOO_LARGE: 400,
@@ -275,7 +239,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_STREAM_TOKEN_REPLAYED: 401,
     ApiErrorCode.E_STREAM_TOKEN_INVALID: 401,
     ApiErrorCode.E_CANCELLED: 499,
-    ApiErrorCode.E_LLM_INTERRUPTED: 503,
     ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED: 429,
     # EPUB errors
     ApiErrorCode.E_RETRY_INVALID_STATE: 409,
@@ -323,24 +286,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
 }
 
 
-LLM_ERROR_CODE_TO_API_ERROR_CODE: dict[ModelCallErrorCode, ApiErrorCode] = {
-    ModelCallErrorCode.INVALID_KEY: ApiErrorCode.E_LLM_INVALID_KEY,
-    ModelCallErrorCode.RATE_LIMIT: ApiErrorCode.E_LLM_RATE_LIMIT,
-    ModelCallErrorCode.CONTEXT_TOO_LARGE: ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE,
-    ModelCallErrorCode.TIMEOUT: ApiErrorCode.E_LLM_TIMEOUT,
-    ModelCallErrorCode.PROVIDER_DOWN: ApiErrorCode.E_LLM_PROVIDER_DOWN,
-    ModelCallErrorCode.BAD_REQUEST: ApiErrorCode.E_LLM_BAD_REQUEST,
-    ModelCallErrorCode.MODEL_NOT_AVAILABLE: ApiErrorCode.E_MODEL_NOT_AVAILABLE,
-    ModelCallErrorCode.QUOTA_EXCEEDED: ApiErrorCode.E_LLM_QUOTA_EXCEEDED,
-    ModelCallErrorCode.TOOL_ARGUMENTS_INVALID: ApiErrorCode.E_LLM_BAD_REQUEST,
-}
-
-
-def api_error_code_for_model_call(error_code: ModelCallErrorCode) -> ApiErrorCode:
-    """Map provider-runtime errors defensively when shared/runtime versions drift."""
-    return LLM_ERROR_CODE_TO_API_ERROR_CODE.get(error_code, ApiErrorCode.E_LLM_PROVIDER_DOWN)
-
-
 def exception_error_detail(
     exc: BaseException,
     *,
@@ -349,8 +294,6 @@ def exception_error_detail(
 ) -> str:
     """Operator-facing terminal detail with provider request id when available."""
     request_id = provider_request_id
-    if request_id is None and isinstance(exc, ModelCallError):
-        request_id = exc.provider_request_id
     detail = f"{type(exc).__name__}: {exc}"
     if request_id is None:
         return detail[:max_chars]

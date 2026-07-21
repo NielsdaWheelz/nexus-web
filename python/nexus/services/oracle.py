@@ -14,14 +14,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
-from provider_runtime.types import ModelCall
+from provider_runtime import Present, Succeeded
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     OracleCorpusSource,
@@ -31,15 +30,13 @@ from nexus.db.models import (
     OracleReadingEvent,
     OracleReadingFolio,
 )
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
     NotFoundError,
-    api_error_code_for_model_call,
-    exception_error_detail,
 )
 from nexus.jobs.queue import enqueue_job
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.oracle import (
@@ -53,10 +50,10 @@ from nexus.schemas.oracle import (
     oracle_passage_payload,
 )
 from nexus.services import oracle_corpus, run_kit
-from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.oracle_plates import oracle_plate_url
-from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
     build_citation_outs,
@@ -80,22 +77,18 @@ from nexus.services.search.query import SearchScope
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
-    SynthesisRequest,
+    build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
+    decode_structured_synthesis,
     ground_indices,
-    run_structured_synthesis,
+    outcome_failure_facts,
 )
 
 logger = get_logger(__name__)
 
-ORACLE_MODEL_NAME = "claude-haiku-4-5-20251001"
-ORACLE_PROVIDER = "anthropic"
-require_catalog_model(
-    ORACLE_PROVIDER, ORACLE_MODEL_NAME
-)  # code/catalog mismatch = import-time defect
+ORACLE_OPERATION = "oracle"
 ORACLE_MAX_OUTPUT_TOKENS = 2000
-ORACLE_LLM_TIMEOUT_SECONDS = 45
 ORACLE_PUBLIC_DOMAIN_CANDIDATES = 6
 ORACLE_USER_LIBRARY_CANDIDATES = 4
 ORACLE_FOLIO_ALLOCATE_ATTEMPTS = 8
@@ -547,7 +540,7 @@ async def execute_reading(
     db: Session,
     *,
     reading_id: UUID,
-    llm_router: ModelRuntime,
+    runtime: ExecutionRuntime,
 ) -> dict[str, Any]:
     """Worker job body: pick plate, retrieve passages, call LLM, persist, stream."""
     reading = _get_reading_or_fail(db, reading_id)
@@ -560,21 +553,10 @@ async def execute_reading(
     question = reading.question_text
     viewer_id = reading.user_id
     folio_number = reading.folio_number
-
-    try:
-        resolved = resolve_api_key(db, viewer_id, ORACLE_PROVIDER, "auto")
-    except ModelCallError as exc:
-        error_code = api_error_code_for_model_call(exc.error_code).value
-        _fail(db, reading, code=error_code, detail=exception_error_detail(exc))
-        return {"status": "failed", "error_code": error_code}
-    except ApiError as exc:
-        _fail(db, reading, code=exc.code.value, detail=exc.message)
-        return {"status": "failed", "error_code": exc.code.value}
+    settings = get_settings()
 
     rate_limiter = get_rate_limiter()
     inflight_acquired = False
-    budget_reserved = False
-    estimated_tokens = 0
 
     try:
         try:
@@ -647,24 +629,7 @@ async def execute_reading(
             )
             return {"status": "failed", "error_code": ApiErrorCode.E_APP_SEARCH_FAILED.value}
 
-        request = _build_llm_request(
-            question=question,
-            candidates=candidates,
-        )
-        estimated_tokens = (
-            estimate_tokens("\n".join(turn.content for turn in request.messages))
-            + ORACLE_MAX_OUTPUT_TOKENS
-        )
-        if resolved.mode == "platform":
-            try:
-                rate_limiter.reserve_token_budget(viewer_id, reading_id, estimated_tokens)
-                budget_reserved = True
-            except ApiError as exc:
-                reading = _get_reading(db, reading_id)
-                if reading is None:
-                    raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
-                _fail(db, reading, code=exc.code.value, detail=exc.message)
-                return {"status": "failed", "error_code": exc.code.value}
+        user_content = _build_oracle_user_content(question=question, candidates=candidates)
 
         reading = _get_reading_or_fail(db, reading_id)
         if reading.status != "pending":
@@ -682,9 +647,9 @@ async def execute_reading(
         )
         db.commit()
 
-        # The semantic validator runs inside run_structured_synthesis so the one
-        # bounded repair round covers oracle's dominant semantic-rejection
-        # failure class; the hook stashes the accepted decomposition.
+        # The semantic validator's rejection is now terminal (no repair round —
+        # the runtime enforces strict JSON); the hook stashes the accepted
+        # decomposition for the one accepted call.
         accepted: list[_OracleReadingParts] = []
 
         def _validate(parsed: _OracleSynthesisOutput) -> str | None:
@@ -697,40 +662,47 @@ async def execute_reading(
             accepted.append(outcome)
             return None
 
+        profile = operation_profile(ORACLE_OPERATION)
+        intent = build_synthesis_intent(
+            profile=profile,
+            system_prompt=_ORACLE_SYSTEM_PROMPT,
+            user_content=user_content,
+            max_output_tokens=ORACLE_MAX_OUTPUT_TOKENS,
+            schema=_OracleSynthesisOutput,
+        )
         try:
-            result = await run_structured_synthesis(
-                llm=LedgeredLLM(
-                    db=db,
-                    owner=LlmCallOwner(kind="oracle_reading", id=reading_id),
-                    router=llm_router,
-                    llm_operation="oracle_reading",
-                    key_mode_requested="auto",
-                    key_mode_used=resolved.mode,
+            call = await execute_generation(
+                GenerationRequest(
+                    owner=LlmCallOwner(kind="oracle_reading", id=reading_id, user_id=viewer_id),
+                    operation=ORACLE_OPERATION,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
                 ),
-                request=SynthesisRequest(
-                    provider=ORACLE_PROVIDER,
-                    llm_request=request,
-                    api_key=resolved.api_key,
-                    timeout_s=ORACLE_LLM_TIMEOUT_SECONDS,
-                ),
-                schema=_OracleSynthesisOutput,
-                validate=_validate,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                settings=settings,
             )
-        except ModelCallError as exc:
-            error_code = api_error_code_for_model_call(exc.error_code).value
-            logger.warning(
-                "oracle.llm_error",
-                reading_id=str(reading_id),
-                llm_error_code=exc.error_code.value,
-                api_error_code=error_code,
-            )
+        except ApiError as exc:
             reading = _get_reading(db, reading_id)
             if reading is None:
                 raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found") from exc
-            if error_code == ApiErrorCode.E_LLM_INVALID_KEY.value and resolved.mode == "byok":
-                update_user_key_status(db, resolved.user_key_id, "invalid")
-            _fail(db, reading, code=error_code, detail=exception_error_detail(exc))
-            return {"status": "failed", "error_code": error_code}
+            _fail(db, reading, code=exc.code.value, detail=exc.message)
+            return {"status": "failed", "error_code": exc.code.value}
+
+        if not isinstance(call.outcome, Succeeded):
+            code, detail = outcome_failure_facts(call.outcome)
+            logger.warning("oracle.llm_error", reading_id=str(reading_id), error_code=code)
+            reading = _get_reading(db, reading_id)
+            if reading is None:
+                raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
+            _fail(db, reading, code=code, detail=detail)
+            return {"status": "failed", "error_code": code}
+
+        try:
+            decode_structured_synthesis(
+                call.outcome, schema=_OracleSynthesisOutput, validate=_validate
+            )
         except StructuredSynthesisError as exc:
             logger.warning(
                 "oracle.llm_unparseable",
@@ -738,15 +710,12 @@ async def execute_reading(
                 reason=str(exc),
             )
             reading = _get_reading_or_fail(db, reading_id)
-            _fail(db, reading, code="E_LLM_BAD_REQUEST", detail=str(exc))
-            return {"status": "failed", "error_code": "E_LLM_BAD_REQUEST"}
+            _fail(db, reading, code="invalid_structured_output", detail=str(exc))
+            return {"status": "failed", "error_code": "invalid_structured_output"}
 
-        # Commit the per-attempt llm_calls rows now so they survive whatever the
-        # finalization does (a later worker-boundary rollback must not erase them).
-        db.commit()
-        usage = result.usage
+        usage = call.outcome.meta.usage
         if not accepted:
-            # justify-defect: run_structured_synthesis returns only after
+            # justify-defect: decode_structured_synthesis returns only after
             # _validate accepted the output and stashed the decomposition.
             raise AssertionError("oracle synthesis returned without a validated output")
         argument, motto, gloss, theme, by_phase, interpretation, omens = accepted[-1]
@@ -867,8 +836,6 @@ async def execute_reading(
             status = reading.status
             db.commit()
             return {"status": status, "noop": True}
-        if resolved.mode == "byok":
-            update_user_key_status(db, resolved.user_key_id, "valid")
         run_kit.mark_terminal(
             db,
             stream=run_kit.oracle_reading_stream(reading),
@@ -877,20 +844,13 @@ async def execute_reading(
         )
         db.commit()
 
-        if budget_reserved:
-            actual_tokens = (usage.total_tokens if usage is not None else None) or estimated_tokens
-            rate_limiter.commit_token_budget(viewer_id, reading_id, actual_tokens)
-            budget_reserved = False
-
         return {
             "status": "complete",
             "folio_number": folio_number,
-            "input_tokens": usage.input_tokens if usage else None,
-            "output_tokens": usage.output_tokens if usage else None,
+            "input_tokens": usage.value.input_tokens if isinstance(usage, Present) else None,
+            "output_tokens": usage.value.output_tokens if isinstance(usage, Present) else None,
         }
     finally:
-        if budget_reserved:
-            rate_limiter.release_token_budget(viewer_id, reading_id)
         if inflight_acquired:
             rate_limiter.release_inflight_slot(viewer_id)
 
@@ -1221,7 +1181,7 @@ _ORACLE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> ModelCall:
+def _build_oracle_user_content(*, question: str, candidates: Sequence[_Candidate]) -> str:
     rendered = "\n\n".join(
         (
             f"[{index}] source_kind={candidate.source_kind} tags={candidate.tags!r}\n"
@@ -1230,14 +1190,10 @@ def _build_llm_request(*, question: str, candidates: Sequence[_Candidate]) -> Mo
         )
         for index, candidate in enumerate(candidates)
     )
-    return build_synthesis_request(
-        provider=ORACLE_PROVIDER,
-        system_prompt=_ORACLE_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=f"QUESTION: {question.strip()}",
-        model_name=ORACLE_MODEL_NAME,
-        max_tokens=ORACLE_MAX_OUTPUT_TOKENS,
     )
 
 
@@ -1288,8 +1244,8 @@ def _validate_oracle_output(
 
     Returns (argument, motto, gloss, theme, by_phase, interpretation, omens) where
     by_phase maps each phase to (candidate_index, marginalia). Returns None on any
-    semantic failure — surfaced as the validate-hook rejection reason, repaired
-    once, then E_LLM_BAD_REQUEST.
+    semantic failure — surfaced as the validate-hook rejection reason
+    (invalid_structured_output; no repair round, the runtime enforces strict JSON).
     """
     argument = parsed.argument
     motto = parsed.folio_motto.strip()

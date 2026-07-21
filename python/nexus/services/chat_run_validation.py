@@ -1,33 +1,25 @@
-"""Pre-phase validation for chat run creation: input, model, rate limits, branch parents."""
+"""Pre-phase validation for chat run creation: input, profile, rate limits, branch parents."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from provider_runtime.errors import ModelCallError
+from provider_runtime import ReasoningLevel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight
-from nexus.config import get_settings
-from nexus.db.models import Conversation, Highlight, Message, Model
+from nexus.db.models import Conversation, Highlight, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.llm_catalog import (
-    chat_surface_capable,
-    is_provider_enabled,
-    require_catalog_model,
-    require_model_capabilities,
-)
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
     BranchAnchorRequest,
     ReaderSelectionRequest,
 )
-from nexus.services.api_key_resolver import (
-    get_model_by_id,
-    resolve_api_key,
-)
 from nexus.services.conversation_branches import branch_anchor_for_message
+from nexus.services.llm_profiles import LlmProfile
+from nexus.services.llm_profiles import profile as lookup_profile
+from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import ResourceRef
@@ -42,19 +34,15 @@ def validate_pre_phase(
     chat_subject: ResourceRef | None,
     reader_selection: ReaderSelectionRequest | None,
     content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str,
-    use_platform_key: bool,
-) -> Model:
-    model = validate_model_pre_phase(
+    profile_id: str,
+    reasoning_option_id: str,
+) -> tuple[LlmProfile, ReasoningLevel]:
+    resolved = validate_model_pre_phase(
         db,
         viewer_id=viewer_id,
         content=content,
-        model_id=model_id,
-        reasoning=reasoning,
-        key_mode=key_mode,
-        use_platform_key=use_platform_key,
+        profile_id=profile_id,
+        reasoning_option_id=reasoning_option_id,
     )
     _validate_parent_anchor_for_existing_conversation(
         db,
@@ -65,7 +53,7 @@ def validate_pre_phase(
     )
     _validate_reader_selection(db, viewer_id, conversation_id, reader_selection, chat_subject)
 
-    return model
+    return resolved
 
 
 def validate_model_pre_phase(
@@ -73,43 +61,30 @@ def validate_model_pre_phase(
     *,
     viewer_id: UUID,
     content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str,
-    use_platform_key: bool,
-) -> Model:
+    profile_id: str,
+    reasoning_option_id: str,
+) -> tuple[LlmProfile, ReasoningLevel]:
     if len(content) > MAX_MESSAGE_CONTENT_LENGTH:
         raise ApiError(
             ApiErrorCode.E_MESSAGE_TOO_LONG,
             f"Message exceeds {MAX_MESSAGE_CONTENT_LENGTH} character limit",
         )
 
-    model = get_model_by_id(db, model_id)
-    if model is None or not model.is_available:
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model not found or not available")
-    catalog_entry = require_catalog_model(model.provider, model.model_name)
-    require_model_capabilities(model.provider, model.model_name)
-    if not chat_surface_capable(model.provider, model.model_name):
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model is not available for chat")
-    if not is_provider_enabled(model.provider, get_settings()):
-        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Model provider is disabled")
-    if reasoning not in catalog_entry.reasoning_modes:
+    profile = lookup_profile(profile_id)
+    if profile is None:
+        raise ApiError(ApiErrorCode.E_MODEL_NOT_AVAILABLE, "Profile not found or not available")
+    reasoning = lookup_reasoning_level(profile, reasoning_option_id)
+    if reasoning is None:
         raise ApiError(
             ApiErrorCode.E_INVALID_REQUEST,
-            f"Reasoning mode '{reasoning}' is not supported for {model.provider}/{model.model_name}",
+            f"Reasoning option '{reasoning_option_id}' is not supported for profile '{profile_id}'",
         )
-
-    try:
-        resolve_api_key(db, viewer_id, model.provider, key_mode)
-    except ModelCallError as exc:
-        raise ApiError(ApiErrorCode.E_LLM_NO_KEY, str(exc.message)) from exc
 
     rate_limiter = get_rate_limiter()
     rate_limiter.check_rpm_limit(viewer_id)
     rate_limiter.check_concurrent_limit(viewer_id)
-    if use_platform_key:
-        rate_limiter.check_token_budget(viewer_id)
-    return model
+    rate_limiter.check_token_budget(viewer_id)
+    return profile, reasoning
 
 
 def load_valid_parent_for_send(

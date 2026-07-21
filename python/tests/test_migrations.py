@@ -5238,6 +5238,29 @@ class TestS5Migration0008:
 class TestS3SchemaConstraints:
     """Tests for S3-specific schema constraints (chat, conversations, messages, etc.)."""
 
+    @pytest.fixture
+    def pre_0186_engine(self):
+        """Pinned to 0183, the last revision before 0186 drops `models` and
+        `user_api_keys` entirely (hard cutover, no downgrade). These
+        constraints are gone for good at head; this fixture preserves their
+        historical migration-behavior coverage without asserting anything
+        false about the current head schema — same rationale as 0182's
+        `head_engine` (see TestMigration0182LecternPlayerLifecycle).
+        Function-scoped (not class-scoped): this class also uses the
+        module-scoped `migrated_engine` (pinned at head), and a class-scoped
+        override here would leave the schema pinned at 0183 for any
+        `migrated_engine` test that happens to run before this fixture's
+        teardown restores head."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0183")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+        run_alembic_command("upgrade head")
+
     def test_conversation_sharing_constraint(self, migrated_engine):
         """CHECK constraint prevents invalid sharing values."""
         with Session(migrated_engine) as session:
@@ -5434,9 +5457,9 @@ class TestS3SchemaConstraints:
 
         assert rows == []
 
-    def test_user_api_key_nonce_length_constraint(self, migrated_engine):
+    def test_user_api_key_nonce_length_constraint(self, pre_0186_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0186_engine) as session:
             user_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
 
@@ -5459,9 +5482,9 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "ck_user_api_keys_nonce_len" in str(exc_info.value)
 
-    def test_user_api_key_user_provider_unique(self, migrated_engine):
+    def test_user_api_key_user_provider_unique(self, pre_0186_engine):
         """UNIQUE constraint: one key per provider per user."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0186_engine) as session:
             user_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
 
@@ -5508,16 +5531,8 @@ class TestS3SchemaConstraints:
             conversation_id = uuid4()
             msg1_id = uuid4()
             msg2_id = uuid4()
-            model_id = uuid4()
 
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-                    VALUES (:id, 'openai', :model_name, 4096, true)
-                """),
-                {"id": model_id, "model_name": f"migration-test-{model_id}"},
-            )
             session.execute(
                 text("""
                     INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
@@ -5554,10 +5569,7 @@ class TestS3SchemaConstraints:
                             assistant_message_id,
                             idempotency_key,
                             payload_hash,
-                            status,
-                            model_id,
-                            reasoning,
-                            key_mode
+                            status
                         )
                         VALUES (
                             :user_id,
@@ -5566,10 +5578,7 @@ class TestS3SchemaConstraints:
                             :msg2,
                             :key,
                             'hash',
-                            'queued',
-                            :model_id,
-                            'none',
-                            'auto'
+                            'queued'
                         )
                     """),
                     {
@@ -5578,7 +5587,6 @@ class TestS3SchemaConstraints:
                         "key": "x" * 129,  # Too long
                         "msg1": msg1_id,
                         "msg2": msg2_id,
-                        "model_id": model_id,
                     },
                 )
                 session.commit()
@@ -5794,9 +5802,9 @@ class TestS3SchemaConstraints:
             assert "ix_note_blocks_body_text_tsv" in index_names
             assert "idx_messages_content_tsv" in index_names
 
-    def test_models_provider_model_name_unique(self, migrated_engine):
+    def test_models_provider_model_name_unique(self, pre_0186_engine):
         """UNIQUE constraint on (provider, model_name)."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0186_engine) as session:
             # First model
             session.execute(
                 text("""
@@ -9929,15 +9937,21 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
-        """A freshly head-migrated engine for this class.
+        """Pinned to 0183 rather than head.
 
         Earlier tests (including this class's own data-move test) call
         ``reset_test_schema()`` in their teardown, so the module-scoped
         ``migrated_engine`` cannot be trusted this late in the file — same
-        rationale as ``li_head_engine`` above.
+        rationale as ``li_head_engine`` above. Pinned to 0183 (not head)
+        because 0186 drops the `provider_route`/`key_mode_requested`/
+        `key_mode_used`/`error_class` columns and the `ck_llm_calls_provider`/
+        `ck_llm_calls_provider_route` checks this class's own constraint test
+        exercises; every column/constraint this class checks is established
+        at or before 0183, so 0183 is the revision this class is actually
+        testing — same "don't chase head" rationale as 0182's class.
         """
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -10976,8 +10990,13 @@ class TestMigration0151LlmProviderRuntimeCatalog:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        """Pinned to 0183 rather than head: 0186 drops `models`, `user_api_keys`,
+        and the `provider`/`provider_route` CHECKs this class exercises
+        entirely. Every seed row/constraint this class checks is established
+        at or before 0183, so 0183 is the revision this class is actually
+        testing — same "don't chase head" rationale as 0182's class."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -11317,8 +11336,10 @@ class TestMigration0151LlmProviderRuntimeCatalog:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            # Pinned to exactly 0151, the revision under test, not head: 0186
+            # drops the models/user_api_keys tables this assertion reads.
+            result = run_alembic_command("upgrade 0151")
+            assert result.returncode == 0, f"upgrade to 0151 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -11997,13 +12018,12 @@ class TestMigration0149SynapseResonance:
                 text(
                     """
                     INSERT INTO llm_calls (
-                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
-                        llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status
+                        owner_kind, owner_id, call_seq, provider, model_name,
+                        llm_operation, streaming, reasoning_effort, cost_status
                     )
                     VALUES (
-                        'synapse_scan', :owner_id, 1, 'anthropic', 'anthropic', 'm',
-                        'synapse_scan', false, 'none', 'auto', 'platform', 'missing_usage'
+                        'synapse_scan', :owner_id, 1, 'anthropic', 'm',
+                        'synapse_scan', false, 'none', 'missing_usage'
                     )
                     """
                 ),
@@ -12031,8 +12051,14 @@ class TestMigration0153ChatRunPolicyConstraints:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        """Pinned to 0183 rather than head: 0186 drops `chat_runs.reasoning`/
+        `key_mode` (and `models`, which this class also reads) entirely,
+        replacing them with profile_id/reasoning_option_id. Every
+        column/constraint this class checks is established at or before
+        0183, so 0183 is the revision this class is actually testing — same
+        "don't chase head" rationale as 0182's class."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -19050,3 +19076,555 @@ class TestMigration0183DefaultLibraryVirtualization:
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
+
+
+class TestMigration0186LlmProviderRuntimeHardCutover:
+    """0186: chat_runs gains profile_id/reasoning_option_id + resolved
+    provider/model_name/reasoning_effort/error_origin/support_id, backfilled
+    from the representative llm_calls row per owner; llm_calls collapses
+    provider/provider_route and gains outcome/error_origin/error_code (backfilled
+    from a frozen error_class table) plus upstream_provider/catalog_revision/
+    request_fingerprint/cache_strategy/cache_ttl; models and user_api_keys are
+    dropped along with every FK/CHECK that touched them."""
+
+    _MODEL_ID = "6e73fa9a-278c-5782-aadf-a6373a010eb3"
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _seed_pre_cutover_user_and_model(self, session: Session, *, user_id) -> None:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        session.execute(
+            text(
+                """
+                INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+                VALUES (:id, 'openai', 'gpt-5.6-terra', 1000000, true)
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            {"id": UUID(self._MODEL_ID)},
+        )
+
+    def _seed_chat_run(
+        self,
+        session: Session,
+        *,
+        run_id,
+        user_id,
+        conversation_id,
+        seq_base: int,
+        reasoning: str,
+        status: str = "complete",
+    ):
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        session.execute(
+            text(
+                """
+                INSERT INTO messages (id, conversation_id, seq, role, content, status, parent_message_id)
+                VALUES (:id, :conversation_id, :seq, 'user', 'seed', 'complete', NULL)
+                """
+            ),
+            {"id": user_message_id, "conversation_id": conversation_id, "seq": seq_base},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO messages (id, conversation_id, seq, role, content, status, parent_message_id)
+                VALUES (:id, :conversation_id, :seq, 'assistant', 'seed', :status, :parent_id)
+                """
+            ),
+            {
+                "id": assistant_message_id,
+                "conversation_id": conversation_id,
+                "seq": seq_base + 1,
+                "status": "complete" if status != "error" else "error",
+                "parent_id": user_message_id,
+            },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO chat_runs (
+                    id, owner_user_id, conversation_id, user_message_id, assistant_message_id,
+                    idempotency_key, payload_hash, status, model_id, reasoning, key_mode
+                )
+                VALUES (
+                    :id, :owner_user_id, :conversation_id, :user_message_id, :assistant_message_id,
+                    :idempotency_key, 'hash', :status, :model_id, :reasoning, 'auto'
+                )
+                """
+            ),
+            {
+                "id": run_id,
+                "owner_user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+                "idempotency_key": f"idem-{run_id}",
+                "status": status,
+                "model_id": UUID(self._MODEL_ID),
+                "reasoning": reasoning,
+            },
+        )
+        return user_message_id, assistant_message_id
+
+    def _seed_llm_call(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        call_seq: int,
+        provider: str,
+        provider_route: str,
+        model_name: str,
+        reasoning_effort: str,
+        terminal_attempt_status: str = "success",
+        error_class: str | None = None,
+        created_at: str = "2026-01-01T00:00:00Z",
+    ) -> None:
+        session.execute(
+            text(
+                """
+                INSERT INTO llm_calls (
+                    owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                    llm_operation, streaming, reasoning_effort, key_mode_requested, key_mode_used,
+                    cost_status, pricing_snapshot, terminal_attempt_status, error_class, created_at
+                )
+                VALUES (
+                    :owner_kind, :owner_id, :call_seq, :provider, :provider_route, :model_name,
+                    'chat_send', true, :reasoning_effort, 'auto', 'platform',
+                    'missing_usage', '{}'::jsonb, :terminal_attempt_status, :error_class,
+                    CAST(:created_at AS timestamptz)
+                )
+                """
+            ),
+            {
+                "owner_kind": owner_kind,
+                "owner_id": owner_id,
+                "call_seq": call_seq,
+                "provider": provider,
+                "provider_route": provider_route,
+                "model_name": model_name,
+                "reasoning_effort": reasoning_effort,
+                "terminal_attempt_status": terminal_attempt_status,
+                "error_class": error_class,
+                "created_at": created_at,
+            },
+        )
+
+    def test_backfills_chat_runs_resolved_and_selection_snapshots_from_representative_call(self):
+        """Covers the three §11 backfill shapes in one seed: a run whose ledger
+        history exactly matches a frozen profile+reasoning-option target
+        (resolved snapshots AND selection snapshots set); a run whose sole
+        call used the legacy literal 'default' reasoning (resolved effort AND
+        both selection snapshots stay NULL, even though the target itself
+        matches a known profile); and a run with zero llm_calls history at
+        all (every new column stays NULL). Also covers the row_number()
+        tie-break: the matched run has TWO agreeing calls (a tool-loop
+        shape), and the representative pick must not depend on which one it
+        reads.
+        """
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade to 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            matched_run_id = uuid4()
+            default_run_id = uuid4()
+            no_history_run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 10)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+
+                # Run 1: two agreeing calls on openai/gpt-5.6-terra @ medium ->
+                # matches the frozen 'balanced' profile at its 'medium' option.
+                self._seed_chat_run(
+                    session,
+                    run_id=matched_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=matched_run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=matched_run_id,
+                    call_seq=2,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+
+                # Run 2: sole call used the legacy 'default' reasoning literal.
+                self._seed_chat_run(
+                    session,
+                    run_id=default_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=3,
+                    reasoning="default",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=default_run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="default",
+                )
+
+                # Run 3: no llm_calls row at all.
+                self._seed_chat_run(
+                    session,
+                    run_id=no_history_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=5,
+                    reasoning="high",
+                    status="queued",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["id"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT id, provider, model_name, reasoning_effort,"
+                            " profile_id, reasoning_option_id, error_origin, support_id"
+                            " FROM chat_runs"
+                        )
+                    ).mappings()
+                }
+
+            matched = rows[matched_run_id]
+            assert (matched["provider"], matched["model_name"], matched["reasoning_effort"]) == (
+                "openai",
+                "gpt-5.6-terra",
+                "medium",
+            )
+            assert (matched["profile_id"], matched["reasoning_option_id"]) == ("balanced", "medium")
+            assert matched["error_origin"] is None
+            assert matched["support_id"] is None
+
+            default_row = rows[default_run_id]
+            assert (default_row["provider"], default_row["model_name"]) == (
+                "openai",
+                "gpt-5.6-terra",
+            ), (
+                "the wire provider/model_name resolved snapshots are NOT gated on"
+                " explicit reasoning -- only the effort + selection snapshots are"
+            )
+            assert default_row["reasoning_effort"] is None, (
+                "the legacy literal 'default' must clear the resolved effort snapshot"
+            )
+            assert default_row["profile_id"] is None
+            assert default_row["reasoning_option_id"] is None
+
+            no_history_row = rows[no_history_run_id]
+            assert (
+                no_history_row["provider"],
+                no_history_row["model_name"],
+                no_history_row["reasoning_effort"],
+                no_history_row["profile_id"],
+                no_history_row["reasoning_option_id"],
+            ) == (None, None, None, None, None)
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_preflight_aborts_on_contradictory_call_history(self):
+        """Two calls under one chat_run that disagree on target must abort the
+        upgrade before any mutation, naming the offending chat_run id."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade to 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 3)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                self._seed_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=2,
+                    provider="anthropic",
+                    provider_route="anthropic",
+                    model_name="claude-sonnet-5",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on contradictory call history"
+            assert str(run_id) in result.stderr
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+            assert version == "0183", (
+                "a failed preflight must leave the schema at the prior revision"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_frozen_error_class_map_backfills_llm_calls_outcome_origin_code(self):
+        """One row per legacy `error_class` bucket: a recognized transient
+        class (mapped origin/code), the two non-Failed outcome tags
+        (E_CANCELLED/E_LLM_INCOMPLETE -- no origin/code), an unrecognized
+        class (outcome only, origin/code stay NULL), and a clean success."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade to 0183 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            with Session(engine) as session:
+                specs = [
+                    (1, "success", None),
+                    (2, "terminal_error", "E_LLM_TIMEOUT"),
+                    (3, "abandoned", "E_CANCELLED"),
+                    (4, "terminal_error", "E_LLM_INCOMPLETE"),
+                    (5, "terminal_error", "E_LLM_QUOTA_EXCEEDED"),
+                ]
+                for call_seq, terminal_attempt_status, error_class in specs:
+                    self._seed_llm_call(
+                        session,
+                        owner_kind="oracle_reading",
+                        owner_id=owner_id,
+                        call_seq=call_seq,
+                        provider="openai",
+                        provider_route="openai",
+                        model_name="gpt-5.6-luna",
+                        reasoning_effort="low",
+                        terminal_attempt_status=terminal_attempt_status,
+                        error_class=error_class,
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["call_seq"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT call_seq, outcome, error_origin, error_code FROM llm_calls"
+                            " WHERE owner_id = :owner_id"
+                        ),
+                        {"owner_id": owner_id},
+                    ).mappings()
+                }
+
+            assert (rows[1]["outcome"], rows[1]["error_origin"], rows[1]["error_code"]) == (
+                "succeeded",
+                None,
+                None,
+            )
+            assert (rows[2]["outcome"], rows[2]["error_origin"], rows[2]["error_code"]) == (
+                "failed",
+                "transport",
+                "timeout",
+            ), "E_LLM_TIMEOUT is a recognized frozen-table entry"
+            assert (rows[3]["outcome"], rows[3]["error_origin"], rows[3]["error_code"]) == (
+                "cancelled",
+                None,
+                None,
+            ), "E_CANCELLED is a terminal outcome tag, not a Failed origin/code pair"
+            assert (rows[4]["outcome"], rows[4]["error_origin"], rows[4]["error_code"]) == (
+                "incomplete",
+                None,
+                None,
+            ), "E_LLM_INCOMPLETE is a terminal outcome tag, not a Failed origin/code pair"
+            assert (rows[5]["outcome"], rows[5]["error_origin"], rows[5]["error_code"]) == (
+                "failed",
+                None,
+                None,
+            ), "an unrecognized/free error_class still yields outcome=failed but NULL origin/code"
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_dropped_columns_checks_and_tables_are_gone(self, head_engine):
+        with Session(head_engine) as session:
+            assert (
+                session.execute(text("SELECT to_regclass('public.models')")).scalar_one() is None
+            ), "models must be dropped"
+            assert (
+                session.execute(text("SELECT to_regclass('public.user_api_keys')")).scalar_one()
+                is None
+            ), "user_api_keys must be dropped"
+
+            columns_by_table = {
+                table_name: {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns"
+                            " WHERE table_name = :table_name"
+                        ),
+                        {"table_name": table_name},
+                    ).fetchall()
+                }
+                for table_name in ("chat_runs", "llm_calls", "messages", "chat_prompt_assemblies")
+            }
+        assert not {"model_id", "reasoning", "key_mode"} & columns_by_table["chat_runs"]
+        assert {
+            "profile_id",
+            "reasoning_option_id",
+            "provider",
+            "model_name",
+            "reasoning_effort",
+            "error_origin",
+            "support_id",
+        }.issubset(columns_by_table["chat_runs"])
+        assert (
+            not {
+                "provider_route",
+                "error_class",
+                "key_mode_requested",
+                "key_mode_used",
+            }
+            & columns_by_table["llm_calls"]
+        )
+        assert {
+            "provider",
+            "upstream_provider",
+            "outcome",
+            "catalog_revision",
+            "request_fingerprint",
+            "cache_strategy",
+            "cache_ttl",
+            "error_origin",
+            "error_code",
+        }.issubset(columns_by_table["llm_calls"])
+        assert not {"model_id", "error_code"} & columns_by_table["messages"]
+        assert "model_id" not in columns_by_table["chat_prompt_assemblies"]
+
+        with Session(head_engine) as session:
+            constraint_names = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid IN ('chat_runs'::regclass, 'llm_calls'::regclass)"
+                    )
+                ).fetchall()
+            }
+        assert (
+            not {
+                "ck_chat_runs_reasoning",
+                "ck_chat_runs_key_mode",
+                "chat_runs_model_id_fkey",
+                "ck_llm_calls_provider",
+                "ck_llm_calls_provider_route",
+            }
+            & constraint_names
+        )
+
+    def test_llm_calls_provider_check_removal_admits_moonshot(self, head_engine):
+        """The dropped `ck_llm_calls_provider` rejected 'moonshot'; the new
+        target union requires it, and no CHECK replaces the old enum (spec
+        §11 point 8: business-policy CHECKs move into application types)."""
+        owner_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, model_name,
+                        llm_operation, streaming, reasoning_effort, cost_status
+                    )
+                    VALUES (
+                        'chat_run', :owner_id, 1, 'moonshot', 'kimi-k3',
+                        'chat_send', true, 'high', 'missing_usage'
+                    )
+                    """
+                ),
+                {"owner_id": owner_id},
+            )
+            session.commit()
+
+            provider = session.execute(
+                text("SELECT provider FROM llm_calls WHERE owner_id = :owner_id"),
+                {"owner_id": owner_id},
+            ).scalar_one()
+            assert provider == "moonshot"
+
+            session.execute(
+                text("DELETE FROM llm_calls WHERE owner_id = :owner_id"), {"owner_id": owner_id}
+            )
+            session.commit()

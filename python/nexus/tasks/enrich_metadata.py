@@ -9,35 +9,29 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
+from provider_runtime import StructuredContent, Succeeded
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.session import get_session_factory
-from nexus.errors import (
-    ApiError,
-    ApiErrorCode,
-    api_error_code_for_model_call,
-    exception_error_detail,
-)
+from nexus.errors import ApiError, ApiErrorCode, exception_error_detail
 from nexus.logging import get_logger
-from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
-from nexus.services.chat_run_usage import usage_tokens
 from nexus.services.contributors import MediaTarget, replace_observed_role_slices
-from nexus.services.llm_ledger import LlmCallOwner, observed_generate
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import (
-    build_enrichment_prompt,
-    build_metadata_enrichment_call,
+    METADATA_ENRICHMENT_OPERATION,
+    build_enrichment_user_content,
+    build_metadata_enrichment_intent,
     get_content_sample,
     merge_enrichment,
-    select_enrichment_model,
     validate_structured_enrichment,
 )
-from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
+from nexus.services.structured_synthesis import outcome_failure_facts
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -62,31 +56,8 @@ def _record_metadata_failure(media: Media, error_code: str, error_message: str) 
     media.updated_at = datetime.now(UTC)
 
 
-def _failed_result(
-    *,
-    reason: str,
-    error_code: str,
-    provider: str | None = None,
-    model: str | None = None,
-) -> dict:
-    result: dict[str, object] = {
-        "status": "failed",
-        "reason": reason,
-        "error_code": error_code,
-    }
-    if provider:
-        result["provider"] = provider
-    if model:
-        result["model"] = model
-    return result
-
-
-def _llm_error_code(exc: Exception) -> str:
-    if isinstance(exc, ApiError):
-        return exc.code.value
-    if isinstance(exc, ModelCallError):
-        return api_error_code_for_model_call(exc.error_code).value
-    return ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+def _failed_result(*, reason: str, error_code: str) -> dict:
+    return {"status": "failed", "reason": reason, "error_code": error_code}
 
 
 def enrich_metadata(
@@ -97,7 +68,7 @@ def enrich_metadata(
 
     Skips silently if:
     - Media is still actively extracting
-    - No LLM provider configured
+    - Metadata enrichment is disabled, or the media has no owning user
 
     On LLM/parse failure records failure_stage=metadata + last_error_* on
     the media row without touching processing_status, then returns
@@ -111,7 +82,7 @@ def enrich_metadata(
         request_id=request_id,
     )
 
-    async def _run(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
+    async def _run(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
         settings = get_settings()
         media = db.get(Media, media_uuid)
         if media is None:
@@ -121,50 +92,22 @@ def enrich_metadata(
         if media.processing_status not in _READY_STATES:
             return {"status": "skipped", "reason": "not_ready"}
 
-        selected_model = select_enrichment_model(settings)
         owner_user_id = media.created_by_user_id
-        if selected_model is None or owner_user_id is None:
+        if not settings.metadata_enrichment_enabled or owner_user_id is None:
             error_code = ApiErrorCode.E_METADATA_NO_PROVIDER.value
             _record_metadata_failure(
                 media,
                 error_code,
-                "No metadata enrichment provider is configured."
-                if selected_model is None
-                else "Media has no owning user to resolve an API key for.",
+                "Metadata enrichment is disabled."
+                if not settings.metadata_enrichment_enabled
+                else "Media has no owning user to attribute the provider call to.",
             )
             db.commit()
             return _failed_result(reason="no_provider", error_code=error_code)
 
-        provider, model = selected_model
-        owner = LlmCallOwner(kind="media_enrichment", id=media.id)
+        owner = LlmCallOwner(kind="media_enrichment", id=media.id, user_id=owner_user_id)
         content_sample = get_content_sample(db, media)
-        prompt = build_enrichment_prompt(db, media, content_sample)
-
-        try:
-            resolved = resolve_api_key(db, owner_user_id, provider, "auto")
-        except (ApiError, ModelCallError) as exc:
-            logger.warning(
-                "enrich_metadata_key_unavailable",
-                media_id=media_id,
-                provider=provider,
-                error=str(exc),
-            )
-            error_code = _llm_error_code(exc)
-            _record_metadata_failure(media, error_code, exception_error_detail(exc))
-            db.commit()
-            return _failed_result(
-                reason="key_unavailable",
-                error_code=error_code,
-                provider=provider,
-                model=model,
-            )
-
-        req = build_metadata_enrichment_call(
-            provider=provider,
-            model=model,
-            prompt=prompt,
-            max_output_tokens=settings.metadata_enrichment_max_output_tokens,
-        )
+        user_content = build_enrichment_user_content(db, media, content_sample)
 
         rate_limiter = get_rate_limiter()
         try:
@@ -172,85 +115,59 @@ def enrich_metadata(
         except ApiError as exc:
             _record_metadata_failure(media, exc.code.value, exc.message)
             db.commit()
-            return _failed_result(
-                reason="rate_limit_rejected",
-                error_code=exc.code.value,
-                provider=provider,
-                model=model,
-            )
+            return _failed_result(reason="rate_limit_rejected", error_code=exc.code.value)
 
-        budget_reserved = False
-        estimated_tokens = 0
         try:
-            if resolved.mode == "platform":
-                estimated_tokens = (
-                    estimate_tokens("\n".join(turn.content for turn in req.messages))
-                    + settings.metadata_enrichment_max_output_tokens
-                )
-                try:
-                    rate_limiter.reserve_token_budget(owner_user_id, media.id, estimated_tokens)
-                    budget_reserved = True
-                except ApiError as exc:
-                    _record_metadata_failure(media, exc.code.value, exc.message)
-                    db.commit()
-                    return _failed_result(
-                        reason="budget_rejected",
-                        error_code=exc.code.value,
-                        provider=provider,
-                        model=model,
-                    )
-
+            profile = operation_profile(METADATA_ENRICHMENT_OPERATION)
+            intent = build_metadata_enrichment_intent(
+                user_content=user_content,
+                max_output_tokens=settings.metadata_enrichment_max_output_tokens,
+            )
             try:
-                response = await observed_generate(
-                    db,
-                    owner=owner,
-                    llm=router,
-                    provider=provider,
-                    request=req,
-                    api_key=resolved.api_key,
-                    timeout_s=30,
-                    llm_operation="metadata_enrichment",
-                    key_mode_requested="auto",
-                    key_mode_used=resolved.mode,
+                call = await execute_generation(
+                    GenerationRequest(
+                        owner=owner,
+                        operation=METADATA_ENRICHMENT_OPERATION,
+                        profile=profile,
+                        reasoning=profile.default_reasoning_option_id,
+                        intent=intent,
+                    ),
+                    session_factory=get_session_factory(),
+                    runtime=runtime,
+                    settings=settings,
                 )
-            except Exception as exc:
-                error_code = _llm_error_code(exc)
+            except ApiError as exc:
+                logger.warning(
+                    "enrich_metadata_llm_rejected",
+                    media_id=media_id,
+                    error_code=exc.code.value,
+                )
+                _record_metadata_failure(media, exc.code.value, exc.message)
+                db.commit()
+                return _failed_result(reason="llm_rejected", error_code=exc.code.value)
+
+            if not isinstance(call.outcome, Succeeded):
+                error_code, detail = outcome_failure_facts(call.outcome)
                 logger.warning(
                     "enrich_metadata_llm_failed",
                     media_id=media_id,
-                    provider=provider,
-                    model=model,
-                    error=str(exc),
-                )
-                if resolved.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                    update_user_key_status(db, resolved.user_key_id, "invalid")
-                _record_metadata_failure(media, error_code, exception_error_detail(exc))
-                db.commit()
-                return _failed_result(
-                    reason="llm_failed",
                     error_code=error_code,
-                    provider=provider,
-                    model=model,
                 )
-
-            if response.status == "incomplete":
-                error_message = str(response.incomplete_details or "llm response incomplete")
-                _record_metadata_failure(media, ApiErrorCode.E_LLM_INCOMPLETE.value, error_message)
+                _record_metadata_failure(media, error_code, detail or "provider call failed")
                 db.commit()
-                return _failed_result(
-                    reason="llm_incomplete",
-                    error_code=ApiErrorCode.E_LLM_INCOMPLETE.value,
-                    provider=provider,
-                    model=model,
-                )
+                return _failed_result(reason="llm_failed", error_code=error_code)
 
-            enrichment = validate_structured_enrichment(response.structured_output)
+            content = call.outcome.response.content
+            if not isinstance(content, StructuredContent):
+                # justify-defect: output=StrictJsonOutput plans output_kind=
+                # "strict_json", which the runtime never promotes to TextContent.
+                raise AssertionError("metadata enrichment outcome decoded as TextContent")
+
+            enrichment = validate_structured_enrichment(content.payload)
             if enrichment is None:
                 logger.warning(
                     "enrich_metadata_parse_failed",
                     media_id=media_id,
-                    provider=provider,
-                    model=model,
                 )
                 error_code = ApiErrorCode.E_METADATA_PARSE_FAILED.value
                 _record_metadata_failure(
@@ -259,12 +176,7 @@ def enrich_metadata(
                     "provider did not return valid structured metadata",
                 )
                 db.commit()
-                return _failed_result(
-                    reason="parse_failed",
-                    error_code=error_code,
-                    provider=provider,
-                    model=model,
-                )
+                return _failed_result(reason="parse_failed", error_code=error_code)
 
             if not enrichment:
                 error_code = ApiErrorCode.E_METADATA_NO_FIELDS.value
@@ -272,12 +184,7 @@ def enrich_metadata(
                     media, error_code, "LLM returned no confident metadata fields."
                 )
                 db.commit()
-                return _failed_result(
-                    reason="no_fields",
-                    error_code=error_code,
-                    provider=provider,
-                    model=model,
-                )
+                return _failed_result(reason="no_fields", error_code=error_code)
 
             merge_result = merge_enrichment(db, media, enrichment)
             if not merge_result.accepted_fields:
@@ -286,19 +193,12 @@ def enrich_metadata(
                     media, error_code, "LLM returned no applicable metadata fields."
                 )
                 db.commit()
-                return _failed_result(
-                    reason="no_applicable_fields",
-                    error_code=error_code,
-                    provider=provider,
-                    model=model,
-                )
+                return _failed_result(reason="no_applicable_fields", error_code=error_code)
 
             if media.failure_stage == FailureStage.metadata:
                 media.failure_stage = None
                 media.last_error_code = None
                 media.last_error_message = None
-            if resolved.mode == "byok":
-                update_user_key_status(db, resolved.user_key_id, "valid")
             db.commit()
 
             # Fresh-session author op (spec 2.4, D-14). Non-author enrichment is
@@ -313,30 +213,19 @@ def enrich_metadata(
                 source="metadata_enrichment",
             )
 
-            if budget_reserved:
-                actual_tokens = usage_tokens(response.usage)["total_tokens"]
-                rate_limiter.commit_token_budget(
-                    owner_user_id, media.id, actual_tokens or estimated_tokens
-                )
-                budget_reserved = False
-
             logger.info(
                 "enrich_metadata_completed",
                 media_id=media_id,
-                provider=provider,
-                model=model,
                 fields_enriched=list(merge_result.accepted_fields),
                 request_id=request_id,
             )
             return {
                 "status": "success",
                 "fields": list(merge_result.accepted_fields),
-                "provider": provider,
-                "model": model,
+                "provider": profile.target.provider,
+                "model": profile.target.model,
             }
         finally:
-            if budget_reserved:
-                rate_limiter.release_token_budget(owner_user_id, media.id)
             rate_limiter.release_inflight_slot(owner_user_id)
 
     def _record_unexpected(db: Session, exc: Exception) -> dict:

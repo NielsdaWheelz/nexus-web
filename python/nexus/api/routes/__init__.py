@@ -21,17 +21,16 @@ from nexus.api.routes.extension_sessions import router as extension_sessions_rou
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
-from nexus.api.routes.keys import router as keys_router
 from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.library_dossier import router as library_dossier_router
 from nexus.api.routes.listening_state import router as listening_state_router
+from nexus.api.routes.llm_profiles import router as llm_profiles_router
 from nexus.api.routes.me import router as me_router
 from nexus.api.routes.media import router as media_router
 from nexus.api.routes.media_assets import router as media_assets_router
 from nexus.api.routes.media_ingest import router as media_ingest_router
 from nexus.api.routes.messages import router as messages_router
-from nexus.api.routes.models import router as models_router
 from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.object_refs import router as object_refs_router
 from nexus.api.routes.oracle import router as oracle_router
@@ -94,8 +93,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(contributors_router)
     api_router.include_router(chat_runs_router)
     api_router.include_router(oracle_router)
-    api_router.include_router(models_router)
-    api_router.include_router(keys_router)
+    api_router.include_router(llm_profiles_router)
     api_router.include_router(browse_router)
     api_router.include_router(search_router)
     api_router.include_router(web_search_router)

@@ -96,7 +96,7 @@ def get_artifact(db: Session, *, viewer_id: UUID, library_id: UUID) -> ArtifactV
                     WHERE owner_kind = 'artifact_revision'
                       AND owner_id = r.id
                       AND llm_operation = 'li_reduce'
-                      AND error_class IS NULL
+                      AND outcome = 'succeeded'
                     ORDER BY call_seq DESC
                     LIMIT 1
                 ) lc ON true

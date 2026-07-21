@@ -4016,36 +4016,6 @@ class ConversationShare(Base):
     library: Mapped["Library"] = relationship("Library")
 
 
-class Model(Base):
-    """Model registry for LLM models."""
-
-    __tablename__ = "models"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    cost_per_1k_input_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cost_per_1k_output_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-
-    __table_args__ = (
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_models_provider",
-        ),
-        CheckConstraint(
-            "max_context_tokens > 0",
-            name="ck_models_max_context_positive",
-        ),
-        UniqueConstraint("provider", "model_name", name="uix_models_provider_model_name"),
-    )
-
-
 class LLMCall(Base):
     """One provider LLM call in the polymorphic ledger (sole writer: llm_ledger)."""
 
@@ -4060,13 +4030,11 @@ class LLMCall(Base):
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_route: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -4075,7 +4043,13 @@ class LLMCall(Base):
     cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    catalog_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cache_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cache_ttl: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -4112,14 +4086,6 @@ class LLMCall(Base):
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_llm_calls_provider",
-        ),
-        CheckConstraint(
-            "provider_route IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_llm_calls_provider_route",
-        ),
         CheckConstraint(
             "input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
             "AND reasoning_tokens >= 0 AND cache_write_input_tokens >= 0 "
@@ -4203,12 +4169,6 @@ class Message(Base):
         server_default=text("""'{"type":"message_document","blocks":[]}'::jsonb"""),
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    model_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     parent_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id"),
@@ -4278,7 +4238,6 @@ class Message(Base):
 
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
-    model: Mapped["Model | None"] = relationship("Model")
     parent_message: Mapped["Message | None"] = relationship(
         "Message",
         foreign_keys=[parent_message_id],
@@ -4725,13 +4684,14 @@ class ChatRun(Base):
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    model_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
-        nullable=False,
-    )
-    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    # Product selection snapshots (non-FK: profile_id/reasoning_option_id name a
+    # frozen registry row in services/llm_profiles.py, not a mutable table).
+    profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Resolved operator/trust-trail facts, filled at execution from the plan.
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -4739,7 +4699,9 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4760,14 +4722,6 @@ class ChatRun(Base):
             "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
             name="ck_chat_runs_idempotency_key_length",
         ),
-        CheckConstraint(
-            "reasoning IN ('default', 'none', 'minimal', 'low', 'medium', 'high', 'max')",
-            name="ck_chat_runs_reasoning",
-        ),
-        CheckConstraint(
-            "key_mode IN ('auto', 'byok_only', 'platform_only')",
-            name="ck_chat_runs_key_mode",
-        ),
         UniqueConstraint(
             "owner_user_id",
             "idempotency_key",
@@ -4783,7 +4737,6 @@ class ChatRun(Base):
         "Message",
         foreign_keys=[assistant_message_id],
     )
-    model: Mapped["Model"] = relationship("Model")
     events: Mapped[list["ChatRunEvent"]] = relationship(
         "ChatRunEvent",
         back_populates="run",
@@ -4902,11 +4855,6 @@ class ChatPromptAssembly(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    model_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
-        nullable=False,
-    )
     cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt_block_manifest: Mapped[dict[str, object]] = mapped_column(
         JSONB,
@@ -5004,7 +4952,6 @@ class ChatPromptAssembly(Base):
         back_populates="prompt_assemblies",
     )
     assistant_message: Mapped["Message"] = relationship("Message")
-    model: Mapped["Model"] = relationship("Model")
 
 
 class ChatRunEvent(Base):
@@ -5045,63 +4992,6 @@ class ChatRunEvent(Base):
     )
 
     run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
-
-
-class UserApiKey(Base):
-    """UserApiKey model - encrypted BYOK API keys per provider."""
-
-    __tablename__ = "user_api_keys"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    # These fields are nullable to support secure revocation (wipe to NULL)
-    encrypted_key: Mapped[bytes | None] = mapped_column(nullable=True)
-    key_nonce: Mapped[bytes | None] = mapped_column(nullable=True)
-    master_key_version: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, server_default="1"
-    )
-    key_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="untested")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_tested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter')",
-            name="ck_user_api_keys_provider",
-        ),
-        CheckConstraint(
-            "master_key_version IS NULL OR master_key_version > 0",
-            name="ck_user_api_keys_master_key_version",
-        ),
-        CheckConstraint(
-            "status IN ('untested', 'valid', 'invalid', 'revoked')",
-            name="ck_user_api_keys_status",
-        ),
-        CheckConstraint(
-            "key_nonce IS NULL OR octet_length(key_nonce) = 24",
-            name="ck_user_api_keys_nonce_len",
-        ),
-        UniqueConstraint("user_id", "provider", name="uix_user_api_keys_user_provider"),
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship("User")
 
 
 class BillingAccount(Base):

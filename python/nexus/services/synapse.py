@@ -23,11 +23,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
-from provider_runtime.types import ModelCall
+from provider_runtime import Succeeded
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -36,26 +34,24 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import Highlight, Media, NoteBlock, Page, SynapseSuppression
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
     ConflictError,
     NotFoundError,
-    api_error_code_for_model_call,
 )
 from nexus.jobs.queue import enqueue_unique_job
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.search import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
     SearchResultOut,
 )
-from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
-from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.media_intelligence import NotReady, get_media_unit
-from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
@@ -78,17 +74,17 @@ from nexus.services.search.query import SearchQuery
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
-    SynthesisRequest,
+    build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
+    decode_structured_synthesis,
     ground_indices,
-    run_structured_synthesis,
+    outcome_failure_facts,
 )
 
 logger = get_logger(__name__)
 
-SYNAPSE_PROVIDER = "anthropic"
-SYNAPSE_MODEL_NAME = "claude-haiku-4-5-20251001"
+SYNAPSE_OPERATION = "synapse"
 SYNAPSE_CANDIDATE_LIMIT = 12
 SYNAPSE_MAX_CONNECTIONS = 4
 # Span-grain dedup lets one text-rich work fill every slot with its own spans;
@@ -96,11 +92,8 @@ SYNAPSE_MAX_CONNECTIONS = 4
 # candidate's owner media.
 SYNAPSE_MAX_CONNECTIONS_PER_WORK = 2
 SYNAPSE_MAX_OUTPUT_TOKENS = 1000
-SYNAPSE_LLM_TIMEOUT_SECONDS = 45
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
-# The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
-require_catalog_model(SYNAPSE_PROVIDER, SYNAPSE_MODEL_NAME)
 
 
 # ---------- public contract -------------------------------------------------
@@ -165,20 +158,20 @@ def scan_status(
 
 
 async def run_synapse_scan(
-    db: Session, *, user_id: UUID, ref: ResourceRef, llm: ModelRuntime
+    db: Session, *, user_id: UUID, ref: ResourceRef, runtime: ExecutionRuntime
 ) -> Literal["ok", "skipped", "failed"]:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
     ``skipped`` (quiet, no edge changes): engine disabled, source missing or
-    not visible, dossier unavailable (media unit not ready, page never
-    indexed), or no resolvable API key. ``failed`` (queue retry ladder, prior
-    edges intact): rate-limit/budget rejection or LLM/synthesis error. ``ok``
+    not visible, or dossier unavailable (media unit not ready, page never
+    indexed). ``failed`` (queue retry ladder, prior edges intact):
+    entitlement/rate-limit/budget rejection or LLM/synthesis error. ``ok``
     replace-sets the ``(source, origin='synapse')`` edge set — possibly to
     empty (current-only, D6).
 
-    The provider call is BYOK-first for the scanned object's owner and runs
-    inside the shared rate-limit/budget envelope; every attempt is one
-    ``llm_calls`` row (owner ``synapse_scan`` = the source object id, AC8).
+    The provider call runs on the platform credential inside the shared
+    rate-limit envelope; every attempt is one ``llm_calls`` row (owner
+    ``synapse_scan`` = the source object id, AC8).
     """
     if not get_settings().synapse_enabled:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="disabled")
@@ -188,11 +181,6 @@ async def run_synapse_scan(
     except NotFoundError:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="source_missing")
         return "skipped"
-    try:
-        resolved_key = resolve_api_key(db, user_id, SYNAPSE_PROVIDER, "auto")
-    except (ApiError, ModelCallError) as exc:
-        logger.info("synapse_scan_skipped", ref=ref.uri, reason="no_api_key", error=str(exc))
-        return "skipped"
 
     rate_limiter = get_rate_limiter()
     try:
@@ -200,12 +188,6 @@ async def run_synapse_scan(
     except ApiError as exc:
         logger.warning("synapse_scan_rate_limited", ref=ref.uri, error_code=exc.code.value)
         return "failed"
-    budget_reserved = False
-    estimated_tokens = 0
-    # One reservation id per scan attempt: commit_token_budget charges a
-    # reservation id once forever, so a stable id (ref.id) would leave every
-    # rescan of the same object unmetered.
-    budget_reservation_id = uuid4()
     try:
         dossier = _build_dossier(db, user_id=user_id, ref=ref)
         if dossier is None:
@@ -241,48 +223,42 @@ async def run_synapse_scan(
             logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
             return "ok"
 
-        request = _build_llm_request(dossier.text, candidates)
-        if resolved_key.mode == "platform":
-            estimated_tokens = (
-                estimate_tokens("\n".join(turn.content for turn in request.messages))
-                + SYNAPSE_MAX_OUTPUT_TOKENS
-            )
-            try:
-                rate_limiter.reserve_token_budget(user_id, budget_reservation_id, estimated_tokens)
-                budget_reserved = True
-            except ApiError as exc:
-                logger.warning(
-                    "synapse_scan_budget_rejected", ref=ref.uri, error_code=exc.code.value
-                )
-                return "failed"
-
+        user_content = _build_synapse_user_content(dossier.text, candidates)
+        profile = operation_profile(SYNAPSE_OPERATION)
+        intent = build_synthesis_intent(
+            profile=profile,
+            system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+            user_content=user_content,
+            max_output_tokens=SYNAPSE_MAX_OUTPUT_TOKENS,
+            schema=SynapseSynthesis,
+        )
         try:
-            result = await run_structured_synthesis(
-                llm=LedgeredLLM(
-                    db=db,
-                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
-                    router=llm,
-                    llm_operation="synapse_scan",
-                    key_mode_requested="auto",
-                    key_mode_used=resolved_key.mode,
+            call = await execute_generation(
+                GenerationRequest(
+                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id, user_id=user_id),
+                    operation=SYNAPSE_OPERATION,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
                 ),
-                request=SynthesisRequest(
-                    provider=SYNAPSE_PROVIDER,
-                    llm_request=request,
-                    api_key=resolved_key.api_key,
-                    timeout_s=SYNAPSE_LLM_TIMEOUT_SECONDS,
-                ),
-                schema=SynapseSynthesis,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                settings=get_settings(),
             )
-        except ModelCallError as exc:
-            error_code = api_error_code_for_model_call(exc.error_code).value
-            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=error_code)
-            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, resolved_key.user_key_id, "invalid")
-            # Keep the failed-attempt llm_calls rows (and any key-status flip);
-            # run_llm_task only closes the session, it never commits.
+        except ApiError as exc:
+            logger.warning("synapse_scan_llm_rejected", ref=ref.uri, error_code=exc.code.value)
+            return "failed"
+
+        if not isinstance(call.outcome, Succeeded):
+            code, _detail = outcome_failure_facts(call.outcome)
+            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=code)
+            # Keep the failed-attempt llm_calls row; run_llm_task only closes
+            # the session, it never commits.
             db.commit()
             return "failed"
+
+        try:
+            value = decode_structured_synthesis(call.outcome, schema=SynapseSynthesis)
         except StructuredSynthesisError as exc:
             logger.warning("synapse_scan_llm_failure", ref=ref.uri, error=str(exc)[:200])
             db.commit()
@@ -293,7 +269,7 @@ async def run_synapse_scan(
         db.commit()
         grounded = (
             ground_indices(
-                result.value.connections,
+                value.connections,
                 candidates,
                 index_of=lambda connection: connection.candidate_index,
                 policy="drop",
@@ -336,17 +312,9 @@ async def run_synapse_scan(
             ],
         )
         db.commit()
-        if budget_reserved:
-            actual_tokens = usage_tokens(result.usage)["total_tokens"]
-            rate_limiter.commit_token_budget(
-                user_id, budget_reservation_id, actual_tokens or estimated_tokens
-            )
-            budget_reserved = False
         logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
         return "ok"
     finally:
-        if budget_reserved:
-            rate_limiter.release_token_budget(user_id, budget_reservation_id)
         rate_limiter.release_inflight_slot(user_id)
 
 
@@ -696,17 +664,13 @@ _SYNAPSE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(source_text: str, candidates: list[_SynapseCandidate]) -> ModelCall:
+def _build_synapse_user_content(source_text: str, candidates: list[_SynapseCandidate]) -> str:
     rendered = "\n\n".join(
         f"[{index}] {candidate.label}: {candidate.snippet}"
         for index, candidate in enumerate(candidates)
     )
-    return build_synthesis_request(
-        provider=SYNAPSE_PROVIDER,
-        system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=f"SOURCE:\n{source_text}",
-        model_name=SYNAPSE_MODEL_NAME,
-        max_tokens=SYNAPSE_MAX_OUTPUT_TOKENS,
     )

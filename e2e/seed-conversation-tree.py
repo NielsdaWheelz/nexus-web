@@ -8,19 +8,14 @@ import os
 import sys
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
-
 from nexus.db.models import (
     ChatRun,
     Conversation,
     ConversationActivePath,
     ConversationBranch,
     Message,
-    Model,
-    UserApiKey,
 )
 from nexus.db.session import create_session_factory
-from nexus.services.crypto import CryptoError, encrypt_api_key
 
 
 def require_env(name: str) -> str:
@@ -28,54 +23,6 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is required")
     return value
-
-
-def openai_model_id(db) -> UUID:
-    model = db.scalar(
-        select(Model).where(
-            Model.provider == "openai",
-            Model.model_name == "gpt-5.4-mini",
-        )
-    )
-    if model is None:
-        model = Model(
-            provider="openai",
-            model_name="gpt-5.4-mini",
-            max_context_tokens=400000,
-            is_available=True,
-        )
-        db.add(model)
-        db.flush()
-    else:
-        model.is_available = True
-        model.max_context_tokens = 400000
-    return model.id
-
-
-def ensure_send_key(db, owner_user_id: UUID) -> None:
-    key = db.scalar(
-        select(UserApiKey).where(
-            UserApiKey.user_id == owner_user_id,
-            UserApiKey.provider == "openai",
-        )
-    )
-    if key is None:
-        key = UserApiKey(user_id=owner_user_id, provider="openai")
-        db.add(key)
-
-    try:
-        encrypted_key, nonce, version, fingerprint = encrypt_api_key("sk-e2e-conversation-tree")
-    except CryptoError as error:
-        raise RuntimeError(
-            "NEXUS_KEY_ENCRYPTION_KEY is required for branching E2E send coverage"
-        ) from error
-
-    key.encrypted_key = encrypted_key
-    key.key_nonce = nonce
-    key.master_key_version = version
-    key.key_fingerprint = fingerprint
-    key.status = "untested"
-    key.revoked_at = None
 
 
 def add_message(
@@ -89,7 +36,6 @@ def add_message(
     branch_anchor_kind: str = "none",
     branch_anchor: dict[str, object] | None = None,
     status: str = "complete",
-    model_id: UUID | None = None,
 ) -> Message:
     branch_root_message_id = None
     if role == "user" and parent_message_id is not None:
@@ -119,7 +65,6 @@ def add_message(
             ),
         },
         status=status,
-        model_id=model_id,
         parent_message_id=parent_message_id,
         branch_root_message_id=branch_root_message_id,
         branch_anchor_kind=branch_anchor_kind,
@@ -206,9 +151,6 @@ def seed_scroll(owner_user_id: UUID, message_count: int) -> dict[str, object]:
 def seed_branching(owner_user_id: UUID) -> dict[str, object]:
     session_factory = create_session_factory()
     with session_factory() as db:
-        model_id = openai_model_id(db)
-        ensure_send_key(db, owner_user_id)
-
         conversation = Conversation(
             id=uuid4(),
             owner_user_id=owner_user_id,
@@ -308,7 +250,6 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
             "",
             parent_message_id=running_user.id,
             status="pending",
-            model_id=model_id,
         )
         add_branch(db, conversation.id, running_user, "Running branch")
         db.add(
@@ -321,9 +262,8 @@ def seed_branching(owner_user_id: UUID) -> dict[str, object]:
                 idempotency_key=f"e2e-running-{conversation.id}",
                 payload_hash="e2e-running-branch",
                 status="running",
-                model_id=model_id,
-                reasoning="none",
-                key_mode="auto",
+                profile_id="balanced",
+                reasoning_option_id="medium",
             )
         )
 

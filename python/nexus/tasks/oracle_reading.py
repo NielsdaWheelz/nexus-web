@@ -5,7 +5,6 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.db.models import OracleReading
@@ -13,6 +12,7 @@ from nexus.errors import exception_error_detail
 from nexus.logging import get_logger
 from nexus.schemas.oracle import oracle_done_payload
 from nexus.services import run_kit
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.oracle import execute_reading
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -25,8 +25,8 @@ def oracle_reading_generate(reading_id: str) -> dict:
     reading_uuid = UUID(reading_id)
     logger.info("oracle_reading_started", reading_id=reading_id)
 
-    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
-        return await execute_reading(db, reading_id=reading_uuid, llm_router=router)
+    async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
+        return await execute_reading(db, reading_id=reading_uuid, runtime=runtime)
 
     def _on_worker_exception(db: Session, exc: Exception) -> dict:
         reading, failed_now = run_kit.fail_run_after_worker_exception(

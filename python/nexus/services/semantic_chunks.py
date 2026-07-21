@@ -10,19 +10,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
-from provider_runtime import ModelRuntime, ProviderApiKey
-from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-from provider_runtime.types import EmbeddingCall, ModelRef, RetryPolicy
+from provider_runtime import EmbeddingCall, Present, ProviderRuntime
 
 from nexus.config import Environment, get_settings
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.llm_catalog import configured_platform_key, is_provider_enabled
 from nexus.logging import get_logger
+from nexus.services.llm_credentials import embedding_credential
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
-# Embeddings are an external third-party API: retries.md gives these a budget
-# longer than infrastructure retries, kept well under the 300s worker lease.
-_EMBEDDING_PROVIDER_MAX_ATTEMPTS = 5
 logger = get_logger(__name__)
 
 
@@ -98,110 +93,53 @@ def build_deterministic_hash_embedding(text: str, *, dimensions: int) -> list[fl
     return [component / norm for component in vector]
 
 
-def _embedding_provider_error(error_code: ModelCallErrorCode) -> ApiErrorCode:
-    if error_code == ModelCallErrorCode.INVALID_KEY:
-        return ApiErrorCode.E_LLM_INVALID_KEY
-    if error_code == ModelCallErrorCode.RATE_LIMIT:
-        return ApiErrorCode.E_LLM_RATE_LIMIT
-    if error_code == ModelCallErrorCode.TIMEOUT:
-        return ApiErrorCode.E_LLM_TIMEOUT
-    if error_code == ModelCallErrorCode.MODEL_NOT_AVAILABLE:
-        return ApiErrorCode.E_MODEL_NOT_AVAILABLE
-    if error_code == ModelCallErrorCode.QUOTA_EXCEEDED:
-        return ApiErrorCode.E_LLM_QUOTA_EXCEEDED
-    if error_code in {ModelCallErrorCode.BAD_REQUEST, ModelCallErrorCode.CONTEXT_TOO_LARGE}:
-        return ApiErrorCode.E_LLM_BAD_REQUEST
-    return ApiErrorCode.E_LLM_PROVIDER_DOWN
-
-
 def _validate_embedding_vectors(
-    vectors: list[list[float]], *, dimensions: int, expected_count: int
+    vectors: tuple[tuple[float, ...], ...], *, dimensions: int, expected_count: int
 ) -> list[list[float]]:
     try:
         if len(vectors) != expected_count:
             raise ValueError("Embedding provider returned incomplete indexes")
-        return [_normalize_and_validate_vector(vector, dimensions=dimensions) for vector in vectors]
+        return [
+            _normalize_and_validate_vector(list(vector), dimensions=dimensions)
+            for vector in vectors
+        ]
     except (TypeError, ValueError) as exc:
         raise ApiError(
-            ApiErrorCode.E_LLM_PROVIDER_DOWN,
+            ApiErrorCode.E_APP_SEARCH_FAILED,
             "Embedding provider returned an invalid response.",
         ) from exc
 
 
-def _api_error_from_embedding_error(exc: ModelCallError) -> ApiError:
-    api_code = _embedding_provider_error(exc.error_code)
-    message = (
-        "Embedding provider returned an invalid response."
-        if _is_invalid_embedding_response_error(exc)
-        else "Embedding provider request failed."
-    )
-    return ApiError(api_code, message)
-
-
-def _is_invalid_embedding_response_error(exc: ModelCallError) -> bool:
-    return (
-        _embedding_provider_error(exc.error_code) == ApiErrorCode.E_LLM_PROVIDER_DOWN
-        and "embedding" in exc.message.lower()
-        and "response" in exc.message.lower()
-    )
-
-
 async def _embed_with_openai_async(texts: list[str], *, dimensions: int) -> list[list[float]]:
+    """Embed via the platform OpenAI credential.
+
+    ``NonGenerationCallFailed`` (transient-exhausted or oversize input) and
+    ``RuntimeDefect`` (missing platform key — a deployment invariant, not a
+    product-facing failure) propagate unwrapped; ``search.embedding`` is the
+    sole catcher of ``NonGenerationCallFailed`` for the lexical-fallback
+    classification (§ preserved). A malformed response is a hard failure.
+    """
     settings = get_settings()
-    if not is_provider_enabled("openai", settings):
-        raise ApiError(
-            ApiErrorCode.E_MODEL_NOT_AVAILABLE,
-            "OpenAI embeddings are disabled.",
-        )
-    api_key = configured_platform_key("openai", settings)
-    if not api_key:
-        raise ApiError(
-            ApiErrorCode.E_LLM_NO_KEY,
-            "OPENAI_API_KEY is required for transcript semantic embeddings.",
-        )
+    credential = embedding_credential(settings, "openai")
 
     vectors: list[list[float]] = []
     async with httpx.AsyncClient() as client:
-        runtime = ModelRuntime(
-            client,
-            enable_openai=settings.enable_openai,
-            enable_anthropic=False,
-            enable_gemini=False,
-            enable_openrouter=False,
-            enable_cloudflare=False,
-        )
+        runtime = ProviderRuntime(client)
         for start in range(0, len(texts), 64):
             batch = texts[start : start + 64]
             call = EmbeddingCall(
-                model=ModelRef(provider="openai", model=settings.transcript_embedding_model_openai),
-                inputs=batch,
-                dimensions=dimensions,
-                retry=RetryPolicy(
-                    max_attempts=_EMBEDDING_PROVIDER_MAX_ATTEMPTS,
-                    initial_delay_s=2.0,
-                    max_delay_s=30.0,
-                ),
+                model=settings.transcript_embedding_model_openai,
+                inputs=tuple(batch),
+                dimensions=Present(dimensions),
             )
-            try:
-                response = await runtime.embed(
-                    call,
-                    key=ProviderApiKey(api_key, source="platform"),
-                    timeout_s=int(settings.transcript_embedding_timeout_seconds),
+            response = await runtime.embed(call, credential=credential)
+            vectors.extend(
+                _validate_embedding_vectors(
+                    response.embeddings,
+                    dimensions=dimensions,
+                    expected_count=len(batch),
                 )
-                vectors.extend(
-                    _validate_embedding_vectors(
-                        response.embeddings,
-                        dimensions=dimensions,
-                        expected_count=len(batch),
-                    )
-                )
-            except ModelCallError as exc:
-                api_code = _embedding_provider_error(exc.error_code)
-                logger.warning(
-                    "embedding_provider_request_failed",
-                    error_code=api_code.value,
-                )
-                raise _api_error_from_embedding_error(exc) from exc
+            )
     return vectors
 
 

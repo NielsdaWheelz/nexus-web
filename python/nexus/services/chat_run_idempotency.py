@@ -21,9 +21,8 @@ logger = get_logger(__name__)
 
 def compute_payload_hash(
     content: str,
-    model_id: UUID,
-    reasoning: str,
-    key_mode: str,
+    profile_id: str,
+    reasoning_option_id: str,
     conversation_id: UUID,
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
@@ -47,46 +46,20 @@ def compute_payload_hash(
     requested_subject = requested_chat_subject.uri if requested_chat_subject is not None else None
     subject = chat_subject.uri if chat_subject is not None else None
     payload = (
-        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{model_id}|{reasoning}|"
-        f"{key_mode}|{requested_subject}|{subject}|{selection}|"
+        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{profile_id}|"
+        f"{reasoning_option_id}|{requested_subject}|{subject}|{selection}|"
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def compute_retry_payload_hash(
-    *,
-    failed_assistant_message_id: UUID,
-    source_run: ChatRun,
-    source_user_message: Message,
-) -> str:
-    payload = {
-        "operation": "chat_response_retry",
-        "failed_assistant_message_id": str(failed_assistant_message_id),
-        "source_run_id": str(source_run.id),
-        "source_conversation_id": str(source_run.conversation_id),
-        "source_user_message_id": str(source_user_message.id),
-        "source_user_parent_message_id": (
-            str(source_user_message.parent_message_id)
-            if source_user_message.parent_message_id is not None
-            else None
-        ),
-        "source_prompt_content": source_user_message.content,
-        "source_model_id": str(source_run.model_id),
-        "source_reasoning": source_run.reasoning,
-        "source_key_mode": source_run.key_mode,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def compute_resend_payload_hash(
+def compute_rerun_payload_hash(
     *,
     source_assistant_message_id: UUID,
     source_run: ChatRun,
     source_user_message: Message,
 ) -> str:
     payload = {
-        "operation": "chat_response_resend",
+        "operation": "chat_response_rerun",
         "source_assistant_message_id": str(source_assistant_message_id),
         "source_run_id": str(source_run.id),
         "source_conversation_id": str(source_run.conversation_id),
@@ -104,9 +77,8 @@ def compute_resend_payload_hash(
         "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
         "source_user_branch_anchor": source_user_message.branch_anchor or {},
         "source_prompt_content": source_user_message.content,
-        "source_model_id": str(source_run.model_id),
-        "source_reasoning": source_run.reasoning,
-        "source_key_mode": source_run.key_mode,
+        "source_profile_id": source_run.profile_id,
+        "source_reasoning_option_id": source_run.reasoning_option_id,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
