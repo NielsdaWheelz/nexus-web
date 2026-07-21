@@ -23,7 +23,7 @@ from provider_runtime.types import (
     ReasoningEffort,
     StructuredOutputSpec,
 )
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -71,23 +71,46 @@ class MetadataMergeResult:
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
 
+# Value constraints kept out of the emitted JSON schema (the canonical subset
+# carries no length/pattern keywords) and enforced by the field validators
+# below instead — behavior-identical to the former Field(...) / hand-written
+# schema constraints.
+_METADATA_STRING_MAX_LENGTHS = {
+    "title": 255,
+    "publisher": 255,
+    "description": 2000,
+    "published_date": 64,
+    "language": 32,
+}
+_METADATA_MAX_AUTHORS = 20
+_METADATA_MAX_AUTHOR_NAME_LENGTH = 255
+
+
+# Every field is required-nullable so model_json_schema() stays inside the
+# canonical structural subset (anyOf: [X, null] unions, required == all
+# properties, no value-constraint keywords). Length caps and the date/language
+# patterns live in the validators below, not the schema, because that subset
+# forbids range/length/pattern keywords outright.
 class MetadataEnrichmentOutput(BaseModel):
-    """Strict model-facing metadata contract."""
+    """Enriched bibliographic metadata for one media item. Use null for unknown fields."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    title: str | None = Field(max_length=255)
-    authors: list[str] | None = Field(max_length=20)
-    publisher: str | None = Field(max_length=255)
-    description: str | None = Field(max_length=2000)
-    published_date: str | None = Field(max_length=64)
-    language: str | None = Field(max_length=32)
+    title: str | None
+    authors: list[str] | None
+    publisher: str | None
+    description: str | None
+    published_date: str | None
+    language: str | None
 
     @field_validator("title", "publisher", "description", "published_date", "language")
     @classmethod
-    def _non_empty_string(cls, value: str | None) -> str | None:
+    def _non_empty_string(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
+        max_length = _METADATA_STRING_MAX_LENGTHS[str(info.field_name)]
+        if len(value) > max_length:
+            raise ValueError(f"{info.field_name} must be at most {max_length} characters")
         stripped = value.strip()
         if not stripped:
             raise ValueError("metadata string fields must be non-empty when present")
@@ -116,56 +139,29 @@ class MetadataEnrichmentOutput(BaseModel):
     def _valid_authors(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
+        if len(value) > _METADATA_MAX_AUTHORS:
+            raise ValueError(f"authors must have at most {_METADATA_MAX_AUTHORS} entries")
         stripped = [author.strip() for author in value]
         if not stripped or any(not author for author in stripped):
             raise ValueError("authors must be non-empty names")
+        if any(len(author) > _METADATA_MAX_AUTHOR_NAME_LENGTH for author in stripped):
+            raise ValueError(
+                f"author names must be at most {_METADATA_MAX_AUTHOR_NAME_LENGTH} characters"
+            )
         return stripped
 
 
 def metadata_structured_output_spec() -> StructuredOutputSpec:
-    """Return the schema requested from structured-output-capable providers."""
-    nullable_string = {"type": ["string", "null"]}
+    """Return the schema requested from structured-output-capable providers.
+
+    Derived from :class:`MetadataEnrichmentOutput` so the wire schema and the
+    decode contract have one owner; it conforms to the canonical structural
+    subset (rich value constraints run in the model's validators post-decode).
+    """
     return StructuredOutputSpec(
         name="media_metadata_enrichment",
         strict=True,
-        schema={
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "title",
-                "authors",
-                "publisher",
-                "description",
-                "published_date",
-                "language",
-            ],
-            "properties": {
-                "title": {**nullable_string, "maxLength": 255},
-                "authors": {
-                    "anyOf": [
-                        {
-                            "type": "array",
-                            "items": {"type": "string", "minLength": 1, "maxLength": 255},
-                            "minItems": 1,
-                            "maxItems": 20,
-                        },
-                        {"type": "null"},
-                    ]
-                },
-                "publisher": {**nullable_string, "maxLength": 255},
-                "description": {**nullable_string, "maxLength": 2000},
-                "published_date": {
-                    **nullable_string,
-                    "maxLength": 64,
-                    "pattern": r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$",
-                },
-                "language": {
-                    **nullable_string,
-                    "maxLength": 32,
-                    "pattern": r"^[a-z]{2}$",
-                },
-            },
-        },
+        schema=MetadataEnrichmentOutput.model_json_schema(),
     )
 
 

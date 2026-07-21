@@ -28,7 +28,7 @@ from uuid import UUID, uuid4
 from provider_runtime import ModelRuntime
 from provider_runtime.errors import ModelCallError
 from provider_runtime.types import ModelCall
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -645,7 +645,16 @@ class SynapseConnectionOut(BaseModel):
 
     candidate_index: int
     kind: Literal["context", "supports", "contradicts"]
-    rationale: str = Field(min_length=1, max_length=240)
+    rationale: str
+
+    @field_validator("rationale")
+    @classmethod
+    def _bounded_rationale(cls, value: str) -> str:
+        # Former Field(min_length=1, max_length=240) — kept out of the emitted
+        # JSON schema (canonical subset carries no length keywords).
+        if not 1 <= len(value) <= 240:
+            raise ValueError("rationale must be 1-240 characters")
+        return value
 
 
 class SynapseSynthesis(BaseModel):

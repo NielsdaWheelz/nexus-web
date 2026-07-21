@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from provider_runtime.types import ModelResponse
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -57,6 +58,7 @@ from nexus.services.resource_graph.schemas import (
 from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
 from nexus.services.synapse import (
+    SynapseConnectionOut,
     dismiss_synapse_edge,
     queue_synapse_scan,
     run_synapse_scan,
@@ -1322,3 +1324,28 @@ class TestSynapseRoutes:
                 select(ResourceEdge.id).where(ResourceEdge.id == edge_id)
             ).scalar_one_or_none()
             assert survivor is not None, "a rejected dismissal must not delete the user edge"
+
+
+# =============================================================================
+# SynapseConnectionOut.rationale bound (former Field(min_length=1, max_length=240),
+# now enforced by _bounded_rationale since the canonical JSON-Schema subset
+# forbids length keywords). Pure pydantic validation, no DB.
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_synapse_connection_rationale_at_240_chars_is_accepted() -> None:
+    connection = SynapseConnectionOut(candidate_index=0, kind="context", rationale="x" * 240)
+    assert connection.rationale == "x" * 240
+
+
+@pytest.mark.unit
+def test_synapse_connection_rationale_empty_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SynapseConnectionOut(candidate_index=0, kind="context", rationale="")
+
+
+@pytest.mark.unit
+def test_synapse_connection_rationale_at_241_chars_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SynapseConnectionOut(candidate_index=0, kind="context", rationale="x" * 241)

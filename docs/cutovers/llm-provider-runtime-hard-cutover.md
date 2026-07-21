@@ -1,970 +1,962 @@
 # LLM Provider Runtime Hard Cutover
 
-## Status
-
-Implementation tracker and hard-cutover contract for the provider runtime layer.
-The current cutover scope is `provider_runtime` plus Nexus. Additional
-consumers are not acceptance targets for this pass. This document supersedes
-the provider client assumption in
-`docs/cutovers/generation-run-harness-hard-cutover.md` while preserving that
-document's durable generation harness: worker-owned runs, server-side key
-resolution, provider-call ledger rows for generation paths, persisted stream
-events, and surface-owned domain finalization.
-
-Current state as of 2026-06-12:
-
-- `llm-calling` has been reworked into the `provider_runtime` package with
-  first-class `catalog.py`, `lowering.py`, `runtime.py`, `testing.py`, and
-  `usage.py`; OpenAI Responses, Anthropic Messages, Gemini, OpenRouter,
-  Cloudflare OpenAI-compatible chat, OpenAI/OpenAI-compatible embeddings,
-  normalized errors, bounded runtime retries, stream retry-before-first-chunk
-  only, usage/request-id capture, key probes, advisory cost policy, integer USD
-  scripted runtimes, verified catalog pricing with provenance and
-  fail-closed context thresholds, and typed opaque provider-artifact replay
-  carriers.
-- Nexus generation paths use `provider_runtime` for chat, oracle, library
-  intelligence, media-unit synthesis, metadata enrichment, key probes, and
-  transcript embeddings. Nexus sends high-level cache/reasoning/structured
-  intent only; provider capability validation and cache lowering live in
-  `provider_runtime.lowering`. The remaining exception is that transcript
-  embeddings are not yet written to `llm_calls`; they are indexing
-  infrastructure calls, not generation-owner rows.
-- `python/nexus/services/podcasts/deepgram_adapter.py` remains an explicitly
-  documented non-LLM modality exception. It owns podcast-grade Deepgram
-  diarization fallback and RSS/fixture normalization, is live-gated through
-  `make test-live-providers`, and must move behind `provider_runtime` only if
-  the shared package grows a first-class podcast transcription port that can
-  preserve those semantics.
-- Additional consumer ports are explicitly deferred; this Nexus/provider-runtime
-  pass does not claim their adapter, event, import-removal, or live-provider
-  proof.
-- Nexus now pins `provider-runtime` to the pushed
-  `NielsdaWheelz/llm-calling` git revision
-  `16ab8457e7730cc1dd4e3483e91fbcd2b971dca5`; the sibling editable path is not
-  used by production app code.
-- The provider-runtime live matrix now passes through the Nexus pin for OpenAI,
-  Anthropic, Gemini, OpenRouter, Cloudflare, embeddings, and OpenAI
-  transcription. Nexus-owned Podcast Index/Deepgram, YouTube transcript, and X
-  live proofs are non-LLM media gates outside the provider-runtime acceptance
-  target. YouTube transcript egress remains optional because datacenter hosts
-  may require an operator-owned transcript proxy. Runtime ingest fails closed as
-  `E_TRANSCRIPT_UNAVAILABLE` when the proxy is absent or blocked.
-
-Repos involved:
-
-- `nexus-web`: durable chat/generation harness, `/models` catalog API, BYOK,
-  ledger, frontend model settings.
-- `llm-calling`: provider-behavior reference implementation, goldens, and
-  type vocabulary to fold forward. This existing repo is renamed/reworked in
-  place as the shared runtime repo.
-- Shared package: `provider_runtime`, a DB-free Python provider runtime that
-  replaces `llm-calling`.
-
-Hard cutover means no compatibility layer, no dual provider stacks, no legacy
-fallback flags, and no provider-call path that bypasses the new runtime.
-
-Second-pass survey verdict:
-
-- `llm-calling` is valuable as provider-behavior evidence and fixture material,
-  not as the final architecture. Keep its provider-specific request/response
-  semantics, error taxonomy, and terminal-stream invariants; rewrite the
-  framework, transport, retry, catalog, and SSE/parser edges.
-- Nexus owns the production harness: API-key resolution, durable run
-  idempotency, `llm_calls`, budget accounting, SSE, citations, prompts,
-  search/resource tools, and all DB writes.
-- Raw HTTP/provider adapters are the current substrate because they preserve
-  request IDs, usage fields, stream terminal semantics, and opaque reasoning /
-  thinking artifacts exactly. Pydantic AI remains only a possible future
-  implementation detail for routes whose artifact-fidelity tests pass.
-- LiteLLM is a later optional gateway/control-plane candidate for virtual keys,
-  budgets, proxy routing, rate limits, and response caching. It is not the
-  source of truth for provider reasoning/tool-continuation semantics.
-
-Implementation decisions for the first build:
-
-- Rework `/home/niels/src/personal/llm-calling` in place. The Python
-  import/package name is `provider_runtime`, and Nexus consumes it through an
-  immutable git revision rather than a sibling editable path.
-- Implement the shared runtime first, then port Nexus against the same pinned
-  package revision. Additional consumers are out of scope for this pass.
-- First provider scope is OpenAI Responses, Anthropic Messages, Gemini,
-  OpenRouter, Cloudflare/OpenAI-compatible, and embeddings.
-- Groq and other future routes are deferred until they have an explicit catalog
-  entry, adapter support, tests, and a consuming app requirement.
-- Use raw provider adapters by default. Higher-level library adapters are allowed
-  only after artifact-fidelity tests prove the route preserves exact replay,
-  streaming terminal semantics, request IDs, and provider-specific usage/error
-  data.
-- Remove old `llm-calling` imports, duplicated lowerers, stale dependency pins,
-  and provider-bypass paths as part of the cutover. Compatibility shims are not
-  required.
-- Unit, golden, fake-runtime, static, typecheck, app integration, and the
-  provider-runtime live matrix now gate the cutover. Nexus-owned media live
-  proofs remain optional release evidence and require their own provider
-  credentials or egress paths.
-
-## Current Failure
-
-Prod chat run `82d85414-6106-4c46-a09c-c82224f4cd99` failed before reaching
-OpenAI. Nexus emitted a cached OpenAI turn with `prompt_cache_key=None`, and
-`llm-calling` raised:
-
-```text
-E_LLM_BAD_REQUEST: OpenAI prompt cache turns require prompt_cache_key
-```
-
-The defect was structural:
-
-- prompt assembly marked a stable system block cacheable;
-- request construction lowered that cache intent directly to `Turn.cache_ttl`;
-- provider capabilities did not decide whether cache TTL was legal or whether a
-  provider cache key was required.
-
-The same latent issue existed in structured synthesis.
-
-## Goals
-
-- Restore prod chat for OpenAI reasoning models.
-- Make provider/model capabilities server-owned truth.
-- Make `/models` the complete frontend model-selection contract.
-- Keep Nexus durable generation lifecycle intact.
-- Replace ad hoc provider wire handling with a shared typed provider runtime.
-- Normalize usage, cache tokens, reasoning tokens, request IDs, retries, and
-  typed errors once.
-- Preserve provider reasoning artifacts exactly while keeping them opaque.
-- Add invariant and live-provider gates that prove provider behavior instead of
-  relying on catalog prose.
-
-## Non-Goals
-
-- Do not move Nexus chat persistence, SSE, citations, search tools, or branch
-  logic into the shared package.
-- Do not move product prompts, memory, proactivity, approvals, or capability
-  policy from any consuming app into the shared package.
-- Do not introduce LangChain/LangGraph-style orchestration.
-- Do not use Pydantic AI or LiteLLM fallback layers. Do not stack hidden
-  provider SDK retries with runtime retries; `provider_runtime` owns bounded
-  provider retries, and Nexus job retries own durable re-execution only.
-- Do not preserve `llm-calling` imports after the shared runtime cutover.
-
-## Target Behavior
-
-User-visible behavior:
-
-- Chat send works for every model returned by `/models`.
-- The model settings UI only offers server-authorized providers, models,
-  reasoning modes, and key modes.
-- A model switch cannot select a reasoning mode unsupported by that model.
-- BYOK-only mode only offers models usable through a user's key.
-- Cloudflare is platform-only in Nexus until the credential contract carries
-  both token and account id; it remains a runtime/model provider.
-- Stream disconnects do not cancel durable chat work.
-- Provider failures surface as typed run/message errors with retry affordances
-  only where product semantics allow retry.
-
-Operator-visible behavior:
-
-- Every generation provider operation produces exactly one `llm_calls` row.
-  Provider-runtime retries are captured in that row's bounded attempt trace
-  rather than split into separate durable ledger rows. Transcript embeddings use
-  `provider_runtime.embed()` but are not yet ledgered.
-- Cache read/write tokens and reasoning tokens are recorded using normalized
-  fields.
-- Provider request IDs are retained when available, including provider-error and
-  key-probe paths.
-- Prompt cache hit behavior can be inspected through usage and latency.
-- Catalog/capability mismatches are defects, not product states.
-- `chat_runs.reasoning` and `chat_runs.key_mode` are constrained to the
-  explicit post-cutover request vocabularies.
-
-Provider behavior:
-
-- OpenAI cached turns always have a deterministic `prompt_cache_key`.
-- Anthropic cache TTL stays on cacheable content blocks and never gets an
-  OpenAI cache key.
-- Providers without implemented cache support receive no cache TTL payload.
-  OpenRouter is currently in this category until provider-specific cache routing
-  is implemented and tested.
-- OpenAI encrypted reasoning, Anthropic thinking/redacted thinking, and Gemini
-  thought signatures are replayed exactly when required for tool continuation.
-- Hidden reasoning artifacts are never parsed, logged, rendered, or persisted as
-  product data.
-
-## Final Architecture
-
-```text
-Nexus surface code
-  prompts / tools / run persistence / citations / finalization
-        |
-        v
-Nexus LLM harness
-  resolve_api_key -> provider runtime -> llm_ledger -> run_kit terminal state
-        |
-        v
-provider_runtime
-  catalog -> validation -> lowering -> runtime retry/transport -> raw provider adapters
-```
-
-The shared runtime is a provider adapter, not an application service. It knows
-how to call models. It does not know why Nexus or a future consumer is calling
-them.
-
-## Source Repo Extraction Boundaries
-
-Move from `llm-calling`:
-
-- normalized request/response vocabulary;
-- provider body golden tests for OpenAI Responses, Anthropic Messages, Gemini
-  GenerateContent, OpenRouter, Cloudflare, and OpenAI-compatible routes;
-- provider parsing for usage, request IDs, status/incomplete details, reasoning
-  tokens, cache tokens, encrypted reasoning, thinking blocks, thought
-  signatures, function calls, and structured JSON;
-- terminal-stream invariant: usage/status/incomplete details only appear on the
-  terminal chunk.
-
-Do not keep from `llm-calling`:
-
-- router/client lifecycle as the final API;
-- lack of retry/idempotency controls;
-- shallow error objects;
-- provider capability policy spread across adapters;
-- unsupported structured streaming semantics;
-- any behavior that treats provider-specific cache/reasoning knobs as caller
-  literals.
-
-Move from Nexus:
-
-- request lowering for cache/reasoning/structured-output/provider extras,
-  duplicate capability literals, normalized usage parsing, model catalog
-  capability truth, fake provider runtime patterns, and provider negative-gate
-  scans.
-
-Keep in Nexus:
-
-- key resolution, BYOK/platform policy, entitlements, budgets, `ChatRun`, job
-  envelopes, `llm_calls`, run terminal writes, SSE, search/resource tools,
-  citations, prompt assembly, domain schemas, repair/finalization, and all DB
-  ownership. Transcript embeddings now use `provider_runtime.embed()` but remain
-  an explicit non-ledgered indexing exception for this cutover.
-
-## Shared Package API
-
-Package name: `provider_runtime`.
-
-The package is importable by Nexus and future projects. It has no DB
-dependency, no product prompt dependency, no web-framework dependency, and no
-knowledge of app persistence. Only symbols exported from
-`provider_runtime.__init__` are public after `1.0`; adapter internals remain
-private.
-
-Current public API shape:
-
-```python
-runtime = ModelRuntime(
-    http_client,
-    catalog=DEFAULT_CATALOG,
-    base_urls=ProviderBaseUrls(...),
-    enable_openai=True,
-    enable_anthropic=True,
-    enable_gemini=True,
-    enable_openrouter=True,
-    enable_cloudflare=True,
-)
-
-call = ModelCall(
-    model=ModelRef(provider="openrouter", model="moonshotai/kimi-k2.6", route="openrouter"),
-    messages=[...],
-    tools=[...],
-    tool_choice="required",
-    reasoning=ReasoningConfig(effort="high"),
-    max_output_tokens=12_000,
-    retry=RetryPolicy(max_attempts=2),
-)
-
-response = await runtime.generate(call, key=provider_key)
-async for chunk in runtime.stream(call, key=provider_key):
-    ...
-
-embedding = await runtime.embed(embedding_call, key=provider_key)
-transcription = await runtime.transcribe(transcription_call, key=provider_key)
-probe = await runtime.probe_key(provider="openai", key=provider_key)
-capabilities = runtime.capabilities(ModelRef(provider="openai", model="gpt-5.5"))
-```
-
-Core types:
-
-- `ProviderName`: closed vocabulary for this cutover: `openai`, `anthropic`,
-  `gemini`, `openrouter`, `cloudflare`; future providers are added explicitly.
-- `ModelRef`: provider, provider model id, optional route id. Route is distinct
-  from provider so a model can run through OpenRouter, a direct SDK, or an
-  OpenAI-compatible gateway without changing product model identity.
-- `ProviderApiKey`: opaque key plus source metadata such as `platform` or
-  `byok`. It never exposes raw key text through logs/errors/reprs.
-- `ReasoningConfig`: canonical effort enum `none`, `minimal`, `low`, `medium`,
-  `high`, `max`, optional `budget_tokens`, and provider-native passthrough only
-  inside the adapter boundary.
-- `ModelMessage`: role, content parts, tool calls, tool results, provider
-  artifacts, and per-turn cache TTL intent. It can carry text and binary
-  content parts; route-specific multimodal lowering for future consumers is a
-  separate proof item.
-- `ToolSpec`, `ToolCall`, `ToolResult`: strict tool contract.
-- `ToolCall.arguments`: parsed JSON only. If a provider returns repairable
-  argument text, the runtime returns `argument_status="repaired"`; unrepaired
-  malformed arguments raise `ModelCallError(code="tool_arguments_invalid")`.
-- `ProviderArtifact`: opaque provider reasoning/signature item with provider,
-  model, purpose, replay payload, and retention policy metadata. It is never
-  rendered, logged, or stringified.
-- `StructuredOutputSpec`: strict JSON/schema output request.
-- `ModelCall`: model ref, messages, tools, tool choice, structured output,
-  max output tokens, temperature, reasoning, cache intent, and retry policy.
-  Timeout is supplied at the runtime method boundary.
-- `ModelChunk`: streamed delta, tool call, provider artifact, provider request
-  id, and terminal usage/status. Usage/status/incomplete details are terminal
-  chunk only.
-- `ModelResponse`: text, tool calls, structured output, provider artifacts,
-  usage, request id, status/incomplete details.
-- `TokenUsage`: input, output, total, reasoning, cache creation, cache read,
-  cached input, provider raw usage.
-- `TranscriptionCall` and `TranscriptionResponse`: shared OpenAI transcription
-  request/response types. Nexus podcast Deepgram and YouTube transcript
-  acquisition remain documented non-LLM media-provider ports until a shared
-  transcription API preserves those modality-specific semantics.
-- `CostBreakdown`: input/output/cache/reasoning cost from catalog pricing when
-  the catalog carries verified price values.
-- `ModelCallError`: closed error code, provider, retryability, HTTP status,
-  `Retry-After`, provider request id, sanitized detail, bounded safe body
-  snippet, and retry attempt trace.
-- `RetryPolicy`: max attempts, deadline, retryable error classes, delay bounds,
-  and jitter. Stream retry safety is enforced by the runtime: retries stop once
-  visible streamed output, a tool call, or another side-effect-bearing chunk has
-  been emitted.
-
-Package modules:
-
-- `types.py`: public dataclasses/protocols and invariants.
-- `catalog.py`: model capabilities, context windows, prices, reasoning modes,
-  cache support, routes, key-probe model, tool/streaming/structured-output
-  support.
-- `lowering.py`: provider-neutral validation and high-level lowering for cache
-  intent. Provider-native request bodies for reasoning, tool choice, structured
-  output, OpenAI-compatible extras, and routing settings are built inside the
-  raw provider adapters after this shared validation step.
-- `runtime.py`: `generate`, `stream`, `embed`, key probes, timeout/retry
-  envelope.
-- provider adapters: flat raw `httpx` modules for the current provider set;
-  Pydantic AI remains a future fidelity spike, not current substrate.
-- transport/retry behavior currently lives in the runtime and adapters: timeout,
-  request id capture, bounded retry, safe error classification, and injected
-  `httpx.AsyncClient`.
-- `retry.py`: future extraction target for richer retry traces. Cross-model
-  fallback is disabled and must not be automatic across materially different
-  model policies.
-- `usage.py`: normalized usage and cost fields.
-- `errors.py`: typed error mapping.
-- `testing.py`: `ScriptedRuntime`, `NoNetworkRuntime`, captured runtime calls,
-  fake streams, fake embeddings, fake transcriptions, and fake key probes for
-  app tests. Provider fixture and invariant tests live in the package test suite
-  beside the adapters.
-
-Public call semantics:
-
-- Runtime validation happens before provider I/O.
-- Unsupported required capabilities raise typed errors before provider I/O.
-- Unsupported optional optimizations, such as cache on a route without cache
-  support, are stripped during lowering and represented in the request plan for
-  tests/diagnostics.
-- Provider-native payloads are created only inside provider adapters after
-  shared validation/lowering.
-- Normalized response fields are stable even when raw provider payloads differ.
-- Explicitly modeled raw provider artifacts and raw usage fragments are
-  available to callers through opaque fields, not hidden globals.
-
-## Provider Capability Contract
-
-Capabilities are per model, not merely per provider. Provider-level defaults are
-allowed only as defaults that each model can override. The authoritative
-capability catalog is `provider_runtime.catalog.DEFAULT_CATALOG`; Nexus
-`llm_catalog.py` is now an app overlay for display names, model tier/order, DB
-availability, and key-mode overlays.
-
-Required fields:
-
-- `provider`
-- `model`
-- `routes`
-- `default_route`
-- `key_probe_model`
-- `reasoning_modes`
-- `reasoning_budget_tokens`
-- `max_context_tokens`
-- `max_output_tokens`
-- `prompt_cache.mode`: `none`, `turn_ttl`, `keyed_ttl`, provider-specific later
-- `prompt_cache.ttl_options`
-- `prompt_cache.requires_key`
-- `prompt_cache.affinity_hints`
-- `streaming`
-- `tool_calling`
-- `tool_choice_required`
-- `structured_output`
-- `structured_output_streaming`
-- `reasoning_continuation`
-- `multimodal_input`
-- `embeddings`
-- `transcription`
-- `provider_request_id`
-- `usage.input_output_tokens`
-- `usage.reasoning_tokens`
-- `usage.cache_read_write_tokens`
-- `raw_artifact_support`
-- `retryable_errors`
-- `default_timeout_s`
-- `max_timeout_s`
-- `price_input`, `price_output`, `price_cached_input`, `price_reasoning`
-
-The catalog powers:
-
-- backend request validation;
-- `/models` frontend options through a UI-safe projection;
-- provider lowering;
-- live-provider matrix selection;
-- cost estimates and ledger attribution.
-
-The catalog is not allowed to be provider-only. Model-specific exceptions are
-normal for reasoning, cache, context windows, structured output, and
-OpenRouter-routed models. Provider defaults are only a way to reduce duplicated
-metadata before per-model overrides are applied.
-
-## Catalog And `/models`
-
-DB `models` rows remain availability/id/cost storage. Code catalog remains the
-curated capability source. The `/models` response is the complete UI contract,
-not a raw dump of every provider-runtime catalog field. Internal retry,
-pricing, timeout, usage-provenance, route, and opaque-artifact fields stay
-backend-owned; `/models` exposes only the fields the browser needs to render
-and submit valid chat choices:
-
-- ordered models;
-- provider/display names;
-- model tier;
-- `provider_rank`, `model_rank`, `is_default`;
-- `reasoning_modes`;
-- `available_via`, `available_key_modes`;
-- max context;
-- nested capabilities.
-
-Frontend rules:
-
-- no hardcoded chat provider order;
-- no client-side reasoning normalization;
-- no client-side default model policy;
-- no rendering of choices missing from `/models`.
-
-## Prompt Cache Policy
-
-Prompt cache is represented as high-level intent before provider lowering.
+**Status:** SPECIFICATION · 2026-07-20
+**Open design questions:** none
+**Cutover prerequisites:** explicit Fable 30-day-retention acceptance and paid
+OpenRouter pinned-endpoint cache certification
+**Type:** hard cutover — one branch, no legacy API, compatibility shim, silent
+fallback, dual read/write path, or old model lane.
+
+This is the sole cutover contract for `provider_runtime` and Nexus LLM
+execution. It replaces the previous contents of this file. It preserves the
+durable run and streaming contracts owned by
+[`generation-run-harness-hard-cutover.md`](generation-run-harness-hard-cutover.md),
+[`sota-chat-streaming-hard-cutover.md`](sota-chat-streaming-hard-cutover.md), and
+[`chat-subsystem-consolidation-hard-cutover.md`](chat-subsystem-consolidation-hard-cutover.md).
+
+## 1. North star
+
+Nexus expresses a product profile and prompt intent. The shared runtime turns
+that intent into one immutable, provider-native request. The exact same plan
+drives transport, retry, accounting, and diagnostics. Provider mechanics do not
+control Nexus behavior outside the profile registry and operational ledger.
+
+Target behavior:
+
+- Chat offers one profile picker and one reasoning picker; no provider or key
+  picker.
+- Every offered profile independently supports the real Nexus system prompt,
+  all tools, streaming, continuation, strict structured output, and prompt
+  caching.
+- Direct OpenAI, Anthropic, Gemini, and Moonshot/Kimi routes are primary.
+- OpenRouter is a certified operator route, never a user-visible duplicate or
+  automatic fallback.
+- Sampling is provider-default and not a product setting.
+- A failure is attributed to the layer that detected it. Local defects are not
+  mislabeled as provider rejection or outage.
+- A failed assistant turn retains valid partial model text and renders exactly
+  one failure card with at most one context-correct action. A Fable refusal is
+  the sole exception: Anthropic declares its partial output incomplete, so the
+  terminal fold discards it.
+- Every generation attempt gets an id and committed ledger row before planning,
+  then exactly one durable terminal outcome.
+
+## 2. 80/20 boundary
+
+### In scope
+
+- `provider_runtime` generation types, catalog, planner, codecs, transport,
+  retries, usage, errors, and live certification.
+- Nexus product profiles, platform credentials, execution/ledger boundary,
+  chat request API, run persistence, failure UX, and all current generation
+  owners.
+- Direct GPT-5.6 Luna/Terra/Sol, Claude Sonnet 5/Fable 5, Gemini 3.5 Flash,
+  Kimi K3, one constrained OpenRouter route, and every supported reasoning
+  level listed in §4.
+- Provider-native prompt-prefix caching for every active generation profile.
+- Removal of stale models, Cloudflare LLM support, BYOK, duplicate catalogs,
+  duplicate rerun paths, and broad error prose.
+
+### Must remain
+
+- Durable `ChatRun`, worker-owned execution, persisted run events, reconnectable
+  SSE, cancellation, tool execution, citations, trust trails, and app
+  idempotency.
+- Surface-owned prompt assembly, domain validation, result persistence, and
+  output schemas.
+- `llm_calls` as Nexus's operator flight recorder and cost ledger.
+- Direct OpenAI embedding and transcription contracts. Prompt caching does not
+  apply to these non-generation operations.
+- The monthly platform token cap and shared billing/entitlement services.
+- Non-LLM provider ports such as Deepgram, Brave, YouTube, and Podcast Index.
+
+### Non-goals
+
+- No dynamic router, model marketplace, automatic optimizer, provider fallback,
+  multi-tenant policy engine, or provider health control plane.
+- No OpenRouter response cache; chat outputs and tool calls are not reusable
+  application responses.
+- No provider-stored conversation cursor (`previous_response_id`, Gemini
+  stateful interactions, or equivalent).
+- No unified wire protocol. OpenAI Responses, Anthropic Messages, Gemini
+  `generateContent`, and Moonshot/OpenRouter Chat Completions remain distinct.
+- No chat transport, event grammar, tool, citation, retrieval, or prompt rewrite.
+- No generalized sampling controls, reasoning token budgets, schema repair, or
+  malformed-tool-argument repair.
+- No production hotfix lane. The cutover itself is the fix.
+
+## 3. Verified problems and consolidation targets
+
+| Current fact | Final owner/action |
+|---|---|
+| `ModelCall.prompt_cache_key` is hidden `init=False` state; cache lowering injects it, then schema normalization reconstructs the call and loses it | Delete hidden state and `lowering.py`; construct one complete finalized plan |
+| Nexus and the ledger can lower the same request again | Only `ProviderPlanner` finalizes; transport and ledger consume its plan facts |
+| Chat hard-codes `temperature=0.7`; Kimi and Sonnet 5 reject or constrain sampling | Remove sampling from Nexus and public runtime intent; omit native fields |
+| `max` is rewritten to OpenAI `xhigh`; `xhigh` is absent from the shared type | Preserve exact, per-model reasoning levels |
+| OpenRouter inherits a provider-branching generic OpenAI-compatible client and can silently route/fallback | Dedicated codec; one pinned upstream; fallbacks off |
+| Unsupported cache controls and schema keywords can be stripped | Validate once and fail before network; never weaken intent |
+| `tool_schema.py` force-adds required fields and nullable unions; Gemini strips schema keywords | Replace mutation with one validated canonical schema type; migrate every schema author before deleting the normalizer |
+| Runtime catalog, Nexus `llm_catalog.py`, DB `models`, Pydantic, DB checks, and TypeScript repeat provider/model/reasoning truth | Runtime contract + Nexus profile registry only |
+| DB `models` cost/context fields have no live owner; UUIDs exist chiefly to select/join chat | Snapshot exact resolved facts on runs; drop `models` |
+| BYOK/key-mode/provider-enable policy spans API, DB, services, config, and UI | Platform credentials only; drop the entire BYOK/key-mode lane |
+| Background model literals are spread across Oracle, artifacts, media, Synapse, Dawn, and enrichment | One operation-to-profile policy registry |
+| Backend failure prose, `MessageRow`, `services/conversations.py`, global feedback copy, and retry/resend paths disagree | Run-owned structured failure + one exhaustive mapper/card + one rerun route |
+| Dawn Write can return after a failed call without committing its ledger row | `llm_execution` owns durable start and terminalization for every call |
+
+## 4. Final product portfolio
+
+`provider_runtime.catalog` owns exact model contracts. Nexus
+`llm_profiles.py` owns only product labels, ordering, operation eligibility, and
+the mapping to a certified runtime target. Profiles are validated at startup.
+
+| Profile id | Display | Runtime target | Reasoning options | Default | Cache |
+|---|---|---|---|---|---|
+| `fast` | Fast · Luna | `openai/gpt-5.6-luna` | `none, low, medium, high, xhigh, max` | `low` | OpenAI explicit prefix, 30m |
+| `balanced` | Balanced · Terra | `openai/gpt-5.6-terra` | `none, low, medium, high, xhigh, max` | `medium` | OpenAI explicit prefix, 30m |
+| `deep` | Deep · Sol | `openai/gpt-5.6-sol` | `none, low, medium, high, xhigh, max` | `high` | OpenAI explicit prefix, 30m |
+| `claude` | Claude · Sonnet 5 | `anthropic/claude-sonnet-5` | `low, medium, high, xhigh, max` | `medium` | Anthropic explicit stable prefix, 5m |
+| `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | `low, medium, high, xhigh, max` | `high` | Anthropic explicit stable prefix, 5m |
+| `gemini` | Gemini · 3.5 Flash | `gemini/gemini-3.5-flash` | `minimal, low, medium, high` | `medium` | Gemini implicit prefix |
+| `kimi` | Kimi · K3 | `moonshot/kimi-k3` | `low, high, max` | `high` | Moonshot automatic prefix |
 
 Rules:
 
-- Static prompt content is placed before dynamic/user content.
-- Nexus marks cacheable prompt turns with high-level `ModelMessage.cache_ttl`
-  only. It does not construct provider cache payloads or provider cache keys.
-- OpenAI cache keys are deterministically derived inside
-  `provider_runtime.lowering` from provider, model, and cacheable message
-  identity. They are provider-runtime routing hints, not app persistence keys.
-- OpenAI receives `prompt_cache_key` whenever any turn has cache TTL.
-- Anthropic receives cache TTL block markers and no cache key.
-- OpenRouter receives no cache TTL in the current implementation. Provider-
-  supported cache controls, routing affinity, and optional session/provider
-  preferences are future work and require runtime lowering plus live tests.
-- Gemini/Cloudflare receive no cache TTL until their runtime implementation
-  supports a cache contract.
-- Unsupported cache intent is stripped when it is an optimization; it is a typed
-  error only when the surface declares cache support mandatory for correctness.
-- Cache usage metrics are normalized into ledger cache write/read/cached fields.
-- Whole-transcript response caching is not the default chat optimization. The
-  runtime optimizes stable prompt prefixes first; deterministic response caching
-  can be a separate route-level feature for non-streaming, side-effect-free,
-  idempotent calls.
+- `balanced` is the default chat profile.
+- Every reasoning option is explicit. Provider defaults are catalog facts, not
+  selectable product behavior.
+- Claude Haiku, Opus, Gemini previews, old GPT/Claude/Kimi rows, Cloudflare, and
+  duplicate OpenRouter model rows are removed. Luna already covers the cheap
+  tier; another adapter mode is not worth its verification surface.
+- Final deployed API and worker startup require `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `MOONSHOT_API_KEY`. Missing or
+  malformed platform configuration is a startup error; it never changes the
+  product portfolio. `OPENROUTER_API_KEY` is required only by the separate
+  operator certification command because no product owner routes through it.
+- Final cutover also requires an explicit RFC 3339 deployment assertion in
+  `NEXUS_FABLE_RETENTION_ACCEPTED_AT`. Fable requires 30-day retention and is
+  not ZDR-eligible. This records informed acceptance; it is not an availability
+  toggle, and Nexus does not build a content classifier.
+- OpenRouter has one hidden `moonshotai/kimi-k3` operator candidate, pinned to
+  endpoint `moonshotai/int4`; the catalog records canonical revision
+  `moonshotai/kimi-k3-20260715`. It is absent from `/llm-profiles` and cannot be
+  selected by chat. It becomes a usable operator target only after the release
+  certification proves `low | high | max`, the pinned upstream, and a billed
+  cache read. Current endpoint metadata does not claim implicit caching, so a
+  successful ordinary call is not certification.
+- Kimi K3's `low | high | max` effort contract is too recent to treat as a
+  static remembered fact. Every release certification rechecks the official
+  source and paid direct/OpenRouter wire behavior; drift fails the cutover.
 
-## Reasoning And Tool Continuation
+Background policy:
 
-Opaque provider artifacts:
+| Operation | Profile |
+|---|---|
+| Oracle, conversation distillate, media summary, metadata enrichment, Synapse | `fast` |
+| Library dossier, Dawn Write | `balanced` |
+| Chat | user-selected active profile |
 
-- OpenAI Responses reasoning encrypted content;
-- Anthropic thinking and redacted thinking blocks;
-- Gemini thought signatures.
+No generation owner contains a raw provider, model, route, or reasoning literal.
+
+## 5. Capability contract
+
+Use separate `ChatModelContract`, `EmbeddingContract`, and
+`TranscriptionContract` types. Do not model unrelated modalities as a boolean
+soup.
+
+Every `ChatModelContract` guarantees the Nexus baseline:
+
+- streamed final text;
+- `auto | none` tool choice and stateless tool continuation;
+- strict JSON output for non-tool calls;
+- a declared prompt-cache strategy;
+- normalized token/cache/reasoning usage and request correlation;
+- a closed continuation codec and provider-response decoder.
+
+`FinalizedProviderRequest` replaces only the runtime input. The built
+`ModelStreamEvent` output union remains authoritative: typed text, tool,
+continuation-artifact, usage, and terminal events. A modeled stream has exactly
+one terminal event. A defect is not a terminal variant: it interrupts the
+stream and is re-raised/reported by the generation-run harness. This supersedes
+any reading of the streaming cutover that converts a defect into
+`ModelCallError`.
+
+It declares only model-varying facts:
+
+```text
+ChatModelContract {
+  target: ProviderTarget
+  protocol: openai_responses | anthropic_messages |
+            gemini_generate_content | moonshot_chat | openrouter_chat
+  context_limit, output_limit
+  reasoning: {levels, provider_default, native_mapping}
+  cache: CacheContract
+  continuation_codec
+  strict_schema_dialect
+  privacy: {retention, zdr_eligible}
+  pricing, source_urls, verified_at, certification
+}
+```
 
 Rules:
 
-- Capture artifacts from provider streams/responses.
-- Store them only in the in-memory continuation turn for the active provider
-  loop by default.
-- If a future provider contract requires cross-process replay, retention must be
-  explicit: encrypted durable store, bounded TTL, redacted operational logs, and
-  app-owned data-classification approval.
-- Replay them exactly as received.
-- Never parse, transform, log, render, or summarize hidden reasoning artifacts.
-- Persist only sanitized metadata: provider, model, usage counts, request IDs,
-  status, and typed error data.
+- A model missing any baseline capability is not a chat model and cannot enter a
+  profile.
+- Tools plus strict structured output in one request are rejected. Nexus does
+  not need that cross-product.
+- `CanonicalTool.parameters` and `StrictJsonOutput.schema` accept only a
+  validated `CanonicalJsonSchema`; arbitrary dictionaries cannot reach a
+  codec.
+- Catalog construction rejects duplicate targets, duplicate profile mappings,
+  unsupported reasoning mappings, unpriced selectable routes, and stale source
+  verification.
 
-Continuation writers are provider-specific:
+### Canonical JSON Schema subset
 
-- OpenAI Responses: replay encrypted reasoning items and function-call outputs
-  without adopting `previous_response_id` as a server conversation cursor.
-- Anthropic Messages: replay thinking/redacted-thinking signatures only in the
-  provider-supported position for the active tool loop.
-- Gemini GenerateContent: replay thought signatures exactly with the content
-  parts that require them.
-- OpenRouter/OpenAI-compatible routes: preserve reasoning blocks/details and
-  provider extras without assuming OpenAI Responses semantics.
+`CanonicalJsonSchema` uses JSON Schema 2020-12 meanings but admits only this
+closed structural subset:
 
-## Cost, Usage, And Ledger
+- the document root is an object schema and may contain one root `$defs` map;
+- an object node has `type="object"`, finite `properties`, `required` equal to
+  exactly every property name, and `additionalProperties=false`;
+- an array node has `type="array"` and one homogeneous `items` schema;
+- a scalar node has `type="string" | "number" | "integer" | "boolean"` and
+  may have one non-empty, type-compatible `enum`; `{"type":"null"}` is the
+  null node;
+- a semantically optional value is still a required object property and is
+  expressed only as `anyOf: [NonNullNode, {"type":"null"}]`; no other union
+  is valid;
+- `title` and `description` are the only annotations; `$ref` may target only an
+  acyclic `#/$defs/<name>` definition and may have no siblings.
 
-The runtime normalizes usage. Nexus remains the ledger owner.
+Everything else is rejected: omitted object fields, `nullable`, defaults,
+open or schema-valued `additionalProperties`, tuple arrays, external or
+recursive references, arbitrary `anyOf`, `oneOf`, `allOf`, `not`, conditional
+schemas, `patternProperties`, formats, patterns, length/range/count
+constraints, and unknown/provider keywords. Rich value constraints remain in
+the surface's domain validator after decode and before persistence or a tool
+side effect.
 
-Current Nexus `llm_calls` rows record:
+`schema.py` owns a pure parser/validator and immutable schema value. It never
+rewrites trusted input. A codec may inline local definitions, omit annotations,
+or translate the nullable union into exactly equivalent native syntax; it may
+not add required/nullability, drop a validating keyword, or repair output. An
+invalid authored schema is a startup/planning defect. A target unable to encode
+the subset exactly cannot certify.
 
-- owner kind/id and call sequence;
-- provider/model/operation/streaming/reasoning;
-- key mode requested/used;
-- input/output/total/reasoning tokens;
-- cache write/read/cached input tokens;
-- latency;
-- provider request id;
-- sanitized error class/detail;
-- raw provider usage object when safe and useful.
-- attempt count, retry count, terminal attempt status, and the bounded provider
-  attempt trace when the shared runtime reports attempts.
-- provider route, advisory cost status, component/total cost fields in integer
-  USD micros, and a pricing snapshot with catalog source, route/model key,
-  cache-write TTL, rates, currency, unit, verified date, source URL, and
-  reasoning billing mode.
+## 6. Finalized provider request
 
-Cost calculation belongs beside normalized usage and model price metadata, not in
-frontend code or provider adapters.
+The public generation input is immutable and provider-neutral:
 
-Runtime cost output is advisory and deterministic from catalog price metadata.
-Nexus persists the shared runtime's policy answer at the ledger boundary. The
-catalog contains verified provider/public-API prices where the current price
-shape can be represented honestly. Calls outside a represented pricing range,
-calls with unverified/ad hoc prices, calls with provider-unit pricing, or calls
-whose usage omits required token fields fail closed with `missing_pricing`,
-`not_token_priced`, or `missing_usage` and no synthesized total. Live provider
-proof remains a separate gate.
-
-## Retry And Idempotency
-
-Nexus application idempotency remains app-owned:
-
-- `ChatRun` idempotency keys;
-- job dedupe;
-- durable message/event finalization;
-- tool side-effect idempotency.
-
-Provider retries belong in the shared runtime:
-
-- bounded;
-- closest to the provider operation;
-- disabled provider-SDK retries unless the runtime has delegated retry ownership
-  for that route explicitly;
-- retry only timeouts, connection failures, 429, and 5xx when safe;
-- honor `Retry-After`;
-- preserve provider request id and safe response snippets per attempt;
-- no retry for 400/schema/bad key/catalog mismatch;
-- no retry after a streamed visible delta, tool call, or side effect unless the
-  caller restarts the entire durable run under app idempotency.
-
-Only one retry owner is active for a call. Hidden provider SDK retries are
-disabled when the runtime owns retry. Automatic cross-model/provider fallback is
-not part of this runtime because silent model changes can alter product
-semantics.
-
-## Nexus Integration
-
-Keep:
-
-- `resolve_api_key`
-- `ChatRun`
-- jobs and worker envelope
-- `observed_generate` / `observed_generate_stream`
-- `llm_calls`
-- `run_kit.mark_terminal`
-- prompt assembly per surface
-- citations/search/resource tools
-- budget reserve/commit/release
-- key status updates
-- domain-specific schema validation, repair, and finalization
-
-Replace:
-
-- `llm-calling` imports
-- provider-specific request lowering in Nexus services
-- frontend provider order/default policy
-- duplicate model capability literals
-- direct `ModelCall` construction outside approved runtime/request-plan modules
-  and app service owners
-
-Primary Nexus call sites to migrate:
-
-- runtime construction/injection: `python/nexus/app.py`,
-  `python/nexus/api/deps.py`, `python/nexus/tasks/llm_task.py`;
-- chat streaming and prompt planning: `services/chat_runs.py`,
-  `services/context_assembler.py`, `services/chat_prompt.py`,
-  `services/llm_ledger.py`;
-- oracle and structured synthesis: `services/oracle.py`,
-  `services/structured_synthesis.py`;
-- library intelligence and media intelligence:
-  `services/library_intelligence_reduce.py`,
-  `services/media_intelligence.py`;
-- metadata enrichment: `tasks/enrich_metadata.py`,
-  `services/metadata_enrichment.py`;
-- key probes: `services/user_keys.py`, `api/routes/keys.py`;
-- model surfacing: `llm_catalog.py`, `services/models.py`,
-  `schemas/models.py`, `apps/web/src/components/chat/useChatModels.ts`;
-- embedding edge: `services/semantic_chunks.py`.
-
-Nexus-specific requirements:
-
-- `observed_generate` and `observed_generate_stream` continue to create ledger
-  rows before provider I/O and finalize them on terminal response/error.
-- Streaming done events must carry terminal usage/status when available.
-- The runtime error object maps into Nexus `ModelCallError`/run error codes without
-  leaking provider bodies or keys.
-- Key probes intentionally do not write `llm_calls`. Generation and structured
-  calls do. Transcript embeddings use `provider_runtime.embed()` but remain a
-  tracked non-ledgered exception for this slice because there is no embedding
-  run owner yet. Probe telemetry must use the same request object returned by
-  `provider_runtime.build_key_probe_call()` that `ModelRuntime.probe_key()` uses
-  internally.
-- Nexus sends only high-level cache/reasoning/structured-output intent into
-  `provider_runtime`; it does not hand-build provider extras.
-- `/models` becomes generated from or backed by the shared catalog plus Nexus DB
-  availability/cost overlays. Frontend client-side defaults are removed.
-
-## `llm-calling` Migration
-
-`llm-calling` is retired as an import dependency but reworked in place as the
-shared runtime repo. The source package becomes `provider_runtime`; the old
-`llm_calling` package path is removed after its behavior is represented by
-goldens and new public types.
-
-Port first:
-
-- `ModelCall`, `ModelMessage`, `ToolSpec`, `ToolCall`, `ToolResult`,
-  `StructuredOutputSpec`, `ModelResponse`, `ModelChunk`, and `TokenUsage`
-  invariants;
-- OpenAI Responses lowering/parsing, including encrypted reasoning items,
-  incomplete details, function calls, request id, structured output, and usage;
-- Anthropic lowering/parsing, including system turns, tools, structured output
-  via forced tool, thinking/redacted blocks, and usage;
-- Gemini lowering/parsing, including JSON schema, function calls, usage, and
-  thought signatures;
-- OpenAI-compatible negative capability behavior;
-- error classifier vocabulary.
-
-Rewrite while porting:
-
-- retry, timeout, and transport ownership;
-- capability/catalog source of truth;
-- OpenRouter and Cloudflare route handling;
-- structured streaming contract;
-- richer error objects with HTTP status, retry-after, request id, retryability,
-  and safe body snippets;
-- provider test fixtures into `provider_runtime.testing`.
-
-## Implementation Slices
-
-1. Shared repo rename/rework: in `/home/niels/src/personal/llm-calling`, rename
-   the Python package/import surface from `llm_calling` to `provider_runtime`,
-   update project metadata, and keep existing provider tests as behavior
-   evidence while they are ported.
-2. Shared package scaffold: `provider_runtime` types, catalog, errors, retry
-   policy, testing helpers, golden fixture layout, and no-network invariant
-   scanners.
-3. Port `llm-calling` provider goldens into `provider_runtime` and freeze
-   terminal chunk/tool/usage/error invariants before changing Nexus.
-4. Implement first provider set in `provider_runtime`: OpenAI Responses,
-   Anthropic Messages, Gemini, OpenRouter, Cloudflare/OpenAI-compatible, and
-   embeddings. The current substrate is shared raw/provider SDK adapters; do
-   not route current production calls through Pydantic AI.
-5. Merge catalog truth: Nexus model availability/cost overlays derive from the
-   shared model-capability source. Future app role defaults must overlay the same
-   catalog rather than fork it.
-6. Prove shared runtime locally with unit, type, golden, fake-runtime, and static
-   gates, then run the unfiltered live matrix whenever provider keys/env or
-   provider egress changes.
-7. Cut Nexus from `llm-calling` to `provider_runtime` behind existing
-   `observed_generate`/`observed_generate_stream` wrappers.
-8. Delete retired Nexus imports, duplicated lowerers, duplicate catalog literals,
-   dependency pins, stale docs, and compatibility flags.
-9. Run Nexus-focused app integration gates and provider-runtime/Nexus negative
-   scans.
-10. Run live-provider matrix after keys/env are provided, then update
-    steady-state docs.
-
-## Acceptance Criteria
-
-- AC-1 `[met]`: The prod OpenAI cache failure is impossible.
-- AC-2 `[met for Nexus/provider-runtime]`: Provider/model/reasoning/cache choices are defined
-  once in `provider_runtime.catalog`, with Nexus DB/display/key-mode overlays
-  exposed through `/models`.
-- AC-3 `[met]`: Frontend has no independent chat provider order, default model policy,
-  or reasoning normalization.
-- AC-4 `[met for Nexus]`: No direct provider wire calls remain outside the shared runtime.
-- AC-5 `[met]`: Nexus keeps one durable `ChatRun` path; HTTP never calls providers
-  directly.
-- AC-6 `[met with explicit exceptions]`: Nexus generation calls go through key resolver,
-  ledger, worker envelope, and terminal run writer; key probes and transcript
-  embeddings are explicit non-ledgered exceptions. Podcast Deepgram
-  transcription remains a documented non-LLM modality port with a removal gate,
-  not a generation-provider bypass.
-- AC-7 `[met for current provider set]`: Shared runtime
-  normalizes usage, request IDs, cache tokens, reasoning tokens, timeouts,
-  retries, typed errors, key probes, embeddings, advisory cost status, integer
-  USD micros estimates, pricing snapshots, and persisted Nexus ledger cost
-  fields. Verified catalog price rows are populated only where official
-  provider/public API prices can be represented honestly; tiered context pricing
-  uses fail-closed `applies_up_to_input_tokens` thresholds.
-- AC-8 `[met by unit/golden tests]`: Streaming tool loops preserve opaque provider reasoning artifacts exactly.
-- AC-9 `[met for current retry policy]`: Provider retries are bounded, recorded
-  in runtime attempt metadata, and cannot duplicate durable messages or tool
-  side effects.
-- AC-10 `[met for Nexus/provider-runtime]`: Nexus consumes the shared runtime
-  API; additional consumers are deferred out of this completion boundary.
-- AC-11 `[met for Nexus/provider-runtime]`: `llm-calling` imports/config/docs
-  are removed from Nexus production import paths, and Nexus pins
-  `provider-runtime` to an immutable fetchable git revision.
-- AC-12 `[met in shared package]`: `provider_runtime.testing` exposes
-  `ScriptedRuntime` and `NoNetworkRuntime` for app tests without provider
-  network calls.
-- AC-13 `[met for provider-runtime; non-LLM media live proof is optional]`: The shared live matrix now
-  covers every generation catalog row, every declared reasoning effort, default
-  send, cacheable prompt send, forced tool continuation, structured output where
-  supported, streaming where supported, embeddings, transcription, invalid key,
-  and timeout. With the supplied production env, the pinned provider-runtime
-  matrix passes for OpenAI, Anthropic, Gemini, OpenRouter, Cloudflare,
-  embeddings, and OpenAI transcription. Podcast Index/Deepgram, YouTube Data
-  API/transcript acquisition, and X remain Nexus-owned non-LLM media live
-  proofs, not part of the shared runtime acceptance boundary. YouTube transcript
-  egress remains optional because it requires a transcript-capable proxy from
-  blocked datacenter hosts. Nexus
-  `make test-live-providers` includes that matrix and verifies the checked-out
-  provider-runtime repo matches the pinned revision before running it. The
-  command unsets `LLM_RUNTIME_LIVE_PROVIDERS` so the acceptance gate cannot be
-  accidentally narrowed. CI always runs the non-live pinned provider-runtime
-  gate; the external live-provider job runs only when all required repository
-  secrets are present and otherwise emits an explicit "not live-provider proof"
-  notice. The YouTube transcript live test skips when no
-  `YOUTUBE_TRANSCRIPT_PROXY_URL` is configured; runtime behavior remains
-  fail-closed.
-- AC-14 `[met]`: Embeddings use `provider_runtime.embed()`.
-- AC-15 `[met before live keys]`: Before live keys are supplied, the shared runtime and Nexus port pass
-  unit, golden, fake-runtime, static, formatting, type, and app integration
-  gates without network access.
-
-## Negative Gates
-
-- No `llm-calling` imports in Nexus runtime paths.
-- No LLM provider SDK imports outside `provider_runtime`.
-- No LLM provider HTTP calls outside `provider_runtime`. Non-LLM provider ports
-  are module-owned and live-gated separately: Deepgram podcast transcription,
-  Podcast Index, YouTube Data API/transcript acquisition, X, and Brave.
-- No `previous_response_id` or server-stored provider conversation cursor.
-- No raw provider key reads outside app key resolution.
-- No raw provider call outside Nexus ledger wrappers.
-- No ambient live-provider matrix filter in `make test-live-providers`; the gate
-  must run the full shared matrix.
-- No frontend chat `PROVIDER_ORDER`, default-model policy, or reasoning
-  normalization.
-- No cache TTL emitted to unsupported providers.
-- No OpenAI cached turn without `prompt_cache_key`.
-- No provider reasoning artifact logging/persistence/rendering.
-- No duplicated provider cache/reasoning lowering. The owner is
-  `provider_runtime.lowering`; `python/nexus/services/llm_request_lowering.py`
-  must not exist.
-- No automatic cross-model or cross-provider fallback in this runtime.
-
-Concrete static scans for the current Nexus slice:
-
-```sh
-rg -n "\\bllm_calling\\b" \
-  /home/niels/src/personal/nexus-web/python/nexus \
-  /home/niels/src/personal/nexus-web/apps/web/src
-
-rg -n "^\\s*(from|import) (openai|anthropic|groq)\\b|^\\s*from google import genai\\b|^\\s*(from|import) google\\.(genai|generativeai)\\b|pydantic_ai\\.models|pydantic_ai\\.providers" \
-  /home/niels/src/personal/nexus-web/python/nexus \
-  /home/niels/src/personal/nexus-web/apps/web/src
-
-rg -n "api\\.openai\\.com|api\\.anthropic\\.com|generativelanguage\\.googleapis\\.com|openrouter\\.ai|api\\.cloudflare\\.com" \
-  /home/niels/src/personal/nexus-web/python
-
-rg -n "provider_runtime\\.router|nexus\\.services\\.llm_request_lowering|lower_llm_request_for_provider" \
-  /home/niels/src/personal/nexus-web/python \
-  /home/niels/src/personal/nexus-web/apps/web/src
-
-rg -n "\\.\\./\\.\\./llm-calling|editable = \"\\.\\./\\.\\./llm-calling\"" \
-  /home/niels/src/personal/nexus-web/python/pyproject.toml \
-  /home/niels/src/personal/nexus-web/python/uv.lock
-
-rg -n "previous_response_id" \
-  /home/niels/src/personal/nexus-web \
-  /home/niels/src/personal/llm-calling
-
-rg -n "prompt_cache_key|cache_ttl|cache_control" \
-  /home/niels/src/personal/nexus-web/python
-
-rg -n "encrypted_content|redacted_thinking|thoughtSignature|reasoning_content|ThinkingPart|reasoning_summary" \
-  /home/niels/src/personal/nexus-web/python/nexus \
-  /home/niels/src/personal/nexus-web/apps/web/src
+```text
+GenerateIntent {
+  target: ProviderTarget
+  messages: tuple<PromptMessage>
+  max_output_tokens
+  reasoning: ReasoningLevel
+  cache: RequiredCache
+  tools: tuple<CanonicalTool>
+  tool_choice: auto | none
+  output: TextOutput | StrictJsonOutput
+}
 ```
 
-## Test Plan
+`PromptMessage` marks content as `dynamic | stable(CacheScope)`; stable content
+must form one contiguous prefix. The Nexus prompt assembler supplies semantic
+order and the privacy scope of each stable block. The planner validates that
+order and encodes it without moving system instructions, context, history, or
+the current turn. Nexus supplies no affinity hash, retry policy, TTL, provider
+cache key, native reasoning object, or request-body extras.
 
-Focused local gates:
+The sole planner performs, in order:
 
-- catalog capability unit tests;
-- request-lowering golden tests;
-- `/models` API response contract tests;
-- frontend model-selection tests;
-- ledger usage normalization tests;
-- chat prompt request tests;
-- structured synthesis request tests.
+1. require the exact catalog contract;
+2. validate the complete intent and capability cross-product;
+3. compile the canonical tool/schema subset;
+4. encode messages and same-target continuation artifacts;
+5. resolve provider-native reasoning and cache controls;
+6. construct and fingerprint the final native body;
+7. freeze wire, retry, cache, reasoning, and accounting facts in one
+   `FinalizedProviderCall`.
 
-Shared runtime gates:
+```text
+FinalizedProviderCall {
+  request: FinalizedProviderRequest
+  accounting: {currency, input_rate, output_rate, cache_write_rate,
+               cache_read_rate, platform_token_reservation,
+               maximum_cost_estimate_usd_micros}
+  requested_reasoning, effective_reasoning, native_reasoning
+  cache_plan, retry_policy
+  catalog_revision, request_fingerprint, tool_fingerprint, schema_fingerprint
+}
 
-- exact provider request-body goldens for text, stream, structured output,
-  forced tool, reasoning, cache, unsupported feature, errors, retry, and
-  idempotency;
-- parser goldens for usage, request id, reasoning token counts, cache token
-  counts, tool calls, incomplete/status fields, structured outputs, and provider
-  artifacts;
-- contract tests proving terminal-only stream usage/status;
-- no retry after any visible streamed delta or tool call has escaped;
-- SDK retry disabling tests;
-- `ModelCallError` field stability tests;
-- `ProviderArtifact` repr/logging redaction tests;
-- bounded retry tests for retryable errors, non-retryable quota exhaustion, and
-  stream retry only before the first visible chunk/tool/artifact escapes;
-- `ScriptedRuntime` and `NoNetworkRuntime` tests used by Nexus and available to
-  future consumers.
-
-Invariant gates:
-
-- static scan for direct provider SDK imports outside shared runtime;
-- static scan for direct provider HTTP calls outside shared runtime;
-- static scan for `llm-calling` imports after cutover;
-- static scan for frontend provider order constants in chat model selection;
-- static scan for low-level cache TTL construction outside approved lowering
-  modules/tests.
-
-Live gated provider matrix:
-
-- provider x model class x reasoning mode;
-- cacheable prompt;
-- streaming text;
-- forced tool call and continuation;
-- structured output where supported;
-- embeddings;
-- transcription;
-- invalid key;
-- timeout/retry;
-- rate-limit/429 behavior when safely reproducible.
-
-Initial command shape:
-
-```sh
-cd /home/niels/src/personal/llm-calling
-uv sync --all-extras --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run pyright
-uv run pytest
-uv build --no-sources
-# Run with provider keys/env:
-# env -u LLM_RUNTIME_LIVE_PROVIDERS LLM_RUNTIME_LIVE=1 uv run pytest -v -m live_provider tests/live/test_provider_matrix.py
-
-cd /home/niels/src/personal/nexus-web
-(cd python && NEXUS_ENV=test uv run pytest -v \
-  tests/test_models_catalog.py \
-  tests/test_chat_prompt.py \
-  tests/test_structured_synthesis.py \
-  tests/test_real_media_fixture_llm.py \
-  tests/test_llm_ledger.py)
-make test-provider-runtime
-./scripts/with_test_services.sh make _test-back-db-ready _test-back-integration-raw
-make test-live-providers
+FinalizedProviderRequest {
+  target, protocol, url, method
+  safe_headers, body
+}
 ```
 
-`make test-provider-runtime` verifies that the sibling `LLM_CALLING_DIR`
-checkout matches the immutable Nexus pin, then runs provider-runtime's non-live
-format, lint, type, and unit/golden tests. `make test-live-providers` in Nexus
-then includes every generation row and declared reasoning effort from the shared
-LLM matrix in the pinned `provider-runtime` source revision. It unsets
-`LLM_RUNTIME_LIVE_PROVIDERS` before entering provider-runtime, so a local or CI
-environment cannot pass by running a subset. With the current supplied env, the
-pinned provider-runtime matrix passes for OpenAI, Anthropic, Gemini, OpenRouter,
-Cloudflare, embeddings, and OpenAI transcription. Nexus-owned non-LLM media
-live proofs are outside the shared runtime boundary. CI runs those live-provider
-checks only when the required secrets are present; otherwise it records that the
-run is not live-provider proof instead of failing unrelated protected merges.
+Credentials remain outside the plan. A provider transport accepts only its own
+finalized request plus an opaque credential. Transport owns auth, HTTP,
+timeouts, and raw SSE framing only. Provider codecs alone parse success/error
+envelopes into normalized events/signals. Neither layer may normalize, default,
+strip, rebuild, or reinterpret intent. Derived fields are constructor fields,
+never hidden mutation or `object.__setattr__` state.
 
-## Key Decisions
+The planner resolves `retry_policy` from the runtime's central external-service
+policy catalog; callers cannot select or vary it.
 
-- Package name is `provider_runtime`; `llm-calling` is a source repo, not the
-  steady-state package name.
-- The existing `/home/niels/src/personal/llm-calling` repo is the implementation
-  home for `provider_runtime`; do not create a new repo for the first build.
-- First app port is Nexus; additional consumer ports are deferred.
-- First provider scope is OpenAI Responses, Anthropic Messages, Gemini,
-  OpenRouter, Cloudflare/OpenAI-compatible, and embeddings.
-- Pydantic AI direct model APIs are not part of the current production
-  substrate. Treat them only as a future, separate fidelity spike that must
-  prove exact replay/streaming/usage artifacts before any adoption.
-- Keep raw HTTP/provider adapters when higher-level libraries cannot preserve
-  exact reasoning artifacts, streaming terminal details, request IDs, or usage.
-- Treat LiteLLM as a later optional gateway/control-plane candidate, not the
-  first hard-cutover provider substrate for Nexus chat loops.
-- Treat OpenRouter as a first-class provider route, not the only abstraction.
-- Treat Cloudflare as a first-scope OpenAI-compatible route for chat/embeddings.
-- Keep product lifecycle in consuming apps; share provider mechanics only.
-- Keep provider artifacts opaque. Exact replay is a provider-runtime concern;
-  durable retention is app-owned and opt-in.
-- Keep retry at one layer per call. SDK retries are disabled unless explicitly
-  delegated.
-- Keep response caching separate from prompt-prefix cache optimization.
-- Defer live-provider execution until the user provides provider keys/env after
-  implementation and review.
-- Prefer live-provider contract tests over confidence based on provider docs.
+`ContinuationArtifact(target, codec_id, opaque_payload)` replaces fragmented
+artifact fields. It is ephemeral, never logged/rendered, and replayable only to
+the identical provider/model/codec. A mismatch fails before network.
 
-## External References To Verify During Build
+## 7. Provider codecs
 
-- Pydantic AI direct model/provider APIs and provider/profile split:
-  `https://pydantic.dev/docs/ai/models/overview/`
-- LiteLLM routing, budgets, proxy, and cache features:
-  `https://docs.litellm.ai/docs/routing`
-- OpenAI prompt caching and Responses reasoning/tool continuation:
-  `https://developers.openai.com/api/docs/guides/prompt-caching`
-  `https://developers.openai.com/api/docs/guides/reasoning`
-- Anthropic prompt caching and extended thinking:
-  `https://platform.claude.com/docs/en/build-with-claude/prompt-caching`
-  `https://platform.claude.com/docs/en/build-with-claude/extended-thinking`
-- Gemini thinking/thought signatures:
-  `https://ai.google.dev/gemini-api/docs/thinking`
-- OpenRouter prompt caching, reasoning, and routing controls:
-  `https://openrouter.ai/docs/guides/best-practices/prompt-caching`
-- Vercel AI SDK provider/gateway shape:
-  `https://ai-sdk.dev/providers/ai-sdk-providers/ai-gateway`
+| Codec | Required behavior |
+|---|---|
+| OpenAI Responses | Preserve `none` through `max`, including distinct `xhigh`; `store:false`; explicit prefix breakpoint + stable hashed `prompt_cache_key` + `prompt_cache_options.ttl=30m`; request `include:["reasoning.encrypted_content"]`; replay the entire ordered `response.output` sequence verbatim |
+| Anthropic Messages | Omit sampling; explicit 5m breakpoint at the stable prefix, optionally plus top-level automatic caching for append-only chat; emit native effort; replay thinking/redacted blocks unchanged; Fable thinking is always on; HTTP-200 `stop_reason=refusal` is terminal `refused`, not provider failure, and invalidates any partial Fable output |
+| Gemini `generateContent` | Stable `gemini-3.5-flash`; native `thinkingLevel`; implicit caching; preserve thought signatures for tool continuation |
+| Moonshot Chat Completions | `reasoning_effort=low|high|max`; omit fixed sampling fields; use `max_completion_tokens`; replay the complete assistant message unchanged; rely on automatic context caching |
+| OpenRouter Chat Completions | Dedicated `moonshotai/kimi-k3` contract; `provider.only=["moonshotai/int4"]`, `provider.order=["moonshotai/int4"]`, `allow_fallbacks=false`, `require_parameters=true`, `data_collection=deny`, `zdr=true`, hashed `session_id`; `reasoning:{effort,exclude:false}`; use routed `max_tokens`, not direct-only `max_completion_tokens`; send `X-OpenRouter-Cache: false` and `X-OpenRouter-Metadata: enabled`; preserve full `reasoning_details`; runtime `max_attempts=1` |
 
-## Open Questions
+Moonshot and OpenRouter may share private, syntax-only Chat Completions wire
+parsers. They do not inherit a generic provider-branching client.
 
-- If a future SDK/Pydantic adapter replaces a raw route, what tests prove its
-  retries are disabled or explicitly delegated so `provider_runtime` remains
-  the single retry owner?
-- Should model prices live in the shared package catalog, Nexus DB rows, or a
-  generated synced artifact?
-- Should prompt cache namespace include user/conversation scope by default, or
-  only when cacheable blocks contain non-global prompt material?
-- How should OpenRouter provider-specific routing, `session_id`, and provider
-  preferences compose with Nexus BYOK/platform key modes?
-- Which additional raw adapters are required after live-provider artifact proof
-  for OpenAI, Anthropic, Gemini, OpenRouter, and Cloudflare?
+## 8. Cache contract
+
+`CachePlan` is a provider-tagged union, not a generic TTL field:
+
+- `OpenAIExplicitPrefix(key, minimum_ttl="30m", breakpoints)`;
+- `AnthropicPrefix(stable_breakpoint, ttl="5m", automatic_append_only)`;
+- `ProviderAutomaticPrefix(provider="gemini" | "moonshot")`;
+- `OpenRouterCertifiedPrefix(session_id, pinned_upstream, evidence_revision)`.
+
+For OpenRouter, `evidence_revision` is the immutable id of the paid
+certification artifact containing the endpoint-metadata snapshot, probe
+generation ids, and observed cache usage. The planner rejects an absent or
+non-matching revision.
+
+`RequiredCache` has no off state. `CacheScope` is the closed union of `global`,
+`owner(owner_id)`, and `conversation(conversation_id)`, ordered broadest to
+narrowest. The assembler supplies already-authorized identities; a conversation
+must belong to the stated owner, and incomparable/mismatched scopes are a
+planning defect. The stable prefix must be non-empty. Its effective scope is the
+narrowest contributing scope, and non-message cache inputs inherit that scope;
+a cache can never be shared more broadly than any contributing block.
+
+`OpaqueCacheAffinity` is private derived plan state, not public intent.
+`planning.py` solely owns `CACHE_AFFINITY_VERSION = 1` and the binary
+`frame(bytes) = uint64_be(length) || bytes` encoder. The planner computes:
+
+```text
+base64url(sha256(
+  frame("nexus-cache-affinity") || frame(uint64_be(CACHE_AFFINITY_VERSION)) ||
+  frame(scope-tag) || frame(scope-id-or-empty) || frame(exact-target) ||
+  frame(protocol) || frame(canonical-cache-contract-bytes) ||
+  frame(exact-provider-native-cache-affecting-prefix-bytes)
+))
+```
+
+Literal/enum fields use UTF-8; scoped UUIDs use RFC 4122 network-order 16-byte
+form; `global` uses an empty id. No locale, JSON serializer, or object ordering
+participates in framing.
+Cache-affecting bytes include the stable messages and any tools/output schema
+that precede or participate in the provider's cache prefix. Byte-identical
+scope, target, contract/version, and prefix produce the same affinity across
+same-target retries, explicit reruns, workers, and deployments. Changing any
+input produces a new affinity. Raw scope ids and prompt bytes never enter wire
+metadata, logs, or the ledger. OpenAI uses the derived value as
+`prompt_cache_key`; OpenRouter uses it as `session_id`; other plans retain it
+only for fingerprint/telemetry and use their native prefix mechanism.
+Canonical cache-contract bytes are the deterministic encoding of the closed
+strategy and parameters. Any framing, scope, prefix-encoding, or cache-contract
+semantic change must increment `CACHE_AFFINITY_VERSION` and update checked-in
+cross-worker golden vectors; the old value is never recomputed under new rules.
+
+Rules:
+
+- Caching is required for every active generation profile and operator route.
+- Unsupported cache intent is a planning defect. It is never silently removed.
+- “Enabled” means the correct provider mechanism is present; it does not promise
+  a hit below the provider's minimum prefix length.
+- Gemini and Moonshot caching are implicit: the catalog declares that fact and
+  live certification proves reported cache reads; there is no invented wire
+  control. OpenAI's `30m` is a minimum lifetime, not exact or maximum retention.
+- Live certification uses an above-minimum stable prefix twice and requires
+  cache-read usage on the second call where the provider reports it.
+- OpenRouter's pinned endpoint currently reports no implicit-cache capability.
+  The operator route therefore remains uncertified and unusable until a paid
+  repeated-prefix probe reports a non-zero billed cache read for that exact
+  endpoint. No `session_id` inference or price-table entry substitutes for the
+  measurement; failure blocks cutover or requires this specification to be
+  revised explicitly.
+- The ledger records effective strategy/TTL plus cache writes and reads. No
+  response cache or application-level transcript cache is added.
+
+## 9. Execution, failures, and retries
+
+`python/nexus/services/llm_execution.py` is the only Nexus generation module
+allowed to resolve a profile, acquire a generation credential, finalize a
+request, dispatch the runtime, or terminalize an `llm_calls` row.
+`llm_credentials.py` is the only platform-key loader. Embedding and
+transcription owners may request their typed credential from it and call their
+non-generation runtime port. `llm_ledger.py` remains the generation storage
+helper. Domain services supply prompt intent and consume typed results.
+
+Execution order:
+
+```text
+domain prompt -> profile resolution -> entitlement check
+-> allocate generation id + commit ledger start -> finalized plan
+-> reserve platform token budget + commit exact plan/accounting facts
+-> provider runtime
+-> durable ledger terminal -> domain result/failure finalization
+```
+
+The start row contains `{owner, operation, profile_id}`. After planning, one
+commit adds the exact resolved target, frozen accounting rates, catalog
+revision, fingerprint, and reservation. A planning failure terminalizes the
+already-committed row without a provider request id. No provider call runs
+inside a database transaction. Every start, plan, and terminal ledger mutation
+uses a dedicated named ledger unit-of-work, never the surface owner's session
+or transaction. The terminal ledger write commits before domain postprocessing
+or owner-row creation. One generation attempt produces exactly one terminal
+outcome.
+
+The existing limiter reserves tokens, not money. Each codec computes
+`planned_input_token_upper_bound` as the UTF-8 byte length of the exact
+finalized native JSON body plus its contract's fixed provider-framing overhead.
+That deliberately conservative count includes every message role/content
+part, tool name/description/schema, strict output schema, and replay artifact;
+auth/HTTP headers are excluded. Catalog certification proves the bound is not
+below provider-reported input usage on the golden/live corpus.
+
+The plan's `platform_token_reservation` is that input bound plus
+`max_output_tokens`, plus a catalog-declared reasoning reserve only when that
+provider bills reasoning outside the output limit. `reserve_token_budget` is
+keyed by generation id. A no-dispatch terminal releases it; a response with
+usage commits provider-reported total tokens and releases the excess; a
+provider-confirmed non-billable response releases it. Once a request may be
+billable, missing usage conservatively commits the full reservation. Reported
+usage above the bound is committed in full and raises a catalog-invariant
+alert. `maximum_cost_estimate_usd_micros` is derived telemetry only; it is not
+a second quota or a dollar reservation.
+
+The runtime emits one closed terminal outcome; every branch carries shared
+`CallMeta {provider, model, provider_request_id: Presence, usage: Presence}`:
+
+```text
+CallOutcome = Succeeded(CallMeta) | Refused(CallMeta, safe_detail) |
+              Incomplete(CallMeta, reason) | Cancelled(CallMeta) |
+              Failed(CallMeta, ExpectedModelFailure)
+```
+
+Only the failed branch carries a closed tagged union:
+
+```text
+ExpectedModelFailure =
+  IntentContextTooLarge {limit, measured}
+  | ProviderContextTooLarge
+  | InvalidToolArguments {safe_detail}
+  | TransientExhausted {
+      attempts,
+      cause: ProviderRateLimit {retry_after: Presence}
+             | ProviderTimeout
+             | ProviderHttpUnavailable
+             | TransportUnavailable
+             | ProviderStreamInterrupted {partial_output: bool}
+    }
+```
+
+Each leaf fixes its code/origin pair; callers cannot combine free enums.
+Transient leaves map respectively to `provider_http/rate_limited`,
+`transport/timeout`, `provider_http/provider_unavailable`,
+`transport/provider_unavailable`, and
+`provider_stream/stream_interrupted`.
+Owned optional correlation uses `Presence`, never raw nullable state. The public
+JSON boundary omits absent fields.
+
+Streaming maps `Refused` to the existing `incomplete` terminal event with
+`status="refused"`; it adds no fifth terminal tag. Non-streamed calls preserve
+the distinct `Refused` outcome.
+
+Raw retryable transport/provider signals are private to the runtime retry
+boundary. `TransientExhausted` is the intentional terminal wrapper after that
+boundary, not the original retry signal leaking through it. Chat models it as
+an expected rerunnable outcome. A background owner must exhaustively map it to
+its own explicit unavailable/requeue contract; it cannot relabel it as a local
+defect or silently switch targets.
+The LLM ledger uses the closed origin union `intent | plan | budget | transport
+| provider_http | provider_stream | provider_response | tool_arguments` and
+retains the exact classified code, request id, and support id. The owning run
+extends origin with `tool | postprocess | worker`; a later owner failure does
+not rewrite a successfully terminal LLM call. Provider bodies, prompts,
+credentials, and hidden reasoning never enter errors or logs.
+
+Rules:
+
+- The detecting owner creates the failure. Mapping is exhaustive.
+- Platform-token-reservation denial is the expected Nexus failure
+  `{origin=budget, code=budget_exceeded, can_rerun=false}`. It terminalizes the
+  started ledger/run before network; it is never an internal/provider error.
+- Provider error type/code is parsed once at ingress. Each codec owns an exact,
+  provider-contract retry classifier; a coarse HTTP status list never invents a
+  domain error or retry decision.
+- Invalid catalog, plan invariant, malformed provider protocol, unknown terminal
+  provider response, platform credential rejection, unclassified exhaustion,
+  and impossible state are defects. The worker boundary reports/re-raises the
+  defect and records its exact origin/code/trace operator-side; it does not turn
+  it into `provider_unavailable` or `bad_request`.
+- Delete `E_LLM_BAD_REQUEST` and every broad “request rejected by the model
+  provider” mapping.
+- The runtime is the sole same-target retry owner. Retry only before any
+  semantic provider event (reasoning, text, tool, artifact, or usage) and only
+  an exactly classified transient provider signal. Never retry after a semantic
+  event or tool side effect. Classified pre-event exhaustion, or a provider
+  stream interruption after semantic output, returns `TransientExhausted` while
+  preserving the normalized signal and attempt trace operator-side. For the
+  stream-interruption leaf, `partial_output=false` means all pre-event attempts
+  exhausted; `true` means semantic output made internal retry unsafe.
+- No cross-model, cross-provider, or OpenRouter upstream fallback.
+
+## 10. API and UX
+
+### Profiles
+
+`GET /llm-profiles` replaces `GET /models`:
+
+```text
+{
+  data: {
+    default_profile_id,
+    profiles: [{
+      id, label, description, provider_label, model_label,
+      reasoning_options: [{id, label}],
+      default_reasoning_option_id,
+      privacy_notice
+    }]
+  }
+}
+```
+
+The final deployment returns all seven certified profiles in §4. The browser
+owns no provider/model/reasoning enum, ordering, default, capability, key, or
+availability policy.
+
+This cutover changes only the chat-create selection fields. Existing semantic
+fields such as `conversation_id`, `parent_message_id`, `branch_anchor`,
+`content`, `chat_subject`, and `reader_selection` remain. Replace:
+
+```text
+{ model_id, reasoning, key_mode }
+-> { profile_id, reasoning_option_id }
+```
+
+Raw `model_id`, provider, model, route, `reasoning`, and `key_mode` are rejected.
+`ChatRunOut` likewise replaces `model_id`, `reasoning`, and `key_mode` with
+`profile_id` and `reasoning_option_id`. Resolved provider/model/native-reasoning
+snapshots remain trust-trail/operator facts; they are not selection controls.
+
+### Failure and rerun
+
+- `ChatRun` owns expected `error_origin`/`error_code`, operator-only
+  `error_detail`, and `support_id`.
+- API/SSE exposes an optional closed `ExpectedChatFailure` tagged union. Its
+  variants fix valid origin/code pairs for `refused`, `incomplete`, `cancelled`,
+  `context_too_large`, `invalid_tool_arguments`, `budget_exceeded`,
+  `rate_limited`, `timeout`, `provider_unavailable`, and
+  `stream_interrupted`, plus `can_rerun` and `support_id: Presence`. The
+  transient variants preserve the exact §9 leaf origin and attempt metadata.
+  `can_rerun=true` for incomplete, cancelled, invalid-tool-argument, and
+  transient-exhaustion outcomes only while the exact profile remains active
+  and no side-effecting write tool was attempted. Any durable write-tool call
+  event or `message_tool_calls.scope='assistant_write'` row fails that predicate,
+  regardless of completion/revert state; read tools do not. Refusal and budget
+  denial are not rerunnable. Public JSON omits absent correlation fields.
+- A defect exposes no failure variant or `internal_error` code. Exact origin and
+  trace remain operator-side. The existing terminal failed run status plus
+  `support_id` makes the screen boundary render the same generic,
+  non-rerunnable card; the defect never becomes product control flow.
+  Assistant messages contain model text only; no synthesized failure prose.
+- `ChatRunOut`, message hydration, terminal SSE, reconnect folding, and the
+  trust trail all derive that same projection from `ChatRun`; none stores or
+  synthesizes a second failure.
+- `ChatFailureCard` is the only failure renderer. It uses one exhaustive
+  `chatFailureMessage` helper, the shared feedback primitives, a quiet red
+  border, concise title/body, optional support id, and at most one action.
+- Valid partial text renders once above the card. For a Fable refusal, the
+  terminal fold suppresses all accumulated text from the assistant message,
+  hydration/reconnect, trust UI, and future continuation; the refusal card is
+  the only product projection. No duplicate inline notice, toast, user-message
+  retry, assistant resend, or other generic-content suppression remains.
+- `POST /messages/{assistant_message_id}/rerun` replaces `/retry` and `/resend`.
+  It creates one new durable run from the source prompt and its stored profile
+  selection. It requires the normal idempotency key and returns the same run for
+  a repeated key. A retired, uncertified, or changed profile makes
+  `can_rerun=false`; rerun never remaps or resurrects a historical target.
+  Provider retry and product rerun remain different concepts.
+- `python/nexus/services/chat_reruns.py` owns the rerun transaction;
+  `python/nexus/api/routes/chat_runs.py` owns the backend route; and
+  `apps/web/src/app/api/messages/[messageId]/rerun/route.ts` is the sole BFF.
+  The service rechecks profile and side-effect eligibility under the rerun
+  transaction; the UI flag is not authority. Delete both old message
+  retry/resend routes and their service projections.
+- A Fable HTTP-200 refusal is `refused`, `can_rerun=false`. Nexus does not
+  automatically retry it or fall back to Sonnet/another profile; the user may
+  edit the prompt or explicitly select another profile.
+
+### Connection lost, status unknown
+
+`ConnectionLostStatusUnknown {run_id, last_cursor}` is a client-only state owned
+by `apps/web/src/components/chat/useChatRunTail.ts`. It is never persisted on a
+message/run, emitted as SSE, or mapped to an expected server failure; delete the
+ambiguous `E_STREAM_INTERRUPTED` path. The hook first reconciles run status,
+then resumes from `last_cursor`. During its bounded automatic reconnect budget,
+the UI retains partial text and shows a quiet reconnecting state. After that
+budget, `ChatFailureCard` renders exactly one action named `Reconnect`. It never
+offers `Run again` or calls `/rerun`. Any rehydrated server state replaces this
+local card, so it cannot coexist with a terminal failure card.
+
+## 11. Persistence hard cutover
+
+`migrations/alembic/versions/0184_llm_provider_runtime_hard_cutover.py` performs
+the whole ownership change; `python/tests/test_migrations.py` owns its upgrade
+proof:
+
+1. Add non-FK product snapshots `profile_id` and `reasoning_option_id`, resolved
+   snapshots `provider`, `model_name`, and `reasoning_effort`, plus
+   `error_origin` and `support_id` to `chat_runs`.
+2. Backfill only from the polymorphic ledger join
+   `llm_calls.owner_kind='chat_run' AND llm_calls.owner_id=chat_runs.id`. Select
+   the first logical call with `row_number() over (partition by owner_id order
+   by call_seq asc, created_at asc, id asc)=1`. Provider transport attempts live
+   inside that row's attempt trace; they are not separate candidate rows.
+   Backfill wire `provider` from legacy `provider_route`, `model_name` from
+   `model_name`, and explicit effort from `reasoning_effort`.
+3. Never infer from `models` or `chat_runs.reasoning`. The literal legacy value
+   `default` is not a new reasoning option; leave resolved effort and selection
+   snapshots null for it. Set `profile_id` and `reasoning_option_id` only when
+   the selected exact target and explicit effort exactly match the frozen
+   cutover registry. No ledger evidence means null historical snapshots. A
+   preflight fails if later `call_seq` rows for one run disagree on target or
+   explicit effort; migration never guesses.
+4. In `llm_calls`, collapse `provider`/`provider_route` to wire `provider`, add
+   nullable `upstream_provider`, `outcome`, `catalog_revision`,
+   `request_fingerprint`, `cache_strategy`, `cache_ttl`, `error_origin`, and
+   `error_code`; retain usage, costs, pricing snapshot, request ids, and attempt
+   traces. Map recognized legacy `error_class` values through one frozen
+   migration table; unknown/free class names leave the new origin/code null.
+   Then drop `error_class`, `ck_llm_calls_provider`, and
+   `ck_llm_calls_provider_route`; the old checks reject `moonshot` and cannot
+   survive the application-owned target union.
+5. All snapshots are application-required for new runs. They remain nullable
+   only for unrecoverable history; `profile_id` never references a mutable
+   registry row. Backfill, then rename/drop old columns. No read fallback.
+6. Drop `messages.model_id`, `messages.error_code`,
+   `chat_prompt_assemblies.model_id`, `chat_runs.model_id`,
+   `chat_runs.reasoning`, `ck_chat_runs_reasoning`, `chat_runs.key_mode`,
+   `ck_chat_runs_key_mode`, and obsolete key-mode ledger columns.
+7. Drop `models` and `user_api_keys` after all foreign keys and consumers are
+   removed. Preserve conversations, runs, messages, run events, and ledger
+   rows; retiring a profile never deletes historical resolved snapshots.
+8. Remove touched business-policy `CHECK` constraints; enforce finite variants
+   in owned application types and defects.
+
+Do not add a generic request/response JSON dump. The ledger stores query-worthy
+facts and a non-secret fingerprint, not prompts or native bodies.
+
+## 12. File and ownership map
+
+### Shared runtime
+
+Introduce/replace:
+
+- `types.py`, `schema.py`, `catalog.py`, `planning.py`, `runtime.py`,
+  `transport.py`, `errors.py`, `usage.py`;
+- explicit `openai.py`, `anthropic.py`, `gemini.py`, `moonshot.py`, and
+  `openrouter.py` codecs;
+- private `_chat_completions_wire.py` syntax helpers;
+- provider fixtures, plan goldens, negative gates, and
+  `tests/live/test_provider_matrix.py` as the paid-live semantic owner;
+- `README.md` documentation for the pinned contract and certification command.
+
+Delete:
+
+- `lowering.py`, `tool_schema.py`, `_adapter_runtime.py`, `cloudflare.py`, and
+  the public provider-branching `openai_compatible.py` abstraction;
+- obsolete catalog rows/fields, `ProviderArtifactRetention`, hidden cache-key
+  state, caller sampling/token-budget fields, JSON repair, and `json-repair`;
+- Cloudflare/generic-compat tests and stale fixtures.
+
+### Nexus backend
+
+Introduce:
+
+- `services/llm_profiles.py`, `services/llm_credentials.py`,
+  `services/llm_execution.py`, `services/chat_reruns.py`, `schemas/llm.py`,
+  and `api/routes/llm_profiles.py`;
+- one migration and focused service/integration tests.
+
+Delete:
+
+- `llm_catalog.py`, `services/models.py`, `schemas/models.py`,
+  `api/routes/models.py`, `services/api_key_resolver.py`,
+  `services/user_keys.py`, `schemas/keys.py`, and key routes;
+- `services/crypto.py`, `python/tests/test_crypto.py`, the sole-use PyNaCl
+  dependency, and all key-encryption configuration;
+- `python/tests/test_keys.py` and `python/tests/test_models.py`; replace their
+  surviving boundary coverage with profile/platform-credential tests, not
+  renamed legacy fixtures;
+- API runtime wiring used only for key probes;
+- retry/resend helpers in `services/chat_run_access.py`, both message BFF
+  routes, backend route handlers, hashing, and response variants.
+
+Modify:
+
+- `config.py`, `db/models.py`, `errors.py`, `app.py`, `api/deps.py`,
+  `tasks/llm_task.py`, `services/llm_ledger.py`, `services/chat_*`,
+  `services/context_assembler.py`, and `services/message_trust_trails.py`;
+- `api/routes/__init__.py`, which removes model/key routers and registers the
+  sole profiles router;
+- `services/conversations.py`, `services/conversation_branches.py`,
+  `schemas/conversation.py`, and `api/routes/chat_runs.py`; the first owns the
+  three `messages.error_code` reads and retry/resend queries and is not covered
+  by the `services/chat_*` glob;
+- `services/prompt_budget.py`; retain its estimation utility, but resolve
+  context/reservation facts only from the finalized profile/plan contract;
+- `services/agent_tools/writes.py`, every other chat tool-schema author, and
+  all strict-output/Pydantic schema authors;
+- Oracle, artifact reducers, media intelligence, metadata enrichment, Synapse,
+  Dawn Write, structured synthesis, embeddings/transcription credential wiring,
+  and their tests;
+- `python/scripts/seed_e2e_data.py`, `e2e/seed-conversation-tree.py`,
+  `e2e/global-setup.mjs`, `e2e/tests/conversation-tree-seed.ts`, and
+  `python/tests/factories.py`; none may import or construct `Model`,
+  `UserApiKey`, or legacy ChatRun selection fields after the migration.
+- `python/pyproject.toml` and `python/uv.lock`, which own the immutable shared
+  runtime pin and remove PyNaCl;
+- `.env.example`, `deploy/env/env-prod-backend.example`,
+  `deploy/hetzner/sync-env.sh`, `e2e/playwright.config.ts`,
+  `e2e/playwright.csp.config.ts`, and `e2e/playwright.deployed.config.ts`;
+  remove encryption-key wiring and require OpenAI, Anthropic, Gemini, Moonshot,
+  and the Fable retention assertion in deployable API/worker environments;
+- `python/tests/test_hetzner_env_sync_validation.py`; replace its encryption-key
+  fixture with the new required direct-key/Fable deployment contract;
+- `python/tests/test_cutover_negative_gates.py`; replace gates that require the
+  old catalog, `default` reasoning, key spine, Cloudflare secrets,
+  skip-success live checks, or duplicated error maps.
+
+The repository-root `Makefile` owns `make certify-llm-providers`; it invokes the
+pinned shared runtime matrix without a focused provider filter and refuses
+missing required credentials or the Fable retention assertion.
+`.github/workflows/ci.yml` owns the protected release-promotion job: normal PR
+CI remains deterministic, but promotion invokes this target and fails closed
+rather than succeeding/skipping when live secrets are absent.
+
+### Web and docs
+
+Introduce `useChatProfiles.ts`, `ChatProfilePicker.tsx`,
+`ChatFailureCard.tsx`, `lib/llm/failure.ts`, and
+`app/api/messages/[messageId]/rerun/route.ts`.
+
+Delete `useChatModels.ts`, `ModelSettingsPopover.tsx`, `/api/models`, `/api/keys`,
+the settings-keys pane/navigation, duplicated failure maps, and retry/resend
+routes/actions, including `app/api/messages/[messageId]/retry/route.ts` and
+`app/api/messages/[messageId]/resend/route.ts`. Modify the composer,
+conversation hooks, message renderers,
+`components/chat/AssistantTrustInspector.tsx`,
+`components/chat/useChatRunTail.ts`, `e2e/tests/chatReadiness.ts`, the BFF
+route-count guard, and the hand-authored contracts in
+`lib/conversations/types.ts`, `lib/api/sse/requests.ts`, and
+`lib/api/sse/events.ts`.
+
+After implementation, update `docs/architecture.md`, `docs/modules/llms.md`,
+`chat.md`, `jobs.md`, and `docs/local-rules/testing_standards.md`; delete
+`docs/modules/byok.md`. The testing standard must remove BYOK readiness and the
+Cloudflare generation matrix and name the new certification tiers.
+`docs/architecture.md` must remove §7.5 BYOK and §8.3 Models claims and remain
+in parity because the generation-run-harness G8 gate makes it contractual.
+Built streaming/chat cutovers are not rewritten.
+
+## 13. Ordered implementation
+
+All slices land on one branch; `main` never contains both contracts.
+
+1. Write failing catalog, canonical-schema, finalized-plan, cache-affinity,
+   transient-exhaustion, codec-golden, error-origin, and negative-gate tests in
+   `llm-calling`.
+2. Migrate every schema author before deleting normalization. In
+   `services/agent_tools/writes.py`, author `library_id/library_name`,
+   `page_uri`, `prefix/suffix/color/note`, and `kind` as required-nullable;
+   keep `queue_add` in the exhaustive suite. Migrate and validate `app_search`,
+   `web_search`, `read_resource`, and `inspect_resource`; structural nullability
+   uses the canonical union and `web_search` keeps its minimum in domain
+   validation. Compile
+   `metadata_enrichment.py` and the Oracle/Synapse/media/artifact structured
+   synthesis Pydantic models to the structural subset while retaining richer
+   constraints in their domain validators. Only after every real schema passes
+   all codec round-trips, delete `tool_schema.py` and its mutation tests.
+3. Build the new types/schema/planner/transport and five codecs; delete old
+   runtime paths, including Gemini keyword stripping; run deterministic gates.
+4. Add Nexus profiles, platform credentials, the sole execution/ledger
+   boundary, and one rerun owner; cut every background generation owner to it.
+5. Apply the one-way DB/API migration, migrate factories and both E2E seed
+   paths, and delete models/BYOK/old selection and retry/resend projections.
+6. Cut the frontend to profiles, one failure card, the client-only reconnect
+   state, and one rerun action; delete old API/UI paths.
+7. Run contradiction scans, integration/E2E and the unfiltered paid provider
+   certification, pin the exact shared runtime revision, and update every
+   steady-state doc named in §12.
+
+## 14. Acceptance and negative gates
+
+- Every profile validates against one catalog contract and has current
+  official source/pricing/privacy provenance.
+- Each declared reasoning level sends the exact native value. `xhigh` and `max`
+  remain distinct; unsupported levels fail before network.
+- Every real tool and structured-output schema validates without mutation and
+  round-trips semantically through every active codec. The five write tools
+  preserve their intended optional values as required-nullable. Streamed tool
+  call plus same-target continuation succeeds without exposing hidden
+  reasoning.
+- One immutable finalized plan is the only transport input. Ledger plan facts
+  and request fingerprint match that exact object; no second lowering occurs.
+- Every profile passes repeated-prefix cache proof; explicit wire controls,
+  derived affinity stability/scope, and observed read/write usage agree with
+  the ledger. The OpenRouter route is unusable unless its pinned endpoint also
+  reports a non-zero paid cache read. Versioned affinity vectors match across
+  processes and change for every scope/target/contract/prefix mutation.
+- Every generation attempt reaches exactly one terminal LLM-ledger outcome for
+  planning, transport, provider, protocol, or cancellation. Tool, postprocess,
+  and worker failures terminalize the owning run without rewriting a successful
+  call. Dawn failure persists the appropriate row.
+- Every token reservation settles exactly once: no dispatch releases, reported
+  usage commits actuals, and a potentially billable request without usage
+  commits the conservative full reservation.
+- Planning failures terminalize the pre-existing ledger row with `origin=plan`
+  and no provider request id. No local defect renders provider-rejection copy or
+  enables product rerun.
+- Rate-limit, timeout, provider-unavailable, and provider-stream exhaustion are
+  expected chat outcomes after runtime retries. They retain attempt evidence
+  and render one **Run again** action only when no write tool was attempted;
+  unknown/unclassified failures remain non-rerunnable defects.
+- OpenRouter cannot fallback, response-cache, or make a second upstream attempt;
+  selected upstream and generation id are recorded.
+- A failed chat persists no failure prose and renders one card/action in initial
+  HTTP, live SSE, reconnect, and reload paths. A browser-only status-unknown
+  disconnect instead renders at most one **Reconnect** action and creates no
+  run/failure record. A mid-stream Fable refusal clears its partial text from
+  every product projection before the refusal card is folded.
+- `/llm-profiles` and chat requests have no raw provider/model/key policy. One
+  `/rerun` route remains; both its projection and transaction reject a source
+  run with any attempted write tool.
+- No LLM provider SDK/HTTP call exists outside `provider_runtime`; no Nexus
+  generation-runtime call exists outside `llm_execution`. Named embedding and
+  transcription owners use only their non-generation runtime ports.
+- Required direct platform keys and the Fable retention assertion are validated
+  at API and worker startup; no missing key silently changes `/llm-profiles`.
+  The operator command rejects a missing `OPENROUTER_API_KEY`.
+- The protected release-promotion job runs the unfiltered certification and
+  fails on missing live secrets; ordinary deterministic PR CI does not claim
+  paid-live success.
+- Migration fixtures prove the ledger-join/tie-break, literal `default`, missing
+  history, contradictory later-call cases, legacy error map/null behavior, and
+  provider-check removal. Both Playwright seed paths and global setup import
+  successfully after `Model`/`UserApiKey` deletion.
+- No `models`/`user_api_keys` table, `/models`, `/keys`, BYOK/key mode, provider
+  enable flag, Cloudflare LLM, active old-model slug, generic provider-branch
+  client, cache stripping, schema mutation, JSON repair, sampling knob,
+  reasoning token budget, stateful cursor, or automatic fallback remains.
+
+Verification tiers:
+
+- unit/golden: every plan variant, error mapping, parser, continuation mismatch,
+  cache mode, schema subset, usage, and negative scan;
+- HTTP-boundary integration: exact native bodies/headers and malformed provider
+  responses with only the external network mocked;
+- Nexus integration: real DB, all seven owner kinds, terminal ledger/failure
+  persistence, API contracts, and rerun idempotency;
+- browser/E2E: profile selection, all reasoning options, stream/reconnect,
+  partial-text failure, one card, and rerun;
+- paid live: one minimal call per reasoning option; one above-minimum cache
+  warm/read, strict-JSON call, and representative full-tool continuation per
+  profile; plus invalid-key, timeout, request-id, usage/cost, and one prod-like
+  canary per provider. Goldens exhaust the remaining cross-product.
+
+`make certify-llm-providers` is the required release-build gate. The root
+`Makefile` pins the `llm-calling` revision and invokes
+`../llm-calling/tests/live/test_provider_matrix.py` with `LLM_RUNTIME_LIVE=1`,
+all direct/OpenRouter credentials, the Fable assertion, and no provider focus
+filter. It proves every declared effort (including newly shipped Kimi
+`low | high | max` both direct and routed), cache reads, strict JSON, tools and
+continuation, usage/request ids, and the pinned OpenRouter upstream. The normal
+deterministic build makes no network calls, but its artifact is not promotable
+without this current paid certification.
+
+## 15. Key decisions
+
+- Direct routes beat OpenRouter-only: they are cheaper to reason about, expose
+  native capabilities first, and remove a routing/failure boundary. OpenRouter
+  remains useful as one explicitly selected, certified operator adapter. No
+  price advantage is assumed; the ledger and catalog use the currently
+  certified direct/route prices.
+- Platform credentials beat BYOK for a one-user prototype. The deleted UI,
+  encryption, key lifecycle, probes, modes, and per-user availability do not buy
+  product value here.
+- Profiles beat provider × model × route selection. They preserve expert
+  reasoning control while making invalid combinations unrepresentable.
+- Static checked-in policy beats a dynamic control plane. Changes are reviewed,
+  live-certified, and deployed like code.
+- Provider-native prefix caches beat an app response cache. They save input cost
+  without replaying stale answers or tool calls.
+- Cache affinity is planner-derived from exact scoped prefix bytes, never
+  caller-supplied or mutable hidden state. This preserves privacy boundaries and
+  stable same-input reuse without another cache service.
+- The cutover deliberately preserves one-click recovery for classified
+  rate-limit, timeout, provider-down, and interrupted-stream exhaustion. It
+  wraps exhausted retry signals in an explicit expected outcome instead of
+  narrowing them into a generic defect card.
+- The 80/20 rerun safety policy is conservative: any attempted write tool
+  disables whole-turn rerun. Nexus does not add checkpoint replay or a new
+  cross-run tool-idempotency system in this cutover.
+- Fable requires one explicit retention-acceptance assertion because mandatory
+  retention is an operator decision, not an implementation default. The final
+  portfolio is otherwise static.
+- Rejected: automatically retrying a Fable refusal with Sonnet or any fallback.
+  A refusal is the chosen model's terminal safety result; hidden substitution
+  would violate selection, privacy, cost, and failure truthfulness.
+
+## 16. Done means
+
+- One profile registry selects a certified exact target for every generation
+  owner.
+- One planner produces the immutable request used by transport and accounting.
+- Direct providers and the constrained OpenRouter route pass paid live proof,
+  including reasoning, tools, continuation, caching, usage, and errors.
+- One expected failure projection, or one generic defect boundary state,
+  produces one accurate card and at most one rerun path.
+- Old models, mirrors, BYOK, duplicated lowering/errors, fallbacks, and dead
+  provider code are gone; steady-state docs describe only the final system.
+
+## Current provider references
+
+- [OpenAI GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model)
+  and [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+- [Anthropic models](https://platform.claude.com/docs/en/about-claude/models/overview),
+  [effort](https://platform.claude.com/docs/en/build-with-claude/effort),
+  [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
+  [Fable refusals](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback),
+  and [Fable retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)
+- [Gemini 3.5 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash),
+  [generateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
+  and [generateContent caching](https://ai.google.dev/gemini-api/docs/generate-content/caching)
+- [Kimi K3](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart),
+  [thinking effort](https://platform.kimi.ai/docs/guide/use-thinking-effort), and
+  [automatic context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api)
+- [OpenRouter Kimi K3](https://openrouter.ai/moonshotai/kimi-k3-20260715),
+  [endpoint metadata](https://openrouter.ai/api/v1/models/moonshotai/kimi-k3-20260715/endpoints),
+  [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection),
+  [router metadata](https://openrouter.ai/docs/guides/features/router-metadata),
+  [reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens),
+  [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching),
+  and [response caching](https://openrouter.ai/docs/guides/features/response-caching)

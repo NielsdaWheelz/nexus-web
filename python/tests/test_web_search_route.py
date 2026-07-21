@@ -281,6 +281,93 @@ def test_web_search_route_rejects_non_positive_freshness_days(auth_client):
     )
 
 
+async def test_search_web_readonly_rejects_freshness_days_below_one():
+    """freshness_days=0 is rejected by search_web_readonly itself (not just the
+    route's Query(ge=1)) as a typed WebSearchQueryError — the constraint that used
+    to live in the tool JSON schema's ``minimum: 1`` now lives here in code."""
+    from nexus.services.agent_tools.web_search import (
+        WebSearchQueryError,
+        search_web_readonly,
+    )
+
+    provider = _StubWebSearchProvider((_result(1),))
+
+    with pytest.raises(WebSearchQueryError):
+        await search_web_readonly(provider, "open web agents", freshness_days=0)
+
+    assert not provider.requests, (
+        "An invalid freshness_days must reject before calling the provider"
+    )
+
+
+async def test_search_web_readonly_accepts_freshness_days_of_one():
+    """freshness_days=1 is the boundary-valid minimum and must not raise."""
+    from nexus.services.agent_tools.web_search import search_web_readonly
+
+    provider = _StubWebSearchProvider((_result(1),))
+
+    result = await search_web_readonly(provider, "open web agents", freshness_days=1)
+
+    assert [c.url for c in result.citations] == ["https://example.com/1"]
+    assert provider.requests[0].freshness_days == 1
+
+
+async def test_execute_web_search_freshness_days_zero_persists_invalid_request(
+    auth_client, direct_db: DirectSessionManager
+):
+    """execute_web_search maps the same freshness_days<1 rejection to a persisted
+    status="error"/error_code="invalid_request" tool-call row, never a bare 500."""
+    from nexus.services.agent_tools.web_search import execute_web_search
+
+    user_id = create_test_user_id()
+    assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
+    with direct_db.session() as session:
+        conversation_id = create_test_conversation(session, user_id)
+        user_message_id = create_test_message(session, conversation_id, 1, "user", "Ask")
+        assistant_message_id = create_test_message(
+            session,
+            conversation_id,
+            2,
+            "assistant",
+            "Web answer [1].",
+            parent_message_id=user_message_id,
+        )
+
+    provider = _StubWebSearchProvider((_result(1),))
+    with direct_db.session() as session:
+        run = await execute_web_search(
+            session,
+            provider=provider,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            query="open web agents",
+            freshness_days=0,
+            tool_call_index=0,
+        )
+
+    direct_db.register_cleanup("resource_external_snapshots", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
+    direct_db.register_cleanup("conversations", "id", conversation_id)
+    direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+    direct_db.register_cleanup("message_tool_calls", "id", run.tool_call_id)
+    direct_db.register_cleanup("message_retrievals", "tool_call_id", run.tool_call_id)
+
+    assert run.status == "error", f"Expected an error run, got {run.status}"
+    assert run.error_code == "invalid_request", f"Expected invalid_request, got {run.error_code}"
+    assert not provider.requests, (
+        "An invalid freshness_days must reject before calling the provider"
+    )
+
+    with direct_db.session() as session:
+        persisted_status, persisted_error_code = session.execute(
+            text("SELECT status, error_code FROM message_tool_calls WHERE id = :tool_call_id"),
+            {"tool_call_id": run.tool_call_id},
+        ).one()
+    assert persisted_status == "error"
+    assert persisted_error_code == "invalid_request"
+
+
 def test_web_search_route_requires_authentication(auth_client):
     """No bearer token yields 401 E_UNAUTHENTICATED before any provider work."""
     auth_client.app.state.web_search_provider = _StubWebSearchProvider((_result(1),))

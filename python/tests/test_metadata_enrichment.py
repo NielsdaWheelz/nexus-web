@@ -219,6 +219,101 @@ def test_validate_structured_enrichment_rejects_text_payloads():
     assert validate_structured_enrichment('{"title":"The Book"}') is None
 
 
+def _enrichment_payload(**overrides: object) -> dict:
+    payload: dict[str, object] = {
+        "title": None,
+        "authors": None,
+        "publisher": None,
+        "description": None,
+        "published_date": None,
+        "language": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_structured_metadata_title_length_cap_255_accepted_256_rejected():
+    # Cap relocated from a JSON-schema maxLength into _non_empty_string (§ Value
+    # constraints kept out of the emitted JSON schema); title has no other
+    # format validator, so the boundary is exercised end-to-end through the model.
+    parsed = MetadataEnrichmentOutput.model_validate(_enrichment_payload(title="x" * 255))
+    assert parsed.title == "x" * 255
+
+    with pytest.raises(ValidationError, match="at most 255 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(title="x" * 256))
+
+
+def test_structured_metadata_publisher_length_cap_255_accepted_256_rejected():
+    parsed = MetadataEnrichmentOutput.model_validate(_enrichment_payload(publisher="x" * 255))
+    assert parsed.publisher == "x" * 255
+
+    with pytest.raises(ValidationError, match="at most 255 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(publisher="x" * 256))
+
+
+def test_structured_metadata_description_length_cap_2000_accepted_2001_rejected():
+    parsed = MetadataEnrichmentOutput.model_validate(_enrichment_payload(description="x" * 2000))
+    assert parsed.description == "x" * 2000
+
+    with pytest.raises(ValidationError, match="at most 2000 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(description="x" * 2001))
+
+
+def test_structured_metadata_published_date_over_cap_is_rejected_by_length_check():
+    # published_date's cap is 64 chars, but every value the format validator
+    # (_valid_partial_iso_date, YYYY / YYYY-MM / YYYY-MM-DD) accepts is at most
+    # 10 chars — no string can be both 64 chars long and format-valid, so the
+    # accept side of this boundary can never be exercised end-to-end through the
+    # model. A too-long value is still caught by the length check, which runs
+    # (and raises) before the format validator ever sees it.
+    with pytest.raises(ValidationError, match="at most 64 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(published_date="1" * 65))
+
+
+def test_structured_metadata_published_date_length_validator_accepts_64_in_isolation():
+    # _non_empty_string is the sole owner of the published_date length cap; call
+    # it directly (duck-typed ValidationInfo — only .field_name is read) to prove
+    # the cap itself accepts exactly 64 chars, isolated from the format validator
+    # that runs after it and would reject a non-date-shaped 64-char string.
+    info = SimpleNamespace(field_name="published_date")
+    value = "1" * 64
+    assert MetadataEnrichmentOutput._non_empty_string(value, info) == value
+
+
+def test_structured_metadata_language_over_cap_is_rejected_by_length_check():
+    # Same interplay as published_date: language's format validator only accepts
+    # exactly 2 lowercase letters, so no 32-char string can pass both checks. The
+    # over-cap (33 chars) value is still rejected by the length check first.
+    with pytest.raises(ValidationError, match="at most 32 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(language="a" * 33))
+
+
+def test_structured_metadata_language_length_validator_accepts_32_in_isolation():
+    info = SimpleNamespace(field_name="language")
+    value = "a" * 32
+    assert MetadataEnrichmentOutput._non_empty_string(value, info) == value
+
+
+def test_structured_metadata_authors_count_cap_20_accepted_21_rejected():
+    parsed = MetadataEnrichmentOutput.model_validate(
+        _enrichment_payload(authors=[f"Author {i}" for i in range(20)])
+    )
+    assert parsed.authors is not None and len(parsed.authors) == 20
+
+    with pytest.raises(ValidationError, match="at most 20 entries"):
+        MetadataEnrichmentOutput.model_validate(
+            _enrichment_payload(authors=[f"Author {i}" for i in range(21)])
+        )
+
+
+def test_structured_metadata_author_name_length_cap_255_accepted_256_rejected():
+    parsed = MetadataEnrichmentOutput.model_validate(_enrichment_payload(authors=["x" * 255]))
+    assert parsed.authors == ["x" * 255]
+
+    with pytest.raises(ValidationError, match="at most 255 characters"):
+        MetadataEnrichmentOutput.model_validate(_enrichment_payload(authors=["x" * 256]))
+
+
 def test_structured_output_spec_requires_all_nullable_fields():
     spec = metadata_structured_output_spec()
 

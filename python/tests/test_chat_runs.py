@@ -1206,14 +1206,23 @@ class TestChatRunTooling:
             "scopes",
         } == set(app_props)
         for key in ("kinds", "formats", "authors", "roles", "scopes"):
-            assert app_props[key]["type"] == ["array", "null"]
+            branches = app_props[key]["anyOf"]
+            assert branches[0]["type"] == "array", f"{key} non-null arm must be an array"
+            assert branches[1] == {"type": "null"}, f"{key} must be required-nullable"
 
         web_props = WEB_SEARCH_TOOL_DEFINITION["parameters"]["properties"]
         assert WEB_SEARCH_TOOL_DEFINITION["parameters"]["required"] == [
             "query",
             "freshness_days",
         ]
-        assert web_props["freshness_days"]["type"] == ["integer", "null"]
+        assert web_props["freshness_days"]["anyOf"] == [
+            {"type": "integer"},
+            {"type": "null"},
+        ]
+        assert "minimum" not in web_props["freshness_days"], (
+            "freshness_days minimum is domain validation (search_web_readonly), "
+            "not a schema keyword"
+        )
 
     def test_app_search_tool_empty_filter_arrays_are_omitted(self):
         from nexus.services.chat_runs import _app_search_string_array_from_tool_args
