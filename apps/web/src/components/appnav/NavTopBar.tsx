@@ -4,7 +4,7 @@ import { useRef } from "react";
 import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
 import ActionMenu from "@/components/ui/ActionMenu";
-import RunningHead from "@/components/ui/RunningHead";
+import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { pluralize } from "@/lib/text/pluralize";
 import styles from "./AppNav.module.css";
@@ -34,84 +34,100 @@ export default function NavTopBar({
     <header
       className={styles.topBar}
       data-hidden={hidden ? "true" : "false"}
-      aria-hidden={hidden || undefined}
-      inert={hidden || undefined}
+      data-header-kind={paneChrome?.header.kind}
+      data-pane-chrome-for={paneChrome?.paneId}
     >
-      <button
-        type="button"
-        className={`${styles.topBarButton} ${styles.topBarBrand}`}
-        onClick={onOpenSheet}
-        aria-label="Open navigation"
-        aria-haspopup="dialog"
+      <div
+        className={styles.topBarControls}
+        data-testid="top-bar-controls"
+        aria-hidden={hidden || undefined}
+        inert={hidden || undefined}
       >
-        <AsterismMark size={20} />
-      </button>
-      <button
-        type="button"
-        className={styles.topBarButton}
-        onClick={() => navigation?.onBack()}
-        disabled={!navigation?.canGoBack}
-        aria-label="Go back"
-      >
-        <ChevronLeft size={20} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        className={styles.topBarButton}
-        onClick={() => navigation?.onForward()}
-        disabled={!navigation?.canGoForward}
-        aria-label="Go forward"
-      >
-        <ChevronRight size={20} aria-hidden="true" />
-      </button>
-
-      <div className={styles.topBarTitle}>
-        <RunningHead
-          standingHead={paneChrome?.standingHead ?? ""}
-          folio={paneChrome?.folio}
-          folioPending={paneChrome?.folioPending}
-        />
+        <button
+          type="button"
+          className={`${styles.topBarButton} ${styles.topBarBrand}`}
+          onClick={onOpenSheet}
+          aria-label="Open navigation"
+          aria-haspopup="dialog"
+        >
+          <AsterismMark size={20} />
+        </button>
+        <button
+          type="button"
+          className={styles.topBarButton}
+          onClick={() => navigation?.onBack()}
+          disabled={!navigation?.canGoBack}
+          aria-label="Go back"
+        >
+          <ChevronLeft size={20} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={`${styles.topBarButton} ${styles.topBarForward}`}
+          onClick={() => navigation?.onForward()}
+          disabled={!navigation?.canGoForward}
+          aria-label="Go forward"
+        >
+          <ChevronRight size={20} aria-hidden="true" />
+        </button>
       </div>
 
-      <button
-        type="button"
-        className={styles.topBarButton}
-        onClick={onOpenCommand}
-        aria-label={commandLabel}
-        aria-haspopup="dialog"
+      <div className={styles.topBarTitle}>
+        {paneChrome ? (
+          <PaneHeaderIdentity id={paneChrome.identityId} model={paneChrome.header} />
+        ) : null}
+      </div>
+
+      <div
+        className={styles.topBarControls}
+        data-testid="top-bar-controls"
+        aria-hidden={hidden || undefined}
+        inert={hidden || undefined}
       >
-        <span className={styles.topBarCommandIcon}>
-          <Command size={20} aria-hidden="true" />
-          {showPaneCount ? (
-            <span className={styles.topBarCommandBadge} aria-hidden="true">
-              {paneCount}
-            </span>
-          ) : null}
-        </span>
-      </button>
-      <button
-        type="button"
-        className={`${styles.topBarButton} ${styles.topBarAdd}`}
-        onClick={onOpenAdd}
-        aria-label="Add content"
-        aria-haspopup="dialog"
-      >
-        <Plus size={20} aria-hidden="true" />
-      </button>
-      {options.length > 0 && (
-        <ActionMenu
-          options={options}
-          label="Pane options"
-          onOpenChange={(open) => {
-            if (open) {
-              releaseLockRef.current = acquireVisibleLock("action-menu");
-            } else {
-              releaseLockRef.current?.();
-              releaseLockRef.current = null;
-            }
-          }}
-        />
-      )}
+        <button
+          type="button"
+          className={styles.topBarButton}
+          onClick={onOpenCommand}
+          aria-label={commandLabel}
+          aria-haspopup="dialog"
+        >
+          <span className={styles.topBarCommandIcon}>
+            <Command size={20} aria-hidden="true" />
+            {showPaneCount ? (
+              <span className={styles.topBarCommandBadge} aria-hidden="true">
+                {paneCount}
+              </span>
+            ) : null}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`${styles.topBarButton} ${styles.topBarAdd}`}
+          onClick={onOpenAdd}
+          aria-label="Add content"
+          aria-haspopup="dialog"
+        >
+          <Plus size={20} aria-hidden="true" />
+        </button>
+        {options.length > 0 && (
+          <ActionMenu
+            options={options}
+            label="Pane options"
+            className={styles.topBarOptions}
+            triggerAttributes={{
+              "data-pane-options-trigger": paneChrome?.paneId,
+            }}
+            onOpenChange={(open) => {
+              if (open) {
+                releaseLockRef.current = acquireVisibleLock("action-menu");
+              } else {
+                releaseLockRef.current?.();
+                releaseLockRef.current = null;
+              }
+            }}
+          />
+        )}
+      </div>
     </header>
   );
 }

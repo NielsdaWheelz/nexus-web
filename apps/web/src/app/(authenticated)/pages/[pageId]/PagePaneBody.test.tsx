@@ -21,10 +21,8 @@ import {
   readDraftBlocksForPersistence,
 } from "@/lib/notes/resourceSurfacePersistence";
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
-import {
-  PaneChromeOverrideContext,
-  type PaneChromeOverrides,
-} from "@/components/workspace/PaneShell";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import PagePaneBody from "./PagePaneBody";
 
 describe("readDraftBlocksForPersistence", () => {
@@ -416,10 +414,12 @@ describe("PagePaneBody daily-note chrome options", () => {
   function renderWithChromeCapture(
     pageId: string,
     initialPage: NotePage,
-  ): { captured: PaneChromeOverrides[] } {
-    const captured: PaneChromeOverrides[] = [];
-    const captureFn = (overrides: PaneChromeOverrides) => {
-      captured.push(overrides);
+  ): { captured: PanePrimaryChromePublication[] } {
+    const captured: PanePrimaryChromePublication[] = [];
+    const captureFn: Parameters<typeof PanePrimaryChromeProvider>[0]["publish"] = (update) => {
+      if (update.publication) {
+        captured.push(update.publication);
+      }
     };
     const href = `/pages/${pageId}`;
     const identity = resolvePaneRouteIdentity(href);
@@ -440,9 +440,9 @@ describe("PagePaneBody daily-note chrome options", () => {
           onGoBackPane={vi.fn()}
           onGoForwardPane={vi.fn()}
         >
-          <PaneChromeOverrideContext.Provider value={captureFn}>
+          <PanePrimaryChromeProvider publish={captureFn}>
             <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
-          </PaneChromeOverrideContext.Provider>
+          </PanePrimaryChromeProvider>
         </PaneRuntimeProvider>
       </FeedbackProvider>,
     );

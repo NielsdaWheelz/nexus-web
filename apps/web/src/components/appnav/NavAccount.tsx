@@ -43,6 +43,7 @@ export default function NavAccount({
       )}
       options={[
         {
+          kind: "custom",
           id: "settings",
           label: settings.label,
           render: ({ closeMenu, closeMenuWithoutFocus }) => (
@@ -64,6 +65,7 @@ export default function NavAccount({
           ),
         },
         {
+          kind: "custom",
           id: "signout",
           label: "Sign Out",
           render: () => (

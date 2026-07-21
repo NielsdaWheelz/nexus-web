@@ -5,12 +5,12 @@
  */
 
 import type { LucideIcon } from "lucide-react";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { PillTone } from "@/components/ui/Pill";
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import type { EdgeKind } from "@/lib/resourceGraph/edges";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export type CollectionItemKind =
   | "media"
@@ -71,7 +71,7 @@ export interface CollectionRowView {
   relatedMediaId?: string | null;
   contributors?: { credits: ContributorCredit[]; maxVisible: number; showRole?: boolean };
   recency?: { at: string };
-  actions?: ActionMenuOption[];
+  actions?: ActionDescriptor[];
   swipeActions?: SwipeAction[];
   selected?: boolean;
 }

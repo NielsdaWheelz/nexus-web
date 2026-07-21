@@ -3,10 +3,10 @@
 const WORKSPACE_TELEMETRY_EVENT = "nexus:workspace-telemetry";
 
 interface WorkspaceTelemetryDetail {
-  type: "title";
+  type: "label";
   status: "ok" | "fallback";
   errorCode: string | null;
-  titleState: "resolved" | "pending";
+  labelState: "resolved" | "pending";
   routeId: string;
 }
 export function emitWorkspaceTelemetry(detail: WorkspaceTelemetryDetail): void {

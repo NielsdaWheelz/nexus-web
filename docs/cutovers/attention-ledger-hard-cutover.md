@@ -62,7 +62,7 @@ Record every contiguous reading and listening episode as a first-class `reading_
 - **P-6.** `collection-surface-hard-cutover.md` (BUILT, 2026-06-19) Non-Goal N6 explicitly defers the `consumption_state` table to v2. This spec fulfills that deferred item; cite at §1.
 - **P-7.** `resource_edges.origin` CHECK (`ck_resource_edges_origin`, `db/models.py:579–587`) currently lists `'user', 'citation', 'system', 'note_body', 'highlight_note', 'synapse', 'document_embed'`. This spec adds NO new origin. Verified.
 - **P-8.** `llm_calls` owner_kind CHECK (`ck_llm_calls_owner_kind`, `db/models.py:4010–4013`) lists `'chat_run', 'oracle_reading', 'li_revision', 'media_summary', 'media_enrichment', 'synapse_scan'`. This spec adds NO new owner kind — it makes no LLM calls. Verified.
-- **P-9.** `lib/actions/resourceActions.ts` (`apps/web/src/lib/actions/resourceActions.ts`) owns `ActionMenuOption[]` construction per kind. Verified at lines 38–121.
+- **P-9.** `lib/actions/resourceActions.ts` (`apps/web/src/lib/actions/resourceActions.ts`) owns `ActionDescriptor[]` construction per kind.
 - **P-10.** `lib/collections/types.ts` `CollectionRowView.swipeActions?: SwipeAction[]` is defined and consumed by `apps/web/src/components/collections/CollectionRow.tsx:63–64`. Verified.
 - **P-11.** Migration chain ends at `0168_web_article_inline_embeds.py` (down_revision `"0167"`). Sibling `dawn-write-hard-cutover.md` (SPEC) claims `0169`. This spec uses placeholder `NNNN`.
 

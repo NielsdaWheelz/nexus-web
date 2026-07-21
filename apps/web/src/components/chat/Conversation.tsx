@@ -4,8 +4,8 @@
  * Reads its own id from the pane route (`usePaneParam("id")`, null on the
  * `new` route), drives the shared `useConversation` engine (which owns all
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
- * (which owns scroll). This adapter only holds pane CHROME: title, the
- * chrome toolbar toggles and action menu, the
+ * (which owns scroll). This adapter only holds pane chrome: typed section
+ * publication, toolbar toggles and action menu, the
  * conversation-context secondary panes (context refs + forks), and the open-resource /
  * reader-source navigation wiring.
  */
@@ -48,9 +48,9 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 
@@ -225,7 +225,7 @@ export default function Conversation() {
 
   const branch = convo.branch;
 
-  useSetPaneTitle(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
+  useSetPaneLabel(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
 
   // --------------------------------------------------------------------------
   // Composer wiring
@@ -326,7 +326,7 @@ export default function Conversation() {
       if (target) dispatchReaderSourceActivation(target);
       if (event?.shiftKey) {
         activateResource(activation, {
-          label: target?.label,
+          labelHint: target?.label,
           openInNewPane,
           newPane: true,
         });
@@ -334,7 +334,7 @@ export default function Conversation() {
       }
       if (resourceRef === activation.resourceRef) return;
       activateResource(activation, {
-        label: target?.label,
+        labelHint: target?.label,
         navigate: (href) => router.push(href),
       });
     },
@@ -344,7 +344,7 @@ export default function Conversation() {
   const handleOpenResource = useCallback(
     (contextRef: ContextRefOut) => {
       activateResource(contextRef.activation, {
-        label: contextRef.label,
+        labelHint: contextRef.label,
         openInNewPane,
         newPane: true,
       });
@@ -438,7 +438,7 @@ export default function Conversation() {
     ],
   );
 
-  usePaneChromeOverride({ toolbar: chatToolbar, options: paneOptions });
+  usePanePrimaryChrome({ toolbar: chatToolbar, options: paneOptions });
 
   const secondaryDescriptor = useMemo(
     () => ({

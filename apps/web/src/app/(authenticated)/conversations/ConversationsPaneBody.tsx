@@ -13,7 +13,7 @@ import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import Button from "@/components/ui/Button";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
@@ -78,9 +78,12 @@ export default function ConversationsPaneBody() {
 
   const loadError = error ? toFeedback(error, { fallback: "Failed to load conversations" }) : null;
 
-  usePaneChromeOverride({
-    folio: { kind: "count", value: rows.length, unit: "chat" },
-    folioPending: status === "loading",
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: rows.length, unit: "chat" },
+      pending: status === "loading",
+    },
   });
 
   return (

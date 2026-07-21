@@ -10,8 +10,42 @@ function PublishChrome() {
   useEffect(() => {
     setPaneChrome({
       paneId: "pane-a",
-      standingHead: "Libraries",
-      folio: { kind: "count", value: 37, unit: "source" },
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Libraries",
+        folio: { kind: "count", value: 37, unit: "source" },
+        pending: false,
+      },
+      navigation: {
+        canGoBack: false,
+        canGoForward: false,
+        onBack: () => {},
+        onForward: () => {},
+      },
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [setPaneChrome]);
+  return null;
+}
+
+function PublishResourceChrome() {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-media",
+      identityId: "pane-media-identity",
+      header: {
+        kind: "resource",
+        resource: {
+          status: "ready",
+          title: "The Left Hand of Darkness",
+          creditGroups: [
+            { kind: "authors", credits: [{ label: "Ursula K. Le Guin" }] },
+          ],
+        },
+      },
       navigation: {
         canGoBack: false,
         canGoForward: false,
@@ -63,7 +97,29 @@ describe("NavTopBar", () => {
     expect(screen.getByText("37 sources")).toBeInTheDocument();
   });
 
-  it("makes hide-on-scroll chrome inert as well as visually hidden", async () => {
+  it("renders the active pane's resource identity from the shared model", () => {
+    render(
+      <MobileChromeProvider>
+        <PublishResourceChrome />
+        <NavTopBar
+          onOpenSheet={() => {}}
+          onOpenCommand={() => {}}
+          onOpenAdd={() => {}}
+          paneCount={1}
+        />
+      </MobileChromeProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "The Left Hand of Darkness" })).toHaveAttribute(
+      "id",
+      "pane-media-identity",
+    );
+    const bar = screen.getByRole("banner");
+    expect(bar).toHaveAttribute("data-header-kind", "resource");
+    expect(bar).toHaveAttribute("data-pane-chrome-for", "pane-media");
+  });
+
+  it("keeps the route heading accessible while hide-on-scroll chrome is translated", async () => {
     vi.stubGlobal("innerWidth", 390);
     vi.spyOn(window, "matchMedia").mockImplementation(
       (query: string) =>
@@ -82,6 +138,7 @@ describe("NavTopBar", () => {
     render(
       withRenderEnvironment(
         <MobileChromeProvider>
+          <PublishResourceChrome />
           <HideChrome />
           <NavTopBar
             onOpenSheet={() => {}}
@@ -95,8 +152,24 @@ describe("NavTopBar", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Hide chrome" }));
-    const navigation = screen.getByRole("banner", { hidden: true });
-    await waitFor(() => expect(navigation).toHaveAttribute("aria-hidden", "true"));
-    expect(navigation).toHaveAttribute("inert");
+    const navigation = screen.getByRole("banner");
+    await waitFor(() =>
+      expect(navigation).toHaveAttribute("data-hidden", "true"),
+    );
+    expect(navigation).not.toHaveAttribute("aria-hidden");
+    expect(navigation).not.toHaveAttribute("inert");
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "The Left Hand of Darkness",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Search or ask anything/ }),
+    ).toBeNull();
+    for (const controls of screen.getAllByTestId("top-bar-controls")) {
+      expect(controls).toHaveAttribute("aria-hidden", "true");
+      expect(controls).toHaveAttribute("inert");
+    }
   });
 });

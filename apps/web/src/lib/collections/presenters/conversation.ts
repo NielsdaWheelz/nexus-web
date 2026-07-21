@@ -33,7 +33,7 @@ export function presentConversation(
   return {
     id: item.id,
     kind: "conversation",
-    primary: { kind: "link", href: `/conversations/${item.id}`, paneTitleHint: item.title },
+    primary: { kind: "link", href: `/conversations/${item.id}`, paneLabelHint: item.title },
     lead: { icon: resourceIconForScheme("conversation") },
     headline: { text: item.title },
     signals: [],

@@ -51,11 +51,10 @@ calls `playback_queue_service.append_subscription_media_if_enabled` — repoint 
 `dispatchTarget` owns every Launcher action (`lib/launcher/dispatch.ts:48`). This
 spec adds one new target kind (`queue-add`) to that switch.
 
-**P-7.** `running-journal-hard-cutover.md` (SPEC) derives every standing head
-exhaustively from `PaneRouteId` via `standingHeadForRoute`. Adding `"lectern"` to
-`PaneRouteId` requires a matching entry in that map (a compile error if missing).
-This spec owns adding the `PaneRouteId` value; the running-journal spec must add
-its `standingHeadForRoute("lectern")` → `"Lectern"` (natural-case) entry in its own build.
+**P-7.** Every `PaneRouteId` has one exhaustive route definition with a typed
+header contract. Adding `"lectern"` therefore puts its navigation destination
+only in the section header contract in the same `PANE_ROUTE_MODELS` entry; no
+duplicate destination field or parallel standing-head map exists.
 
 **P-8.** `amanuensis-hard-cutover.md` (SPEC, same batch): its `queue_add` tool
 writes `consumption_queue_items` with `source='assistant'`. This spec's migration
@@ -336,15 +335,20 @@ with `source_url: queueItem.source_url`. After S2, `ConsumptionQueueItem` drops
 ```typescript
 route({
   id: "lectern",
+  header: {
+    kind: "section",
+    destinationId: "lectern",
+    defaultFolio: "none",
+  },
   pattern: ["lectern"],
-  staticTitle: "Lectern",
-  titleMode: "static",
+  defaultLabel: "Lectern",
+  labelMode: "static",
   bodyMode: "standard",
   ...STANDARD_WIDTH_CONTRACT,
 })
 ```
 
-`lib/panes/paneRouteTable.ts` gets the corresponding chrome entry.
+`lib/panes/paneRouteTable.ts` gets only the corresponding icon entry.
 `lib/navigation/destinations.ts` gains:
 ```typescript
 {
@@ -356,12 +360,9 @@ route({
   match: { exact: ["/lectern"] },
 }
 ```
-Ordered **before** Libraries in the `DESTINATIONS` array to achieve mobile-first
-ordering (NAV_MODEL derives from this order). On desktop, rail order follows the
-array; the standing-head map in `running-journal-hard-cutover.md` must be updated to
-include `"lectern": "Lectern"` (natural-case label as value, consistent with the
-running-journal spec's `standingHeadForRoute` unit test requirement; that spec owns
-the entry).
+The fixed app-navigation projection orders Lectern before Libraries. The
+section header resolves the route's `header.destinationId` through the same
+destination registry; it has no separate label map.
 
 ### 7.3 Lectern pane
 
@@ -412,7 +413,7 @@ On desktop, opening behavior is unchanged (queueOpen state, overlay at the foote
 ### 7.5 Mobile GlobalPlayerFooter change
 
 `openQueueFromMobileExpanded` (`GlobalPlayerFooter.tsx:253`): instead of
-`setQueueOpen(true)`, calls `requestOpenInAppPane('/lectern', { titleHint: 'Lectern' })`.
+`setQueueOpen(true)`, calls `requestOpenInAppPane('/lectern', { labelHint: 'Lectern' })`.
 The `GlobalPlayerConsumptionPanel` is now desktop-only; on mobile the Lectern pane
 is the queue surface.
 
@@ -629,16 +630,10 @@ with `source='assistant'`. This spec's migration (`NNNN_consumption_queue.py`) a
 `consumption_queue.py` service must be merged before amanuensis S6 is built. Both
 specs carry this sequencing line.
 
-**`running-journal-hard-cutover.md` (SPEC):** Adds `RunningHead` / `SectionOpener`
-and derives standing heads from `PaneRouteId` exhaustively via `standingHeadForRoute`.
-This spec adds `"lectern"` to `PaneRouteId`; the running-journal spec must:
-1. Add the map entry `"lectern": "Lectern"` (natural-case label as value; lowercase
-   would fail the unit test checking `standingHeadForRoute` returns natural-case strings).
-2. Add a LECTERN row to its §4.2 surface table.
-3. Include `"lectern"` in its AC-3 exhaustive `PaneRouteId` check.
-
-If running-journal builds before this spec, the `satisfies Record<PaneRouteId, string>`
-exhaustive check will emit a compile error — correct behavior.
+**`running-journal-hard-cutover.md`:** The final typed header contract supersedes
+the earlier standalone standing-head plan. This spec adds `"lectern"` to
+`PaneRouteId` together with its section-header contract; the destination registry
+provides the natural-case `"Lectern"` label.
 
 **`browse-surface-deletion-hard-cutover.md` (SPEC):** Deletes `"browse"` from
 `PaneRouteId` and the `{ id: "browse", slot: "primary" }` DESTINATIONS entry. Mobile
@@ -874,10 +869,9 @@ it("lectern destination has primary slot", () => {
 ```bash
 cd apps/web && bun run typecheck && bun run lint
 ```
-Both must be clean. The `satisfies Record<PaneRouteId, string>` in
-`standingHeadForRoute` fails at build time if `"lectern"` is missing from the map
-(running-journal-hard-cutover.md must be applied or the map must be updated in
-this build).
+Both must be clean. The exhaustive `PANE_ROUTE_MODELS` definition makes a
+missing Lectern route/header contract a type or route-table failure in this
+build.
 
 ### BE static
 ```bash

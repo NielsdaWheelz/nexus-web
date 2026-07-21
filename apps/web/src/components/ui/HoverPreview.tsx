@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import styles from "./HoverPreview.module.css";
 
 interface HoverPreviewAnchor {
@@ -20,6 +25,12 @@ export default function HoverPreview({
   onClose: () => void;
 }) {
   const [touchSheet, setTouchSheet] = useState(false);
+  const touchSheetRef = useRef<HTMLDivElement>(null);
+  const overlay = useDialogOverlay({
+    ref: touchSheetRef,
+    active: touchSheet,
+    onDismiss: onClose,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -52,16 +63,25 @@ export default function HoverPreview({
   });
 
   const preview = touchSheet ? (
-      <div className={styles.sheetBackdrop} onClick={onClose} role="presentation">
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.sheetBackdrop}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        onClick={onClose}
+        role="presentation"
+      >
         <div
+          ref={touchSheetRef}
           className={styles.sheet}
           role="dialog"
-          aria-modal="true"
+          aria-label="Preview"
+          tabIndex={-1}
           onClick={(event) => event.stopPropagation()}
         >
           {children}
         </div>
       </div>
+    </ModalLayerProvider>
     ) : (
     <div
       ref={cardRef}

@@ -17,12 +17,12 @@ vi.mock("@/lib/panes/paneRenderRegistry", () => ({ preloadPane }));
 type NavigatePane = (
   paneId: string,
   href: string,
-  options?: { titleHint?: string },
+  options?: { labelHint?: string },
 ) => void;
 
 type OpenInNewPane = (
   href: string,
-  titleHint?: string,
+  labelHint?: string,
   secondarySurfaceId?: WorkspaceSecondarySurfaceId,
 ) => void;
 
@@ -50,6 +50,7 @@ function renderBoundary(input: {
         <ActionMenu
           options={[
             {
+              kind: "link",
               id: "reader-settings",
               label: "Reader settings",
               href: "/settings/reader",
@@ -176,7 +177,7 @@ describe("PaneRouteBoundary", () => {
     expect(navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/settings/reader",
-      { titleHint: "Reader settings" },
+      { labelHint: "Reader settings" },
     );
   });
 

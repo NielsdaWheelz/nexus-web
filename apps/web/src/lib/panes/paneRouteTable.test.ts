@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_MEDIA_PANE_WIDTH_PX,
   MAX_STANDARD_PANE_WIDTH_PX,
+  PANE_ROUTE_MODELS,
   resolvePaneRouteWidthContract,
+  sectionDestinationIdForHref,
 } from "@/lib/panes/paneRouteModel";
 import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRoute } from "./paneRouteTable";
@@ -11,12 +13,32 @@ const PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const BLOCK_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("pane route table", () => {
-  it("resolves the search route to its chrome title", () => {
+  it("declares section and resource header contracts independently of layout", () => {
     const route = resolvePaneRoute("/search");
-    const chrome = route.definition?.getChrome?.({ href: "/search", params: {} });
+    const mediaRoute = resolvePaneRoute(`/media/${PAGE_ID}`);
 
     expect(route.id).toBe("search");
-    expect(chrome?.title).toBe("Search");
+    expect(route.defaultLabel).toBe("Search");
+    expect(route.definition?.header).toEqual({
+      kind: "section",
+      destinationId: "search",
+      defaultFolio: "none",
+    });
+    expect(mediaRoute.definition?.bodyMode).toBe("document");
+    expect(mediaRoute.definition?.header).toEqual({
+      kind: "resource",
+      pendingLabel: "Loading media…",
+    });
+  });
+
+  it("declares a header contract for every route and only media is resource-owned", () => {
+    expect(
+      PANE_ROUTE_MODELS.filter(({ header }) => header.kind === "resource").map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["media"]);
+
+    expect(sectionDestinationIdForHref(`/media/${PAGE_ID}`)).toBe("libraries");
   });
 
   it("resolves author routes with contributor handle locators", () => {

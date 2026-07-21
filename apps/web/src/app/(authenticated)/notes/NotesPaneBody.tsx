@@ -8,10 +8,10 @@ import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/f
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneRouter, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { usePaneRouter, useSetPaneLabel } from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
 import { openTodayPage } from "@/lib/notes/openToday";
 import type { NotePageSummary } from "@/lib/notes/normalize";
@@ -48,10 +48,13 @@ export default function NotesPaneBody() {
   const pages = localPages ?? resourcePages ?? [];
   const loading = pagesResource.status === "loading" && pages.length === 0;
 
-  useSetPaneTitle("Notes");
-  usePaneChromeOverride({
-    folio: { kind: "count", value: pages.length, unit: "page" },
-    folioPending: loading,
+  useSetPaneLabel("Notes");
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: pages.length, unit: "page" },
+      pending: loading,
+    },
   });
 
   useEffect(() => {

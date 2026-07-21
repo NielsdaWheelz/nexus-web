@@ -164,10 +164,9 @@ Use these patterns:
   pane runtime numeric values in one pure module and unit-testing the edge cases.
 - `apps/web/src/lib/panes/paneRuntime.tsx` is the precedent for React runtime
   transport staying separate from pure value modules.
-- `apps/web/src/components/workspace/PaneShell.tsx` has a local
-  `arePaneChromeOverridesEqual` helper. That is a related publication-like
-  pattern, but it is chrome override state local to `PaneShell`, not this
-  cross-component workspace publication contract.
+- Primary chrome is now a route-keyed `PanePrimaryChromePublication` whose
+  value semantics live in this same pure publication module; React transport
+  stays in `PanePrimaryChrome.tsx`.
 
 Do not generalize all equality helpers into one broad comparator. The shared
 module should be specific to pane publication values.
@@ -502,9 +501,9 @@ Consolidate in this cutover:
 
 Do not consolidate in this cutover:
 
-- `PaneShell` chrome override equality. It is local chrome override state, not
-  pane publication state.
-- `ActionMenuOption` equality. It is a separate component-level value contract.
+- `ActionDescriptor` rendering semantics. Primary-chrome publication equality
+  compares its descriptor fields, but ActionBar/ActionMenu projection remains
+  owned by those components.
 - `normalizePaneRuntimeLayout`. It belongs to pane sizing and layout.
 - `resolveEffectivePaneSizing` or secondary width policy. They belong to sizing
   modules.

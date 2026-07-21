@@ -11,7 +11,7 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
   return {
     id: item.id,
     kind: "note",
-    primary: { kind: "link", href: `/pages/${item.id}`, paneTitleHint: item.title },
+    primary: { kind: "link", href: `/pages/${item.id}`, paneLabelHint: item.title },
     lead: { icon: resourceIconForScheme("page") },
     headline: { text: item.title },
     signals: [],

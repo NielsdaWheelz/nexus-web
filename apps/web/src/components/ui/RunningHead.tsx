@@ -4,6 +4,7 @@ import { formatFolio, type Folio } from "@/lib/ui/folio";
 import styles from "./RunningHead.module.css";
 
 interface RunningHeadProps {
+  id: string;
   standingHead: string; // section, rendered uppercase small-caps by CSS
   folio?: Folio; // flush-right; defaults to { kind: "none" }
   folioPending?: boolean; // skeleton while the count/title resolves
@@ -19,6 +20,7 @@ const NONE_FOLIO: Folio = { kind: "none" };
  * in SectionOpener / the reader body — the standing head is a `<p>` label.
  */
 export default function RunningHead({
+  id,
   standingHead,
   folio = NONE_FOLIO,
   folioPending = false,
@@ -26,7 +28,7 @@ export default function RunningHead({
   const folioText = formatFolio(folio);
 
   return (
-    <div className={styles.runningHead} data-running-head="true">
+    <div id={id} className={styles.runningHead} data-running-head="true">
       <p className={styles.standing}>{standingHead}</p>
       {folioPending ? (
         <span className={styles.folio} aria-busy="true">

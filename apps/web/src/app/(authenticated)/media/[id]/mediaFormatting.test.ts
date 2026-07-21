@@ -1,54 +1,80 @@
 import { describe, expect, it } from "vitest";
-import { buildCompactMediaPaneTitle, mapMediaAuthorCredits } from "./mediaFormatting";
+import {
+  buildMediaResourceHeader,
+  classifyCanonicalMediaRefetchFailure,
+  mapMediaAuthorCredits,
+} from "./mediaFormatting";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { ApiError } from "@/lib/api/client";
 
-describe("buildCompactMediaPaneTitle", () => {
-  it("returns null for null input", () => {
-    expect(buildCompactMediaPaneTitle(null)).toBeNull();
+describe("classifyCanonicalMediaRefetchFailure", () => {
+  it("marks a canonical 404 or media-not-found code unavailable", () => {
+    expect(
+      classifyCanonicalMediaRefetchFailure(
+        new ApiError(404, "E_MEDIA_NOT_FOUND", "gone"),
+      ),
+    ).toBe("unavailable");
+    expect(
+      classifyCanonicalMediaRefetchFailure(
+        new ApiError(404, "E_UNKNOWN", "gone"),
+      ),
+    ).toBe("unavailable");
   });
 
-  it("returns null for media with an empty title", () => {
-    expect(buildCompactMediaPaneTitle({ title: "", contributors: [] })).toBeNull();
+  it("retains ready identity for not-ready and retryable failures", () => {
+    expect(
+      classifyCanonicalMediaRefetchFailure(
+        new ApiError(404, "E_MEDIA_NOT_READY", "processing"),
+      ),
+    ).toBe("retain-ready");
+    expect(
+      classifyCanonicalMediaRefetchFailure(
+        new ApiError(503, "E_UPSTREAM", "retry"),
+      ),
+    ).toBe("retain-ready");
+    expect(classifyCanonicalMediaRefetchFailure(new Error("network"))).toBe(
+      "retain-ready",
+    );
   });
+});
 
-  it("returns null for media with a whitespace-only title", () => {
-    expect(buildCompactMediaPaneTitle({ title: "   ", contributors: [] })).toBeNull();
-  });
-
-  it("returns the title when there are no contributors", () => {
-    const result = buildCompactMediaPaneTitle({ title: "Dune", contributors: [] });
-    expect(result).toBe("Dune");
-  });
-
-  it("returns the compact title·author form when a contributor is present", () => {
-    const contributor = {
-      contributor_handle: "frank-herbert",
-      credited_name: "Frank Herbert",
-      role: "author",
-    };
-    const result = buildCompactMediaPaneTitle({ title: "Dune", contributors: [contributor] });
-    expect(result).toBe("Dune · Frank Herbert");
-  });
-
-  it("uses the author role, not the first credit, for the compact title (D-23)", () => {
-    const result = buildCompactMediaPaneTitle({
+describe("buildMediaResourceHeader", () => {
+  it("maps title and canonical ordered credit groups", () => {
+    expect(buildMediaResourceHeader({
       title: "Dune",
       contributors: [
         { contributor_handle: "some-narrator", credited_name: "A Narrator", role: "narrator" },
         { contributor_handle: "frank-herbert", credited_name: "Frank Herbert", role: "author" },
+        { contributor_handle: "brian", credited_name: "Brian Attebery", role: "author" },
+        { contributor_handle: "margaret", credited_name: "Margaret Chodos-Irvine", role: "translator" },
+      ],
+    })).toEqual({
+      status: "ready",
+      title: "Dune",
+      creditGroups: [
+        {
+          kind: "authors",
+          credits: [
+            { label: "Frank Herbert", href: "/authors/frank-herbert" },
+            { label: "Brian Attebery", href: "/authors/brian" },
+          ],
+        },
+        {
+          kind: "role",
+          label: "Translator",
+          credits: [
+            { label: "Margaret Chodos-Irvine", href: "/authors/margaret" },
+          ],
+        },
+        {
+          kind: "role",
+          label: "Narrator",
+          credits: [
+            { label: "A Narrator", href: "/authors/some-narrator" },
+          ],
+        },
       ],
     });
-    expect(result).toBe("Dune · Frank Herbert");
-  });
-
-  it("returns the bare title when no author-role credit exists", () => {
-    const result = buildCompactMediaPaneTitle({
-      title: "Some Podcast Episode",
-      contributors: [
-        { contributor_handle: "the-host", credited_name: "The Host", role: "host" },
-      ],
-    });
-    expect(result).toBe("Some Podcast Episode");
   });
 });
 

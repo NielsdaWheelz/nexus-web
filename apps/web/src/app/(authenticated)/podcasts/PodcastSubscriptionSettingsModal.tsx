@@ -3,6 +3,10 @@
 import { useRef } from "react";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
+import {
   SUBSCRIPTION_PLAYBACK_SPEED_OPTIONS,
   formatPlaybackSpeedLabel,
 } from "@/lib/player/subscriptionPlaybackSpeed";
@@ -20,17 +24,26 @@ export default function PodcastSubscriptionSettingsModal({
   settingsModal: PodcastSubscriptionSettingsModalState;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
-  useDialogOverlay({ ref: cardRef, active: podcastTitle !== null, onDismiss: settingsModal.close });
+  const overlay = useDialogOverlay({
+    ref: cardRef,
+    active: podcastTitle !== null,
+    onDismiss: settingsModal.close,
+  });
   if (podcastTitle === null) {
     return null;
   }
   return (
-    <div className={styles.modalBackdrop} role="presentation" onClick={settingsModal.close}>
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.modalBackdrop}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        role="presentation"
+        onClick={settingsModal.close}
+      >
       <div
         ref={cardRef}
         className={styles.modalCard}
         role="dialog"
-        aria-modal="true"
         aria-label="Subscription settings"
         onClick={(event) => event.stopPropagation()}
       >
@@ -89,7 +102,8 @@ export default function PodcastSubscriptionSettingsModal({
             Close
           </Button>
         </div>
+        </div>
       </div>
-    </div>
+    </ModalLayerProvider>
   );
 }

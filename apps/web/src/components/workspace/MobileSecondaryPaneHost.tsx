@@ -2,24 +2,29 @@
 
 import { X } from "lucide-react";
 import { useId } from "react";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import MobileSheet from "@/components/ui/MobileSheet";
-import SecondarySurfaceTabs, {
-  secondarySurfacePanelId,
-  secondarySurfaceTabId,
-} from "@/components/workspace/SecondarySurfaceTabs";
+import SecondarySurfaceTabs from "@/components/workspace/SecondarySurfaceTabs";
+import SecondarySurfacePanels from "@/components/workspace/SecondarySurfacePanels";
 import {
   getPublishedSecondarySurface,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import {
   getSecondarySurfaceDefinition,
+  paneSecondaryRegionId,
   type WorkspaceSecondaryState,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./MobileSecondaryPaneHost.module.css";
 
 interface MobileSecondaryPaneHostProps {
+  primaryPaneId: string;
   secondaryPaneId: string;
   secondary: WorkspaceSecondaryState | null;
   publication: PaneSecondaryPublication | null;
@@ -28,6 +33,12 @@ interface MobileSecondaryPaneHostProps {
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
+  returnFocusTo: ReturnFocusTarget;
+}
+
+interface MobileSecondaryPanePresentationProps
+  extends MobileSecondaryPaneHostProps {
+  options: readonly ActionDescriptor[];
 }
 
 /**
@@ -37,13 +48,16 @@ interface MobileSecondaryPaneHostProps {
  * detaching it, so this component stays mounted and `active` toggles — the
  * MobileSheet mount contract (C7 history dismissal) holds.
  */
-export default function MobileSecondaryPaneHost({
+function MobileSecondaryPanePresentation({
+  primaryPaneId,
   secondaryPaneId,
   secondary,
   publication,
   onClose,
   onActiveSurfaceChange,
-}: MobileSecondaryPaneHostProps) {
+  returnFocusTo,
+  options,
+}: MobileSecondaryPanePresentationProps) {
   const baseId = useId();
   const activeSurface = getPublishedSecondarySurface(
     publication,
@@ -62,14 +76,18 @@ export default function MobileSecondaryPaneHost({
   return (
     <MobileSheet
       active={active}
+      panelId={
+        publication
+          ? paneSecondaryRegionId(primaryPaneId, publication.groupId)
+          : undefined
+      }
       onDismiss={() => onClose(secondaryPaneId)}
       ariaLabel={activeSurfaceDefinition?.title ?? ""}
       layer="overlay"
       scrim="soft"
       initialFocus={(c) => c.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')}
-      returnFocusFallback={() =>
-        document.querySelector<HTMLElement>('[data-active="true"] [data-pane-chrome-focus="true"]')
-      }
+      returnFocusTo={returnFocusTo}
+      returnFocusFallback={() => findPaneChromeFocusTarget(primaryPaneId)}
       focusKey={activeSurface?.id ?? null}
       backdropTestId="mobile-secondary-backdrop"
       panelTestId="mobile-secondary-host"
@@ -83,6 +101,10 @@ export default function MobileSecondaryPaneHost({
               activeSurfaceId={activeSurface.id}
               onSelect={(surfaceId) => onActiveSurfaceChange(secondaryPaneId, surfaceId)}
             />
+            <ActionMenu
+              options={options}
+              label="Pane options"
+            />
             <Button
               variant="ghost"
               size="sm"
@@ -93,16 +115,23 @@ export default function MobileSecondaryPaneHost({
               <X size={15} aria-hidden="true" />
             </Button>
           </header>
-          <div
-            id={secondarySurfacePanelId(baseId, activeSurface.id)}
-            role="tabpanel"
-            aria-labelledby={secondarySurfaceTabId(baseId, activeSurface.id)}
+          <SecondarySurfacePanels
+            baseId={baseId}
+            surfaces={publication.surfaces}
+            activeSurfaceId={activeSurface.id}
             className={styles.body}
-          >
-            {activeSurface.body}
-          </div>
+          />
         </>
       ) : null}
     </MobileSheet>
   );
+}
+
+export default function MobileSecondaryPaneHost(
+  props: MobileSecondaryPaneHostProps,
+) {
+  const { paneChrome } = useMobileChrome();
+  const options =
+    paneChrome?.paneId === props.primaryPaneId ? paneChrome.options : [];
+  return <MobileSecondaryPanePresentation {...props} options={options} />;
 }

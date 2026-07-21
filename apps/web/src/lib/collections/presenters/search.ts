@@ -28,7 +28,7 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     primary: {
       kind: "link",
       href,
-      paneTitleHint: vm.paneTitleHint,
+      paneLabelHint: vm.paneLabelHint,
       viewTransition: href.startsWith("/media/") ? "media-reader" : undefined,
     },
     lead: { icon: resourceIconForUri(vm.resourceRef) },

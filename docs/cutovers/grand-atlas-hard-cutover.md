@@ -317,11 +317,10 @@ Route file: `python/nexus/api/routes/atlas.py`. Router registered in
 
 | File | Change |
 |---|---|
-| `lib/panes/paneRouteModel.ts` | Add `"atlas"` to `PaneRouteId` union; add `route({id:"atlas", pattern:["atlas"], staticTitle:"The Atlas", titleMode:"static", bodyMode:"document", ...STANDARD_WIDTH_CONTRACT})` |
-| `lib/panes/paneRouteTable.ts` | Add entry to `PANE_ROUTE_META` with `icon: Map` (from `lucide-react`), `getChrome` returning `{ title: "The Atlas" }` |
+| `lib/panes/paneRouteModel.ts` | Add `"atlas"` with one section header (`destinationId: "atlas"`, `defaultFolio: "pane-label"`), `defaultLabel: "The Atlas"`, `labelMode: "static"`, and `bodyMode: "document"` |
+| `lib/panes/paneRouteTable.ts` | Add entry to `PANE_ROUTE_META` with `icon: Map` (from `lucide-react`); route chrome is not registered here |
 | `lib/panes/paneRenderRegistry.tsx` | Add `atlas` loader pointing to `(authenticated)/atlas/GrandAtlasPaneBody` |
 | `lib/navigation/destinations.ts` | Add `{ id:"atlas", label:"Atlas", href:"/atlas", keywords:["map","chart","library","constellation","stars"], slot:"primary", match:{ exact:["/atlas"], prefix:["/atlas/"] } }` after the `notes` entry |
-| `lib/navigation/standingHead.ts` | **Required if running-journal is already built** (the file uses `satisfies Record<PaneRouteId, string>`): add `atlas: "atlas"` to `ROUTE_SECTION`. If running-journal is not yet built, `standingHead.ts` does not exist — no action needed (the `satisfies` constraint enforces it when running-journal lands). |
 
 ### 7.2 Reuse vs rewrite accounting (`AtlasPaneBody.tsx`)
 
@@ -531,12 +530,9 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
 
 - **`oracle-shell-dissolution-hard-cutover.md` (SPEC):** Atlas absorption declared above. All
   other oracle routes (`oracle`, `oracleReading`) are unaffected.
-- **`running-journal-hard-cutover.md` (SPEC):** `atlas` is added to `PaneRouteId` and therefore
-  MUST appear in `ROUTE_SECTION` in `lib/navigation/standingHead.ts` as `atlas: "atlas"`. The
-  `satisfies Record<PaneRouteId, string>` type constraint enforces this at compile time. If
-  running-journal is built before this spec, update `standingHead.ts` per §7.1 at build time.
-  If this spec is built before running-journal, `standingHead.ts` does not exist yet (no compile
-  error); running-journal must include `atlas: "atlas"` when it creates the file.
+- **`running-journal-hard-cutover.md`:** The final typed header model supersedes
+  its standalone standing-head plan. The Atlas route declares its section-header
+  destination in the same exhaustive `PANE_ROUTE_MODELS` entry.
 - **`machine-hand-hard-cutover.md` (SPEC):** No overlap. The atlas renders no machine output;
   `MachineText` is not used.
 - **`two-rooms-hard-cutover.md` (SPEC):** `[data-theme="oracle"]` on the atlas pane is a sibling
@@ -550,9 +546,9 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
   `reading_sessions` exist, `StarOut.magnitude` can switch from highlight count to dwell-ms. No
   blocking dependency; the magnitude field is already decoupled.
 - **`browse-surface-deletion-hard-cutover.md` (SPEC):** Deletes `browse` from DESTINATIONS and
-  PaneRouteId. The `ROUTE_SECTION` exhaustive map forces its removal; no conflict with `atlas`.
-- **MediaPaneBody.tsx (`running-journal-hard-cutover.md` §10):** Shared file with running-journal
-  (it removes the `meta` chrome override). This spec does not touch `MediaPaneBody.tsx`.
+  `PaneRouteId`; deleting its route definition also deletes its header contract. No conflict with Atlas.
+- **MediaPaneBody.tsx:** The typed pane-header cutover owns media identity and
+  removed the old metadata chrome override. This spec does not touch `MediaPaneBody.tsx`.
   No coordination needed.
 
 ---
@@ -739,9 +735,9 @@ are already canonical in `(authenticated)/atlas/`). `OracleThemeWrapper` is defi
   file writes to `media_atlas_positions` outside `services/atlas_projection.py` and test fixtures.
 - **AC-11.** ETag round-trip: a second `GET /atlas` with the correct `If-None-Match` header
   returns 304 with no body.
-- **AC-12.** `atlas` appears in DESTINATIONS with `slot: "primary"` and the nav rail shows
-  an Atlas entry. `standingHeadForRoute('atlas')` returns a non-empty string (running-journal
-  ROUTE_SECTION entry present).
+- **AC-12.** `atlas` appears in the destination registry and fixed app-navigation
+  projection, the nav rail shows an Atlas entry, and its route resolves a non-empty
+  section header from `header.destinationId`.
 - **AC-13.** When at least one Nebula star is present (star with `x: null`), a faint italic
   "Nebula" label renders at the 6 o'clock rim position on the canvas (`ctx.fillText('Nebula', …)`
   at `altitude = HORIZON_RIM_MARGIN * 0.4`, azimuth `Math.PI * 1.5` ± `Math.PI / 16`).
@@ -851,7 +847,6 @@ apps/web/src/lib/panes/paneRenderRegistry.tsx      (add PANE_LOADERS['atlas'])
 apps/web/src/lib/navigation/destinations.ts        (add atlas destination)
 apps/web/src/app/api/proxy-routes.test.ts          (API_ROUTE_COUNT +2)
 apps/web/src/app/(oracle)/oracle/OracleLandingPaneBody.tsx  (update atlasLink href to /atlas?layer=readings)
-apps/web/src/lib/navigation/standingHead.ts        (add atlas: "atlas" to ROUTE_SECTION — only if running-journal is already built; file does not exist otherwise)
 ```
 
 ```

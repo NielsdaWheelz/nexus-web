@@ -92,8 +92,8 @@ export interface AddSeed {
 
 // Terminal targets: dispatchTarget executes exactly one of these (one open seam, AC-9).
 export type LauncherActionTarget =
-  | { kind: "href"; href: string; externalShell: boolean; titleHint?: string }
-  | { kind: "resource"; activation: ResourceActivation; titleHint?: string }
+  | { kind: "href"; href: string; externalShell: boolean; labelHint?: string }
+  | { kind: "resource"; activation: ResourceActivation; labelHint?: string }
   | { kind: "ask"; text: string }
   | { kind: "add-url"; url: string } // quick add from the hard-signal row
   | { kind: "queue-add"; mediaId: string; title: string } // append media to the Lectern

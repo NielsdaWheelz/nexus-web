@@ -12,7 +12,11 @@ export function useFocusTrap(
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
       const els = getFocusableElements(container);
-      if (els.length === 0) return;
+      if (els.length === 0) {
+        e.preventDefault();
+        container.focus();
+        return;
+      }
       const first = els[0];
       const last = els[els.length - 1];
       const current = document.activeElement;

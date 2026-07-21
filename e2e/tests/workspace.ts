@@ -204,7 +204,7 @@ export async function waitForWorkspaceHydration(page: Page): Promise<void> {
 }
 
 export function activeWorkspacePane(page: Page): Locator {
-  return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR).first();
+  return page.locator(ACTIVE_WORKSPACE_PANE_SELECTOR);
 }
 
 export async function expectPaneShellContainedByViewport(

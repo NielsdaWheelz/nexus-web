@@ -7,16 +7,16 @@ import WorkspacePaneStrip from "@/components/workspace/WorkspacePaneStrip";
 type PaneItem = {
   paneId: string;
   href: string;
-  title: string;
-  titleState: "resolved" | "pending";
+  label: string;
+  labelState: "resolved" | "pending";
   isActive: boolean;
   isInView: boolean;
   visibility: "visible" | "minimized";
   canMinimize: boolean;
 };
 
-function paneActivator(title: string): HTMLElement {
-  return screen.getByRole("button", { name: new RegExp(`^${title}\\b`) });
+function paneActivator(label: string): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(`^${label}\\b`) });
 }
 
 function CloseHarness() {
@@ -24,8 +24,8 @@ function CloseHarness() {
     {
       paneId: "pane-a",
       href: "/libraries",
-      title: "Libraries",
-      titleState: "resolved",
+      label: "Libraries",
+      labelState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -34,8 +34,8 @@ function CloseHarness() {
     {
       paneId: "pane-b",
       href: "/search",
-      title: "Search",
-      titleState: "resolved",
+      label: "Search",
+      labelState: "resolved",
       isActive: true,
       isInView: false,
       visibility: "visible",
@@ -44,8 +44,8 @@ function CloseHarness() {
     {
       paneId: "pane-c",
       href: "/media/m1",
-      title: "Media",
-      titleState: "resolved",
+      label: "Media",
+      labelState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -83,8 +83,8 @@ function MinimizeHarness() {
     {
       paneId: "pane-a",
       href: "/libraries",
-      title: "Libraries",
-      titleState: "resolved",
+      label: "Libraries",
+      labelState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -93,8 +93,8 @@ function MinimizeHarness() {
     {
       paneId: "pane-b",
       href: "/search",
-      title: "Search",
-      titleState: "resolved",
+      label: "Search",
+      labelState: "resolved",
       isActive: true,
       isInView: false,
       visibility: "visible",
@@ -103,8 +103,8 @@ function MinimizeHarness() {
     {
       paneId: "pane-c",
       href: "/media/m1",
-      title: "Media",
-      titleState: "resolved",
+      label: "Media",
+      labelState: "resolved",
       isActive: false,
       isInView: false,
       visibility: "visible",
@@ -140,8 +140,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-a",
             href: "/libraries",
-            title: "Libraries",
-            titleState: "resolved",
+            label: "Libraries",
+            labelState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -150,8 +150,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-b",
             href: "/search",
-            title: "Search",
-            titleState: "resolved",
+            label: "Search",
+            labelState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -185,8 +185,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-a",
             href: "/libraries",
-            title: "Libraries",
-            titleState: "resolved",
+            label: "Libraries",
+            labelState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "visible",
@@ -195,8 +195,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-b",
             href: "/search",
-            title: "Search",
-            titleState: "resolved",
+            label: "Search",
+            labelState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -205,8 +205,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-c",
             href: "/media/m1",
-            title: "Media",
-            titleState: "resolved",
+            label: "Media",
+            labelState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "visible",
@@ -245,8 +245,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-a",
             href: "/libraries",
-            title: "Libraries",
-            titleState: "resolved",
+            label: "Libraries",
+            labelState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -255,8 +255,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-b",
             href: "/search",
-            title: "Search",
-            titleState: "resolved",
+            label: "Search",
+            labelState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -290,8 +290,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-a",
             href: "/libraries",
-            title: "Libraries",
-            titleState: "resolved",
+            label: "Libraries",
+            labelState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -300,8 +300,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-b",
             href: "/search",
-            title: "Search",
-            titleState: "resolved",
+            label: "Search",
+            labelState: "resolved",
             isActive: false,
             isInView: false,
             visibility: "minimized",
@@ -330,15 +330,15 @@ describe("WorkspacePaneStrip", () => {
     expect(onClosePane).toHaveBeenCalledWith("pane-b");
   });
 
-  it("renders a skeleton for a pending pane and title text for a resolved pane", () => {
+  it("renders a skeleton for a pending pane and label text for a resolved pane", () => {
     render(
       <WorkspacePaneStrip
         items={[
           {
             paneId: "pane-a",
             href: "/libraries",
-            title: "Libraries",
-            titleState: "resolved",
+            label: "Libraries",
+            labelState: "resolved",
             isActive: true,
             isInView: false,
             visibility: "visible",
@@ -347,8 +347,8 @@ describe("WorkspacePaneStrip", () => {
           {
             paneId: "pane-b",
             href: "/media/m1",
-            title: "Storm Front",
-            titleState: "pending",
+            label: "Storm Front",
+            labelState: "pending",
             isActive: false,
             isInView: false,
             visibility: "visible",

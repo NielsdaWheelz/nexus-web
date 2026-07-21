@@ -4,5 +4,5 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 
 export async function openTodayPage(): Promise<void> {
   const page = await fetchDailyNotePage(todayLocalDate());
-  requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
+  requestOpenInAppPane(`/pages/${page.id}`, { labelHint: page.title });
 }

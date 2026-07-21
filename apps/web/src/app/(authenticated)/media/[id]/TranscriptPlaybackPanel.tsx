@@ -33,7 +33,7 @@ function toSeekSeconds(timestampMs: number | null | undefined): number | null {
 
 function resolveActiveChapter(
   chapters: GlobalPlayerChapter[],
-  currentTimeSeconds: number
+  currentTimeSeconds: number,
 ): GlobalPlayerChapter | null {
   if (chapters.length === 0) {
     return null;
@@ -76,7 +76,7 @@ export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
 
 export function buildYoutubeEmbedSrc(
   embedUrl: string,
-  seekTargetMs: number | null
+  seekTargetMs: number | null,
 ): string {
   const url = new URL(embedUrl);
   const startSeconds = toSeekSeconds(seekTargetMs);
@@ -93,7 +93,7 @@ export function buildYoutubeEmbedSrc(
 }
 
 function resolveSafeVideoEmbedUrl(
-  playbackSource: TranscriptPlaybackSource | null
+  playbackSource: TranscriptPlaybackSource | null,
 ): string | null {
   if (!playbackSource || playbackSource.kind !== "external_video") {
     return null;
@@ -143,7 +143,7 @@ function escapeShowNotesText(value: string): string {
 
 function enhanceShowNotesHtmlWithTimestampButtons(
   html: string,
-  buttonClassName: string
+  buttonClassName: string,
 ): string {
   if (
     !html.trim() ||
@@ -198,7 +198,9 @@ function enhanceShowNotesHtmlWithTimestampButtons(
       const matchIndex = match.index ?? 0;
 
       if (matchIndex > lastIndex) {
-        fragment.append(doc.createTextNode(textValue.slice(lastIndex, matchIndex)));
+        fragment.append(
+          doc.createTextNode(textValue.slice(lastIndex, matchIndex)),
+        );
       }
 
       const seekMs = parseShowNotesTimestampTokenToMs(token);
@@ -267,11 +269,14 @@ export default function TranscriptPlaybackPanel({
   // "Play next": After the active exact Lectern origin, else First; a no-op when
   // it would target the current origin's own media.
   const activeOrigin = state.kind === "Absent" ? null : state.session.origin;
-  const activeMediaId = state.kind === "Absent" ? null : state.session.descriptor.mediaId;
+  const activeMediaId =
+    state.kind === "Absent" ? null : state.session.descriptor.mediaId;
   const playNextDisabled =
-    !lecternReady || (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
+    !lecternReady ||
+    (activeOrigin?.kind === "Lectern" && activeMediaId === mediaId);
   const onLectern =
-    resource.status === "ready" && resource.data.items.some((item) => item.mediaId === mediaId);
+    resource.status === "ready" &&
+    resource.data.items.some((item) => item.mediaId === mediaId);
 
   const handlePlayNext = () => {
     const placement =
@@ -281,19 +286,22 @@ export default function TranscriptPlaybackPanel({
     void placeItems({ mediaIds: [parseMediaId(mediaId)], placement });
   };
   const handleAddToLectern = () => {
-    void placeItems({ mediaIds: [parseMediaId(mediaId)], placement: { kind: "Last" } });
+    void placeItems({
+      mediaIds: [parseMediaId(mediaId)],
+      placement: { kind: "Last" },
+    });
   };
 
   const normalizedChapters = useMemo(
     () => normalizeTrackChapters(chapters),
-    [chapters]
+    [chapters],
   );
   const activeChapter = useMemo(
     () =>
       mediaKind === "podcast_episode"
         ? resolveActiveChapter(normalizedChapters, currentTimeSeconds)
         : null,
-    [currentTimeSeconds, mediaKind, normalizedChapters]
+    [currentTimeSeconds, mediaKind, normalizedChapters],
   );
   const showNotesHtml = useMemo(() => {
     if (mediaKind !== "podcast_episode") {
@@ -304,7 +312,7 @@ export default function TranscriptPlaybackPanel({
     if (normalizedHtml) {
       return enhanceShowNotesHtmlWithTimestampButtons(
         normalizedHtml,
-        styles.showNotesTimestampButton
+        styles.showNotesTimestampButton,
       );
     }
 
@@ -322,7 +330,7 @@ export default function TranscriptPlaybackPanel({
 
     return enhanceShowNotesHtmlWithTimestampButtons(
       escapedTextLines || `<p>${escapeShowNotesText(normalizedText)}</p>`,
-      styles.showNotesTimestampButton
+      styles.showNotesTimestampButton,
     );
   }, [descriptionHtml, descriptionText, mediaKind]);
 
@@ -340,7 +348,12 @@ export default function TranscriptPlaybackPanel({
 
   useEffect(() => {
     setPlaybackError(false);
-  }, [mediaKind, playbackSource?.embed_url, playbackSource?.kind, playbackSource?.source_url]);
+  }, [
+    mediaKind,
+    playbackSource?.embed_url,
+    playbackSource?.kind,
+    playbackSource?.source_url,
+  ]);
 
   const handleShowNotesClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -371,7 +384,8 @@ export default function TranscriptPlaybackPanel({
           <div className={styles.notReady}>
             <p>No playback source is available.</p>
           </div>
-        ) : mediaKind === "podcast_episode" && playbackSource.kind === "external_audio" ? (
+        ) : mediaKind === "podcast_episode" &&
+          playbackSource.kind === "external_audio" ? (
           <div className={styles.globalPlayerPrompt}>
             <p>Playback is controlled in the global player footer.</p>
             <div className={styles.podcastPlaybackActions}>
@@ -401,7 +415,9 @@ export default function TranscriptPlaybackPanel({
               >
                 Add to Lectern
               </Button>
-              {onLectern ? <span className={styles.queueBadge}>On Lectern</span> : null}
+              {onLectern ? (
+                <span className={styles.queueBadge}>On Lectern</span>
+              ) : null}
             </div>
           </div>
         ) : mediaKind === "video" && iframeSrc ? (
@@ -442,11 +458,12 @@ export default function TranscriptPlaybackPanel({
 
       {mediaKind === "podcast_episode" && normalizedChapters.length > 0 ? (
         <section className={styles.chapterPanel} aria-label="Episode chapters">
-          <h3 className={styles.chapterHeading}>Chapters</h3>
+          <h2 className={styles.chapterHeading}>Chapters</h2>
           <ol className={styles.chapterList}>
             {normalizedChapters.map((chapter) => {
               const timestamp = formatTranscriptTimestampMs(chapter.t_start_ms);
-              const isActiveChapter = activeChapter?.chapter_idx === chapter.chapter_idx;
+              const isActiveChapter =
+                activeChapter?.chapter_idx === chapter.chapter_idx;
 
               return (
                 <li
@@ -477,7 +494,9 @@ export default function TranscriptPlaybackPanel({
                       <span className={styles.chapterTimestamp}>
                         {timestamp ?? "00:00:00"}
                       </span>
-                      <span className={styles.chapterTitle}>{chapter.title}</span>
+                      <span className={styles.chapterTitle}>
+                        {chapter.title}
+                      </span>
                     </Button>
                     {chapter.url ? (
                       <a
@@ -499,11 +518,12 @@ export default function TranscriptPlaybackPanel({
 
       {mediaKind === "podcast_episode" && showNotesHtml ? (
         <section className={styles.showNotesPanel}>
-          <h3 className={styles.showNotesHeading}>Show Notes</h3>
+          <h2 className={styles.showNotesHeading}>Show Notes</h2>
           <div className={styles.showNotesBody} onClick={handleShowNotesClick}>
             <HtmlRenderer
               htmlSanitized={showNotesHtml}
               className={styles.showNotesContent}
+              headingLevelOffset={2}
             />
           </div>
         </section>

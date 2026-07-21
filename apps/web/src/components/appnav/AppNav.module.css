@@ -509,6 +509,12 @@
   transform: translateY(-100%);
 }
 
+.topBarControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .topBarButton {
   display: inline-flex;
   align-items: center;
@@ -544,15 +550,18 @@
   color: var(--accent);
 }
 
+.topBarOptions > button {
+  min-width: var(--size-xl);
+  min-height: var(--size-xl);
+}
+
 .topBarTitle {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
   flex: 1;
   min-width: 0;
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .topBarCommandIcon {
@@ -581,6 +590,30 @@
   font-weight: var(--weight-semibold);
   line-height: 1;
   pointer-events: none;
+}
+
+@media (max-width: 303px) {
+  .topBar,
+  .topBarControls {
+    gap: 0;
+  }
+
+  .topBarAdd {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .topBar[data-header-kind="resource"] .topBarForward,
+  .topBar[data-header-kind="resource"] .topBarAdd {
+    display: none;
+  }
+}
+
+@media (max-width: 235px) {
+  .topBarForward {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

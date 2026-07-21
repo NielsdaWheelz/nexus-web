@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ComponentProps, MouseEvent } from "react";
 import { BookOpen, Settings } from "lucide-react";
 import NavSheet from "@/components/appnav/NavSheet";
+import Dialog from "@/components/ui/Dialog";
 import type { NavItem } from "@/components/appnav/navModel";
 
 const items: NavItem[] = [
@@ -124,6 +125,37 @@ describe("NavSheet", () => {
     const { onClose } = renderSheet({ open: true });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("suspends its backdrop and modality beneath a newer modal", async () => {
+    const { onClose } = renderSheet({ open: true });
+    render(
+      <Dialog open onClose={vi.fn()} title="Nested modal">
+        Nested content
+      </Dialog>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("nav-sheet-backdrop")).toHaveAttribute(
+        "data-suspended",
+        "true",
+      ),
+    );
+    expect(
+      getComputedStyle(screen.getByTestId("nav-sheet-backdrop")).backgroundColor,
+    ).toBe("rgba(0, 0, 0, 0)");
+    expect(
+      screen.getByRole("dialog", { name: "Navigation", hidden: true }),
+    ).toHaveAttribute("inert");
+    expect(
+      screen.getByRole("dialog", { name: "Navigation", hidden: true }),
+    ).not.toHaveAttribute("aria-modal");
+    expect(
+      screen.getByRole("dialog", { name: "Nested modal" }),
+    ).toHaveAttribute("aria-modal", "true");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("exposes a visible close control", () => {

@@ -56,7 +56,11 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { mediaResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
-import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
+import {
+  paneResourceLoaders,
+  type PaneMediaFragmentsSeed,
+  type PaneSubresourceFailure,
+} from "@/lib/panes/paneResourceLoaders";
 import {
   FeedbackNotice,
   PDF_PASSWORD_PROTECTED_MESSAGE,
@@ -107,11 +111,15 @@ import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import {
+  hasActiveInteractionOwner,
+  isTopmostInteractionOwner,
+} from "@/lib/ui/useEscapeKey";
 import Pill from "@/components/ui/Pill";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
-import ActionMenu, { type ActionMenuOption } from "@/components/ui/ActionMenu";
+import ActionMenu from "@/components/ui/ActionMenu";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   getReaderDocumentMap,
@@ -131,14 +139,16 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
   usePaneRuntime,
 } from "@/lib/panes/paneRuntime";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
 import type {
+  PanePrimaryChromePublication,
   PaneSecondaryPublication,
   PaneSecondarySurfacePublication,
 } from "@/lib/panes/panePublications";
@@ -233,10 +243,11 @@ import {
   type HighlightLinkedNoteBlock,
 } from "@/lib/highlights/api";
 import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
-import ContributorRoleGroups from "@/components/contributors/ContributorRoleGroups";
+import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import {
-  buildCompactMediaPaneTitle,
+  buildMediaResourceHeader,
+  classifyCanonicalMediaRefetchFailure,
   mapMediaAuthorCredits,
 } from "./mediaFormatting";
 import {
@@ -244,35 +255,32 @@ import {
   resolveEpubInternalLinkTarget,
   resolveSectionAnchorId,
 } from "./epubHelpers";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Map as MapIcon,
-  RefreshCw,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import {
   dispatchReaderPulse,
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import Button from "@/components/ui/Button";
-import SectionOpener from "@/components/ui/SectionOpener";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
+import { documentMapAction } from "@/components/reader/document-map/documentMapAction";
+import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
+import type {
+  ActionDescriptor,
+  ActionSelectDetail,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
+import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import styles from "./page.module.css";
 
-// F3 (parallel lane) owns MediaAuthorsEditor + AuthorSearchField. It is lazily
-// mounted only after the user first opens the editor, so the media byline
-// renders (and its tests run) without depending on that module being present
-// yet. Frozen props contract: { mediaId, open, onClose, authors, authorMode,
-// onSaved }; F3 exports it as a named `MediaAuthorsEditor`.
+// Author administration is lazy: resource identity does not pay for the editor
+// until the user invokes its capability-gated Options command.
 const MediaAuthorsEditor = lazy(() =>
   import(
     /* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"
-  ).then((module) => ({
-    default: module.MediaAuthorsEditor,
-  })),
+  ),
 );
 
 // =============================================================================
@@ -603,6 +611,10 @@ export default function MediaPaneBody() {
   const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
   const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
+  const returnFocusFallback = useCallback(
+    () => findPaneChromeFocusTarget(paneRuntime?.paneId),
+    [paneRuntime?.paneId],
+  );
   // Reader-owned location-target seam: replaces the mounted media visit's
   // href (loc/fragment) without creating a pane-history checkpoint. Pane
   // history instead records destination activations (see the generic
@@ -787,14 +799,26 @@ export default function MediaPaneBody() {
   // ---- Core data state ----
   const [media, setMedia] = useState<Media | null>(null);
   const [loading, setLoading] = useState(media === null);
-  // Media authors editor (F3). `mounted` latches on first open so the mobile
-  // MobileSheet stays mounted for its active→false dismissal after that, while
-  // never mounting (or resolving the lazy module) until the user opens it.
+  const [initialHeaderFailure, setInitialHeaderFailure] = useState<
+    "unavailable" | "failed" | null
+  >(null);
   const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
   const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
-  const openAuthorsEditor = useCallback(() => {
+  const [authorsEditorTrigger, setAuthorsEditorTrigger] =
+    useState<HTMLButtonElement | null>(null);
+  const openAuthorsEditor = useCallback(({ triggerEl }: ActionSelectDetail) => {
+    setAuthorsEditorTrigger(triggerEl);
     setAuthorsEditorMounted(true);
     setAuthorsEditorOpen(true);
+  }, []);
+  const [creditsOverlayOpen, setCreditsOverlayOpen] = useState(false);
+  const [creditsOverlayMounted, setCreditsOverlayMounted] = useState(false);
+  const [creditsOverlayTrigger, setCreditsOverlayTrigger] =
+    useState<HTMLButtonElement | null>(null);
+  const openCreditsOverlay = useCallback(({ triggerEl }: ActionSelectDetail) => {
+    setCreditsOverlayTrigger(triggerEl);
+    setCreditsOverlayMounted(true);
+    setCreditsOverlayOpen(true);
   }, []);
   const handleAuthorsSaved = useCallback((result: MediaAuthors) => {
     setMedia((prev) => {
@@ -825,12 +849,12 @@ export default function MediaPaneBody() {
   const [metadataRetryPollsRemaining, setMetadataRetryPollsRemaining] =
     useState(0);
   const [, setMetadataRetryPollExhausted] = useState(false);
-  useSetPaneTitle(
-    loading ? null : (buildCompactMediaPaneTitle(media) ?? "Media"),
-  );
+  useSetPaneLabel(loading ? null : (media?.title.trim() || "Media"));
 
   // ---- Non-EPUB fragment state ----
   const [fragments, setFragments] = useState<Fragment[]>([]);
+  const [initialFragmentsFailure, setInitialFragmentsFailure] =
+    useState<PaneSubresourceFailure | null>(null);
   const [activeTranscriptFragmentId, setActiveTranscriptFragmentId] = useState<
     string | null
   >(null);
@@ -891,6 +915,7 @@ export default function MediaPaneBody() {
         : { state: "Unavailable" },
     [canRead, id, readerLocatorKind],
   );
+  const documentMapAvailable = readerCapability.state === "Readable";
   // Format-owned capture/apply land further down; the coordinator reads them
   // through these refs at call time.
   const captureCurrentLocatorRef = useRef<() => ReaderResumeState | null>(
@@ -1395,7 +1420,7 @@ export default function MediaPaneBody() {
   });
   const readerDocumentMapResource = useResource<ReaderDocumentMap>({
     cacheKey:
-      media && canRead
+      media && documentMapAvailable
         ? `${id}:reader-document-map:${documentMapVersion}`
         : null,
     load: (signal) => getReaderDocumentMap(id, { signal }),
@@ -1696,7 +1721,7 @@ export default function MediaPaneBody() {
   const initialMediaResource = useResource<
     {
       media: Media;
-      fragments: Fragment[];
+      fragments: PaneMediaFragmentsSeed<Fragment>;
     },
     { id: string }
   >({
@@ -1706,7 +1731,10 @@ export default function MediaPaneBody() {
       paneResourceLoaders.media!.load(
         clientResourceFetcher(signal),
         params,
-      ) as Promise<{ media: Media; fragments: Fragment[] }>,
+      ) as Promise<{
+        media: Media;
+        fragments: PaneMediaFragmentsSeed<Fragment>;
+      }>,
   });
 
   useEffect(() => {
@@ -1718,14 +1746,27 @@ export default function MediaPaneBody() {
   useEffect(() => {
     if (initialMediaResource.status === "loading") {
       setLoading(true);
+      setInitialHeaderFailure(null);
+      setInitialFragmentsFailure(null);
       return;
     }
 
     if (initialMediaResource.status === "ready") {
       setMedia(initialMediaResource.data.media);
-      setFragments(initialMediaResource.data.fragments);
+      if (initialMediaResource.data.fragments.status === "ready") {
+        setFragments(
+          normalizeFragments(initialMediaResource.data.fragments.data),
+        );
+        setInitialFragmentsFailure(null);
+      } else {
+        setFragments([]);
+        setInitialFragmentsFailure(
+          initialMediaResource.data.fragments.error,
+        );
+      }
       setActiveTranscriptFragmentId(null);
       setError(null);
+      setInitialHeaderFailure(null);
       setLoading(false);
       return;
     }
@@ -1733,13 +1774,16 @@ export default function MediaPaneBody() {
     if (initialMediaResource.status === "error") {
       const err = initialMediaResource.error;
       if (err.status === 404) {
+        setInitialHeaderFailure("unavailable");
         setError({
           severity: "error",
           title: "Media not found or you don't have access to it.",
         });
       } else {
+        setInitialHeaderFailure("failed");
         setError(toFeedback(err, { fallback: "Failed to load media" }));
       }
+      setInitialFragmentsFailure(null);
       setLoading(false);
     }
   }, [initialMediaResource]);
@@ -1775,6 +1819,7 @@ export default function MediaPaneBody() {
       }
 
       setFragments(nextFragments);
+      setInitialFragmentsFailure(null);
       setActiveTranscriptFragmentId((prev) =>
         nextFragments.some((fragment) => fragment.id === prev) ? prev : null,
       );
@@ -1821,9 +1866,31 @@ export default function MediaPaneBody() {
         return;
       }
 
-      const mediaResp = await apiFetch<{ data: Media }>(
-        `/api/media/${media.id}`,
-      );
+      let mediaResp: { data: Media };
+      try {
+        mediaResp = await apiFetch<{ data: Media }>(`/api/media/${media.id}`);
+      } catch (error) {
+        if (classifyCanonicalMediaRefetchFailure(error) === "unavailable") {
+          metadataRetryBaselineRef.current = null;
+          setMetadataRetryPollsRemaining(0);
+          setMetadataRetryPollExhausted(false);
+          setMedia(null);
+          setFragments([]);
+          setInitialFragmentsFailure(null);
+          setInitialHeaderFailure("unavailable");
+          setError({
+            severity: "error",
+            title: "Media not found or you don't have access to it.",
+          });
+          return;
+        }
+        if (options?.decrementOnNoChange !== false) {
+          setMetadataRetryPollsRemaining((remaining) =>
+            Math.max(remaining - 1, 0),
+          );
+        }
+        return;
+      }
       const nextMedia = mediaResp.data;
       setMedia(nextMedia);
 
@@ -1859,13 +1926,10 @@ export default function MediaPaneBody() {
     [feedback, media?.id],
   );
 
-  const pollMetadataRetryState = useCallback(async () => {
-    try {
-      await refreshMetadataRetryState();
-    } catch {
-      setMetadataRetryPollsRemaining((remaining) => Math.max(remaining - 1, 0));
-    }
-  }, [refreshMetadataRetryState]);
+  const pollMetadataRetryState = useCallback(
+    () => refreshMetadataRetryState(),
+    [refreshMetadataRetryState],
+  );
 
   // justify-polling: metadata retry completion is backend async work without a
   // stream today; the named remaining-count state terminates the schedule.
@@ -4046,12 +4110,16 @@ export default function MediaPaneBody() {
       : null;
   const defaultDocumentMapSurface: "reader-contents" | "reader-evidence" =
     contentsAvailable ? "reader-contents" : "reader-evidence";
-  const documentMapSurfaceActive = activeReaderSecondarySurface !== null;
-  const openDocumentMap = useCallback(() => {
-    requestSecondarySurface?.(defaultDocumentMapSurface);
-  }, [defaultDocumentMapSurface, requestSecondarySurface]);
+  const documentMapSurfaceActive =
+    documentMapAvailable &&
+    (activeReaderSecondarySurface === "reader-evidence" ||
+      (activeReaderSecondarySurface === "reader-contents" &&
+        contentsAvailable));
+  const documentMapRegionId = paneRuntime?.paneId
+    ? paneSecondaryRegionId(paneRuntime.paneId, "reader-tools")
+    : null;
   const showDesktopDocumentMapRail =
-    !isMobileViewport && canRead && documentMapMarkers.length > 0;
+    !isMobileViewport && documentMapAvailable && documentMapMarkers.length > 0;
   const desktopDocumentMapRailWidthPx = showDesktopDocumentMapRail
     ? DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX
     : 0;
@@ -4086,6 +4154,9 @@ export default function MediaPaneBody() {
   // Suppress when typing in form fields or contenteditable surfaces.
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
+      if (event.defaultPrevented || hasActiveInteractionOwner()) {
+        return;
+      }
       if (isEditableTarget(event.target)) {
         return;
       }
@@ -4198,6 +4269,7 @@ export default function MediaPaneBody() {
       capabilityPatch: MediaActionCapabilities;
     }) => {
       setFragments([]);
+      setInitialFragmentsFailure(null);
       setActiveSectionId(null);
       setActiveWebSectionId(null);
       setEpubError(null);
@@ -4389,6 +4461,20 @@ export default function MediaPaneBody() {
     return "unread";
   })();
 
+  const mediaResourceHeader = useMemo<PaneResourceHeaderPublication | null>(
+    () => {
+      if (media) return buildMediaResourceHeader(media);
+      if (initialHeaderFailure === "unavailable") {
+        return { status: "unavailable", title: "Media unavailable" };
+      }
+      if (initialHeaderFailure === "failed") {
+        return { status: "failed", title: "Media failed to load" };
+      }
+      return null;
+    },
+    [initialHeaderFailure, media],
+  );
+
   const mediaHeaderOptions = useMemo(() => {
     const options = mediaResourceOptions({
       media,
@@ -4444,8 +4530,31 @@ export default function MediaPaneBody() {
           }
         : undefined,
     });
-    const readerOptions: ActionMenuOption[] = [
+    const readerOptions: ActionDescriptor[] = [];
+    if (mediaResourceHeader?.status === "ready") {
+      readerOptions.push({
+        kind: "command",
+        id: "view-credits",
+        label: "Credits…",
+        restoreFocusOnClose: false,
+        onSelect: openCreditsOverlay,
+      });
+      if (media?.capabilities?.can_edit_authors) {
+        const hasAuthors = mediaResourceHeader.creditGroups.some(
+          (group) => group.kind === "authors",
+        );
+        readerOptions.push({
+          kind: "command",
+          id: "edit-authors",
+          label: hasAuthors ? "Edit authors…" : "Add author…",
+          restoreFocusOnClose: false,
+          onSelect: openAuthorsEditor,
+        });
+      }
+    }
+    readerOptions.push(
       {
+        kind: "command",
         id: "reader-settings",
         label: "Reader settings",
         restoreFocusOnClose: false,
@@ -4453,20 +4562,13 @@ export default function MediaPaneBody() {
           openInNewPane?.("/settings/reader", "Reader settings");
         },
       },
-    ];
-
-    if ((isMobileViewport || isTranscriptMedia) && canRead) {
-      readerOptions.push({
-        id: "document-map",
-        label: "Document Map",
-        onSelect: () => requestSecondarySurface?.(defaultDocumentMapSurface),
-      });
-    }
+    );
 
     // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
     const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
     if (isReflowableReader) {
       readerOptions.push({
+        kind: "command",
         id: "reader-theme-light",
         label:
           readerProfile.theme === "light"
@@ -4476,6 +4578,7 @@ export default function MediaPaneBody() {
         onSelect: () => setTheme("light"),
       });
       readerOptions.push({
+        kind: "command",
         id: "reader-theme-dark",
         label:
           readerProfile.theme === "dark"
@@ -4486,6 +4589,7 @@ export default function MediaPaneBody() {
       });
     } else if (isPdf && canRead) {
       readerOptions.push({
+        kind: "custom",
         id: "reader-pdf-source-colors",
         label: "PDF pages keep their source colors",
         // A static, perceivable status row (the render seam wraps it in a
@@ -4508,7 +4612,6 @@ export default function MediaPaneBody() {
     return options;
   }, [
     documentDeleteBusy,
-    defaultDocumentMapSurface,
     handleAddMediaToLectern,
     handleDeleteDocument,
     handleMarkFinished,
@@ -4516,19 +4619,19 @@ export default function MediaPaneBody() {
     handleRefreshSource,
     handleRetryMetadata,
     handleRetryProcessing,
-    isMobileViewport,
     isPdf,
-    isTranscriptMedia,
     isReflowableReader,
     loadLibraryPickerLibraries,
     media,
+    mediaResourceHeader,
     mediaReadState,
+    openAuthorsEditor,
     openChatForMedia,
+    openCreditsOverlay,
     openInNewPane,
     readerProfile.theme,
     readerPersistence.state,
     refreshSourceBusy,
-    requestSecondarySurface,
     retryMetadataBusy,
     retryProcessingBusy,
     canRead,
@@ -4583,12 +4686,14 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const toggleDocumentMap = useCallback(() => {
+  const toggleDocumentMap = useCallback((detail: ActionSelectDetail) => {
     if (documentMapSurfaceActive) {
       closeSecondaryPane?.();
       return;
     }
-    requestSecondarySurface?.(defaultDocumentMapSurface);
+    requestSecondarySurface?.(defaultDocumentMapSurface, {
+      returnFocusTo: detail.triggerEl,
+    });
   }, [
     closeSecondaryPane,
     defaultDocumentMapSurface,
@@ -4602,6 +4707,8 @@ export default function MediaPaneBody() {
   //   G c       → chat (opens new pane)
   //   G e       → Evidence surface
   useEffect(() => {
+    if (paneRuntime?.isActive !== true) return;
+
     let chordPendingG = false;
     let chordTimeoutId: number | null = null;
 
@@ -4614,6 +4721,14 @@ export default function MediaPaneBody() {
     };
 
     const handleGChord = (event: KeyboardEvent) => {
+      const readerModalOwnsShortcut =
+        !hasActiveInteractionOwner() ||
+        (documentMapRegionId !== null &&
+          isTopmostInteractionOwner(documentMapRegionId));
+      if (!readerModalOwnsShortcut) {
+        if (chordPendingG) clearChord();
+        return;
+      }
       if (
         event.defaultPrevented ||
         event.metaKey ||
@@ -4628,7 +4743,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      // Shift+G → chat (legacy shortcut, kept for discoverability)
+      // Shift+G → chat (reader navigation contract)
       if (event.key.toLowerCase() === "g" && event.shiftKey) {
         clearChord();
         event.preventDefault();
@@ -4644,7 +4759,13 @@ export default function MediaPaneBody() {
         chordTimeoutId = window.setTimeout(() => {
           chordPendingG = false;
           chordTimeoutId = null;
-          toggleDocumentMap();
+          const readerModalStillOwnsShortcut =
+            !hasActiveInteractionOwner() ||
+            (documentMapRegionId !== null &&
+              isTopmostInteractionOwner(documentMapRegionId));
+          if (readerModalStillOwnsShortcut && documentMapAvailable) {
+            toggleDocumentMap({ triggerEl: null });
+          }
         }, 500);
         return;
       }
@@ -4655,14 +4776,16 @@ export default function MediaPaneBody() {
           event.preventDefault();
           clearChord();
           void openChatForMedia();
-        } else if (event.key === "e") {
+        } else if (event.key === "e" && documentMapAvailable) {
           event.preventDefault();
           clearChord();
           requestSecondarySurface?.("reader-evidence");
         } else {
           // Non-chord key: execute bare-G default immediately and pass through
           clearChord();
-          toggleDocumentMap();
+          if (documentMapAvailable) {
+            toggleDocumentMap({ triggerEl: null });
+          }
         }
       }
     };
@@ -4672,23 +4795,14 @@ export default function MediaPaneBody() {
       clearChord();
       document.removeEventListener("keydown", handleGChord);
     };
-  }, [openChatForMedia, requestSecondarySurface, toggleDocumentMap]);
-
-  const documentMapToolbarButton = useMemo(
-    () =>
-      canRead ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          leadingIcon={<MapIcon size={16} aria-hidden="true" />}
-          onClick={toggleDocumentMap}
-          aria-pressed={documentMapSurfaceActive}
-        >
-          Document Map
-        </Button>
-      ) : null,
-    [canRead, documentMapSurfaceActive, toggleDocumentMap],
-  );
+  }, [
+    documentMapAvailable,
+    documentMapRegionId,
+    openChatForMedia,
+    paneRuntime?.isActive,
+    requestSecondarySurface,
+    toggleDocumentMap,
+  ]);
 
   const mediaToolbar = useMemo(
     () =>
@@ -4699,7 +4813,6 @@ export default function MediaPaneBody() {
           aria-label="PDF controls"
         >
           <div className={styles.mediaToolbarRow}>
-            {documentMapToolbarButton}
             <Button
               variant="ghost"
               size="sm"
@@ -4730,12 +4843,14 @@ export default function MediaPaneBody() {
               label="More actions"
               options={[
                 {
+                  kind: "command",
                   id: "zoom-out",
                   label: "Zoom out",
                   disabled: !pdfControlsState.canZoomOut,
                   onSelect: () => pdfControlsRef.current?.zoomOut(),
                 },
                 {
+                  kind: "command",
                   id: "zoom-in",
                   label: "Zoom in",
                   disabled: !pdfControlsState.canZoomIn,
@@ -4752,7 +4867,6 @@ export default function MediaPaneBody() {
           aria-label="EPUB controls"
         >
           <div className={styles.mediaToolbarRow}>
-            {documentMapToolbarButton}
             <Button
               variant="ghost"
               size="sm"
@@ -4815,48 +4929,20 @@ export default function MediaPaneBody() {
             ) : null}
           </div>
         </div>
-      ) : media?.kind === "web_article" && canRead ? (
-        <div
-          className={styles.mediaToolbar}
-          role="toolbar"
-          aria-label="Article controls"
-        >
-          <div className={styles.mediaToolbarRow}>
-            {documentMapToolbarButton}
-          </div>
-        </div>
       ) : null,
     [
       activeSectionId,
       activeSectionPosition,
       canRead,
-      documentMapToolbarButton,
       epubSections,
       isEpub,
       isPdf,
-      media?.kind,
       navigateToSection,
       nextSection,
       pdfControlsState,
       prevSection,
     ],
   );
-  const paneChromeOverrides = useMemo(
-    () => ({
-      toolbar: mediaToolbar,
-      options: mediaHeaderOptions,
-    }),
-    [mediaHeaderOptions, mediaToolbar],
-  );
-
-  // ==========================================================================
-  // Chrome override — push toolbar/options into PaneShell. The reader's title
-  // rides the chrome running head as an auto-derived folio (document-mode);
-  // no free-form meta node (running-journal cutover).
-  // ==========================================================================
-
-  usePaneChromeOverride(paneChromeOverrides);
-
   useEffect(() => {
     setVideoSeekTargetMs(null);
   }, [
@@ -5434,7 +5520,7 @@ export default function MediaPaneBody() {
   const handleActivateEvidenceObject = useCallback(
     (object: ReaderEvidenceObject, options: { newPane: boolean }) => {
       const activated = activateResource(object.activation, {
-        label: object.label,
+        labelHint: object.label,
         openInNewPane,
         navigate: paneRouter.push,
         newPane: options.newPane || object.kind === "Chat",
@@ -5451,7 +5537,7 @@ export default function MediaPaneBody() {
         return;
       }
       const activated = activateResource(target.activation, {
-        label: target.label.kind === "Present" ? target.label.value : "Source",
+        labelHint: target.label.kind === "Present" ? target.label.value : "Source",
         openInNewPane,
         navigate: paneRouter.push,
         newPane: options.newPane,
@@ -5603,15 +5689,53 @@ export default function MediaPaneBody() {
     startEditBounds,
   ]);
 
-  const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication>(
-    () => ({
-      groupId: "reader-tools",
-      defaultSurfaceId: defaultDocumentMapSurface,
-      surfaces: readerSecondarySurfaces,
-    }),
-    [defaultDocumentMapSurface, readerSecondarySurfaces],
+  const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication | null>(
+    () =>
+      documentMapAvailable
+        ? {
+            groupId: "reader-tools",
+            defaultSurfaceId: defaultDocumentMapSurface,
+            surfaces: readerSecondarySurfaces,
+          }
+        : null,
+    [defaultDocumentMapSurface, documentMapAvailable, readerSecondarySurfaces],
   );
   usePaneSecondary(readerSecondaryDescriptor);
+  const documentMapHeaderAction = useMemo<PaneHeaderAction | null>(() => {
+    if (!readerSecondaryDescriptor || !documentMapRegionId) return null;
+    return documentMapAction({
+      expanded: documentMapSurfaceActive,
+      regionId: documentMapRegionId,
+      onToggle: toggleDocumentMap,
+    });
+  }, [
+    documentMapSurfaceActive,
+    documentMapRegionId,
+    readerSecondaryDescriptor,
+    toggleDocumentMap,
+  ]);
+  const primaryChromePublication = useMemo<PanePrimaryChromePublication>(
+    () => ({
+      ...(mediaResourceHeader
+        ? {
+            header: {
+              kind: "resource" as const,
+              resource: mediaResourceHeader,
+            },
+          }
+        : {}),
+      ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
+      actions: documentMapHeaderAction ? [documentMapHeaderAction] : [],
+      options: mediaHeaderOptions,
+    }),
+    [
+      documentMapHeaderAction,
+      mediaHeaderOptions,
+      mediaResourceHeader,
+      mediaToolbar,
+    ],
+  );
+  usePanePrimaryChrome(primaryChromePublication);
   const fixedChromePublication = useMemo(
     () =>
       showDesktopDocumentMapRail
@@ -5624,7 +5748,6 @@ export default function MediaPaneBody() {
                 contentRef={isPdf ? pdfContentRef : contentRef}
                 documentSpan={documentSpan}
                 onActivateMarker={activateDocumentMapMarker}
-                onOpenMap={openDocumentMap}
               />
             ),
           }
@@ -5636,7 +5759,6 @@ export default function MediaPaneBody() {
       documentSpan,
       documentMapMarkers,
       isPdf,
-      openDocumentMap,
       pdfContentRef,
       showDesktopDocumentMapRail,
     ],
@@ -5648,12 +5770,18 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   if (loading) {
-    return <PaneLoadingState />;
+    return (
+      <div className={styles.mobileDocumentState}>
+        <PaneLoadingState />
+      </div>
+    );
   }
 
   if (error || !media) {
     return (
-      <div className={styles.errorContainer}>
+      <div
+        className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
+      >
         <FeedbackNotice
           feedback={error ?? { severity: "error", title: "Media not found" }}
         />
@@ -5668,7 +5796,7 @@ export default function MediaPaneBody() {
     media.processing_status !== "failed"
   ) {
     return (
-      <div className={styles.content}>
+      <div className={`${styles.content} ${styles.mobileDocumentState}`}>
         <div className={styles.notReady}>
           <p>This EPUB is still being processed.</p>
           <p>Status: {media.processing_status}</p>
@@ -5677,12 +5805,49 @@ export default function MediaPaneBody() {
     );
   }
 
+  const readerBanners = (
+    <>
+      {!isPdf && isMismatchDisabled ? (
+        <div className={styles.mismatchBanner}>
+          Highlights disabled due to content mismatch. Try reloading.
+        </div>
+      ) : null}
+      {focusModeEnabled ? (
+        <div className={styles.focusModeBanner}>
+          <Pill tone="info">Focus mode enabled: highlights pane hidden.</Pill>
+        </div>
+      ) : null}
+      {media.retrieval_status &&
+      media.retrieval_status !== "ready" &&
+      canRead ? (
+        <div
+          className={styles.retrievalBanner}
+          data-testid="retrieval-readiness"
+        >
+          <Pill
+            tone={
+              media.retrieval_status === "failed" ? "danger" : "warning"
+            }
+          >
+            Search index: {media.retrieval_status.replaceAll("_", " ")}
+          </Pill>
+          {media.retrieval_status_reason ? (
+            <span>{media.retrieval_status_reason}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+
   const readerProgressLoadFailed = (
-    <div className={styles.notReady} data-testid="reader-progress-load-failed">
-      <p>Couldn&apos;t load your reading position.</p>
-      <Button variant="primary" size="md" onClick={readerProgress.retryLoad}>
-        Retry
-      </Button>
+    <div className={styles.mobileDocumentState}>
+      {readerBanners}
+      <div className={styles.notReady} data-testid="reader-progress-load-failed">
+        <p>Couldn&apos;t load your reading position.</p>
+        <Button variant="primary" size="md" onClick={readerProgress.retryLoad}>
+          Retry
+        </Button>
+      </div>
     </div>
   );
 
@@ -5699,7 +5864,19 @@ export default function MediaPaneBody() {
       />
     ) : null;
 
-  const transcriptPaneBody = !canRead ? (
+  const transcriptPaneBody = initialFragmentsFailure ? (
+    <div className={styles.mobileDocumentState}>
+      <FeedbackNotice
+        feedback={{
+          severity: "warning",
+          title:
+            initialFragmentsFailure.code === "E_MEDIA_NOT_READY"
+              ? "Transcript content is still being processed."
+              : "Transcript content could not be loaded.",
+        }}
+      />
+    </div>
+  ) : !canRead ? (
     <TranscriptStatePanel
       mediaId={media.id}
       transcriptState={transcriptState}
@@ -5799,48 +5976,6 @@ export default function MediaPaneBody() {
           </div>
         ) : null}
         <div className={styles.readerColumn}>
-          <div className={styles.byline}>
-            <ContributorRoleGroups
-              credits={media.contributors}
-              media={{
-                canEditAuthors: media.capabilities?.can_edit_authors ?? false,
-                authorMode: media.author_mode ?? "automatic",
-                onEditAuthors: openAuthorsEditor,
-              }}
-            />
-          </div>
-          {!isPdf && isMismatchDisabled && (
-            <div className={styles.mismatchBanner}>
-              Highlights disabled due to content mismatch. Try reloading.
-            </div>
-          )}
-          {focusModeEnabled && (
-            <div className={styles.focusModeBanner}>
-              <Pill tone="info">
-                Focus mode enabled: highlights pane hidden.
-              </Pill>
-            </div>
-          )}
-          {media.retrieval_status &&
-          media.retrieval_status !== "ready" &&
-          canRead ? (
-            <div
-              className={styles.retrievalBanner}
-              data-testid="retrieval-readiness"
-            >
-              <Pill
-                tone={
-                  media.retrieval_status === "failed" ? "danger" : "warning"
-                }
-              >
-                Search index: {media.retrieval_status.replaceAll("_", " ")}
-              </Pill>
-              {media.retrieval_status_reason ? (
-                <span>{media.retrieval_status_reason}</span>
-              ) : null}
-            </div>
-          ) : null}
-
           {isTranscriptMedia ? (
             <div className={styles.readerFrame}>
               <div
@@ -5849,6 +5984,7 @@ export default function MediaPaneBody() {
                 data-pane-content="true"
                 onScroll={handleDocumentScrollEvent}
               >
+                {readerBanners}
                 <div className={styles.transcriptPane}>
                   <TranscriptPlaybackPanel
                     mediaId={media.id}
@@ -5873,52 +6009,60 @@ export default function MediaPaneBody() {
               </div>
             </div>
           ) : !canRead ? (
-            <div className={styles.notReady}>
-              <SectionOpener heading={media.title} />
-              {media.processing_status === "failed" ? (
-                <>
-                  {isPdf &&
-                  media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
-                    <p>{PDF_PASSWORD_PROTECTED_MESSAGE}</p>
-                  ) : (
-                    <p>This media cannot be opened right now.</p>
-                  )}
-                  {media.last_error_code && (
-                    <p>Error: {media.last_error_code}</p>
-                  )}
-                  {media.capabilities?.can_retry ? (
-                    <Button
-                      variant="primary"
-                      size="md"
-                      leadingIcon={<RefreshCw size={15} aria-hidden="true" />}
-                      onClick={() => {
-                        void handleRetryProcessing();
-                      }}
-                      disabled={retryProcessingBusy}
-                    >
-                      {retryProcessingBusy ? "Retrying..." : "Retry processing"}
-                    </Button>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <p>This media is still being processed.</p>
-                  <p>Status: {media.processing_status}</p>
-                </>
-              )}
+            <div className={styles.mobileDocumentState}>
+              {readerBanners}
+              <div className={styles.notReady}>
+                {media.processing_status === "failed" ? (
+                  <>
+                    {isPdf &&
+                    media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
+                      <p>{PDF_PASSWORD_PROTECTED_MESSAGE}</p>
+                    ) : (
+                      <p>This media cannot be opened right now.</p>
+                    )}
+                    {media.last_error_code && (
+                      <p>Error: {media.last_error_code}</p>
+                    )}
+                    {media.capabilities?.can_retry ? (
+                      <Button
+                        variant="primary"
+                        size="md"
+                        leadingIcon={<RefreshCw size={15} aria-hidden="true" />}
+                        onClick={() => {
+                          void handleRetryProcessing();
+                        }}
+                        disabled={retryProcessingBusy}
+                      >
+                        {retryProcessingBusy
+                          ? "Retrying..."
+                          : "Retry processing"}
+                      </Button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <p>This media is still being processed.</p>
+                    <p>Status: {media.processing_status}</p>
+                  </>
+                )}
+              </div>
             </div>
           ) : readerProgress.status === "load_failed" ? (
             readerProgressLoadFailed
           ) : isPdf ? (
             initialReaderResumeStateLoading ? (
-              <div className={styles.notReady}>
-                <p>Loading reader state...</p>
+              <div className={styles.mobileDocumentState}>
+                {readerBanners}
+                <div className={styles.notReady}>
+                  <p>Loading reader state...</p>
+                </div>
               </div>
             ) : (
               <div className={styles.readerFrame}>
                 <PdfReader
                   key={id}
                   mediaId={id}
+                  beforeContent={readerBanners}
                   contentRef={pdfContentRef}
                   focusedHighlightId={focusState.focusedId}
                   hoveredHighlightId={hoveredHighlightId}
@@ -5986,6 +6130,7 @@ export default function MediaPaneBody() {
           ) : isEpub ? (
             <TextDocumentReader
               mediaId={id}
+              beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}
               readerSurfaceClassName={readerSurfaceClassName}
@@ -6015,6 +6160,7 @@ export default function MediaPaneBody() {
           ) : (
             <TextDocumentReader
               mediaId={id}
+              beforeContent={readerBanners}
               readerRootRef={readerRootRef}
               contentRef={contentRef}
               readerSurfaceClassName={readerSurfaceClassName}
@@ -6038,7 +6184,7 @@ export default function MediaPaneBody() {
             />
           ) : null}
         </div>
-        {!isTranscriptMedia && canRead ? (
+        {!isTranscriptMedia && documentMapAvailable ? (
           <MarginRail
             items={marginItems}
             contentRef={isPdf ? pdfContentRef : contentRef}
@@ -6166,6 +6312,17 @@ export default function MediaPaneBody() {
         />
       ) : null}
 
+      {creditsOverlayMounted && mediaResourceHeader?.status === "ready" ? (
+        <ResourceCreditsOverlay
+          open={creditsOverlayOpen}
+          title={mediaResourceHeader.title}
+          creditGroups={mediaResourceHeader.creditGroups}
+          returnFocusTo={() => creditsOverlayTrigger}
+          returnFocusFallback={returnFocusFallback}
+          onClose={() => setCreditsOverlayOpen(false)}
+        />
+      ) : null}
+
       {authorsEditorMounted ? (
         <Suspense fallback={null}>
           <MediaAuthorsEditor
@@ -6174,6 +6331,8 @@ export default function MediaPaneBody() {
             onClose={() => setAuthorsEditorOpen(false)}
             authors={mapMediaAuthorCredits(media.contributors)}
             authorMode={media.author_mode ?? "automatic"}
+            returnFocusTo={() => authorsEditorTrigger}
+            returnFocusFallback={returnFocusFallback}
             onSaved={handleAuthorsSaved}
           />
         </Suspense>

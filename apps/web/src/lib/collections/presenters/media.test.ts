@@ -31,7 +31,7 @@ describe("presentMedia", () => {
     expect(view.primary).toEqual({
       kind: "link",
       href: "/media/media-1",
-      paneTitleHint: "On Exactitude in Science",
+      paneLabelHint: "On Exactitude in Science",
       viewTransition: "media-reader",
     });
     expect(view.headline.text).toBe("On Exactitude in Science");

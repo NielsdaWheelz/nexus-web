@@ -16,7 +16,7 @@ import LibraryPaneBody from "./LibraryPaneBody";
 // `{ library, entries }`), LibraryPaneBody must paint from the seed and never
 // fetch `/api/libraries/<id>`. We exercise the real useResource → apiFetch →
 // global fetch path (apiFetch is NOT mocked) and assert the library GET never
-// fires. `usePaneChromeOverride` / `usePaneSecondary` no-op without their
+// fires. `usePanePrimaryChrome` / `usePaneSecondary` no-op without their
 // contexts, so the minimal harness is FeedbackProvider + PaneRuntimeProvider.
 
 const LIBRARY_ID = "ac4-library";
@@ -144,7 +144,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     const href = `/libraries/${LIBRARY_ID}`;
-    const { onSetPaneTitle } = renderHydratedPane({
+    const { onSetPaneLabel } = renderHydratedPane({
       href,
       resources: {
         [LIBRARY_ID]: {
@@ -162,10 +162,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       await screen.findByText("No podcasts or media in this library yet."),
     ).toBeInTheDocument();
 
-    // Seed surfaced: the pane title is published from the seeded library name.
+    // Seed surfaced: the pane label is published from the seeded library name.
     await waitFor(() => {
-      expect(onSetPaneTitle).toHaveBeenCalledWith(
-        expect.objectContaining({ title: LIBRARY_NAME }),
+      expect(onSetPaneLabel).toHaveBeenCalledWith(
+        expect.objectContaining({ label: LIBRARY_NAME }),
       );
     });
 

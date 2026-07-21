@@ -51,7 +51,7 @@ export function buildItemActions(item: LauncherItem): LauncherAction[] {
         target: {
           kind: "resource",
           activation: item.target.activation,
-          titleHint: item.target.titleHint ?? item.title,
+          labelHint: item.target.labelHint ?? item.title,
         },
       },
       ask,

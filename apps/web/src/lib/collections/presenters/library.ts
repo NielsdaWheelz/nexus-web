@@ -37,7 +37,7 @@ export function presentLibrary(
   return {
     id: item.id,
     kind: "library",
-    primary: { kind: "link", href: `/libraries/${item.id}`, paneTitleHint: item.name },
+    primary: { kind: "link", href: `/libraries/${item.id}`, paneLabelHint: item.name },
     lead: { icon: resourceIconForScheme("library") },
     headline: { text: item.name },
     signals,

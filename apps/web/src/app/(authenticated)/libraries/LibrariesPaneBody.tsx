@@ -20,7 +20,7 @@ import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
@@ -86,9 +86,12 @@ export default function LibrariesPaneBody() {
         ? "error"
         : "loading";
 
-  usePaneChromeOverride({
-    folio: { kind: "count", value: libraries.length, unit: "library" },
-    folioPending: status === "loading",
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: libraries.length, unit: "library" },
+      pending: status === "loading",
+    },
   });
 
   const refreshLibraries = useCallback(() => {

@@ -7,7 +7,7 @@ import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/f
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { LECTERN_RECENT_LIMIT, lecternRecentResource } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -171,9 +171,12 @@ export default function LecternPaneBody() {
     [placeItems],
   );
 
-  usePaneChromeOverride({
-    folio: { kind: "count", value: items.length, unit: "on the lectern" },
-    folioPending: queueStatus === "loading",
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: items.length, unit: "on the lectern" },
+      pending: queueStatus === "loading",
+    },
   });
 
   const queueRows = items.map((item) =>

@@ -37,7 +37,7 @@ function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
       onNavigatePane={onNavigatePane}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
-      onSetPaneTitle={vi.fn()}
+      onSetPaneLabel={vi.fn()}
     >
       {node}
     </PaneRuntimeProvider>

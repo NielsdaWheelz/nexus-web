@@ -17,7 +17,7 @@ function viewModel(
       unresolvedReason: null,
     },
     citationTarget: resourceRef,
-    paneTitleHint: "before match after",
+    paneLabelHint: "before match after",
     type: "content_chunk",
     mediaId: "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
     contextRef: {

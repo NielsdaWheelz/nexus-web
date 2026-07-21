@@ -157,14 +157,14 @@ export default function LibraryBrief({ libraryId }: { libraryId: string }) {
       if (target) dispatchReaderSourceActivation(target);
       if (event?.shiftKey) {
         activateResource(activation, {
-          label: target?.label,
+          labelHint: target?.label,
           openInNewPane,
           newPane: true,
         });
         return;
       }
       activateResource(activation, {
-        label: target?.label,
+        labelHint: target?.label,
         navigate: (href) => router.push(href),
       });
     },

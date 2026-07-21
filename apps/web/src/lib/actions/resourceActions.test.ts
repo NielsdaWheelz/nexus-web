@@ -62,7 +62,14 @@ describe("mediaResourceOptions", () => {
       "manage-media-libraries",
       "delete-media",
     ]);
+    expect(headerMenu[0]).toMatchObject({
+      kind: "link",
+      id: "open-source",
+      href: "https://example.com/source",
+    });
+    expect(headerMenu.slice(1).every((option) => option.kind === "command")).toBe(true);
     expect(headerMenu.at(-1)).toMatchObject({
+      kind: "command",
       id: "delete-media",
       label: "Delete document",
       tone: "danger",

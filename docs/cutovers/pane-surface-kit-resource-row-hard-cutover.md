@@ -341,7 +341,7 @@ It does not own:
 
 - pane frame, scroll mode, chrome, fixed toolbar, secondary pane, or resizing;
 - data fetching or hydration;
-- route parsing, pane navigation, or title publication;
+- route parsing, pane navigation, or pane-label publication;
 - filter state machines;
 - action menus or specific controls;
 - document-reader layout.
@@ -473,7 +473,7 @@ It does not own:
 - fetching, ingestion, following, subscription, library assignment, sorting, or
   transcript actions;
 - pane routing policy;
-- title publication beyond forwarding link attributes supplied by the caller.
+- pane-label publication beyond forwarding link attributes supplied by the caller.
 
 Activation must be a discriminated union so illegal states are unrepresentable:
 
@@ -482,7 +482,7 @@ type ResourceRowPrimary =
   | {
       kind: "link";
       href: string;
-      paneTitleHint?: string;
+      paneLabelHint?: string;
       target?: "_self" | "_blank";
     }
   | {
@@ -526,7 +526,7 @@ Rules:
 - If an implementation supports outer-row click affordance, it must ignore
   events from `a`, `button`, `input`, `textarea`, `select`, `[role="button"]`,
   `[role="menuitem"]`, and `[data-row-action]`.
-- `data-pane-title-hint` is forwarded only when provided by a link row caller.
+- `data-pane-label-hint` is forwarded only when provided by a link row caller.
 - Domain adapters may precompose title/meta/actions, but they cannot replace
   the activation contract.
 
@@ -556,8 +556,8 @@ Rules:
 `PaneSurface` is below `PaneShell`; it has no knowledge of pane route ids, body
 modes, pane widths, secondary panes, or fixed chrome. Links inside
 `ResourceRow` continue to be captured by the existing pane link-routing
-boundary. `paneTitleHint` is forwarded as an attribute for the existing routing
-and title systems; `ResourceRow` does not compute pane titles.
+boundary. `paneLabelHint` is forwarded as an attribute for the existing routing
+and label systems; `ResourceRow` does not compute pane labels.
 
 ### Hydration And Resources
 
@@ -657,7 +657,7 @@ Required tests:
 
 - `ResourceRow` renders link, button, and static rows with correct semantics.
 - Button row invokes `onActivate` on click and keyboard activation.
-- Link row forwards `href` and `data-pane-title-hint`.
+- Link row forwards `href` and `data-pane-label-hint`.
 - Disabled/busy button rows do not activate.
 - Nested action buttons do not trigger primary activation.
 - Long title/metadata/action combinations remain contained in browser coverage.
@@ -719,7 +719,7 @@ Work:
 Acceptance for S2:
 
 - Search filter chip tests keep passing.
-- Search result links keep route behavior and title hints.
+- Search result links keep route behavior and pane-label hints.
 - `SearchResultRow` no longer imports `ContextRow`.
 
 ### S3 - Notes And Conversations

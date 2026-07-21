@@ -129,7 +129,7 @@ test.describe("workspace tabs", () => {
     await expect(librariesButton).toBeVisible();
     await expect(searchButton).toBeVisible();
 
-    // Neither activator should carry aria-busy (that signals a pending title).
+    // Neither activator should carry aria-busy (that signals a pending label).
     await expect(librariesButton).not.toHaveAttribute("aria-busy");
     await expect(searchButton).not.toHaveAttribute("aria-busy");
   });
@@ -236,16 +236,16 @@ test.describe("workspace tabs", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Dynamic-content pane: resolved title
+  // Dynamic-content pane: resolved label
   //
-  // A media pane is titleMode:"dynamic".  Once the body loads and publishes a
-  // title, the tab must show that specific resource title, not a category word
+  // A media pane is labelMode:"dynamic". Once the body loads and publishes a
+  // label, the tab must show that specific resource title, not a category word
   // like "Media".
   //
   // The epub seed gives us a deterministic title we can assert on.
   // -------------------------------------------------------------------------
 
-  test("desktop: a dynamic media pane tab shows the resolved resource title after load", async ({
+  test("desktop: a dynamic media pane tab shows the resolved resource label after load", async ({
     page,
   }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
@@ -259,7 +259,7 @@ test.describe("workspace tabs", () => {
     const strip = workspacePaneStrip(page);
     await expect(strip).toBeVisible();
 
-    // Wait until the tab no longer carries aria-busy, meaning titleState has
+    // Wait until the tab no longer carries aria-busy, meaning labelState has
     // transitioned from "pending" to "resolved".
     const activator = activeWorkspacePaneButton(page);
 
@@ -274,10 +274,10 @@ test.describe("workspace tabs", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Dynamic pane: title is not a category word
+  // Dynamic pane: label is not a category word
   //
   // This uses the epub seed so we can assert on the strip tab specifically
-  // while waiting for a non-"Media" resolved title.
+  // while waiting for a non-"Media" resolved label.
   // -------------------------------------------------------------------------
 
   test("desktop: epub tab eventually carries a real book title, not \"Media\"", async ({
@@ -303,7 +303,7 @@ test.describe("workspace tabs", () => {
     await expect(strip).toBeVisible();
 
     // Poll until the tab text is neither "Media" nor empty — i.e. a resolved
-    // resource title has been published.
+    // resource label has been published.
     await expect
       .poll(
         async () => {
@@ -348,7 +348,7 @@ test.describe("workspace tabs", () => {
         { timeout: 20_000, intervals: [500, 500, 1_000] },
       )
       .not.toBe("");
-    const resolvedTitle = await paneButtonLabel(activator);
+    const resolvedLabel = await paneButtonLabel(activator);
 
     const navigationResponse = await page.request.get(
       `/api/media/${epub.media_id}/navigation`,
@@ -379,13 +379,13 @@ test.describe("workspace tabs", () => {
         timeout: 10_000,
         intervals: [500, 1_000],
       })
-      .toBe(resolvedTitle);
+      .toBe(resolvedLabel);
     // The book title is surfaced via the pane-strip button label (verified
     // above), not as a heading element — the EPUB HTML only contains chapter
     // headings and the RunningHead uses <span>, not <h*>.
   });
 
-  test("desktop: library epub title hint appears before media load", async ({
+  test("desktop: library epub label hint appears before media load", async ({
     page,
   }, testInfo) => {
     const epub = readSeed<SeededEpubMedia>("epub-media.json");
@@ -508,12 +508,12 @@ test.describe("workspace tabs", () => {
   // -------------------------------------------------------------------------
   // Pending tab: aria-busy and accessible name while loading
   //
-  // While a dynamic-content pane has not yet published its title, the tab
+  // While a dynamic-content pane has not yet published its label, the tab
   // MUST carry aria-busy and an accessible aria-label (not be an anonymous
   // control).
   //
   // We assert this by opening a media pane and checking the strip before the
-  // title resolves.  Because the title may resolve very fast, we use the
+  // label resolves. Because the label may resolve very fast, we use the
   // non-pdf (web article) seed — it is still dynamic but the window is short;
   // the test is safe because we only need to assert that IF the tab carries
   // aria-busy THEN it also has an aria-label.  After resolution we assert

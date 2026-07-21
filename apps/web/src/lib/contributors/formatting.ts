@@ -1,5 +1,58 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { isPositiveFinite } from "@/lib/validation";
+import { contributorAuthorHref } from "@/lib/contributors/routes";
+import {
+  CONTRIBUTOR_ROLE_ORDER,
+  contributorRoleLabel,
+  normalizeContributorRoleToken,
+  type ContributorRoleToken,
+} from "@/lib/contributors/vocab";
+
+interface ContributorDisplayCredit {
+  readonly label: string;
+  readonly href?: string;
+}
+
+interface ContributorDisplayGroup {
+  readonly role: ContributorRoleToken;
+  readonly label: string;
+  readonly credits: readonly ContributorDisplayCredit[];
+}
+
+export function groupContributorCredits(
+  credits: readonly ContributorCredit[] | null | undefined,
+): readonly ContributorDisplayGroup[] {
+  const grouped = new Map<ContributorRoleToken, ContributorDisplayCredit[]>();
+  for (const credit of credits ?? []) {
+    const label = getContributorCreditLabel(credit);
+    if (!label) continue;
+    const handle = credit.contributor_handle?.trim();
+    const explicitHref = credit.href?.trim();
+    const displayCredit: ContributorDisplayCredit = {
+      label,
+      ...(explicitHref
+        ? { href: explicitHref }
+        : handle
+          ? { href: contributorAuthorHref(handle) }
+          : {}),
+    };
+    const role = normalizeContributorRoleToken(credit.role);
+    const existing = grouped.get(role);
+    if (existing) existing.push(displayCredit);
+    else grouped.set(role, [displayCredit]);
+  }
+
+  return CONTRIBUTOR_ROLE_ORDER.flatMap((role) => {
+    const roleCredits = grouped.get(role);
+    if (!roleCredits?.length) return [];
+    return [
+      {
+        role,
+        label: contributorRoleLabel(role, roleCredits.length),
+        credits: roleCredits,
+      },
+    ];
+  });
+}
 
 function getContributorCreditLabel(credit: ContributorCredit): string | null {
   const creditedName = credit.credited_name?.trim();
@@ -7,44 +60,6 @@ function getContributorCreditLabel(credit: ContributorCredit): string | null {
     return creditedName;
   }
   return credit.contributor_display_name?.trim() || null;
-}
-
-export function formatContributorCreditSummary(
-  credits: ContributorCredit[] | null | undefined,
-  maxNames: number = Number.POSITIVE_INFINITY,
-): string | null {
-  if (!Array.isArray(credits)) {
-    return null;
-  }
-
-  const seen = new Set<string>();
-  const names: string[] = [];
-  for (const credit of credits) {
-    const name = getContributorCreditLabel(credit);
-    if (!name) {
-      continue;
-    }
-    // Dedupe by handle when present; handle-less text-fact credits (podcast
-    // previews) dedupe by their credited label so they still count.
-    const key = credit.contributor_handle?.trim() || name;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    names.push(name);
-  }
-
-  if (names.length === 0) {
-    return null;
-  }
-
-  const visibleCount = isPositiveFinite(maxNames)
-    ? Math.max(1, Math.floor(maxNames))
-    : names.length;
-  if (names.length <= visibleCount) {
-    return names.join(", ");
-  }
-  return `${names.slice(0, visibleCount).join(", ")} +${names.length - visibleCount}`;
 }
 
 export function formatContributorRole(

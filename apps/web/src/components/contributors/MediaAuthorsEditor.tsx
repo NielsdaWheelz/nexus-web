@@ -29,6 +29,7 @@ import type {
 import { createRandomId } from "@/lib/createRandomId";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import AuthorSearchField, { normalizedNameKey } from "./AuthorSearchField";
 import styles from "./MediaAuthorsEditor.module.css";
 
@@ -105,7 +106,7 @@ function removedAnnouncement(name: string, remaining: number): string {
   return `Removed ${name}. ${count}.`;
 }
 
-export interface MediaAuthorsEditorProps {
+interface MediaAuthorsEditorProps {
   /** Visibility gate. The media pane keeps this mounted; drive with this. */
   open: boolean;
   mediaId: string;
@@ -117,9 +118,11 @@ export interface MediaAuthorsEditorProps {
   authors: MediaAuthorCredit[];
   /** Whether authors are pinned to manual; drives the reset affordance. */
   authorMode: "automatic" | "manual";
+  returnFocusTo: ReturnFocusTarget;
+  returnFocusFallback: ReturnFocusTarget;
   /** Dismiss (accepted): close without a PUT. */
   onClose: () => void;
-  /** A successful PUT returned the fresh slice — the byline updates from it. */
+  /** A successful PUT returned the fresh slice — resource credits update from it. */
   onSaved: (next: MediaAuthors) => void;
 }
 
@@ -128,6 +131,8 @@ export default function MediaAuthorsEditor({
   mediaId,
   authors,
   authorMode,
+  returnFocusTo,
+  returnFocusFallback,
   onClose,
   onSaved,
 }: MediaAuthorsEditorProps) {
@@ -636,6 +641,8 @@ export default function MediaAuthorsEditor({
         ariaLabel="Edit authors"
         onDismiss={handleClose}
         onDismissRequest={requestDismiss}
+        returnFocusTo={returnFocusTo}
+        returnFocusFallback={returnFocusFallback}
         backdropTestId="edit-authors-backdrop"
       >
         {renderContent(true)}
@@ -644,12 +651,15 @@ export default function MediaAuthorsEditor({
   }
 
   return (
-    <Dialog open={open} title="Edit authors" onClose={handleClose} onDismissRequest={requestDismiss}>
+    <Dialog
+      open={open}
+      title="Edit authors"
+      onClose={handleClose}
+      onDismissRequest={requestDismiss}
+      returnFocusTo={returnFocusTo}
+      returnFocusFallback={returnFocusFallback}
+    >
       {renderContent(false)}
     </Dialog>
   );
 }
-
-// The media pane lazy-imports this by name (`module.MediaAuthorsEditor`); the
-// default export serves direct importers and tests.
-export { MediaAuthorsEditor };

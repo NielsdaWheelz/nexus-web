@@ -8,6 +8,10 @@ import AsterismMark from "@/components/AsterismMark";
 import { OPEN_LAUNCHER_EVENT } from "@/lib/launcher/launcherEvents";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import type { AppNavActivationResult } from "./navActivation";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
@@ -47,7 +51,7 @@ export default function NavSheet({
     if (open) navigationClaimedFocusRef.current = false;
   }, [open]);
 
-  useDialogOverlay({
+  const overlay = useDialogOverlay({
     ref: sheetRef,
     active: open,
     onDismiss: onClose,
@@ -57,7 +61,7 @@ export default function NavSheet({
   });
   // Stays mounted across open/close (AppNav renders NavSheet unconditionally;
   // the `!open` gate below is after the hooks) — required by useHistoryDismiss.
-  useHistoryDismiss(open, onClose);
+  useHistoryDismiss(open, onClose, { isTopmost: overlay.isTopmost });
 
   useEffect(() => {
     const changed = previousActiveHrefRef.current !== activeHref;
@@ -98,12 +102,18 @@ export default function NavSheet({
   const AccountIcon = account.icon;
 
   return createPortal(
-    <div className={styles.sheetBackdrop} role="presentation" onClick={onClose}>
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.sheetBackdrop}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        data-testid="nav-sheet-backdrop"
+        role="presentation"
+        onClick={onClose}
+      >
       <aside
         ref={sheetRef}
         className={styles.sheet}
         role="dialog"
-        aria-modal="true"
         aria-label="Navigation"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
@@ -202,8 +212,9 @@ export default function NavSheet({
             </button>
           </form>
         </div>
-      </aside>
-    </div>,
+        </aside>
+      </div>
+    </ModalLayerProvider>,
     document.body,
   );
 }

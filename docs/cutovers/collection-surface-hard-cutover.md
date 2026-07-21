@@ -362,7 +362,7 @@ top-level `disabled`; guard now lands here, not only on `ItemCard`):
 
 ```tsx
 type ResourceRowPrimary =
-  | { kind: "link"; href: string; paneTitleHint?: string; target?: "_self" | "_blank"; rel?: string }
+  | { kind: "link"; href: string; paneLabelHint?: string; target?: "_self" | "_blank"; rel?: string }
   | { kind: "button"; onActivate: () => void | Promise<void>; disabled?: boolean; busy?: boolean; label: string }
   | { kind: "static" };
 
@@ -419,7 +419,7 @@ interface CollectionRowView {
   related?: PeerChip[];                            // similarity + shared-author (lazy)
   contributors?: { credits: ContributorCredit[]; maxVisible: number; showRole?: boolean };
   recency?: { at: string; reason: "added" | "connected" | "read" | "published" };
-  actions?: { menu?: ActionMenuOption[]; inline?: InlineAction[] };
+  actions?: ActionDescriptor[];
   swipeActions?: SwipeAction[];
   selected?: boolean;
 }

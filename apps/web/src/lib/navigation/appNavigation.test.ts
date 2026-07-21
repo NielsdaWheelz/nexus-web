@@ -5,7 +5,10 @@ import {
   NAV_HOME,
   NAV_MODEL,
 } from "@/components/appnav/navModel";
-import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
+import {
+  resolvePaneRouteModel,
+  sectionDestinationIdForHref,
+} from "@/lib/panes/paneRouteModel";
 import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 describe("app navigation model", () => {
@@ -35,7 +38,7 @@ describe("app navigation model", () => {
         `${destination.id} (${destination.href}) must resolve to a pane route`,
       ).not.toBe("unsupported");
       expect(
-        route.definition?.sectionDestinationId,
+        sectionDestinationIdForHref(destination.href),
         `${destination.id} (${destination.href}) must activate its own nav section`,
       ).toBe(destination.id);
     }

@@ -7,7 +7,7 @@ export type ResourceRowPrimary =
   | {
       kind: "link";
       href: string;
-      paneTitleHint?: string;
+      paneLabelHint?: string;
       target?: "_self" | "_blank";
       rel?: string;
       viewTransition?: "media-reader";
@@ -38,7 +38,7 @@ export default function ResourceActivation({
         className={className}
         data-row-focusable={dataRowFocusable ? "" : undefined}
         href={primary.href}
-        data-pane-title-hint={primary.paneTitleHint}
+        data-pane-label-hint={primary.paneLabelHint}
         data-view-transition={primary.viewTransition}
         target={primary.target}
         rel={primary.rel}

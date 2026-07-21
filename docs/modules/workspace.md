@@ -55,6 +55,36 @@ The hook accepts `mode: "desktop" | "disabled"`.
 Callers must not clear canvas state themselves. `WorkspaceHost` passes the mode
 and renders edge fades only in desktop mode.
 
+## Pane Headers and Primary Chrome
+
+Every supported route declares one `PaneRouteHeaderContract`:
+
+- `section` resolves the destination-owned standing head and an optional folio
+- `resource` resolves a title plus structured credit groups
+
+Pane bodies publish the orthogonal `{ header, toolbar, actions, options }`
+capabilities through `usePanePrimaryChrome`. Each update carries the current
+`routeKey`; `PaneShell` rejects stale updates before validating the header kind.
+There is no route-level chrome descriptor, body-mode inference, or ambient title
+override.
+
+The three projections are fixed:
+
+- desktop section header: 44px
+- desktop resource header: 60px
+- mobile top bar: 60px plus safe area
+
+Desktop actions render through `ActionBar`; the same typed descriptors render in
+mobile Options through `ActionMenu`. Free-form `toolbar` content is reserved for
+bounded format navigation such as PDF and EPUB controls. It is not another
+action channel.
+
+Each pane landmark is named from its resolved header. Resource identity owns its
+`h1`; imported reader headings are projected beneath it, and pending resource
+identity supplies an accessible loading name. The
+route-scoped error boundary wraps runtime, chrome, body, and mobile secondary
+composition so one pane failure cannot replace its siblings or the workspace.
+
 ## Mobile Secondary Panes
 
 `MobileSecondaryPaneHost` is the only workspace mobile secondary presentation.
@@ -71,6 +101,13 @@ and mobile, but the chrome owner differs:
 - desktop: `SecondaryPaneShell`
 - mobile: `MobileSecondaryPaneHost`
 
+An expanded secondary region uses
+`paneSecondaryRegionId(primaryPaneId, groupId)`. Disclosure actions expose that
+id only while the region exists. Mobile open requests may carry the exact trigger
+element as ephemeral focus state; the sheet focuses its active tab, returns to
+that trigger on close, and falls back to the same pane's chrome if the trigger
+disconnects.
+
 Do not introduce another workspace mobile drawer or sheet owner.
 
 ## Fixed Chrome
@@ -79,7 +116,9 @@ Fixed primary chrome is desktop-only. Pane bodies may publish fixed chrome, but
 mobile workspace mode makes that publication inert for desktop fixed-chrome
 rendering.
 
-The reader Document Map overview rail is fixed primary chrome and remains desktop-only.
+The reader Document Map overview rail is fixed primary chrome and remains
+desktop-only. Its markers activate contextual targets; it contains no generic
+Document Map opener.
 
 ## Pane History
 

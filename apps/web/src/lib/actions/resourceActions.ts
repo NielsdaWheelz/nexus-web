@@ -1,8 +1,6 @@
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { ReadStatus } from "@/lib/collections/types";
+import type { ActionDescriptor, ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { isRecord } from "@/lib/validation";
-
-type MenuSelectDetail = { triggerEl: HTMLButtonElement | null };
 
 interface MediaActionSubject {
   id: string;
@@ -45,7 +43,7 @@ export function mediaResourceOptions(input: {
   retryMetadataBusy?: boolean;
   readState?: ReadStatus;
   onOpenChat?: () => void;
-  onManageLibraries?: (detail: MenuSelectDetail) => void;
+  onManageLibraries?: (detail: ActionSelectDetail) => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
   onDelete?: () => void;
@@ -53,15 +51,16 @@ export function mediaResourceOptions(input: {
   onMarkFinished?: () => void;
   onMarkUnread?: () => void;
   onAddToLectern?: () => void;
-}): ActionMenuOption[] {
+}): ActionDescriptor[] {
   const media = input.media;
   if (!media) return [];
 
   const capabilities = normalizeMediaActionCapabilities(media.capabilities);
-  const options: ActionMenuOption[] = [];
+  const options: ActionDescriptor[] = [];
 
   if (media.canonical_source_url) {
     options.push({
+      kind: "link",
       id: "open-source",
       label: "Open source",
       href: media.canonical_source_url,
@@ -70,6 +69,7 @@ export function mediaResourceOptions(input: {
 
   if (capabilities.can_retry && input.onRetry) {
     options.push({
+      kind: "command",
       id: "retry-processing",
       label: input.retryBusy ? "Retrying..." : "Retry processing",
       disabled: input.retryBusy,
@@ -79,6 +79,7 @@ export function mediaResourceOptions(input: {
 
   if (capabilities.can_refresh_source && input.onRefreshSource) {
     options.push({
+      kind: "command",
       id: "refresh-source",
       label: input.refreshBusy ? "Refreshing..." : "Refresh source",
       disabled: input.refreshBusy,
@@ -88,6 +89,7 @@ export function mediaResourceOptions(input: {
 
   if (capabilities.can_retry_metadata && input.onRetryMetadata) {
     options.push({
+      kind: "command",
       id: "re-enrich-metadata",
       label: input.retryMetadataBusy ? "Re-enriching..." : "Re-enrich metadata",
       disabled: input.retryMetadataBusy,
@@ -97,6 +99,7 @@ export function mediaResourceOptions(input: {
 
   if (input.onAddToLectern) {
     options.push({
+      kind: "command",
       id: "add-to-lectern",
       label: "Add to Lectern",
       onSelect: input.onAddToLectern,
@@ -105,6 +108,7 @@ export function mediaResourceOptions(input: {
 
   if (input.onOpenChat) {
     options.push({
+      kind: "command",
       id: "chat-about-media",
       label: "Chat about this resource",
       onSelect: input.onOpenChat,
@@ -113,6 +117,7 @@ export function mediaResourceOptions(input: {
 
   if (input.canManageLibraries && input.onManageLibraries) {
     options.push({
+      kind: "command",
       id: "manage-media-libraries",
       label: "Libraries...",
       restoreFocusOnClose: false,
@@ -124,6 +129,7 @@ export function mediaResourceOptions(input: {
   // finished. Exactly one is offered, driven by the current derived read-state.
   if (input.readState !== "finished" && input.onMarkFinished) {
     options.push({
+      kind: "command",
       id: "mark-finished",
       label: "Mark as finished",
       onSelect: input.onMarkFinished,
@@ -131,6 +137,7 @@ export function mediaResourceOptions(input: {
   }
   if (input.readState === "finished" && input.onMarkUnread) {
     options.push({
+      kind: "command",
       id: "mark-unread",
       label: "Mark as unread",
       onSelect: input.onMarkUnread,
@@ -139,6 +146,7 @@ export function mediaResourceOptions(input: {
 
   if (capabilities.can_delete && input.onDelete) {
     options.push({
+      kind: "command",
       id: "delete-media",
       label: "Delete document",
       tone: "danger",
@@ -168,17 +176,18 @@ export function libraryResourceOptions(input: {
   library: LibraryActionSubject | null | undefined;
   onEdit?: () => void;
   onDelete?: () => void;
-}): ActionMenuOption[] {
+}): ActionDescriptor[] {
   const library = input.library;
   if (!library) return [];
 
-  const options: ActionMenuOption[] = [];
+  const options: ActionDescriptor[] = [];
 
   // The edit dialog owns rename + sharing/membership (not media-entry
   // editing), so it is gated on can_rename. The default library reports
   // can_rename === false; a system library reports all can_* false.
   if (library.can_rename && input.onEdit) {
     options.push({
+      kind: "command",
       id: "edit-library",
       label: "Edit library",
       onSelect: input.onEdit,
@@ -187,6 +196,7 @@ export function libraryResourceOptions(input: {
 
   if (library.can_delete && input.onDelete) {
     options.push({
+      kind: "command",
       id: "delete-library",
       label: "Delete library",
       tone: "danger",
@@ -203,17 +213,18 @@ export function podcastResourceOptions(input: {
   busy?: boolean;
   refreshBusy?: boolean;
   unsubscribeBusy?: boolean;
-  onManageLibraries?: (detail: MenuSelectDetail) => void;
+  onManageLibraries?: (detail: ActionSelectDetail) => void;
   onOpenSettings?: () => void;
   onRefreshSync?: () => void;
   onUnsubscribe?: () => void;
-}): ActionMenuOption[] {
+}): ActionDescriptor[] {
   if (!input.canUsePodcastActions) return [];
 
-  const options: ActionMenuOption[] = [];
+  const options: ActionDescriptor[] = [];
 
   if (input.onManageLibraries) {
     options.push({
+      kind: "command",
       id: "manage-podcast-libraries",
       label: "Libraries...",
       restoreFocusOnClose: false,
@@ -224,6 +235,7 @@ export function podcastResourceOptions(input: {
 
   if (input.onOpenSettings) {
     options.push({
+      kind: "command",
       id: "open-podcast-settings",
       label: "Settings",
       disabled: input.busy || input.unsubscribeBusy,
@@ -233,6 +245,7 @@ export function podcastResourceOptions(input: {
 
   if (input.onRefreshSync) {
     options.push({
+      kind: "command",
       id: "refresh-podcast-sync",
       label: input.refreshBusy ? "Refreshing..." : "Refresh sync",
       disabled: input.busy || input.refreshBusy || input.unsubscribeBusy,
@@ -242,6 +255,7 @@ export function podcastResourceOptions(input: {
 
   if (input.onUnsubscribe) {
     options.push({
+      kind: "command",
       id: "unsubscribe-podcast",
       label: input.unsubscribeBusy ? "Unsubscribing..." : "Unsubscribe",
       tone: "danger",
@@ -263,7 +277,7 @@ export function episodeResourceOptions(input: {
   retryMetadataBusy?: boolean;
   played: boolean;
   markingBusy?: boolean;
-  onManageLibraries: (detail: MenuSelectDetail) => void;
+  onManageLibraries: (detail: ActionSelectDetail) => void;
   onOpenChat?: () => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
@@ -271,7 +285,7 @@ export function episodeResourceOptions(input: {
   onRetryMetadata?: () => void;
   onTogglePlayed: () => void;
   onAddToLectern?: () => void;
-}): ActionMenuOption[] {
+}): ActionDescriptor[] {
   const options = mediaResourceOptions({
     media: input.media,
     canManageLibraries: true,
@@ -291,7 +305,8 @@ export function episodeResourceOptions(input: {
       ? { ...option, disabled: input.busy }
       : option
   );
-  const playbackOption: ActionMenuOption = {
+  const playbackOption: ActionDescriptor = {
+    kind: "command",
     id: "toggle-episode-played",
     label: input.played ? "Mark as unplayed" : "Mark as played",
     disabled: input.markingBusy,
@@ -311,10 +326,11 @@ export function conversationResourceOptions(input: {
   distilling?: boolean;
   onDistill?: () => void;
   onDelete: () => void;
-}): ActionMenuOption[] {
-  const options: ActionMenuOption[] = [];
+}): ActionDescriptor[] {
+  const options: ActionDescriptor[] = [];
   if (input.onDistill) {
     options.push({
+      kind: "command",
       id: "distill-conversation",
       label: input.distilling ? "Distilling..." : "Distill",
       disabled: input.distilling,
@@ -322,6 +338,7 @@ export function conversationResourceOptions(input: {
     });
   }
   options.push({
+    kind: "command",
     id: "delete-conversation",
     label: input.deleting ? "Deleting..." : "Delete conversation",
     tone: "danger",

@@ -1,10 +1,15 @@
 "use client";
 
-import { forwardRef, type ReactNode } from "react";
+import { forwardRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { Folio } from "@/lib/ui/folio";
-import ActionMenu, { type ActionMenuOption } from "./ActionMenu";
-import RunningHead from "./RunningHead";
+import type {
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
+import ActionBar from "./ActionBar";
+import ActionMenu from "./ActionMenu";
+import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import styles from "./SurfaceHeader.module.css";
 
 export interface SurfaceHeaderNavigation {
@@ -15,27 +20,24 @@ export interface SurfaceHeaderNavigation {
 }
 
 interface SurfaceHeaderProps {
-  standingHead: string;
-  folio?: Folio;
-  folioPending?: boolean;
-  actions?: ReactNode;
-  options?: ActionMenuOption[];
+  header: PaneHeaderModel;
+  identityId: string;
+  actions?: readonly PaneHeaderAction[];
+  options?: readonly ActionDescriptor[];
   navigation: SurfaceHeaderNavigation;
   className?: string;
 }
 
 /**
  * The pane-runtime chrome bar: back/forward navigation and the options menu are
- * pane-runtime furniture and stay here; identity is delegated to the
- * {@link RunningHead} (section standing head + typed folio). The accessible page
- * `<h1>` lives in the body's SectionOpener / reader heading, not this bar.
+ * pane-runtime furniture and stay here; identity is delegated to the typed
+ * {@link PaneHeaderIdentity} projection.
  */
 const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
   function SurfaceHeader(
     {
-      standingHead,
-      folio,
-      folioPending = false,
+      header,
+      identityId,
       actions,
       options = [],
       navigation,
@@ -47,7 +49,12 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
     const headerClassName = [styles.header, className].filter(Boolean).join(" ");
 
     return (
-      <header ref={ref} className={headerClassName} data-surface-header="true">
+      <header
+        ref={ref}
+        className={headerClassName}
+        data-surface-header="true"
+        data-header-kind={header.kind}
+      >
         <div className={styles.leading}>
           <div className={styles.navigationControls}>
             <button
@@ -69,21 +76,20 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
               <ChevronRight size={20} aria-hidden="true" />
             </button>
           </div>
-          <RunningHead
-            standingHead={standingHead}
-            folio={folio}
-            folioPending={folioPending}
-          />
+          <PaneHeaderIdentity id={identityId} model={header} />
         </div>
 
         <div className={styles.trailing}>
-          {actions && <div className={styles.actions}>{actions}</div>}
+          {actions && actions.length > 0 ? (
+            <ActionBar options={actions} label="Pane actions" className={styles.actions} />
+          ) : null}
 
           {hasOptions && (
             <ActionMenu
               options={options}
               label="Options"
               className={styles.optionsContainer}
+              triggerAttributes={{ "data-pane-options-trigger": "true" }}
             />
           )}
         </div>

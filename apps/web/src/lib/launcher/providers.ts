@@ -41,7 +41,7 @@ export interface LauncherPane {
   id: string;
   href: string;
   visibility: "visible" | "minimized";
-  title: string;
+  label: string;
 }
 
 export interface LauncherRecentRow {
@@ -99,9 +99,9 @@ function contextItems(ctx: LauncherContext): LauncherItem[] {
   return [
     {
       id: `context-${pane.id}`,
-      title: `Continue · ${pane.title}`,
+      title: `Continue · ${pane.label}`,
       subtitle: "Active tab",
-      keywords: [pane.title, pane.href],
+      keywords: [pane.label, pane.href],
       sectionId: "context",
       icon: getPaneRouteIcon(pane.href),
       target: { kind: "pane-open", paneId: pane.id },
@@ -117,7 +117,7 @@ function openTabItems(ctx: LauncherContext): LauncherItem[] {
     .filter((pane) => !androidBlocked(ctx, pane.href))
     .map((pane) => ({
       id: `pane-open-${pane.id}`,
-      title: pane.title,
+      title: pane.label,
       subtitle: pane.visibility === "minimized" ? "Restore minimized tab" : "Switch to open tab",
       keywords: ["tab", "pane", "switch", pane.href],
       sectionId: "open-tabs",
@@ -128,7 +128,7 @@ function openTabItems(ctx: LauncherContext): LauncherItem[] {
       hasActions: true,
       trailingAction: {
         target: { kind: "pane-close", paneId: pane.id },
-        ariaLabel: `Close ${pane.title}`,
+        ariaLabel: `Close ${pane.label}`,
       },
     }));
 }
@@ -258,7 +258,7 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
         keywords: [],
         sectionId: "search-results",
         icon: SEARCH_TYPE_ICON[result.type],
-        target: { kind: "resource", activation: result.activation, titleHint: result.paneTitleHint },
+        target: { kind: "resource", activation: result.activation, labelHint: result.paneLabelHint },
         source: "search",
         rank: { searchScore: 1 },
         hasActions: true,

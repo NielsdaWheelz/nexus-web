@@ -270,6 +270,18 @@ describe("PdfReader selection chat destinations", () => {
     vi.mocked(apiFetch).mockClear();
   });
 
+  it("renders reader banners inside the PDF scroll owner", async () => {
+    render(
+      <PdfReader
+        mediaId="media-1"
+        beforeContent={<div>Reader readiness</div>}
+      />,
+    );
+
+    const viewport = await screen.findByLabelText("PDF document");
+    expect(viewport).toContainElement(screen.getByText("Reader readiness"));
+  });
+
   it("creates a PDF highlight and quotes it to a new chat", async () => {
     pdfRuntimeState.createdHighlightId = "created-highlight-42";
     const onQuoteToNewChat =

@@ -3,24 +3,25 @@
 import { Fragment, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import {
+  projectActionControlState,
+  type PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ActionBar.module.css";
 
 /**
  * Flat toolbar of icon buttons — the inline-row sibling of {@link ActionMenu},
- * sharing the {@link ActionMenuOption} model. Each option's `label` is the
- * accessible name + tooltip; `tone="danger"` colors it; `pressed` toggles
- * aria-pressed + active styling; `separatorBefore` inserts a divider. A
- * `render` option becomes a toggle that opens an anchored popover hosting the
- * rendered content (the highlight color picker).
+ * sharing the semantic action descriptor projected by {@link ActionMenu}.
+ * Toggle and disclosure states map to their button ARIA; custom actions open
+ * an anchored surface owned by the descriptor renderer.
  */
 export default function ActionBar({
   options,
   label = "Actions",
   className,
 }: {
-  options: ActionMenuOption[];
+  options: readonly PaneHeaderAction[];
   label?: string;
   className?: string;
 }) {
@@ -32,8 +33,10 @@ export default function ActionBar({
           {option.separatorBefore && index > 0 ? (
             <span className={styles.separator} aria-hidden="true" />
           ) : null}
-          {option.render ? (
+          {option.kind === "custom" ? (
             <PopoverAction option={option} />
+          ) : option.kind === "link" ? (
+            <LinkAction option={option} />
           ) : (
             <ActionButton option={option} />
           )}
@@ -43,7 +46,8 @@ export default function ActionBar({
   );
 }
 
-function ActionButton({ option }: { option: ActionMenuOption }) {
+function ActionButton({ option }: { option: Extract<PaneHeaderAction, { kind: "command" }> }) {
+  const control = projectActionControlState(option.label, option.state);
   return (
     <Button
       variant={option.tone === "danger" ? "danger" : "ghost"}
@@ -52,11 +56,13 @@ function ActionButton({ option }: { option: ActionMenuOption }) {
       disabled={option.disabled}
       aria-label={option.label}
       title={option.label}
-      aria-pressed={option.pressed}
-      className={cx(option.pressed && styles.pressed)}
+      aria-pressed={control.barPressed}
+      aria-expanded={control.barExpanded}
+      aria-controls={control.barControls}
+      className={cx(styles.chromeAction, control.active && styles.pressed)}
       onClick={(event) => {
         event.stopPropagation();
-        option.onSelect?.({ triggerEl: event.currentTarget });
+        option.onSelect({ triggerEl: event.currentTarget });
       }}
     >
       {option.icon}
@@ -64,7 +70,37 @@ function ActionButton({ option }: { option: ActionMenuOption }) {
   );
 }
 
-function PopoverAction({ option }: { option: ActionMenuOption }) {
+function LinkAction({ option }: { option: Extract<PaneHeaderAction, { kind: "link" }> }) {
+  return (
+    <Button
+      variant={option.tone === "danger" ? "danger" : "ghost"}
+      size="sm"
+      iconOnly
+      asChild
+      className={styles.chromeAction}
+    >
+      <a
+        href={option.disabled ? undefined : option.href}
+        aria-label={option.label}
+        title={option.label}
+        aria-disabled={option.disabled || undefined}
+        tabIndex={option.disabled ? -1 : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (option.disabled) {
+            event.preventDefault();
+            return;
+          }
+          option.onSelect?.({ triggerEl: null });
+        }}
+      >
+        {option.icon}
+      </a>
+    </Button>
+  );
+}
+
+function PopoverAction({ option }: { option: Extract<PaneHeaderAction, { kind: "custom" }> }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -75,6 +111,7 @@ function PopoverAction({ option }: { option: ActionMenuOption }) {
         variant="ghost"
         size="sm"
         iconOnly
+        className={styles.chromeAction}
         disabled={option.disabled}
         aria-label={option.label}
         title={option.label}
@@ -98,7 +135,7 @@ function PopoverAction({ option }: { option: ActionMenuOption }) {
         className={styles.popover}
         onDismiss={() => setOpen(false)}
       >
-        {option.render?.({
+        {option.render({
           closeMenu: () => setOpen(false),
           closeMenuWithoutFocus: () => setOpen(false),
           triggerEl: triggerRef.current,

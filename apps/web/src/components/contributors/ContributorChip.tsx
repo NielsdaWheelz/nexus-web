@@ -75,7 +75,7 @@ export default function ContributorChip({
       href={href}
       className={cx(styles.link, className)}
       title={title}
-      data-pane-title-hint={label}
+      data-pane-label-hint={label}
     >
       {nameNode}
       {roleNode}

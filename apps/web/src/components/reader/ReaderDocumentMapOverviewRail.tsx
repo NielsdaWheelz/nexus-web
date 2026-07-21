@@ -9,8 +9,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
-import { ListOrdered } from "lucide-react";
-import Button from "@/components/ui/Button";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
@@ -28,7 +26,6 @@ interface ReaderDocumentMapOverviewRailProps {
   contentRef: RefObject<HTMLElement | null>;
   documentSpan: { start: number; end: number };
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
-  onOpenMap: () => void;
 }
 
 interface Cluster {
@@ -41,7 +38,6 @@ export default function ReaderDocumentMapOverviewRail({
   contentRef,
   documentSpan,
   onActivateMarker,
-  onOpenMap,
 }: ReaderDocumentMapOverviewRailProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const hoverDelayRef = useRef<number | null>(null);
@@ -244,17 +240,6 @@ export default function ReaderDocumentMapOverviewRail({
       role="region"
       aria-label="Document Map overview"
     >
-      <div className={styles.openSlot}>
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Open Document Map"
-          onClick={onOpenMap}
-        >
-          <ListOrdered size={14} aria-hidden="true" />
-        </Button>
-      </div>
       <div
         ref={trackRef}
         className={styles.track}

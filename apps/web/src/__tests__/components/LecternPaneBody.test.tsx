@@ -188,7 +188,7 @@ function withProviders(node: ReactNode, isActive = true) {
           onNavigatePane={vi.fn()}
           onReplacePane={vi.fn()}
           onOpenInNewPane={vi.fn()}
-          onSetPaneTitle={vi.fn()}
+          onSetPaneLabel={vi.fn()}
         >
           {node}
         </PaneRuntimeProvider>

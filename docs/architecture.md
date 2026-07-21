@@ -808,7 +808,9 @@ Fixture counts and 20-source support status live in
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
-`dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Inline
+`dangerouslySetInnerHTML` site. It renders already-sanitized HTML, permits
+annotation transforms, and applies the bounded media `h1`-to-`h2` projection
+beneath the resource heading. Inline
 highlight rendering remains separate for text selection, while the reader
 **Document Map** is the single side instrument with exactly `Contents | Evidence`.
 Evidence is a target-centered aggregate of highlights, source references,
@@ -816,7 +818,9 @@ generated citations, links, and Synapses, separated into passage and
 whole-document scopes with typed one-hop associations. `MarginRail` is the
 wide-reader spatial presenter for the same filtered passage facts. The desktop
 overview rail is positioned from aggregate owner locators and metadata, never
-DOM geometry; mobile uses the workspace secondary sheet instead of fixed chrome.
+DOM geometry, and has no generic opener. One semantic `documentMapAction`
+projects into the desktop header `ActionBar` and mobile Options; mobile presents
+the same secondary publication in the workspace sheet.
 The contract is
 [`reader-evidence-scope-associations-hard-cutover.md`](cutovers/reader-evidence-scope-associations-hard-cutover.md).
 
@@ -1083,21 +1087,32 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   multi-pane canvas. State (`WorkspaceState`: primary panes with per-pane history,
   attached secondary tool panes, widths) lives in a React reducer+context store and
   is persisted **per-user-per-device** to `workspace_sessions`. A pane is identified
-  by a `resourceKey` (`media:<id>` etc.) — the de-dup, title-cache, and remount key.
+  by a stable pane id; its resolved `routeKey` gates route-scoped labels, layout,
+  secondary/fixed chrome, and primary-chrome publication so stale cleanup cannot
+  mutate a newer route instance.
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
-  `useSetPaneTitle`, `usePaneSecondary`; `usePaneRuntime().isActive` exposes the
+  `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
+  `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for adoption-versus-
   handoff arbitration). Secondary panes (Document Map,
   conversation context, library tools) are runtime-published sidebars.
+  Every supported route declares a typed section/resource header contract.
+  `PaneShell` combines that contract with one primary-chrome publication and
+  projects it into a 44px desktop section header, 60px desktop resource header,
+  or 60px mobile top bar (safe area additional). Resource identity is title plus
+  structured credits; actions/options are typed descriptors shared by desktop
+  `ActionBar` and mobile Options. A pane-scoped error boundary contains chrome and
+  body failures without replacing sibling panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
   `components/appnav/navModel.ts` independently owns the flat fixed order
   Lectern → Libraries → Podcasts → Chats → Notes → Atlas → Oracle for both rail
-  and mobile sheet. Every pane route declares a semantic `sectionDestinationId`,
-  so detail panes (notably `/media/{id}`) keep their owning section active without
-  another prefix map. Plain clicks dispatch through workspace `openPane` to
+  and mobile sheet. Section routes derive semantic navigation ownership from
+  `header.destinationId`; resource routes (notably `/media/{id}`) declare one
+  `sectionDestinationId`, with no duplicate field or prefix map. Plain clicks
+  dispatch through workspace `openPane` to
   restore/reuse an exact pane or open a new one; modified/non-primary clicks remain
   native anchor gestures. The activation result explicitly assigns focus to the
   source trigger for an already-active destination or to the destination for a

@@ -21,6 +21,7 @@ import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
+import { isAbortError } from "@/lib/errors";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import type {
   ContributorDetail,
@@ -89,6 +90,26 @@ export interface PaneResourceLoader {
   load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
 }
 
+export interface PaneSubresourceFailure {
+  readonly status: number | null;
+  readonly code: string | null;
+}
+
+export type PaneMediaFragmentsSeed<T = unknown> =
+  | { readonly status: "ready"; readonly data: readonly T[] }
+  | { readonly status: "error"; readonly error: PaneSubresourceFailure };
+
+function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
+  if (typeof error !== "object" || error === null) {
+    return { status: null, code: null };
+  }
+  const candidate = error as { status?: unknown; code?: unknown };
+  return {
+    status: typeof candidate.status === "number" ? candidate.status : null,
+    code: typeof candidate.code === "string" ? candidate.code : null,
+  };
+}
+
 // Only panes whose primary first-paint resource is FastAPI-backed AND
 // deterministically keyed by the route params appear here. Deliberately NOT
 // prefetched (client-fetch on open): page
@@ -139,9 +160,26 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
           { data: { kind?: string; capabilities?: { can_read?: boolean } | null } }
         >(mediaResource, params)
       ).data;
-      const fragments = shouldLoadInitialMediaFragments(media)
-        ? (await request<{ id: string }, { data: unknown[] }>(mediaFragmentsResource, params)).data
-        : [];
+      let fragments: PaneMediaFragmentsSeed = { status: "ready", data: [] };
+      if (shouldLoadInitialMediaFragments(media)) {
+        try {
+          fragments = {
+            status: "ready",
+            data: (
+              await request<{ id: string }, { data: unknown[] }>(
+                mediaFragmentsResource,
+                params,
+              )
+            ).data,
+          };
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          fragments = {
+            status: "error",
+            error: paneSubresourceFailure(error),
+          };
+        }
+      }
       return { media, fragments };
     },
   },

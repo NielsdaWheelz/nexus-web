@@ -68,16 +68,17 @@ import {
 } from "@/lib/libraries/sharing";
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { isAbortError } from "@/lib/errors";
 import styles from "./page.module.css";
 
@@ -246,7 +247,7 @@ export default function LibraryPaneBody() {
   const canReorder = canEditEntries && !isDefaultLibrary;
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
-  useSetPaneTitle(currentLibrary?.name ?? (loading ? null : "Library"));
+  useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
   const connectionSummaryEntries = sort === "resonance" ? resonanceEntries : entries;
   const connectionSummaries = useConnectionSummaries(
     connectionSummaryEntries.map((entry) =>
@@ -1007,11 +1008,12 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions = currentLibrary
+  const paneOptions: ActionDescriptor[] = currentLibrary
     ? [
         ...(canEditEntries
           ? [
               {
+                kind: "command" as const,
                 id: "add-content",
                 label: "Add content",
                 restoreFocusOnClose: false,
@@ -1032,10 +1034,13 @@ export default function LibraryPaneBody() {
   const entryFolioCount = entries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
   ).length;
-  usePaneChromeOverride({
+  usePanePrimaryChrome({
     options: paneOptions,
-    folio: { kind: "count", value: entryFolioCount, unit: "entry" },
-    folioPending: loading,
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: entryFolioCount, unit: "entry" },
+      pending: loading,
+    },
   });
 
   if (loading) {

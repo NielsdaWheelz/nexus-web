@@ -1,5 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -13,18 +14,25 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
   getPublishedSecondarySurface,
+  type PanePrimaryChromePublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import type { ContributorCredit } from "@/lib/contributors/types";
+import type {
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
 import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
+import { useEscapeKey } from "@/lib/ui/useEscapeKey";
+import { useModalLayer } from "@/lib/ui/useModalLayer";
 import type {
   ReaderEvidenceConfidence,
   ReaderEvidenceSourceKind,
@@ -33,7 +41,31 @@ import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
-  mediaKind: "pdf" as "pdf" | "web_article" | "epub" | "video",
+  mediaKind: "pdf" as
+    | "pdf"
+    | "web_article"
+    | "epub"
+    | "podcast_episode"
+    | "video"
+    | "audio"
+    | "future_kind",
+  canRead: true,
+  canPlay: false,
+  processingStatus: "ready_for_reading" as
+    | "pending"
+    | "extracting"
+    | "ready_for_reading"
+    | "failed",
+  contributors: [] as ContributorCredit[],
+  canEditAuthors: false,
+  initialMediaFailureStatus: null as number | null,
+  canonicalMediaRefetchFailure: null as {
+    status: number;
+    code: string;
+  } | null,
+  fragmentFailure: null as { status: number; code: string } | null,
+  mediaDetailCallCount: 0,
+  onMetadataRetryEnqueued: null as (() => void) | null,
   includeToc: false,
   includeSecondEpubSection: false,
   isMobileViewport: false,
@@ -61,8 +93,8 @@ const testState = vi.hoisted(() => ({
   },
 }));
 
-const paneShellMocks = vi.hoisted(() => ({
-  usePaneChromeOverride: vi.fn(),
+const paneChromeMocks = vi.hoisted(() => ({
+  usePanePrimaryChrome: vi.fn(),
   usePaneMobileChromeController: vi.fn(() => null),
 }));
 
@@ -83,12 +115,12 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => testState.isMobileViewport,
 }));
 
-vi.mock("@/components/workspace/PaneShell", () => ({
-  usePaneChromeOverride: paneShellMocks.usePaneChromeOverride,
+vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
+  usePanePrimaryChrome: paneChromeMocks.usePanePrimaryChrome,
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: paneShellMocks.usePaneMobileChromeController,
+  usePaneMobileChromeController: paneChromeMocks.usePaneMobileChromeController,
 }));
 
 vi.mock("@/lib/reader/ReaderContext", () => ({
@@ -120,15 +152,27 @@ vi.mock("@/lib/media/useLibraryMembership", () => ({
 }));
 
 vi.mock("@/lib/media/useDocumentActions", () => ({
-  useDocumentActions: () => ({
-    deleteBusy: false,
-    retryBusy: false,
-    refreshBusy: false,
-    retryMetadataBusy: false,
-    handleDelete: vi.fn(),
-    handleRetry: vi.fn(),
-    handleRefresh: vi.fn(),
-    handleRetryMetadata: vi.fn(),
+  useDocumentActions: (options: {
+    onMetadataRetryEnqueued: () => void;
+  }) => {
+    testState.onMetadataRetryEnqueued = options.onMetadataRetryEnqueued;
+    return {
+      deleteBusy: false,
+      retryBusy: false,
+      refreshBusy: false,
+      retryMetadataBusy: false,
+      handleDelete: vi.fn(),
+      handleRetry: vi.fn(),
+      handleRefresh: vi.fn(),
+      handleRetryMetadata: vi.fn(),
+    };
+  },
+}));
+
+vi.mock("@/lib/media/useMediaProcessingStatus", () => ({
+  useMediaProcessingStatus: () => ({
+    snapshot: null,
+    connectionState: "open",
   }),
 }));
 
@@ -209,19 +253,15 @@ vi.mock("@/components/HtmlRenderer", () => ({
 }));
 
 vi.mock("@/components/reader/ReaderDocumentMapOverviewRail", () => ({
-  default: ({ onOpenMap }: { onOpenMap: () => void }) => (
-    <button type="button" onClick={onOpenMap}>
-      Open Document Map
-    </button>
-  ),
+  default: () => <div data-testid="document-map-overview-rail" />,
+}));
+
+vi.mock("@/components/reader/MarginRail", () => ({
+  default: () => <div data-testid="margin-rail" />,
 }));
 
 const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 28;
 const PDF_HIGHLIGHT_ID = "33333333-3333-4333-8333-333333333333";
-type PaneChromeOverrides = {
-  toolbar?: ReactNode;
-  options?: ActionMenuOption[];
-};
 
 function jsonResponse(data: unknown) {
   return { data };
@@ -439,19 +479,21 @@ function mediaResponse() {
     kind: testState.mediaKind,
     title: "Reader fixture",
     canonical_source_url: null,
-    processing_status: "ready_for_reading",
+    processing_status: testState.processingStatus,
     retrieval_status: "ready",
-    contributors: [],
+    contributors: testState.contributors,
+    author_mode: "automatic" as const,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     capabilities: {
-      can_read: true,
+      can_read: testState.canRead,
       can_highlight: true,
       can_quote: true,
       can_search: true,
-      can_play: false,
+      can_play: testState.canPlay,
       can_download_file: false,
       can_read_embeds: testState.mediaKind === "web_article",
+      can_edit_authors: testState.canEditAuthors,
     },
   };
 }
@@ -586,15 +628,15 @@ function readerEvidenceSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
   };
 }
 
-function latestChromeOverrides(): PaneChromeOverrides | null {
-  const call = paneShellMocks.usePaneChromeOverride.mock.calls.at(-1);
-  return (call?.[0] as PaneChromeOverrides | undefined) ?? null;
+function latestPrimaryChrome(): PanePrimaryChromePublication | null {
+  const call = paneChromeMocks.usePanePrimaryChrome.mock.calls.at(-1);
+  return (call?.[0] as PanePrimaryChromePublication | undefined) ?? null;
 }
 
 async function renderLatestToolbar() {
   let toolbar: ReactNode = null;
   await waitFor(() => {
-    toolbar = latestChromeOverrides()?.toolbar ?? null;
+    toolbar = latestPrimaryChrome()?.toolbar ?? null;
     expect(toolbar).not.toBeNull();
   });
   render(<>{toolbar}</>);
@@ -625,13 +667,35 @@ async function getContentsSurfaceBody(
   return body;
 }
 
-async function getChromeOption(id: string): Promise<ActionMenuOption> {
-  let option: ActionMenuOption | undefined;
+async function getPrimaryOption(id: string): Promise<ActionDescriptor> {
+  let option: ActionDescriptor | undefined;
   await waitFor(() => {
-    option = latestChromeOverrides()?.options?.find((item) => item.id === id);
+    option = latestPrimaryChrome()?.options?.find((item) => item.id === id);
     expect(option).toBeDefined();
   });
-  return option as ActionMenuOption;
+  return option as ActionDescriptor;
+}
+
+async function getHeaderAction(id: string): Promise<PaneHeaderAction> {
+  let action: PaneHeaderAction | undefined;
+  await waitFor(() => {
+    action = latestPrimaryChrome()?.actions?.find((item) => item.id === id);
+    expect(action).toBeDefined();
+  });
+  return action as PaneHeaderAction;
+}
+
+async function getReadyPrimaryChrome(): Promise<PanePrimaryChromePublication> {
+  await waitFor(() => {
+    const publication = latestPrimaryChrome();
+    expect(publication?.header).toMatchObject({
+      kind: "resource",
+      resource: { status: "ready", title: "Reader fixture" },
+    });
+  });
+  const publication = latestPrimaryChrome();
+  if (!publication) throw new Error("Expected ready primary chrome publication");
+  return publication;
 }
 
 function noteTargetDocumentItem() {
@@ -691,9 +755,33 @@ function PaneSecondaryTestHost({
   );
 }
 
+function ReaderInteractionStack({
+  blocker = "none",
+}: {
+  blocker?: "none" | "modal" | "transient";
+}) {
+  const readerModal = useModalLayer(true);
+  const nestedModal = useModalLayer(blocker === "modal");
+  useEscapeKey(true, () => undefined, {
+    layer: "modal",
+    modalToken: readerModal.token,
+    scope: "pane-pane-1-secondary-reader-tools",
+  });
+  useEscapeKey(blocker === "modal", () => undefined, {
+    layer: "modal",
+    modalToken: nestedModal.token,
+  });
+  useEscapeKey(blocker === "transient", () => undefined, {
+    layer: "transient",
+    modalToken: readerModal.token,
+  });
+  return null;
+}
+
 function renderMediaPane(
   options: {
     href?: string;
+    isActive?: boolean;
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
     renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
@@ -701,6 +789,7 @@ function renderMediaPane(
   const href = options.href ?? "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
+  const onSetPaneLabel = vi.fn();
   const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
@@ -714,7 +803,7 @@ function renderMediaPane(
         <GlobalPlayerProvider>
           <PaneRuntimeProvider
             paneId="pane-1"
-            isActive={true}
+            isActive={options.isActive ?? true}
             href={href}
             routeId={identity.routeId}
             routeKey={identity.routeKey}
@@ -727,6 +816,7 @@ function renderMediaPane(
             onNavigatePane={onNavigatePane}
             onReplacePane={vi.fn()}
             onOpenInNewPane={onOpenInNewPane}
+            onSetPaneLabel={onSetPaneLabel}
             onSetPaneLayout={onSetPaneLayout}
             onRequestSecondarySurface={onRequestSecondarySurface}
             onCloseSecondaryPane={onCloseSecondaryPane}
@@ -747,6 +837,7 @@ function renderMediaPane(
 
   return {
     onSetPaneLayout,
+    onSetPaneLabel,
     onNavigatePane,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
@@ -769,10 +860,20 @@ describe("MediaPaneBody pane sizing", () => {
     testState.documentMapDocumentItems = null;
     testState.documentMapPassageGroups = null;
     testState.documentMapEmbeds = null;
+    testState.canRead = true;
+    testState.canPlay = false;
+    testState.processingStatus = "ready_for_reading";
+    testState.contributors = [];
+    testState.canEditAuthors = false;
+    testState.initialMediaFailureStatus = null;
+    testState.canonicalMediaRefetchFailure = null;
+    testState.fragmentFailure = null;
+    testState.mediaDetailCallCount = 0;
+    testState.onMetadataRetryEnqueued = null;
     testState.readerFocusMode = "off";
     testState.readerPersistence = { state: "Clean" };
-    paneShellMocks.usePaneChromeOverride.mockReset();
-    paneShellMocks.usePaneMobileChromeController.mockClear();
+    paneChromeMocks.usePanePrimaryChrome.mockReset();
+    paneChromeMocks.usePaneMobileChromeController.mockClear();
     for (const fn of Object.values(testState.readerContextFns)) {
       fn.mockReset();
     }
@@ -784,6 +885,23 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({ items: [] });
         }
         if (path === "/api/media/media-1") {
+          testState.mediaDetailCallCount += 1;
+          if (testState.initialMediaFailureStatus !== null) {
+            throw {
+              status: testState.initialMediaFailureStatus,
+              code: "E_TEST_MEDIA_LOAD",
+              message: "Media load failed",
+            };
+          }
+          if (
+            testState.mediaDetailCallCount > 1 &&
+            testState.canonicalMediaRefetchFailure
+          ) {
+            throw {
+              ...testState.canonicalMediaRefetchFailure,
+              message: "Canonical refetch failed",
+            };
+          }
           return jsonResponse(mediaResponse());
         }
         if (path === "/api/media/media-1/reader-state") {
@@ -798,6 +916,12 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({ state: "Empty", revision: 0 });
         }
         if (path === "/api/media/media-1/fragments") {
+          if (testState.fragmentFailure) {
+            throw {
+              ...testState.fragmentFailure,
+              message: "Fragments failed",
+            };
+          }
           return jsonResponse(fragmentResponse());
         }
         if (path === "/api/media/media-1/navigation") {
@@ -958,6 +1082,105 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
+  it("publishes unavailable resource identity after an initial 404", async () => {
+    testState.initialMediaFailureStatus = 404;
+    renderMediaPane();
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "unavailable", title: "Media unavailable" },
+      });
+    });
+  });
+
+  it("publishes failed resource identity after a non-404 initial error", async () => {
+    testState.initialMediaFailureStatus = 503;
+    renderMediaPane();
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "failed", title: "Media failed to load" },
+      });
+    });
+  });
+
+  it("keeps a returned still-processing DTO as ready resource identity", async () => {
+    testState.mediaKind = "epub";
+    testState.canRead = false;
+    testState.processingStatus = "extracting";
+    const { onSetPaneLabel, routeKey } = renderMediaPane();
+
+    const publication = await getReadyPrimaryChrome();
+    expect(publication.actions).toEqual([]);
+    expect(onSetPaneLabel).toHaveBeenCalledWith({
+      paneId: "pane-1",
+      routeKey,
+      label: "Reader fixture",
+    });
+  });
+
+  it("moves ready identity to unavailable after a canonical media-not-found refetch", async () => {
+    renderMediaPane();
+    await getReadyPrimaryChrome();
+    testState.canonicalMediaRefetchFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_FOUND",
+    };
+
+    await act(async () => {
+      testState.onMetadataRetryEnqueued?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "unavailable", title: "Media unavailable" },
+      });
+    });
+    expect(screen.queryByText("Reader fixture")).not.toBeInTheDocument();
+  });
+
+  it("retains ready identity after a canonical media-not-ready refetch", async () => {
+    renderMediaPane();
+    const ready = await getReadyPrimaryChrome();
+    testState.canonicalMediaRefetchFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_READY",
+    };
+
+    await act(async () => {
+      testState.onMetadataRetryEnqueued?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(testState.mediaDetailCallCount).toBe(2));
+
+    expect(latestPrimaryChrome()?.header).toEqual(ready.header);
+  });
+
+  it("keeps ready identity when a subordinate fragment request returns 404", async () => {
+    testState.mediaKind = "video";
+    testState.fragmentFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_READY",
+    };
+    renderMediaPane();
+
+    const publication = await getReadyPrimaryChrome();
+    expect(publication.header).toEqual({
+      kind: "resource",
+      resource: expect.objectContaining({
+        status: "ready",
+        title: "Reader fixture",
+      }),
+    });
+    expect(
+      screen.getByText("Transcript content is still being processed."),
+    ).toBeVisible();
+  });
+
   it.each(["epub", "web_article"] as const)(
     "renders readable %s text content",
     async (kind) => {
@@ -1061,13 +1284,63 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("renders the media authors byline with an empty-author state", async () => {
+  it.each([
+    {
+      name: "full-title inspection without credits or author permission",
+      contributors: [] as ContributorCredit[],
+      canEditAuthors: false,
+      expected: ["Credits…"],
+    },
+    {
+      name: "read-only credits",
+      contributors: [
+        {
+          credited_name: "Ada Lovelace",
+          role: "editor",
+        },
+      ] satisfies ContributorCredit[],
+      canEditAuthors: false,
+      expected: ["Credits…"],
+    },
+    {
+      name: "authorized empty author set",
+      contributors: [] as ContributorCredit[],
+      canEditAuthors: true,
+      expected: ["Credits…", "Add author…"],
+    },
+    {
+      name: "authorized authored resource",
+      contributors: [
+        {
+          contributor_handle: "octavia-e-butler",
+          contributor_display_name: "Octavia E. Butler",
+          credited_name: "Octavia E. Butler",
+          role: "author",
+          href: "/authors/octavia-e-butler",
+        },
+      ] satisfies ContributorCredit[],
+      canEditAuthors: true,
+      expected: ["Credits…", "Edit authors…"],
+    },
+  ])("gates credit and author Options for $name", async (testCase) => {
     testState.mediaKind = "web_article";
-    renderMediaPane();
+    testState.contributors = testCase.contributors;
+    testState.canEditAuthors = testCase.canEditAuthors;
+    const { onSetPaneLabel, routeKey } = renderMediaPane();
 
-    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
-    expect(screen.getByText("Authors")).toBeInTheDocument();
-    expect(screen.getByText("No authors")).toBeInTheDocument();
+    const publication = await getReadyPrimaryChrome();
+    const creditOptionLabels =
+      publication.options
+        ?.filter((option) =>
+          option.id === "view-credits" || option.id === "edit-authors",
+        )
+        .map((option) => option.label) ?? [];
+    expect(creditOptionLabels).toEqual(testCase.expected);
+    expect(onSetPaneLabel).toHaveBeenCalledWith({
+      paneId: "pane-1",
+      routeKey,
+      label: "Reader fixture",
+    });
   });
 
   it("loads web article fragments once", async () => {
@@ -1225,6 +1498,7 @@ describe("MediaPaneBody pane sizing", () => {
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-evidence",
+      undefined,
     );
   });
 
@@ -1543,122 +1817,266 @@ describe("MediaPaneBody pane sizing", () => {
     );
   });
 
-  it.each(["epub", "web_article"] as const)(
-    "requests the Document Map secondary from %s mobile reader menu",
-    async (kind) => {
+  it.each([
+    { kind: "pdf" as const, canRead: true, canPlay: false, available: true },
+    { kind: "epub" as const, canRead: true, canPlay: false, available: true },
+    {
+      kind: "web_article" as const,
+      canRead: true,
+      canPlay: false,
+      available: true,
+    },
+    {
+      kind: "podcast_episode" as const,
+      canRead: true,
+      canPlay: true,
+      available: true,
+    },
+    { kind: "video" as const, canRead: true, canPlay: true, available: true },
+    {
+      kind: "podcast_episode" as const,
+      canRead: false,
+      canPlay: true,
+      available: false,
+    },
+    { kind: "video" as const, canRead: false, canPlay: true, available: false },
+    { kind: "pdf" as const, canRead: false, canPlay: false, available: false },
+    { kind: "audio" as const, canRead: true, canPlay: true, available: false },
+    {
+      kind: "future_kind" as const,
+      canRead: true,
+      canPlay: false,
+      available: false,
+    },
+  ])(
+    "projects Document Map availability for $kind (readable=$canRead, playable=$canPlay)",
+    async ({ kind, canRead, canPlay, available }) => {
       testState.mediaKind = kind;
-      testState.includeToc = true;
-      testState.isMobileViewport = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
-      await getContentsSurfaceBody(onSetPaneSecondary);
+      testState.canRead = canRead;
+      testState.canPlay = canPlay;
+      const { onSetPaneSecondary, onSetFixedChrome } = renderMediaPane();
 
-      const contentsOption = await getChromeOption("document-map");
-      expect(contentsOption.label).toBe("Document Map");
-
-      contentsOption.onSelect?.({ triggerEl: null });
-
-      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-        "pane-1",
-        "reader-contents",
+      const publication = await getReadyPrimaryChrome();
+      expect(
+        publication.actions?.filter((action) => action.id === "document-map"),
+      ).toHaveLength(available ? 1 : 0);
+      expect(
+        publication.options?.filter((option) => option.id === "document-map"),
+      ).toHaveLength(0);
+      expect(Boolean(latestSecondaryPublication(onSetPaneSecondary))).toBe(
+        available,
       );
+      if (kind === "future_kind") {
+        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(0);
+        expect(
+          onSetFixedChrome.mock.calls.some(([publication]) => publication !== null),
+        ).toBe(false);
+        expect(screen.queryByTestId("margin-rail")).not.toBeInTheDocument();
+      }
     },
   );
 
-  it("keeps mobile Contents available when focus mode hides highlights", async () => {
-    testState.mediaKind = "web_article";
+  it.each([
+    { isActive: true, expectedRequests: 1 },
+    { isActive: false, expectedRequests: 0 },
+  ])(
+    "routes the Document Map keyboard chord only from an active media pane (active=$isActive)",
+    async ({ isActive, expectedRequests }) => {
+      testState.mediaKind = "epub";
+      const { onRequestSecondarySurface } = renderMediaPane({ isActive });
+      await getReadyPrimaryChrome();
+
+      fireEvent.keyDown(document, { key: "g" });
+      fireEvent.keyDown(document, { key: "e" });
+
+      expect(onRequestSecondarySurface).toHaveBeenCalledTimes(expectedRequests);
+      if (expectedRequests > 0) {
+        expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+          "pane-1",
+          "reader-evidence",
+          undefined,
+        );
+      }
+    },
+  );
+
+  it("lets bare G close a topmost mobile Document Map", async () => {
+    testState.mediaKind = "epub";
     testState.includeToc = true;
-    testState.isMobileViewport = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack />);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let bare G mutate Document Map beneath a nested modal", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack blocker="modal" />);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let bare G mutate Document Map beneath its Options menu", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack blocker="transient" />);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes one collapsed Document Map command with no toolbar or Options duplicate", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
     testState.readerFocusMode = "paragraph";
+    const triggerEl = document.createElement("button");
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
     await getContentsSurfaceBody(onSetPaneSecondary);
 
-    const contentsOption = await getChromeOption("document-map");
-    const optionIds = latestChromeOverrides()?.options?.map(
-      (option) => option.id,
+    const action = await getHeaderAction("document-map");
+    expect(action).toMatchObject({
+      kind: "command",
+      label: "Document Map",
+      restoreFocusOnClose: false,
+      state: {
+        kind: "disclosure",
+        expanded: false,
+        menuLabels: {
+          collapsed: "Show Document Map",
+          expanded: "Hide Document Map",
+        },
+      },
+    });
+    expect(action.state?.kind === "disclosure" && action.state.controls).toBe(
+      undefined,
     );
+    expect(
+      latestPrimaryChrome()?.actions?.filter(
+        (candidate) => candidate.id === "document-map",
+      ),
+    ).toHaveLength(1);
+    expect(
+      latestPrimaryChrome()?.options?.some(
+        (option) => option.id === "document-map",
+      ),
+    ).toBe(false);
 
-    expect(optionIds).toContain("document-map");
-    expect(optionIds).not.toContain("show-contents");
-    expect(optionIds).not.toContain("show-highlights");
+    await renderLatestToolbar();
+    expect(
+      screen.queryByRole("button", { name: "Document Map" }),
+    ).not.toBeInTheDocument();
 
-    contentsOption.onSelect?.({ triggerEl: null });
-
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl });
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-contents",
+      triggerEl,
     );
   });
 
-  it("requests the Document Map secondary from desktop transcript options", async () => {
+  it("opens readable transcript Document Map on Evidence", async () => {
     testState.mediaKind = "video";
-    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+    const { onRequestSecondarySurface } = renderMediaPane();
 
-    await waitFor(() => {
-      const publication = latestSecondaryPublication(onSetPaneSecondary);
-      expect(
-        publication?.surfaces.some(
-          (surface) => surface.id === "reader-evidence",
-        ),
-      ).toBe(true);
-    });
-
-    const documentMapOption = await getChromeOption("document-map");
-    expect(documentMapOption.label).toBe("Document Map");
-
-    documentMapOption.onSelect?.({ triggerEl: null });
+    const action = await getHeaderAction("document-map");
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
 
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-evidence",
+      null,
     );
   });
 
-  it.each(["epub", "web_article"] as const)(
-    "requests the Document Map secondary from %s toolbar controls",
-    async (kind) => {
-      testState.mediaKind = kind;
-      testState.includeToc = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
-      await getContentsSurfaceBody(onSetPaneSecondary);
+  it("publishes expanded Document Map state and closes the visible secondary", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
 
-      await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", {
-        name: "Document Map",
-      });
-      expect(contentsButton).toHaveAttribute("aria-pressed", "false");
-
-      fireEvent.click(contentsButton);
-
-      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-        "pane-1",
-        "reader-contents",
+    let action: PaneHeaderAction | undefined;
+    await waitFor(() => {
+      action = latestPrimaryChrome()?.actions?.find(
+        (item) => item.id === "document-map",
       );
-    },
-  );
-
-  it.each(["epub", "web_article"] as const)(
-    "closes the active Document Map secondary from %s toolbar controls",
-    async (kind) => {
-      testState.mediaKind = kind;
-      testState.includeToc = true;
-      const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
-        secondaryPane: readerContentsSecondaryPane(),
+      expect(action?.state).toEqual({
+        kind: "disclosure",
+        expanded: true,
+        controls: "pane-pane-1-secondary-reader-tools",
+        menuLabels: {
+          collapsed: "Show Document Map",
+          expanded: "Hide Document Map",
+        },
       });
-      await getContentsSurfaceBody(onSetPaneSecondary);
+    });
+    if (!action) throw new Error("Expected Document Map action");
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
 
-      await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", {
-        name: "Document Map",
-      });
-      expect(contentsButton).toHaveAttribute("aria-pressed", "true");
+    expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+  });
 
-      fireEvent.click(contentsButton);
+  it("omits a broken Document Map IDREF while a retained active surface is unpublished", async () => {
+    testState.mediaKind = "video";
+    testState.canRead = true;
+    const { onCloseSecondaryPane, onRequestSecondarySurface } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
 
-      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
-    },
-  );
+    const action = await getHeaderAction("document-map");
+    expect(action.state).toEqual({
+      kind: "disclosure",
+      expanded: false,
+      menuLabels: {
+        collapsed: "Show Document Map",
+        expanded: "Hide Document Map",
+      },
+    });
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
+
+    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "reader-evidence",
+      null,
+    );
+  });
 
   it("keeps the desktop secondary pane open after Contents selection", async () => {
     testState.mediaKind = "web_article";
@@ -1693,13 +2111,13 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "web_article";
     renderMediaPane();
 
-    const light = await getChromeOption("reader-theme-light");
-    const dark = await getChromeOption("reader-theme-dark");
+    const light = await getPrimaryOption("reader-theme-light");
+    const dark = await getPrimaryOption("reader-theme-dark");
     // The current theme is light: its own option is inert, the other active.
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(false);
     expect(
-      latestChromeOverrides()?.options?.map((option) => option.id),
+      latestPrimaryChrome()?.options?.map((option) => option.id),
     ).not.toContain("reader-pdf-source-colors");
 
     dark.onSelect?.({ triggerEl: null });
@@ -1711,8 +2129,8 @@ describe("MediaPaneBody pane sizing", () => {
     testState.readerPersistence = { state: "Forbidden", failure: {} };
     renderMediaPane();
 
-    const light = await getChromeOption("reader-theme-light");
-    const dark = await getChromeOption("reader-theme-dark");
+    const light = await getPrimaryOption("reader-theme-light");
+    const dark = await getPrimaryOption("reader-theme-dark");
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(true);
   });
@@ -1721,7 +2139,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "pdf";
     renderMediaPane();
 
-    const statusRow = await getChromeOption("reader-pdf-source-colors");
+    const statusRow = await getPrimaryOption("reader-pdf-source-colors");
     expect(statusRow.label).toBe("PDF pages keep their source colors");
     // A render-seam status row: perceivable static content, not a disabled
     // menuitem that keyboard traversal would skip.
@@ -1740,7 +2158,7 @@ describe("MediaPaneBody pane sizing", () => {
       screen.getByText("PDF pages keep their source colors"),
     ).toBeInTheDocument();
 
-    const optionIds = latestChromeOverrides()?.options?.map(
+    const optionIds = latestPrimaryChrome()?.options?.map(
       (option) => option.id,
     );
     expect(optionIds).not.toContain("reader-theme-light");

@@ -9,14 +9,6 @@
   overflow: hidden;
 }
 
-.openSlot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--edge-subtle);
-}
-
 .track {
   position: relative;
   flex: 1 1 auto;

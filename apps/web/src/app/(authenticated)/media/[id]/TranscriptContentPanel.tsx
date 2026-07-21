@@ -60,7 +60,12 @@ export default function TranscriptContentPanel({
   const isReadablePartialTranscript =
     transcriptState === "partial" || transcriptCoverage === "partial";
   const timeline: Array<
-    | { kind: "chapter"; chapterIdx: number; chapterTitle: string; chapterStartMs: number }
+    | {
+        kind: "chapter";
+        chapterIdx: number;
+        chapterTitle: string;
+        chapterStartMs: number;
+      }
     | { kind: "segment"; fragment: TranscriptFragment }
   > = [];
 
@@ -73,7 +78,8 @@ export default function TranscriptContentPanel({
 
     for (const fragment of fragments) {
       const fragmentStartMs =
-        typeof fragment.t_start_ms === "number" && Number.isFinite(fragment.t_start_ms)
+        typeof fragment.t_start_ms === "number" &&
+        Number.isFinite(fragment.t_start_ms)
           ? fragment.t_start_ms
           : Number.MAX_SAFE_INTEGER;
 
@@ -124,7 +130,7 @@ export default function TranscriptContentPanel({
             {timeline.map((entry) => {
               if (entry.kind === "chapter") {
                 const chapterTimestamp = formatTranscriptTimestampMs(
-                  entry.chapterStartMs
+                  entry.chapterStartMs,
                 );
                 return (
                   <div
@@ -143,7 +149,9 @@ export default function TranscriptContentPanel({
                 );
               }
 
-              const timestamp = formatTranscriptTimestampMs(entry.fragment.t_start_ms);
+              const timestamp = formatTranscriptTimestampMs(
+                entry.fragment.t_start_ms,
+              );
               const isActive = entry.fragment.id === activeFragment?.id;
               const segmentStartMs = entry.fragment.t_start_ms;
               const segmentEndMs = entry.fragment.t_end_ms;
@@ -151,13 +159,17 @@ export default function TranscriptContentPanel({
                 evidenceHighlightId &&
                   typeof evidenceStartMs === "number" &&
                   typeof segmentStartMs === "number" &&
-                  (typeof evidenceEndMs === "number" && typeof segmentEndMs === "number"
-                    ? segmentStartMs < evidenceEndMs && segmentEndMs > evidenceStartMs
+                  (typeof evidenceEndMs === "number" &&
+                  typeof segmentEndMs === "number"
+                    ? segmentStartMs < evidenceEndMs &&
+                      segmentEndMs > evidenceStartMs
                     : segmentStartMs === evidenceStartMs),
               );
               const normalizedEvidenceText =
-                evidenceExactText?.replace(/\s+/g, " ").trim().toLocaleLowerCase() ??
-                "";
+                evidenceExactText
+                  ?.replace(/\s+/g, " ")
+                  .trim()
+                  .toLocaleLowerCase() ?? "";
               const normalizedSegmentText = entry.fragment.canonical_text
                 .replace(/\s+/g, " ")
                 .trim()
@@ -223,7 +235,11 @@ export default function TranscriptContentPanel({
                 onPointerOver={onContentPointerOver}
                 onPointerOut={onContentPointerOut}
               >
-                <HtmlRenderer htmlSanitized={renderedHtml} mediaId={mediaId} />
+                <HtmlRenderer
+                  htmlSanitized={renderedHtml}
+                  mediaId={mediaId}
+                  headingLevelOffset={1}
+                />
               </div>
             </div>
           ) : null}

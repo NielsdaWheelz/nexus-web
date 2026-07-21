@@ -27,8 +27,10 @@ contract.
 - mobile-safe reader layout and controls; mobile document panes render the
   shared Document Map secondary surfaces as a mobile sheet instead of the
   desktop attached secondary pane
-- on mobile, the Document Map sheet is the single reader detail path.
-  The overview rail remains desktop-only.
+- one semantic Document Map action: a desktop resource-header icon and a mobile
+  `Show Document Map` / `Hide Document Map` Options item
+- on mobile, the Document Map sheet is the single reader detail path; the
+  overview rail remains desktop-only
 - resume that survives reflow where possible
 
 ## architecture
@@ -41,14 +43,38 @@ surfaces under the internal `reader-tools` secondary group: **Contents** and
 
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
   markers from `GET /media/{id}/document-map`, shows whole-document positions
-  for positioned reader facts, and opens the matching Document Map surface.
+  for positioned reader facts, and activates the matching contextual target.
+  It has no generic opener.
 - Contents uses `ReaderContentsNav`.
 - Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
   source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
 - Mobile has no rail. The same Document Map secondary publication renders in
   the workspace mobile secondary sheet.
+- `documentMapAction` is the only visible generic control. It projects to desktop
+  `ActionBar` and mobile Options from one stateful descriptor; no toolbar,
+  transcript, or overview-rail opener exists.
+- The open region id is scoped by primary pane and secondary group. Mobile
+  carries the selected Options trigger as ephemeral return-focus state, focuses
+  the active surface tab, and returns to that trigger when the sheet closes.
 - Chat opens in the conversation pane; it is not a Document Map surface.
+
+### media identity and credits
+
+Media publishes a typed resource header through `usePanePrimaryChrome`. Its
+title and compact structured credits are the identity; each line truncates
+independently inside the 60px resource bar. The desktop section/resource bars
+are 44px/60px, and the mobile bar is 60px plus safe area.
+`ResourceHead` owns the route `h1`; each reader context explicitly offsets
+imported HTML headings beneath its local outline and saturates at `h6` while
+preserving anchor IDs. Main document/transcript content uses offset 1; podcast
+show notes, nested below the local section heading, use offset 2.
+
+The compact credit line is a non-interactive summary. `Credits…` in Options opens
+the complete, wrapping, linked credit list. Authorization-gated `Add author…` /
+`Edit authors…` opens `MediaAuthorsEditor` separately; author administration is
+not inline header content. Both overlays return focus to the exact Options
+trigger, with pane chrome as the disconnected-trigger fallback.
 
 The canonical contract for explicit `Passages | Whole document` scope,
 semantic filters, and typed related-object disclosures is
@@ -96,8 +122,8 @@ bare keys.
 The document table of contents (epub + web article) is the Document Map
 "Contents" tab (`ReaderContentsNav`).
 
-- it is on-demand through the single reader toolbar/menu "Document Map"
-  affordance. When contents exist, generic Document Map open defaults here.
+- it is on-demand through the single semantic Document Map header action. When
+  contents exist, generic Document Map open defaults here.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
 - selecting an entry runs the existing section/anchor navigation, which
@@ -121,8 +147,9 @@ PDF page geometry and publishes the widest rendered page as intrinsic primary
 width; the workspace raises the PDF pane floor to that width.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
-rendered pane width without changing stored primary pane width. Contents and
-Evidence are Document Map secondary surfaces under the workspace secondary
+rendered pane width without changing stored primary pane width and contains no
+generic open control. Contents and Evidence are Document Map secondary surfaces
+under the workspace secondary
 pane contract ([workspace.md](workspace.md)); their width is independent from
 the primary reader width. `MarginRail` is wide-reader primary-adjacent evidence
 presentation, not another secondary surface. Mobile panes ignore desktop
@@ -515,8 +542,8 @@ of its location-target writes uses.
   section without starting a second restore loop
 - the epub active-section target is reader location state inside the
   `media:{id}` pane resource, held in `useReaderTarget` (not the URL).
-  synchronizing it must not reset pane chrome, clear tab/header title records,
-  or remount the media pane body.
+  synchronizing it must not reset pane chrome, clear route-keyed label/header
+  publications, or remount the media pane body.
 - web article/transcript restore uses the one-shot hash target first
   (`#fragment-<id>`, `#evidence-<id>`, `#highlight-<id>`, or `#t-<ms>` for
   transcript), consumed by `useReaderTarget`, and falls back to the saved
@@ -543,13 +570,13 @@ of its location-target writes uses.
   search parameter as coarse in-visit address state and adds no Back/Forward
   entry
 - removed `chapters` and `toc` reader routes stay out of the client surface
-- pane titles are driven by media metadata, not by navigation section title or
-  active section content. navigation and section loading are content-level
-  states and do not own workspace tab/header title state.
+- the pane label and resource-header title are driven by media metadata, not by
+  navigation section title or active section content. navigation and section
+  loading are content-level states and do not own workspace label/header state.
 
 ### reader theme quick-switch
 
-- the media header dropdown exposes a reader theme quick-switch
+- media Options exposes a reader theme quick-switch
 - available theme values are light and dark
 - it is shown for epub, web article, and transcript readers
 - pdf readers keep their existing appearance behavior and do not surface

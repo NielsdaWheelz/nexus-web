@@ -22,7 +22,7 @@ import {
 export const MAX_PANES = 12;
 export const MAX_PANE_HISTORY_STACK_LENGTH = 12;
 export const MAX_TOTAL_PANE_HISTORY_ENTRIES = 48;
-const MAX_PANE_TITLE_LENGTH = 120;
+const MAX_PANE_LABEL_LENGTH = 120;
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 type WorkspaceSecondaryPaneVisibility = "visible" | "collapsed";
@@ -153,7 +153,7 @@ export function trimWorkspacePaneHistory(state: WorkspaceState): WorkspaceState 
   };
 }
 
-export function normalizePaneTitle(raw: string | null | undefined): string | null {
+export function normalizePaneLabel(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") {
     return null;
   }
@@ -161,7 +161,7 @@ export function normalizePaneTitle(raw: string | null | undefined): string | nul
   if (!normalized) {
     return null;
   }
-  return normalized.slice(0, MAX_PANE_TITLE_LENGTH).trim();
+  return normalized.slice(0, MAX_PANE_LABEL_LENGTH).trim();
 }
 
 export function createDefaultWorkspaceState(

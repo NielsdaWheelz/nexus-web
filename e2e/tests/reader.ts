@@ -13,20 +13,30 @@ export async function openReaderSecondary(page: Page): Promise<Locator> {
   try {
     await expect(secondary).toBeVisible({ timeout: 5_000 });
   } catch {
-    const documentMapButton = activePane
-      .getByRole("button", { name: "Document Map" })
-      .first();
+    const documentMapButton = activePane.getByRole("button", {
+      name: "Document Map",
+      exact: true,
+    });
     if (await documentMapButton.isVisible().catch(() => false)) {
+      await expect(documentMapButton).toHaveCount(1);
       await documentMapButton.click();
     } else {
-      const optionsButton = activePane
-        .getByRole("button", { name: "Options" })
-        .first();
+      const paneId = await activePane.getAttribute("data-pane-id");
+      if (!paneId) throw new Error("Active pane has no canonical pane id");
+      const mobileChrome = page.locator(
+        `[data-pane-chrome-for="${paneId}"]`,
+      );
+      await expect(mobileChrome).toHaveCount(1);
+      const optionsButton = mobileChrome.getByRole("button", {
+        name: "Pane options",
+        exact: true,
+      });
       await expect(optionsButton).toBeVisible({ timeout: 10_000 });
       await optionsButton.click();
-      const documentMapItem = page
-        .getByRole("menuitem", { name: "Document Map" })
-        .first();
+      const documentMapItem = page.getByRole("menuitem", {
+        name: "Show Document Map",
+        exact: true,
+      });
       await expect(documentMapItem).toBeVisible({ timeout: 10_000 });
       await documentMapItem.click();
     }
@@ -43,7 +53,11 @@ export async function openEvidencePane(page: Page): Promise<Locator> {
     await evidenceTab.click();
   }
   await expect(evidenceTab).toHaveAttribute("aria-selected", "true");
-  return activeWorkspacePane(page).getByTestId("evidence-pane-surface").first();
+  const evidence = activeWorkspacePane(page).getByTestId(
+    "evidence-pane-surface",
+  );
+  await expect(evidence).toHaveCount(1);
+  return evidence;
 }
 
 export async function openMediaInSinglePaneWorkspace(

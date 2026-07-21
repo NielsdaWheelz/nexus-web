@@ -214,7 +214,14 @@ describe("CollectionView", () => {
                   credits: [contributor(1), contributor(2), contributor(3)],
                   maxVisible: 3,
                 },
-                actions: [{ id: "archive", label: "Archive", onSelect: onAction }],
+                actions: [
+                  {
+                    kind: "command",
+                    id: "archive",
+                    label: "Archive",
+                    onSelect: onAction,
+                  },
+                ],
                 status: {
                   tone: "neutral",
                   label: "Extremely Long Status Label",
@@ -459,7 +466,14 @@ describe("CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
-          actions: [{ id: "archive", label: "Archive", onSelect: onAction }],
+          actions: [
+            {
+              kind: "command",
+              id: "archive",
+              label: "Archive",
+              onSelect: onAction,
+            },
+          ],
         },
         ROWS[1],
       ],
@@ -493,7 +507,14 @@ describe("CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
-          actions: [{ id: "archive", label: "Archive", onSelect: vi.fn() }],
+          actions: [
+            {
+              kind: "command",
+              id: "archive",
+              label: "Archive",
+              onSelect: vi.fn(),
+            },
+          ],
         },
       ],
     });

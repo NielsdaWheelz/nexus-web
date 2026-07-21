@@ -31,7 +31,7 @@ becoming permanent rail items.
 | Authenticated home href | `apps/web/src/lib/routes/defaults.ts` |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts` |
 | Fixed-nav membership, order, and decoration | `apps/web/src/components/appnav/navModel.ts` |
-| Route-to-semantic-section ownership | `sectionDestinationId` in `apps/web/src/lib/panes/paneRouteModel.ts` |
+| Route-to-semantic-section ownership | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
 | Rail/sheet projection and pane dispatch | `apps/web/src/components/appnav/AppNav.tsx` |
 | Plain-click interception policy | `apps/web/src/components/appnav/navActivation.ts` |
 | Pane reuse, restoration, and activation | `openPane` in `apps/web/src/lib/workspace/store.tsx` |
@@ -48,7 +48,8 @@ reordering the rail.
 ## Active-state semantics
 
 Active state follows the active pane's semantic section, not URL-prefix guesses.
-Every supported pane route declares a `sectionDestinationId`:
+Section routes derive it from their one `header.destinationId`; resource routes
+declare `sectionDestinationId` because their header has no section identity:
 
 - `/media/{id}` and `/libraries/{id}` keep **Libraries** active;
 - `/podcasts/{id}` keeps **Podcasts** active;
@@ -57,9 +58,9 @@ Every supported pane route declares a `sectionDestinationId`:
 - Atlas, Oracle, Lectern, and settings map to their own destinations.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
-Authors, do not fabricate a selected rail item. `standingHeadForRoute` consumes
-the same semantic section owner, so running heads and navigation cannot drift
-through parallel maps.
+Authors, do not fabricate a selected rail item. Section headers resolve the
+route's typed `header.destinationId` through the same destination registry, so
+running heads and navigation cannot drift through parallel maps.
 
 ## Activation and pane reuse
 
@@ -116,7 +117,8 @@ When adding or changing a destination:
 
 1. Change identity once in `DESTINATION_REGISTRY`.
 2. Change fixed membership/order/presentation only in `APP_NAVIGATION`.
-3. Give every new pane route a semantic `sectionDestinationId`.
+3. Give a section route one `header.destinationId`; give a resource route one
+   `sectionDestinationId`.
 4. If the backend records Launcher history for the href, update its canonical
    allowlist and integration coverage.
 5. Keep desktop and mobile projections sourced from the same `NAV_MODEL`.

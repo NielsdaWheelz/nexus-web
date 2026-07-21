@@ -42,7 +42,7 @@ export function presentLecternItem(
   return {
     id: item.itemId,
     kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
-    primary: { kind: "link", href: item.href, paneTitleHint: item.title },
+    primary: { kind: "link", href: item.href, paneLabelHint: item.title },
     lead: { icon: mediaKindIcon(item.kind) },
     headline: { text: item.title },
     signals: item.subtitle.kind === "Present" ? [{ value: item.subtitle.value }] : [],
@@ -50,6 +50,7 @@ export function presentLecternItem(
     relatedMediaId: null,
     actions: [
       {
+        kind: "command",
         id: "remove-from-lectern",
         label: "Remove from Lectern",
         tone: "danger",
@@ -81,7 +82,7 @@ export function presentRecentConsumptionItem(
   return {
     id: item.mediaId,
     kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
-    primary: { kind: "link", href: item.href, paneTitleHint: item.title },
+    primary: { kind: "link", href: item.href, paneLabelHint: item.title },
     lead: { icon: mediaKindIcon(item.kind) },
     headline: { text: item.title },
     signals: subtitle ? [{ value: subtitle }] : [],
@@ -90,6 +91,7 @@ export function presentRecentConsumptionItem(
     relatedMediaId: null,
     actions: [
       {
+        kind: "command",
         id: "add-to-lectern",
         label: "Add to Lectern",
         disabled: !input.canAdd,

@@ -28,7 +28,7 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     id: item.id ?? item.href ?? item.title,
     kind: "settings_row",
     primary: item.href
-      ? { kind: "link", href: item.href, paneTitleHint: item.title }
+      ? { kind: "link", href: item.href, paneLabelHint: item.title }
       : { kind: "static" },
     lead: { icon: item.icon },
     headline: { text: item.title },

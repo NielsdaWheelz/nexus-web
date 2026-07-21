@@ -28,11 +28,9 @@ function marker(
 function RailHarness({
   markers,
   onActivateMarker = () => {},
-  onOpenMap = () => {},
 }: {
   markers: ReaderDocumentMapMarker[];
   onActivateMarker?: (marker: ReaderDocumentMapMarker) => void;
-  onOpenMap?: () => void;
 }) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   return (
@@ -43,22 +41,19 @@ function RailHarness({
         contentRef={contentRef}
         documentSpan={{ start: 0, end: 1 }}
         onActivateMarker={onActivateMarker}
-        onOpenMap={onOpenMap}
       />
     </div>
   );
 }
 
 describe("ReaderDocumentMapOverviewRail", () => {
-  it("renders canonical typed markers and opens the map", async () => {
-    const onOpenMap = vi.fn();
+  it("renders canonical typed markers without a generic map opener", async () => {
     render(
       <RailHarness
         markers={[
           marker("highlight:h1", 0.1),
           marker("source-reference:r1", 0.8, "SourceReference"),
         ]}
-        onOpenMap={onOpenMap}
       />,
     );
     expect(
@@ -67,10 +62,9 @@ describe("ReaderDocumentMapOverviewRail", () => {
     expect(
       await screen.findByTestId("reader-document-map-marker-highlight:h1"),
     ).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Open Document Map" }),
-    );
-    expect(onOpenMap).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "Open Document Map" }),
+    ).not.toBeInTheDocument();
   });
 
   it("activates the primary canonical marker object in a nearby cluster", async () => {

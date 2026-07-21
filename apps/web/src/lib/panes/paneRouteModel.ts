@@ -22,21 +22,37 @@ export type PaneBodyMode = "standard" | "document" | "contained";
 export type RouteParams = Record<string, string>;
 export type RoutePattern = readonly string[];
 
-export interface PaneRouteContext {
-  href: string;
-  params: RouteParams;
-  androidShell?: boolean;
-}
+export type PaneRouteHeaderContract =
+  | {
+      readonly kind: "section";
+      readonly destinationId: DestinationId;
+      readonly defaultFolio: "none" | "pane-label";
+    }
+  | {
+      readonly kind: "resource";
+      readonly pendingLabel: string;
+    };
 
-interface PaneRouteModelDefinitionBase extends PaneWidthContract {
+interface PaneRouteModelDefinitionCommon extends PaneWidthContract {
   id: string;
-  sectionDestinationId: DestinationId;
   pattern: RoutePattern;
-  staticTitle: string;
-  titleMode: "static" | "dynamic";
+  defaultLabel: string;
+  labelMode: "static" | "dynamic";
   bodyMode: PaneBodyMode;
   secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
 }
+
+type PaneRouteModelDefinitionBase = PaneRouteModelDefinitionCommon &
+  (
+    | {
+        header: Extract<PaneRouteHeaderContract, { kind: "section" }>;
+        sectionDestinationId?: never;
+      }
+    | {
+        header: Extract<PaneRouteHeaderContract, { kind: "resource" }>;
+        sectionDestinationId: DestinationId;
+      }
+  );
 
 const STANDARD_WIDTH_CONTRACT: PaneWidthContract = {
   maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
@@ -57,238 +73,339 @@ function route<const Definition extends PaneRouteModelDefinitionBase>(
 export const PANE_ROUTE_MODELS = [
   route({
     id: "lectern",
-    sectionDestinationId: "lectern",
+    header: {
+      kind: "section",
+      destinationId: "lectern",
+      defaultFolio: "none",
+    },
     pattern: ["lectern"],
-    staticTitle: "Lectern",
-    titleMode: "static",
+    defaultLabel: "Lectern",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "libraries",
-    sectionDestinationId: "libraries",
+    header: {
+      kind: "section",
+      destinationId: "libraries",
+      defaultFolio: "none",
+    },
     pattern: ["libraries"],
-    staticTitle: "Libraries",
-    titleMode: "static",
+    defaultLabel: "Libraries",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "library",
-    sectionDestinationId: "libraries",
+    header: {
+      kind: "section",
+      destinationId: "libraries",
+      defaultFolio: "none",
+    },
     pattern: ["libraries", ":id"],
-    staticTitle: "Library",
-    titleMode: "dynamic",
+    defaultLabel: "Library",
+    labelMode: "dynamic",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "media",
     sectionDestinationId: "libraries",
+    header: { kind: "resource", pendingLabel: "Loading media…" },
     pattern: ["media", ":id"],
-    staticTitle: "Media",
-    titleMode: "dynamic",
+    defaultLabel: "Media",
+    labelMode: "dynamic",
     bodyMode: "document",
     secondaryGroups: ["reader-tools"],
     ...MEDIA_READER_WIDTH_CONTRACT,
   }),
   route({
     id: "conversations",
-    sectionDestinationId: "chats",
+    header: {
+      kind: "section",
+      destinationId: "chats",
+      defaultFolio: "none",
+    },
     pattern: ["conversations"],
-    staticTitle: "Chats",
-    titleMode: "static",
+    defaultLabel: "Chats",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "conversationNew",
-    sectionDestinationId: "chats",
+    header: {
+      kind: "section",
+      destinationId: "chats",
+      defaultFolio: "none",
+    },
     pattern: ["conversations", "new"],
-    staticTitle: "New chat",
-    titleMode: "static",
+    defaultLabel: "New chat",
+    labelMode: "static",
     bodyMode: "contained",
     secondaryGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "conversation",
-    sectionDestinationId: "chats",
+    header: {
+      kind: "section",
+      destinationId: "chats",
+      defaultFolio: "none",
+    },
     pattern: ["conversations", ":id"],
-    staticTitle: "Chat",
-    titleMode: "dynamic",
+    defaultLabel: "Chat",
+    labelMode: "dynamic",
     bodyMode: "contained",
     secondaryGroups: ["conversation-context"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "podcasts",
-    sectionDestinationId: "podcasts",
+    header: {
+      kind: "section",
+      destinationId: "podcasts",
+      defaultFolio: "none",
+    },
     pattern: ["podcasts"],
-    staticTitle: "Podcasts",
-    titleMode: "static",
+    defaultLabel: "Podcasts",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "podcastDetail",
-    sectionDestinationId: "podcasts",
+    header: {
+      kind: "section",
+      destinationId: "podcasts",
+      defaultFolio: "pane-label",
+    },
     pattern: ["podcasts", ":podcastId"],
-    staticTitle: "Podcast",
-    titleMode: "dynamic",
+    defaultLabel: "Podcast",
+    labelMode: "dynamic",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "search",
-    sectionDestinationId: "search",
+    header: {
+      kind: "section",
+      destinationId: "search",
+      defaultFolio: "none",
+    },
     pattern: ["search"],
-    staticTitle: "Search",
-    titleMode: "static",
+    defaultLabel: "Search",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "author",
-    sectionDestinationId: "authors",
+    header: {
+      kind: "section",
+      destinationId: "authors",
+      defaultFolio: "none",
+    },
     pattern: ["authors", ":handle"],
-    staticTitle: "Author",
-    titleMode: "dynamic",
+    defaultLabel: "Author",
+    labelMode: "dynamic",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "notes",
-    sectionDestinationId: "notes",
+    header: {
+      kind: "section",
+      destinationId: "notes",
+      defaultFolio: "none",
+    },
     pattern: ["notes"],
-    staticTitle: "Notes",
-    titleMode: "static",
+    defaultLabel: "Notes",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "page",
-    sectionDestinationId: "notes",
+    header: {
+      kind: "section",
+      destinationId: "notes",
+      defaultFolio: "pane-label",
+    },
     pattern: ["pages", ":pageId"],
-    staticTitle: "Page",
-    titleMode: "dynamic",
+    defaultLabel: "Page",
+    labelMode: "dynamic",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "note",
-    sectionDestinationId: "notes",
+    header: {
+      kind: "section",
+      destinationId: "notes",
+      defaultFolio: "pane-label",
+    },
     pattern: ["notes", ":blockId"],
-    staticTitle: "Note",
-    titleMode: "dynamic",
+    defaultLabel: "Note",
+    labelMode: "dynamic",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settings",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings"],
-    staticTitle: "Settings",
-    titleMode: "static",
+    defaultLabel: "Settings",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsAccount",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "account"],
-    staticTitle: "Account",
-    titleMode: "static",
+    defaultLabel: "Account",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsBilling",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "billing"],
-    staticTitle: "Billing",
-    titleMode: "static",
+    defaultLabel: "Billing",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsReader",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "reader"],
-    staticTitle: "Reader settings",
-    titleMode: "static",
+    defaultLabel: "Reader settings",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsAppearance",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "appearance"],
-    staticTitle: "Appearance",
-    titleMode: "static",
+    defaultLabel: "Appearance",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsKeys",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "keys"],
-    staticTitle: "API Keys",
-    titleMode: "static",
+    defaultLabel: "API Keys",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsLocalVault",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "local-vault"],
-    staticTitle: "Local vault",
-    titleMode: "static",
+    defaultLabel: "Local vault",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsIdentities",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "identities"],
-    staticTitle: "Linked identities",
-    titleMode: "static",
+    defaultLabel: "Linked identities",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "settingsKeybindings",
-    sectionDestinationId: "settings",
+    header: {
+      kind: "section",
+      destinationId: "settings",
+      defaultFolio: "none",
+    },
     pattern: ["settings", "keybindings"],
-    staticTitle: "Keyboard shortcuts",
-    titleMode: "static",
+    defaultLabel: "Keyboard shortcuts",
+    labelMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "atlas",
-    sectionDestinationId: "atlas",
+    header: {
+      kind: "section",
+      destinationId: "atlas",
+      defaultFolio: "pane-label",
+    },
     pattern: ["atlas"],
-    staticTitle: "The Atlas",
-    titleMode: "static",
+    defaultLabel: "The Atlas",
+    labelMode: "static",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "oracle",
-    sectionDestinationId: "oracle",
+    header: {
+      kind: "section",
+      destinationId: "oracle",
+      defaultFolio: "pane-label",
+    },
     pattern: ["oracle"],
-    staticTitle: "Oracle",
-    titleMode: "static",
+    defaultLabel: "Oracle",
+    labelMode: "static",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
     id: "oracleReading",
-    sectionDestinationId: "oracle",
+    header: {
+      kind: "section",
+      destinationId: "oracle",
+      defaultFolio: "pane-label",
+    },
     pattern: ["oracle", ":readingId"],
-    staticTitle: "Reading",
-    titleMode: "static",
+    defaultLabel: "Reading",
+    labelMode: "static",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -301,13 +418,39 @@ export type PaneRouteModelDefinition = PaneRouteModelDefinitionBase & {
   id: PaneRouteId;
 };
 
-export interface ResolvedPaneRouteModel {
-  id: PaneRouteId | "unsupported";
+interface ResolvedPaneRouteModelCommon {
   pathname: string;
   params: RouteParams;
-  staticTitle: string;
-  titleMode: "static" | "dynamic";
-  definition: PaneRouteModelDefinition | null;
+  defaultLabel: string;
+  labelMode: "static" | "dynamic";
+}
+
+export type ResolvedPaneRouteModel = ResolvedPaneRouteModelCommon &
+  (
+    | {
+        id: PaneRouteId;
+        header: PaneRouteHeaderContract;
+        definition: PaneRouteModelDefinition;
+      }
+    | {
+        id: "unsupported";
+        header: null;
+        definition: null;
+      }
+  );
+
+function sectionDestinationIdForDefinition(
+  definition: PaneRouteModelDefinition,
+): DestinationId {
+  if (definition.header.kind === "section") {
+    return definition.header.destinationId;
+  }
+  if (!definition.sectionDestinationId) {
+    throw new Error(
+      `Resource pane route ${definition.id} has no navigation destination`,
+    );
+  }
+  return definition.sectionDestinationId;
 }
 
 function toPathSegments(pathname: string): string[] {
@@ -369,8 +512,9 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
       id: definition.id,
       pathname,
       params,
-      staticTitle: definition.staticTitle,
-      titleMode: definition.titleMode,
+      defaultLabel: definition.defaultLabel,
+      labelMode: definition.labelMode,
+      header: definition.header,
       definition,
     };
   }
@@ -378,24 +522,16 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     id: "unsupported",
     pathname,
     params: {},
-    staticTitle: "Tab",
-    titleMode: "static",
+    defaultLabel: "Tab",
+    labelMode: "static",
+    header: null,
     definition: null,
   };
 }
 
-export function sectionDestinationIdForRoute(routeId: PaneRouteId): DestinationId {
-  const definition = PANE_ROUTE_MODELS.find((candidate) => candidate.id === routeId);
-  if (!definition) {
-    // justify-defect: PaneRouteId is derived from PANE_ROUTE_MODELS, so a miss
-    // means the runtime module no longer matches its compiled type contract.
-    throw new Error(`Pane route ${routeId} has no model definition`);
-  }
-  return definition.sectionDestinationId;
-}
-
 export function sectionDestinationIdForHref(href: string): DestinationId | null {
-  return resolvePaneRouteModel(href).definition?.sectionDestinationId ?? null;
+  const definition = resolvePaneRouteModel(href).definition;
+  return definition ? sectionDestinationIdForDefinition(definition) : null;
 }
 
 export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {

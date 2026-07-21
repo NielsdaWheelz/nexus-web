@@ -8,6 +8,7 @@ import {
   useState,
   type UIEvent,
   type MutableRefObject,
+  type ReactNode,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -165,6 +166,7 @@ export interface PdfReaderIntrinsicWidthState {
 
 interface PdfReaderProps {
   mediaId: string;
+  beforeContent?: ReactNode;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
@@ -498,6 +500,7 @@ function applyViewerPageNumber(
 
 export default function PdfReader({
   mediaId,
+  beforeContent,
   contentRef,
   onControlsStateChange,
   onControlsReady,
@@ -2483,11 +2486,16 @@ export default function PdfReader({
   return (
     <div className={styles.viewer}>
       {recovering && (
-        <div className={styles.notice}>Refreshing secure file access…</div>
+        <div className={`${styles.notice} ${styles.mobileTopState}`}>
+          Refreshing secure file access…
+        </div>
       )}
 
       {error ? (
-        <div className={styles.error} role="alert">
+        <div
+          className={`${styles.error} ${styles.mobileTopState}`}
+          role="alert"
+        >
           {error}
         </div>
       ) : (
@@ -2518,6 +2526,7 @@ export default function PdfReader({
               aria-label="PDF document"
               onScroll={handleViewerContainerScroll}
             >
+              {beforeContent}
               <div
                 ref={setContentNode}
                 className={`pdfViewer ${styles.viewerHost}`}

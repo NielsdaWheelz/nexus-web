@@ -52,8 +52,8 @@ export function resourceRefForActivation(
 export function activateResource(
   activation: ResourceActivation,
   options: {
-    label?: string | null;
-    openInNewPane?: (href: string, title?: string) => void;
+    labelHint?: string | null;
+    openInNewPane?: (href: string, labelHint?: string) => void;
     navigate?: (href: string) => void;
     newPane?: boolean;
   },
@@ -69,7 +69,7 @@ export function activateResource(
     return true;
   }
   if (options.newPane && options.openInNewPane) {
-    options.openInNewPane(href, options.label ?? undefined);
+    options.openInNewPane(href, options.labelHint ?? undefined);
     return true;
   }
   if (options.navigate) {
@@ -77,7 +77,7 @@ export function activateResource(
     return true;
   }
   if (options.openInNewPane) {
-    options.openInNewPane(href, options.label ?? undefined);
+    options.openInNewPane(href, options.labelHint ?? undefined);
     return true;
   }
   return false;

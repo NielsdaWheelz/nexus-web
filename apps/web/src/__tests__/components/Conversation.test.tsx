@@ -455,7 +455,7 @@ function renderPane(
     onReplacePane?: (
       paneId: string,
       href: string,
-      navOptions?: { titleHint?: string },
+      navOptions?: { labelHint?: string },
     ) => void;
   } = {},
 ) {
@@ -479,7 +479,7 @@ function renderPane(
       onNavigatePane={vi.fn()}
       onReplacePane={onReplacePane}
       onOpenInNewPane={vi.fn()}
-      onSetPaneTitle={vi.fn()}
+      onSetPaneLabel={vi.fn()}
     >
       <Conversation />
     </PaneRuntimeProvider>,
@@ -1426,14 +1426,22 @@ describe("Conversation", () => {
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onSetPaneTitle={vi.fn()}
+        onSetPaneLabel={vi.fn()}
         secondaryPane={secondaryPane}
         onRequestSecondarySurface={onRequestSecondarySurface}
         onCloseSecondaryPane={onCloseSecondaryPane}
       >
         <PaneShell
           paneId="pane-1"
-          title="Chat"
+          routeKey={
+            resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
+          }
+          routeHeader={{
+            kind: "section",
+            destinationId: "chats",
+            defaultFolio: "none",
+          }}
+          label="Chat"
           navigation={{
             canGoBack: false,
             canGoForward: false,
@@ -1465,6 +1473,7 @@ describe("Conversation", () => {
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "conversation-context-refs",
+      undefined,
     );
 
     // With the context-ref surface open, the same button collapses it.
