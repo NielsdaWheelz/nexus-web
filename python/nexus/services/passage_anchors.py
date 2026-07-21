@@ -24,12 +24,14 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.services import locator_resolver, text_quote
+from nexus.services.resource_graph import cleanup
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
 SELECTOR_VERSION = 1
@@ -198,6 +200,48 @@ def materialize_or_reuse(
     db.add(anchor)
     db.flush()
     return anchor
+
+
+def delete_for_owner(
+    db: Session,
+    *,
+    owner_scheme: str,
+    owner_id: UUID,
+    user_id: UUID | None = None,
+) -> None:
+    """Explicitly delete every passage anchor owned by a dying owner.
+
+    True owner deletion only — media hard-delete, viewer-scoped media removal
+    (pass ``user_id``), and note-block deletion. Refresh/reindex never calls
+    this (invariant 9: anchors survive content replacement). Child-first, the
+    ``media_deletion.py`` order: graph edges + their view states touching each
+    anchor, then each anchor's protocol state, then the anchor rows.
+    Flush-only: composes inside the caller's transaction.
+    """
+    if owner_scheme not in PASSAGE_ANCHOR_OWNER_SCHEMES:
+        raise AssertionError(  # justify-defect: callers pass the closed media|note_block set
+            f"Invalid passage-anchor owner scheme: {owner_scheme!r}"
+        )
+    query = select(PassageAnchor).where(
+        PassageAnchor.owner_scheme == owner_scheme,
+        PassageAnchor.owner_id == owner_id,
+    )
+    if user_id is not None:
+        query = query.where(PassageAnchor.user_id == user_id)
+    anchors = db.scalars(query).all()
+    if not anchors:
+        return
+    cleanup.delete_edges_for_deleted_resources(
+        db,
+        refs=[ResourceRef(scheme="passage_anchor", id=anchor.id) for anchor in anchors],
+    )
+    for anchor in anchors:
+        cleanup.delete_resource_protocol_state(
+            db,
+            viewer_id=anchor.user_id,
+            ref=ResourceRef(scheme="passage_anchor", id=anchor.id),
+        )
+    db.execute(delete(PassageAnchor).where(PassageAnchor.id.in_([anchor.id for anchor in anchors])))
 
 
 _REFUSAL_MESSAGES = {

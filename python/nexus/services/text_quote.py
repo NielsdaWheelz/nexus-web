@@ -211,6 +211,72 @@ class OwnerQuoteMatch:
 _NO_OWNER_MATCH = OwnerQuoteMatch(QuoteStatus.no_match, None, None, None, "", "", None, None)
 
 
+@dataclass(frozen=True, slots=True)
+class NormalizedOwnerSource:
+    """One owner text unit, fetched and normalized once, matchable many times."""
+
+    fragment_id: UUID | None
+    t_start_ms: int | None
+    t_end_ms: int | None
+    normalized: NormalizedText
+
+
+def load_normalized_media_sources(db: Session, *, media_id: UUID) -> list[NormalizedOwnerSource]:
+    """Fetch and normalize a media's fragments once for repeated quote matching."""
+    rows = db.execute(
+        select(Fragment.id, Fragment.canonical_text, Fragment.t_start_ms, Fragment.t_end_ms)
+        .where(Fragment.media_id == media_id)
+        .order_by(Fragment.idx)
+    ).all()
+    return [
+        NormalizedOwnerSource(row[0], row[2], row[3], normalize_for_match(row[1])) for row in rows
+    ]
+
+
+def match_quote_in_sources(
+    sources: list[NormalizedOwnerSource],
+    *,
+    exact: str,
+    prefix: str = "",
+    suffix: str = "",
+) -> OwnerQuoteMatch:
+    """Match one normalized quote against pre-normalized owner sources.
+
+    The pure-matching half of ``resolve_owner_quote``: callers resolving many
+    quotes against the same owner (highlight cache repair) load the sources once
+    and call this per quote instead of re-fetching the whole document each time.
+    """
+    if not exact:
+        return OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
+
+    hits: list[tuple[NormalizedOwnerSource, QuoteCandidate]] = []
+    for source in sources:
+        for candidate in find_quote_candidates(
+            source.normalized, exact=exact, prefix=prefix, suffix=suffix
+        ):
+            hits.append((source, candidate))
+
+    if len(hits) > 1:
+        return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
+    if not hits:
+        return _NO_OWNER_MATCH
+
+    source, candidate = hits[0]
+    context_prefix, context_suffix = context_window(
+        source.normalized, start=candidate.normalized_start, end=candidate.normalized_end
+    )
+    return OwnerQuoteMatch(
+        status=QuoteStatus.unique,
+        fragment_id=source.fragment_id,
+        raw_start=candidate.raw_start,
+        raw_end=candidate.raw_end,
+        prefix=context_prefix,
+        suffix=context_suffix,
+        t_start_ms=source.t_start_ms,
+        t_end_ms=source.t_end_ms,
+    )
+
+
 def resolve_owner_quote(
     db: Session,
     *,
@@ -236,41 +302,8 @@ def resolve_owner_quote(
         ).scalar_one_or_none()
         if body_text is None:
             return _NO_OWNER_MATCH
-        sources: list[tuple[UUID | None, str, int | None, int | None]] = [
-            (None, body_text, None, None)
-        ]
+        sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
     else:
-        rows = db.execute(
-            select(Fragment.id, Fragment.canonical_text, Fragment.t_start_ms, Fragment.t_end_ms)
-            .where(Fragment.media_id == owner_id)
-            .order_by(Fragment.idx)
-        ).all()
-        sources = [(row[0], row[1], row[2], row[3]) for row in rows]
+        sources = load_normalized_media_sources(db, media_id=owner_id)
 
-    hits: list[tuple[UUID | None, int | None, int | None, NormalizedText, QuoteCandidate]] = []
-    for fragment_id, source_text, t_start_ms, t_end_ms in sources:
-        normalized = normalize_for_match(source_text)
-        for candidate in find_quote_candidates(
-            normalized, exact=exact, prefix=prefix, suffix=suffix
-        ):
-            hits.append((fragment_id, t_start_ms, t_end_ms, normalized, candidate))
-
-    if len(hits) > 1:
-        return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
-    if not hits:
-        return _NO_OWNER_MATCH
-
-    fragment_id, t_start_ms, t_end_ms, normalized, candidate = hits[0]
-    context_prefix, context_suffix = context_window(
-        normalized, start=candidate.normalized_start, end=candidate.normalized_end
-    )
-    return OwnerQuoteMatch(
-        status=QuoteStatus.unique,
-        fragment_id=fragment_id,
-        raw_start=candidate.raw_start,
-        raw_end=candidate.raw_end,
-        prefix=context_prefix,
-        suffix=context_suffix,
-        t_start_ms=t_start_ms,
-        t_end_ms=t_end_ms,
-    )
+    return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)

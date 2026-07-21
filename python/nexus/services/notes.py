@@ -31,7 +31,7 @@ from nexus.schemas.notes import (
     QuickCaptureRequest,
     UpdatePageRequest,
 )
-from nexus.services import note_bodies
+from nexus.services import note_bodies, passage_anchors
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
@@ -364,6 +364,9 @@ def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
         return
     ref = _note_ref(block.id)
     delete_edges_for_deleted_resource(db, ref=ref)
+    # True owner deletion: passage anchors owned by this block (and edges/view
+    # states touching them) die with it. Refresh/reindex never runs this.
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=block.id)
     delete_content_index(db, owner=IndexOwner("note_block", block.id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(block)
@@ -456,6 +459,8 @@ def delete_highlight_note(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     ref = _note_ref(existing.id)
     delete_edges_for_deleted_resource(db, ref=ref)
+    # True owner deletion: passage anchors owned by this block die with it.
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)
     db.execute(
         delete(PinnedObjectRef).where(
             PinnedObjectRef.user_id == viewer_id,

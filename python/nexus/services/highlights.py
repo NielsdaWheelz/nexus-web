@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from nexus.auth.permissions import (
     can_read_media,
@@ -15,6 +16,7 @@ from nexus.db.models import (
     Highlight,
     HighlightFragmentAnchor,
     HighlightPdfAnchor,
+    HighlightPdfQuad,
     Media,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
@@ -30,6 +32,7 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
+from nexus.services import text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlight_access import (
     get_highlight_for_author_write_or_404,
@@ -38,10 +41,15 @@ from nexus.services.highlight_access import (
 from nexus.services.highlight_access import (
     require_typed_highlight_or_404 as _require_typed_highlight_or_404,
 )
-from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
+from nexus.services.passage_anchors import normalize_quote_text
+from nexus.services.resource_graph.cleanup import (
+    delete_edges_for_deleted_resource,
+    delete_resource_protocol_state,
+)
 from nexus.services.resource_graph.context import batch_conversations_with_any_edge_to_ref
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.text_quote import QuoteStatus
 
 logger = get_logger(__name__)
 
@@ -459,6 +467,58 @@ def list_highlights_for_fragment(
     return project_highlights_with_links(db, viewer_id, highlights)
 
 
+def _repair_missing_fragment_caches(db: Session, *, media_id: UUID, stale: list[Highlight]) -> bool:
+    """Re-resolve highlights whose cached fragment row vanished (reindex/refresh).
+
+    The authored quote is identity; ``fragment_id``/offsets are a disposable
+    locator cache. A quote that resolves uniquely against the media's current
+    text through the shared quote matchers recreates the cache values; ambiguous
+    or unmatched quotes stay unresolved — returned with no locator, never
+    painted at a wrong location (invariant 9). The media's fragments are fetched
+    and normalized once, then matched per quote.
+
+    Returns True when the caller must re-read: a cache row was repaired
+    (committed — read paths otherwise roll back at session close) or a
+    highlight vanished under a concurrent delete.
+    """
+    sources = text_quote.load_normalized_media_sources(db, media_id=media_id)
+    gone = False
+    repaired = False
+    for highlight in stale:
+        anchor = highlight.fragment_anchor
+        if anchor is None:
+            # Concurrently deleted between the list read and this repair; the
+            # caller's re-read drops the highlight instead of crashing.
+            gone = True
+            continue
+        match = text_quote.match_quote_in_sources(
+            sources,
+            exact=normalize_quote_text(highlight.exact),
+            prefix=normalize_quote_text(highlight.prefix),
+            suffix=normalize_quote_text(highlight.suffix),
+        )
+        if (
+            match.status is not QuoteStatus.unique
+            or match.fragment_id is None
+            or match.raw_start is None
+            or match.raw_end is None
+        ):
+            continue
+        anchor.fragment_id = match.fragment_id
+        anchor.start_offset = match.raw_start
+        anchor.end_offset = match.raw_end
+        repaired = True
+    if repaired:
+        try:
+            db.commit()
+        except StaleDataError:
+            # An anchor row was deleted while we repaired it. Drop the batch;
+            # the re-read reflects the delete and the next read repairs the
+            # survivors.
+            db.rollback()
+    return gone or repaired
+
+
 def list_highlights_for_media(
     db: Session, viewer_id: UUID, media_id: UUID, mine_only: bool = True
 ) -> list[TypedHighlightOut]:
@@ -477,7 +537,9 @@ def list_highlights_for_media(
 
     Returns:
         List of canonical typed highlights ordered by anchor position then
-        created_at ASC, id ASC.
+        created_at ASC, id ASC. Fragment highlights whose cached fragment
+        vanished are re-resolved by quote; those that stay unresolved are
+        returned last with a locator-less anchor.
 
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If media doesn't exist or not readable.
@@ -495,38 +557,72 @@ def list_highlights_for_media(
                 Highlight.anchor_kind == "pdf_page_geometry",
             )
         )
-        order_by = (
+        if mine_only:
+            query = query.filter(Highlight.user_id == viewer_id)
+        else:
+            query = query.filter(highlight_visibility_filter(viewer_id, media_id))
+        highlights = query.order_by(
             HighlightPdfAnchor.page_number.asc(),
             HighlightPdfAnchor.sort_top.asc(),
             HighlightPdfAnchor.sort_left.asc(),
             Highlight.created_at.asc(),
             Highlight.id.asc(),
-        )
-    else:
+        ).all()
+        return project_highlights_with_links(db, viewer_id, highlights)
+
+    # Fragment ids/offsets are a locator cache, not identity: start from
+    # highlights (anchor_media_id) and LEFT JOIN the cached fragment so a
+    # highlight whose fragment was replaced by reindex/refresh is still
+    # returned, never silently dropped (invariant 9).
+    def ordered_rows():  # (Highlight, live fragment id | None) rows
         query = (
-            db.query(Highlight)
+            db.query(Highlight, Fragment.id)
             .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
-            .join(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
+            .outerjoin(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
             .filter(
-                Fragment.media_id == media_id,
+                Highlight.anchor_media_id == media_id,
                 Highlight.anchor_kind == "fragment_offsets",
             )
         )
-        order_by = (
-            Fragment.idx.asc(),
+        if mine_only:
+            filtered = query.filter(Highlight.user_id == viewer_id)
+        else:
+            filtered = query.filter(highlight_visibility_filter(viewer_id, media_id))
+        return filtered.order_by(
+            Fragment.idx.asc(),  # NULLS LAST: unresolved highlights sort after resolved
             HighlightFragmentAnchor.start_offset.asc(),
             Highlight.created_at.asc(),
             Highlight.id.asc(),
-        )
+        ).all()
 
-    if mine_only:
-        query = query.filter(Highlight.user_id == viewer_id)
-    else:
-        query = query.filter(highlight_visibility_filter(viewer_id, media_id))
+    rows = ordered_rows()
+    stale = [highlight for highlight, live_fragment_id in rows if live_fragment_id is None]
+    if stale and _repair_missing_fragment_caches(db, media_id=media_id, stale=stale):
+        # Re-read so a repaired cache sorts at its true document position (the
+        # first ORDER BY saw a NULL join) and a highlight deleted mid-repair
+        # drops out; still-unresolved rows re-join NULL and stay last.
+        rows = ordered_rows()
 
-    highlights = query.order_by(*order_by).all()
+    highlights = [highlight for highlight, _ in rows]
+    unresolved_ids = {
+        highlight.id for highlight, live_fragment_id in rows if live_fragment_id is None
+    }
 
-    return project_highlights_with_links(db, viewer_id, highlights)
+    outs = project_highlights_with_links(db, viewer_id, highlights)
+    if unresolved_ids:
+        outs = [
+            out.model_copy(
+                update={
+                    "anchor": out.anchor.model_copy(
+                        update={"fragment_id": None, "start_offset": None, "end_offset": None}
+                    )
+                }
+            )
+            if out.id in unresolved_ids
+            else out
+            for out in outs
+        ]
+    return outs
 
 
 def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHighlightOut:
@@ -660,8 +756,27 @@ def update_highlight(
     return project_highlight(highlight, viewer_id)
 
 
+def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
+    """Explicit child-first deletion of one Highlight (no DB cascades remain).
+
+    Order: graph edges with their view states plus the author's protocol state,
+    then PDF quads, then PDF/fragment anchor rows, then the Highlight root —
+    the single-highlight form of media_deletion.py's owner-wide block.
+    Flush-only: runs inside the caller's transaction.
+    """
+    ref = ResourceRef(scheme="highlight", id=highlight.id)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    delete_resource_protocol_state(db, viewer_id=highlight.user_id, ref=ref)
+    db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
+    db.execute(delete(HighlightPdfAnchor).where(HighlightPdfAnchor.highlight_id == highlight.id))
+    db.execute(
+        delete(HighlightFragmentAnchor).where(HighlightFragmentAnchor.highlight_id == highlight.id)
+    )
+    db.execute(delete(Highlight).where(Highlight.id == highlight.id))
+
+
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
-    """Delete a highlight.
+    """Delete a highlight (fragment or PDF) with explicit child-first cleanup.
 
     NO ready check - allows cleanup even if media status drifts.
 
@@ -674,9 +789,8 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
     # Verify highlight exists and is owned by viewer
-    get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="highlight", id=highlight_id))
-    db.execute(delete(Highlight).where(Highlight.id == highlight_id))
+    delete_highlight_rows(db, highlight)
     db.flush()
     db.commit()

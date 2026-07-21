@@ -12,16 +12,28 @@ import hashlib
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Fragment, NoteBlock, PassageAnchor
+from nexus.db.models import (
+    Fragment,
+    Highlight,
+    HighlightFragmentAnchor,
+    NoteBlock,
+    PassageAnchor,
+    ResourceEdge,
+    ResourceViewState,
+)
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.services import passage_anchors
+from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.locator_resolver import resolve_passage_selector
 from nexus.services.text_quote import QuoteStatus, find_quote_candidates, normalize_for_match
 from tests.factories import (
+    add_media_to_library,
     create_pdf_media_with_text,
     create_test_fragment,
+    create_test_highlight,
     create_test_media,
     get_user_default_library,
 )
@@ -476,3 +488,245 @@ class TestResolvePassageSelector:
             db_session, owner_scheme="media", owner_id=uuid4(), exact="anything"
         )
         assert resolution.status is QuoteStatus.no_match
+
+
+@pytest.mark.integration
+class TestRefreshPreservation:
+    """AC8/invariant 9: source refresh never deletes passage anchors.
+
+    Refresh publishes new artifacts; authored selectors then resolve against
+    the new current content. Equivalent content re-resolves; changed content
+    is visibly unresolved, never deleted.
+    """
+
+    @staticmethod
+    def _highlight_family_counts(db_session: Session, highlight_id) -> tuple[int, int]:
+        """(root, anchor-row) counts via fresh SQL — immune to identity-map caching."""
+        root = db_session.execute(
+            select(func.count()).select_from(Highlight).where(Highlight.id == highlight_id)
+        ).scalar_one()
+        anchor_rows = db_session.execute(
+            select(func.count())
+            .select_from(HighlightFragmentAnchor)
+            .where(HighlightFragmentAnchor.highlight_id == highlight_id)
+        ).scalar_one()
+        return root, anchor_rows
+
+    def test_web_refresh_preserves_anchor_and_reresolves_on_equivalent_content(
+        self, db_session: Session, bootstrapped_user
+    ):
+        from nexus.services.web_article_artifacts import delete_web_article_artifacts
+
+        media_id = create_test_media(db_session)
+        fragment_id = create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        anchor = _materialize(db_session, bootstrapped_user, media_id, exact="kilo lima mike")
+        highlight_id = create_test_highlight(
+            db_session, bootstrapped_user, fragment_id, exact="kilo lima mike"
+        )
+
+        delete_web_article_artifacts(
+            db_session,
+            owner_user_id=bootstrapped_user,
+            media_id=media_id,
+            include_content_index=True,
+        )
+
+        # The Highlight root and its anchor row (stale locator cache) survive
+        # the refresh — the removed refresh-time DELETE FROM highlights must
+        # never come back (invariant 9).
+        assert self._highlight_family_counts(db_session, highlight_id) == (1, 1)
+        assert db_session.get(PassageAnchor, anchor.id) is not None
+        no_content = passage_anchors.resolve_current_location(
+            db_session, viewer_id=bootstrapped_user, passage_anchor_id=anchor.id
+        )
+        assert no_content is not None
+        assert no_content.resolved is False
+        assert no_content.locator is None
+
+        # Equivalent re-ingested content: the durable anchor resolves again.
+        new_fragment_id = create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        relocated = passage_anchors.resolve_current_location(
+            db_session, viewer_id=bootstrapped_user, passage_anchor_id=anchor.id
+        )
+        assert relocated is not None
+        assert relocated.resolved is True
+        assert relocated.locator is not None
+        assert relocated.locator["fragment_id"] == str(new_fragment_id)
+
+    def test_epub_refresh_preserves_anchor(self, db_session: Session, bootstrapped_user):
+        from nexus.services.epub_lifecycle import delete_extraction_artifacts
+
+        media_id = create_test_media(db_session)
+        fragment_id = create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        anchor = _materialize(db_session, bootstrapped_user, media_id, exact="kilo lima mike")
+        highlight_id = create_test_highlight(
+            db_session, bootstrapped_user, fragment_id, exact="kilo lima mike"
+        )
+
+        delete_extraction_artifacts(db_session, media_id)
+
+        # Highlight root + anchor row survive EPUB re-extraction (invariant 9).
+        assert self._highlight_family_counts(db_session, highlight_id) == (1, 1)
+        assert db_session.get(PassageAnchor, anchor.id) is not None
+        location = passage_anchors.resolve_current_location(
+            db_session, viewer_id=bootstrapped_user, passage_anchor_id=anchor.id
+        )
+        assert location is not None
+        assert location.resolved is False
+
+
+@pytest.mark.integration
+class TestOwnerDeletion:
+    """AC9: true owner deletion explicitly removes passage anchors child-first
+    — touching graph edges and view states die with the anchors."""
+
+    def test_media_owner_deletion_removes_anchors_edges_and_view_states(
+        self, db_session: Session, bootstrapped_user
+    ):
+        media_id = create_test_media(db_session)
+        keeper_media_id = create_test_media(db_session, title="Keeper")
+        create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        anchor = _materialize(db_session, bootstrapped_user, media_id, exact="kilo lima mike")
+        db_session.add(
+            ResourceEdge(
+                user_id=bootstrapped_user,
+                kind="context",
+                origin="user",
+                source_scheme="passage_anchor",
+                source_id=anchor.id,
+                target_scheme="media",
+                target_id=keeper_media_id,
+            )
+        )
+        db_session.add(
+            ResourceViewState(
+                user_id=bootstrapped_user,
+                surface_scheme="media",
+                surface_id=keeper_media_id,
+                target_scheme="passage_anchor",
+                target_id=anchor.id,
+                state={"collapsed": True},
+            )
+        )
+        db_session.flush()
+
+        passage_anchors.delete_for_owner(db_session, owner_scheme="media", owner_id=media_id)
+        db_session.flush()
+
+        assert db_session.get(PassageAnchor, anchor.id) is None
+        edge_count = db_session.execute(
+            select(ResourceEdge).where(
+                (ResourceEdge.source_scheme == "passage_anchor")
+                & (ResourceEdge.source_id == anchor.id)
+                | (ResourceEdge.target_scheme == "passage_anchor")
+                & (ResourceEdge.target_id == anchor.id)
+            )
+        ).all()
+        assert edge_count == []
+        view_states = db_session.execute(
+            select(ResourceViewState).where(
+                ResourceViewState.target_scheme == "passage_anchor",
+                ResourceViewState.target_id == anchor.id,
+            )
+        ).all()
+        assert view_states == []
+
+    def test_viewer_scoped_deletion_spares_other_users_anchors(
+        self, db_session: Session, bootstrapped_user
+    ):
+        other_user = uuid4()
+        ensure_user_and_default_library(db_session, other_user)
+        media_id = create_test_media(db_session)
+        create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        mine = _materialize(db_session, bootstrapped_user, media_id, exact="kilo lima mike")
+        theirs = _materialize(db_session, other_user, media_id, exact="kilo lima mike")
+
+        passage_anchors.delete_for_owner(
+            db_session, owner_scheme="media", owner_id=media_id, user_id=bootstrapped_user
+        )
+        db_session.flush()
+
+        assert db_session.get(PassageAnchor, mine.id) is None
+        assert db_session.get(PassageAnchor, theirs.id) is not None
+
+    def test_note_block_removal_deletes_owned_anchors(self, db_session: Session, bootstrapped_user):
+        from nexus.services import notes
+
+        note = NoteBlock(
+            id=uuid4(),
+            user_id=bootstrapped_user,
+            body_pm_json={"type": "doc"},
+            body_text="A note about the meaning of anchors and durable identity.",
+        )
+        db_session.add(note)
+        db_session.flush()
+        anchor = _materialize(
+            db_session,
+            bootstrapped_user,
+            note.id,
+            owner_scheme="note_block",
+            exact="meaning of anchors",
+        )
+
+        notes.remove_note_block(db_session, bootstrapped_user, note.id)
+
+        assert db_session.get(PassageAnchor, anchor.id) is None
+        assert db_session.get(NoteBlock, note.id) is None
+
+    def test_highlight_note_deletion_deletes_owned_anchors(
+        self, db_session: Session, bootstrapped_user
+    ):
+        """The second note-deletion seam, ``notes.delete_highlight_note``, also
+        removes note-owned passage anchors; the highlight itself survives."""
+        from nexus.services import notes
+
+        media_id = create_test_media(db_session)
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        add_media_to_library(db_session, library_id, media_id)
+        fragment_id = create_test_fragment(db_session, media_id, content=FIXTURE_TEXT)
+        highlight_id = create_test_highlight(
+            db_session, bootstrapped_user, fragment_id, exact="kilo lima mike"
+        )
+        note = NoteBlock(
+            id=uuid4(),
+            user_id=bootstrapped_user,
+            body_pm_json={"type": "doc"},
+            body_text="A margin note quoting the durable passage identity.",
+        )
+        db_session.add(note)
+        db_session.flush()
+        db_session.add(
+            ResourceEdge(
+                user_id=bootstrapped_user,
+                kind="context",
+                origin="highlight_note",
+                source_scheme="highlight",
+                source_id=highlight_id,
+                target_scheme="note_block",
+                target_id=note.id,
+            )
+        )
+        db_session.flush()
+        anchor = _materialize(
+            db_session,
+            bootstrapped_user,
+            note.id,
+            owner_scheme="note_block",
+            exact="durable passage identity",
+        )
+
+        notes.delete_highlight_note(
+            db_session,
+            bootstrapped_user,
+            highlight_id=highlight_id,
+            note_block_id=None,
+            client_mutation_id=f"cm-{uuid4()}",
+        )
+
+        assert db_session.get(PassageAnchor, anchor.id) is None
+        assert db_session.get(NoteBlock, note.id) is None
+        surviving_highlights = db_session.execute(
+            select(func.count()).select_from(Highlight).where(Highlight.id == highlight_id)
+        ).scalar_one()
+        assert surviving_highlights == 1, "the highlight survives its note's deletion"

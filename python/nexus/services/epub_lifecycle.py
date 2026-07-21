@@ -12,8 +12,6 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
     FragmentBlock,
-    Highlight,
-    HighlightFragmentAnchor,
     Media,
     ProcessingStatus,
 )
@@ -136,17 +134,15 @@ def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     )
 
     if fragment_ids:
-        db.execute(
-            delete(Highlight).where(
-                Highlight.id.in_(
-                    select(HighlightFragmentAnchor.highlight_id).where(
-                        HighlightFragmentAnchor.fragment_id.in_(fragment_ids)
-                    )
-                )
-            )
-        )
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
+    # Highlights are authored user data and are NOT deleted here: refresh
+    # publishes new fragments, then authored selectors (Highlights, passage
+    # anchors) resolve against the new current content (spec "Highlight
+    # Durability", Invariant 9). Fragment deletion only invalidates the
+    # highlight_fragment_anchors locator cache (fragment_id FK is non-cascading,
+    # non-owning); the Highlight root survives and is resolved via LEFT JOIN
+    # + quote re-resolution.
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
     db.flush()
     return list(storage_paths)

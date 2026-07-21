@@ -10731,9 +10731,14 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                     )
                 ).fetchall()
             }
+            # 0184 dropped the broad uq_resource_edges_context_pair in favor of
+            # the three shape-owned partial unique indexes.
+            assert "uq_resource_edges_context_pair" not in indexes
             assert {
                 "uq_resource_edges_citation_ordinal",
-                "uq_resource_edges_context_pair",
+                "uq_resource_edges_user_context_link_pair",
+                "uq_resource_edges_user_stance_directed_pair",
+                "uq_resource_edges_nonuser_orderless_pair",
                 "uq_resource_edges_source_order",
                 "ix_resource_edges_user_source",
                 "ix_resource_edges_user_target",
@@ -10805,7 +10810,9 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 )
                 session.flush()
             session.rollback()
-        assert "uq_resource_edges_context_pair" in str(exc_info.value)
+        # 0184: the duplicate user/context pair is caught by the shape-owned
+        # partial unique index that replaced uq_resource_edges_context_pair.
+        assert "uq_resource_edges_user_context_link_pair" in str(exc_info.value)
 
     def test_ordered_adjacency_order_is_unique_per_source_at_head(self, head_engine):
         with Session(head_engine) as session:
