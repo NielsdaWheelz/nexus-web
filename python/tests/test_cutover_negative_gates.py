@@ -150,9 +150,14 @@ def test_user_graph_tag_modules_absent():
 
 def test_user_graph_tag_registry_literals_absent():
     cases = [
+        # apps/web/src/lib/objectRefs.ts (the fourth original registry) is
+        # deleted outright by the universal-link-authoring cutover (its
+        # ObjectRef search/resolve surface is gone; see
+        # test_object_ref_search_resolve_surface_absent below) — a deleted
+        # file trivially carries no tag literal, so it is dropped from this
+        # list rather than read from a path that no longer exists.
         "python/nexus/services/resource_graph/refs.py",
         "apps/web/src/lib/resourceGraph/resourceRef.ts",
-        "apps/web/src/lib/objectRefs.ts",
         "apps/web/src/lib/resources/resourceKind.ts",
     ]
     hits: list[_Hit] = []
@@ -1498,22 +1503,6 @@ def test_notes_pages_object_graph_old_note_structure_absent_in_production():
     )
 
 
-def test_public_resource_graph_edge_create_does_not_accept_order_keys():
-    # Ordered adjacency is written by the resource adjacency service, not by the
-    # generic public edge API/client.
-    schema_src = (_PY_ROOT / "schemas" / "resource_graph.py").read_text(encoding="utf-8")
-    request_block = schema_src.split("class CreateEdgeRequest", 1)[1].split("\n\nclass ", 1)[0]
-    assert "source_order_key" not in request_block
-    assert "target_order_key" not in request_block
-
-    client_src = (_WEB_ROOT / "lib" / "resourceGraph" / "edges.ts").read_text(encoding="utf-8")
-    create_block = client_src.split("export async function createUserEdge", 1)[1].split(
-        "export async function deleteUserEdge", 1
-    )[0]
-    assert "source_order_key" not in create_block
-    assert "target_order_key" not in create_block
-
-
 # =============================================================================
 # Incoming reader connections cutover — one graph read model + one sidecar layout
 # =============================================================================
@@ -1531,6 +1520,12 @@ def test_incoming_connections_legacy_read_surfaces_absent_in_production():
 
 
 def test_incoming_connections_old_routes_and_note_component_absent():
+    # The generic edges BFF route this test's last clause used to read
+    # (`apps/web/src/app/api/resource-graph/edges/route.ts`) is itself deleted
+    # by the universal-link-authoring cutover (spec, Mutation APIs > Stance:
+    # "POST/DELETE /resource-graph/edges ... are deleted") — its narrower
+    # "no GET verb" concern is subsumed by the file's outright absence, which
+    # test_universal_link_authoring_deleted_files_absent below asserts.
     rel_paths = [
         "apps/web/src/components/notes/NoteBacklinks.tsx",
         "apps/web/src/components/notes/NoteBacklinks.module.css",
@@ -1541,11 +1536,6 @@ def test_incoming_connections_old_routes_and_note_component_absent():
     ]
     present = [path for path in rel_paths if (_REPO_ROOT / path).exists()]
     assert not present, f"old object/backlink routes or components exist: {present}"
-
-    edge_route = (_WEB_ROOT / "app" / "api" / "resource-graph" / "edges" / "route.ts").read_text(
-        encoding="utf-8"
-    )
-    assert "export async function GET" not in edge_route
 
 
 def test_reader_sidecar_alignment_owned_by_shared_surface():
@@ -2485,3 +2475,277 @@ def test_default_library_virtualization_ac16_extirpation_gate():
     hits = _excluding(hits, "test_migrations.py", "test_cutover_negative_gates.py")
     hits = [hit for hit in hits if not _ac16_allowed_residual_test_line(hit)]
     assert not hits, f"AC16-dead symbol survives extirpation:\n{_fmt(hits)}"
+
+
+# #############################################################################
+# Universal Link Authoring hard cutover
+# (docs/cutovers/universal-link-authoring-hard-cutover.md, AC23/AC25)
+#
+# Same grep idiom as every section above: python/nexus + apps/web/src only —
+# migrations/ (repo-root) and python/tests/ sit outside the scanned roots, so
+# only frontend *.test.{ts,tsx} files need excluding. AC23 gates are ABSENCE
+# (a deleted picker/search-lane/writer/mapper/allowlist survives); AC25 gates
+# are PRESENCE (a new retry constraint, error code, or scheme-CHECK is
+# registered) plus a self-check that the deep scheme/capability/search parity
+# tests still exist (their own bodies do the parity work; see
+# resourceGraph/contractParity.test.ts and search/contractParity.test.ts).
+# #############################################################################
+
+
+# =============================================================================
+# AC23 — deleted files stay deleted
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        # Cite picker/composer (spec Consolidation And Deletion).
+        "apps/web/src/components/reader/CitePicker.tsx",
+        "apps/web/src/components/reader/CitePicker.module.css",
+        "apps/web/src/components/reader/CitePicker.test.tsx",
+        "apps/web/src/lib/reader/useCiteComposer.ts",
+        # ObjectRef search/resolve/autocomplete surface.
+        "apps/web/src/components/notes/ObjectRefAutocomplete.tsx",
+        "apps/web/src/components/notes/ObjectRefAutocomplete.module.css",
+        "apps/web/src/lib/objectRefs.ts",
+        "apps/web/src/lib/objectRefs.test.ts",
+        "apps/web/src/app/api/object-refs/resolve/route.ts",
+        "apps/web/src/app/api/object-refs/search/route.ts",
+        "python/nexus/api/routes/object_refs.py",
+        "python/nexus/services/object_refs.py",
+        "python/tests/test_object_refs_routes.py",
+        # Generic public edge writer.
+        "apps/web/src/lib/resourceGraph/edges.ts",
+        "apps/web/src/lib/resourceGraph/edges.test.ts",
+        "apps/web/src/app/api/resource-graph/edges/route.ts",
+        "apps/web/src/app/api/resource-graph/edges/[edgeId]/route.ts",
+    ],
+)
+def test_universal_link_authoring_deleted_files_absent(rel_path: str):
+    assert not (_REPO_ROOT / rel_path).exists(), (
+        f"{rel_path} must be deleted (universal-link-authoring hard cutover)"
+    )
+
+
+def test_cite_picker_and_object_ref_autocomplete_not_imported():
+    # File non-existence above proves the components themselves are gone;
+    # this proves no straggler import/JSX-usage/hook-call survives elsewhere
+    # either. Matched by import/usage FORM (an import specifier, a JSX tag
+    # open, a hook call), not the bare identifier — a design-note comment
+    # comparing a new component to the old CitePicker by name (legitimate
+    # historical-lineage prose, same spirit as this file's own "the old
+    # /resource-graph/edges route" style landmine notes) is not what this
+    # gate polices; a live reference is.
+    pattern = (
+        r'from\s+["\'][^"\']*\bCitePicker["\']|<CitePicker\b|'
+        r'\buseCiteComposer\(|from\s+["\'][^"\']*useCiteComposer["\']|'
+        r'from\s+["\'][^"\']*ObjectRefAutocomplete["\']|<ObjectRefAutocomplete\b'
+    )
+    hits = _filtered(pattern, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, (
+        f"a deleted Cite/ObjectRefAutocomplete surface is still imported/used:\n{_fmt(hits)}"
+    )
+
+
+def test_object_ref_search_resolve_surface_absent():
+    pattern = (
+        r"\bsearchObjectRefs\(|\bresolveObjectRefs\(|"
+        r"/object-refs/search|/object-refs/resolve|"
+        r'from\s+["\'][^"\']*\blib/objectRefs["\']'
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"ObjectRef search/resolve surface still referenced:\n{_fmt(hits)}"
+
+
+def test_public_generic_edge_writer_absent():
+    # POST/DELETE /resource-graph/edges and the frontend createUserEdge/
+    # deleteUserEdge client are deleted; resource_graph.edges/create_edge
+    # remains only as the internal low-level writer (spec, Mutation APIs >
+    # Stance: "resource_graph.edges remains the internal low-level writer").
+    # The unused request schema behind the deleted route must go too — a dead
+    # DTO whose docstring names a route that no longer exists is exactly the
+    # residue this gate exists to catch.
+    pattern = (
+        r"\bcreateUserEdge\(|\bdeleteUserEdge\(|"
+        r'from\s+["\'][^"\']*resourceGraph/edges["\']|'
+        r"/resource-graph/edges\b"
+    )
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"public generic edge writer still referenced:\n{_fmt(hits)}"
+
+    schema_src = (_PY_ROOT / "schemas" / "resource_graph.py").read_text(encoding="utf-8")
+    assert "class CreateEdgeRequest" not in schema_src, (
+        "CreateEdgeRequest is dead: the POST /resource-graph/edges route it "
+        "served is deleted; delete the unused request schema too"
+    )
+
+
+def test_client_target_result_to_resource_ref_mapper_absent():
+    # citableRefForRow inferred a ResourceRef from a search result's `type`
+    # field client-side (Consolidation And Deletion: "frontend
+    # citableRefForRow inference"). Target search rule 9 / AC9 replaces it —
+    # the backend resolves and returns the ref; the client never derives one
+    # (see resourceTargets.ts's own "never maps a search-result type to a
+    # ResourceRef" docstring).
+    hits = _filtered(r"\bcitableRefForRow\b", _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"client-side search-result-to-ResourceRef mapper survives:\n{_fmt(hits)}"
+
+
+def test_refresh_lifecycles_do_not_delete_highlights():
+    # Invariant 9 / "Highlight Durability": web/EPUB/transcript-current and
+    # podcast-transcription refresh must never delete a Highlight row; only
+    # explicit owner cleanup (media/note deletion) does.
+    refresh_files = (
+        _PY_ROOT / "services" / "web_article_artifacts.py",
+        _PY_ROOT / "services" / "epub_lifecycle.py",
+        _PY_ROOT / "services" / "transcripts" / "current.py",
+        _PY_ROOT / "services" / "podcasts" / "transcription.py",
+    )
+    pattern = r"\bdelete_highlight\(|\bdelete_highlight_rows\(|DELETE\s+FROM\s+highlights\b"
+    hits = _grep(pattern, *refresh_files)
+    assert not hits, f"refresh-time Highlight deletion survives:\n{_fmt(hits)}"
+
+
+def test_consumer_scheme_allowlist_alias_absent():
+    # Capability Contract: "Replace ambiguous `linkable` with an explicit
+    # graph sub-policy; do not keep an alias." (No per-consumer hand-rolled
+    # linkable-scheme registry may survive outside the one capability owner
+    # either — test_local_resource_capability_lists_absent_outside_capability_owner
+    # above already polices the *_RESOURCE_SCHEMES registries by name; this
+    # closes the narrower alias-name gap this cutover specifically forbids.)
+    hits = _filtered(
+        r"\bresourceSchemeIsLinkable\b|\.linkable\b",
+        _PY_ROOT,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"dropped 'linkable' alias survives on a consumer:\n{_fmt(hits)}"
+
+
+# =============================================================================
+# AC25 — new retry constraints, error codes, and scheme CHECKs are registered
+# =============================================================================
+
+
+def test_retryable_unique_constraints_include_universal_link_authoring_shapes():
+    from nexus.db.retries import RETRYABLE_UNIQUE_CONSTRAINTS
+
+    for name in (
+        "uq_passage_anchors_identity",
+        "uq_resource_edges_user_context_link_pair",
+        "uq_resource_edges_user_stance_directed_pair",
+        "highlights_pkey",
+    ):
+        assert name in RETRYABLE_UNIQUE_CONSTRAINTS, (
+            f"{name} missing from RETRYABLE_UNIQUE_CONSTRAINTS"
+        )
+
+
+def test_link_error_codes_registered():
+    from nexus.errors import ERROR_CODE_TO_STATUS, ApiErrorCode
+
+    expected_status = {
+        "E_LINK_SELF": 422,
+        "E_LINK_CAPABILITY": 422,
+        "E_LINK_TARGET_AMBIGUOUS": 422,
+        "E_LINK_TARGET_STALE": 409,
+    }
+    for name, status in expected_status.items():
+        code = getattr(ApiErrorCode, name, None)
+        assert code is not None, f"errors.py is missing {name}"
+        assert ERROR_CODE_TO_STATUS[code] == status, f"{name} is not mapped to HTTP {status}"
+
+
+# The closed contracts passage_anchor's scheme must be admitted into: two
+# resource_edges direction CHECKs, one resource_versions CHECK, two
+# resource_view_states CHECKs, and both chat_run_turn_contexts CHECKs
+# (passage_anchor IS a chat subject, capability chat_subject="quote" — S1
+# outcome, PLAN.md). Seven total, across 4 tables.
+_PASSAGE_ANCHOR_ADMITTING_CHECKS: tuple[str, ...] = (
+    "ck_resource_edges_source_scheme",
+    "ck_resource_edges_target_scheme",
+    "ck_resource_versions_resource_scheme",
+    "ck_resource_view_states_surface_scheme",
+    "ck_resource_view_states_target_scheme",
+    "ck_chat_run_turn_contexts_requested_subject_scheme",
+    "ck_chat_run_turn_contexts_subject_scheme",
+)
+
+# passage_anchor is deliberately NOT a search scope (S1 outcome, PLAN.md): it
+# is unreachable through message_retrievals/synapse_suppressions by design, so
+# these CHECKs must stay excluded rather than widen alongside the ones above.
+_PASSAGE_ANCHOR_EXCLUDED_CHECKS: tuple[str, ...] = (
+    "ck_message_retrievals_result_type",
+    "ck_synapse_suppressions_source_scheme",
+    "ck_synapse_suppressions_target_scheme",
+)
+
+_BARE_PASSAGE_ANCHOR = re.compile(r"(?<!oracle_)\bpassage_anchor\b")
+
+
+def _check_constraint_body(models_src: str, constraint_name: str) -> str:
+    idx = models_src.find(f'name="{constraint_name}"')
+    assert idx != -1, f"{constraint_name} CHECK constraint is missing from db/models.py"
+    start = models_src.rfind("CheckConstraint(", 0, idx)
+    assert start != -1, f"{constraint_name} is not inside a CheckConstraint(...) call"
+    return models_src[start:idx]
+
+
+def test_passage_anchor_registered_in_closed_scheme_contracts():
+    models_src = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    missing = [
+        name
+        for name in _PASSAGE_ANCHOR_ADMITTING_CHECKS
+        if not _BARE_PASSAGE_ANCHOR.search(_check_constraint_body(models_src, name))
+    ]
+    assert not missing, f"passage_anchor scheme missing from CHECK(s): {missing}"
+
+
+def test_passage_anchor_excluded_from_search_scope_scheme_checks():
+    models_src = (_PY_ROOT / "db" / "models.py").read_text(encoding="utf-8")
+    widened = [
+        name
+        for name in _PASSAGE_ANCHOR_EXCLUDED_CHECKS
+        if _BARE_PASSAGE_ANCHOR.search(_check_constraint_body(models_src, name))
+    ]
+    assert not widened, (
+        f"passage_anchor must stay excluded from these search-scope CHECK(s) "
+        f"(S1 outcome, PLAN.md): {widened}"
+    )
+
+
+def test_backend_edge_origins_sanctioned_list_ends_with_link_note():
+    # Mirrors secondApparatus.guards.test.ts's frontend EDGE_ORIGINS gate on
+    # the backend single source (EdgeOrigin Literal, get_args-derived
+    # EDGE_ORIGINS — test_edge_vocab_is_single_sourced proves the single
+    # sourcing elsewhere); this pins the exact sanctioned 9-value list so a
+    # stray tenth origin can't slip in unreviewed.
+    from nexus.services.resource_graph.schemas import EDGE_ORIGINS
+
+    assert EDGE_ORIGINS == (
+        "user",
+        "citation",
+        "system",
+        "note_body",
+        "highlight_note",
+        "synapse",
+        "document_embed",
+        "assistant",
+        "link_note",
+    )
+
+
+def test_universal_link_authoring_contract_parity_tests_exist():
+    # Deep scheme/backend-frontend capability parity (including the
+    # resourceCapabilities.generated.ts nested user-relation policy) and
+    # search result-taxonomy parity (including the `artifact` discriminant,
+    # AC13) are each proven by their own dedicated test file's body; this
+    # gate only ensures neither disappears out from under the contract.
+    for rel_path in (
+        "apps/web/src/lib/resourceGraph/contractParity.test.ts",
+        "apps/web/src/lib/search/contractParity.test.ts",
+    ):
+        assert (_REPO_ROOT / rel_path).exists(), (
+            f"{rel_path} must exist (scheme/capability/search parity, AC13/AC25)"
+        )

@@ -350,9 +350,19 @@ The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
 `object_search` substrate.
 
-**Highlights** — `highlights` (base row + the exact/prefix/suffix triple),
-`highlight_fragment_anchors` (codepoint ranges), `highlight_pdf_anchors` +
-`highlight_pdf_quads` (page-space geometry).
+**Highlights & passage anchors** — `highlights` (base row + the
+exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
+`fragment_id` is a disposable locator cache, not an FK — a missing fragment is
+detected by LEFT JOIN and re-resolved by quote, never cascade-deleted),
+`highlight_pdf_anchors` + `highlight_pdf_quads` (page-space geometry), and
+`passage_anchors` (durable user-owned identity for a derived/passage
+endpoint — owner `media`/`note_block`, an immutable normalized-quote
+`anchor_key`, and a replaceable `locator_hint`; it is the sole durable form a
+passage candidate takes once linked, never a persisted `evidence_span`/
+`content_chunk`/`fragment`/`reader_apparatus_item`/`oracle_passage_anchor`
+row). None of the highlight-family FKs cascade; ordinary deletion is explicit
+child-first cleanup, and reindex/refresh never delete Highlights or passage
+anchors — unresolved locators stay visible rather than disappearing.
 
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
 `library_invitations`, and the current **library-intelligence** head/revision
@@ -373,14 +383,26 @@ Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 
 **Resource graph** — `resource_edges` (the single directed connection table:
-stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
-`highlight_note`, `synapse`), polymorphic `scheme`+`id`
+`kind` (`context`, `supports`, `contradicts`), writer `origin` (`user`,
+`citation`, `system`, `note_body`, `highlight_note`, `synapse`,
+`document_embed`, `assistant`, `link_note`), polymorphic `scheme`+`id`
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
 `ordinal`+`snapshot`, and synapse rationale snapshots),
 `resource_external_snapshots` (stable targets for public web-search citations),
 and `oracle_reading_folios` (oracle-owned generated folio content referencing its
 citation edge). This subgraph is the single durable positive connection
-contract.
+contract. **Link** is the one durable relationship-authoring primitive:
+exactly one neutral `origin='user', kind='context'` edge exists per user and
+canonical unordered endpoint pair (`min(A,B) → max(A,B)`, ordered by
+`(scheme, id)`); repeated or reverse creation returns the existing Link rather
+than raising or duplicating. A directional user **stance**
+(`supports`/`contradicts`) may coexist on the same pair — at most one per
+user/unordered pair, its stored direction carrying meaning — and ordered
+adjacency (page/note occurrence order) is a third, never-canonicalized shape;
+all three may coexist on the same endpoints. An optional **Link note** is one
+ordinary note attached through two structural `link_note` edges (one per
+endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
+field — the attachment edges themselves never render as separate rows.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
@@ -603,13 +625,26 @@ Other identity surfaces:
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-three surfaces: the in-app search page, the chat `app_search` agent tool (RAG), and
-object-ref resolution for notes. The request is a single typed `SearchQuery` value
-object parsed at the edge; the user-facing taxonomy is **six kinds** (Documents,
-Notes, Highlights, Conversations, People, Web) folding the internal result types,
-with operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
+two public surfaces: the in-app search page and the chat `app_search` agent tool
+(RAG). The request is a single typed `SearchQuery` value object parsed at the
+edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
+Conversations, People, Web) folding the internal result types, with
+operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
 `embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+Ranking/retrieval is extracted below that public projection into one internal
+pre-projection candidate seam (`search/candidates.py`); **resource target
+search** (`services/resource_items/targets.py`, `POST
+/resource-items/targets/search`) is a second projection over the same
+candidate engine, not a second search engine, and never introduces a new
+public `SearchKind` or `GET /search` result type. Its `purpose=link` profile
+is the full hybrid retrieval and may surface passage candidates (`kind:
+"passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
+one-character-capable lexical fast path (exact/prefix/substring/FTS,
+including note-body substrings) restricted to direct targets, and never calls
+`build_query_embedding`. Both profiles apply target capability, visibility,
+canonical dedupe, and exclusions before per-source caps, and refill a sparse
+filtered page rather than under-filling it.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -633,8 +668,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
-  `library_intelligence_artifact`, `library_intelligence_revision`,
-  `reader_apparatus_item`, `external_snapshot`, `contributor`, `podcast`)
+  `artifact`, `artifact_revision`, `reader_apparatus_item`, `external_snapshot`,
+  `contributor`, `podcast`, `passage_anchor`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, a chat subject, and a read/inspect agent-tool
@@ -642,7 +677,20 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   strict (canonical lowercase uuid) and returns a typed failure, never `None`.
   Hydration + permission checks live in `services/resource_graph/resolve.py` —
   `load_resource_batch` is the one place each scheme's read SQL + visibility gate
-  exists.
+  exists, including a viewer-scoped `passage_anchor` branch under the same
+  masked-404 convention as every other scheme.
+- **User-Link/mention capability** (`services/resource_items/capabilities.py`):
+  one explicit `ResourceUserRelationPolicy(user_link_source: bool,
+  user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
+  former scalar `linkable` flag — `UserLinkTargetMode` is `"none" | "direct" |
+  "materialize_passage"`, so a scheme can admit a durable Link while
+  distinguishing a direct endpoint from one that must first materialize a
+  `passage_anchor`; a derived `note_reference_target` property is `True` only
+  for `"direct"`. `evidence_span`, `content_chunk`, `fragment`,
+  `reader_apparatus_item`, and `oracle_passage_anchor` are passage-candidate-only
+  (`materialize_passage`); `external_snapshot` is `"none"`; every other scheme
+  above is a direct source/target/reference. Backend policy and the
+  hand-maintained frontend projection are exhaustive and parity-tested.
 
 ### 7.7 Citations & the agent tool contract
 
@@ -1306,11 +1354,11 @@ attached-reference citation regression came from breaking this density.
 | The schema | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`) |
 | Background jobs / worker | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/` |
 | Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
-| Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
+| Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py` |
 | Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
 | Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py` |
-| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
-| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
+| Search / retrieval / indexing / Link target search | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/targets.py` |
+| Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`) |
 | Agent tools | `python/nexus/services/agent_tools/` |
 | Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py` |
 | Podcasts / playback | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py` |

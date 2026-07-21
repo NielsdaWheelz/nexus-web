@@ -59,6 +59,10 @@ apparatus. Not a new pane; the margin itself.
   The reader's largest annotation gap (nothing can point from document A to a
   passage in document B) dissolves into machinery that already exists:
   `resource_edges` + text-quote selectors + apparatus rendering.
+  Substantially realized by `universal-link-authoring-hard-cutover.md`
+  (IMPLEMENTED): the cross-document pointer shipped as the neutral **Link**
+  action, not a footnote, and a passage endpoint durably materializes as
+  `passage_anchor:<id>` rather than persisting a direct `evidence_span` edge.
 - **Take a Side lives here.** Dreams' conceding tick / doubting tilde gets its
   physical location: the margin, beside the passage, in your hand's register —
   machine glosses beside it in the Machine Hand.

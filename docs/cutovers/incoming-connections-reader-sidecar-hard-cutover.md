@@ -5,6 +5,17 @@ Author: design synthesis, 2026-06-12
 Type: hard cutover - one-user prototype, production-grade contracts, no legacy
 lanes, no compatibility shims, no fallback readers, no duplicate graph APIs.
 
+**Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
+this document already required verbless user-link copy (below, "For user
+links, show verbless connection metadata") — that requirement is
+authoritative and unchanged. Only its typed per-edge `incoming`/`outgoing`
+`ConnectionDirection`/`direction` result for a neutral user link is
+superseded: a neutral `origin='user', kind='context'` **Link** now returns a
+distinct `ConnectionResultDirection` value, `"undirected"`, decided once by
+`connections.py` and never inferred by a presenter from canonical storage
+direction. Citation, note-body, highlight-note, synapse, and every other
+origin keep their existing typed incoming/outgoing direction unchanged.
+
 ## 0. North Star
 
 Every durable "this thing points at that thing" fact in Nexus should be visible

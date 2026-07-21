@@ -72,9 +72,12 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   explicit in app code, not the database.
 - **One read tier (Tier-R).** Writes have one owner; visibility/search readers
   read the table under an explicit allowlist: `auth/permissions.py`,
-  `services/search.py`, `services/contributors.py`,
-  `services/agent_tools/app_search.py`, `services/object_refs.py`,
-  `services/note_indexing.py`, and `services/library_intelligence.py`.
+  `services/search/scope.py`, `services/contributors.py`,
+  `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
+  `services/library_intelligence.py`. `services/object_refs.py` is deleted;
+  its former note/@-mention reads are superseded by `services/resource_items/
+  targets.py` (target search) and the shared frontend target controller — see
+  [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).
   Visibility itself remains the boolean predicates in `auth/permissions.py`;
   `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
   rather than re-implementing the intersection.

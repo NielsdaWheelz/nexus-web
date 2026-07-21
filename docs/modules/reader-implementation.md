@@ -229,6 +229,22 @@ separate from source-authored apparatus.
   stay in the same list below anchored rows instead of inventing locator data.
 - Activating a row opens the source object; activating its target uses the
   target-owned reader locator. Edges never store reader locators.
+- **Link** (see
+  [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md))
+  is the reader's primary chain-link authoring verb: a fresh selection or an
+  existing Highlight opens one searchable target dialog whose results include
+  direct Resources, existing Highlights, and passage candidates; confirming a
+  result atomically creates/reuses the Highlight, the target's
+  `passage_anchor`, and one neutral `origin='user', kind='context'` Link. Media
+  rollup (`media_owned_reader_children`) includes viewer-owned `passage_anchor`
+  rows for the current media, so a Link into a search-derived passage of this
+  document surfaces here too. A cross-document Link anchors once in each
+  reader; a same-media Link between two local passages emits two rows, each
+  activating the opposite endpoint, with stable identity
+  `edge:{edge_id}:anchor:{local_ref}` independent of canonical storage
+  direction. Stable Link rows expose Remove and Add/Edit/Remove Link-note
+  controls; already-linked targets rank normally and show a textual **Linked**
+  state instead of a color-only cue.
 
 ### reader settings
 

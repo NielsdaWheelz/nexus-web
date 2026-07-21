@@ -1,7 +1,7 @@
 """Wire schemas for the resource provenance graph API (spec §10).
 
 Refs travel as ``<scheme>:<uuid>`` URI strings on the wire; routes parse them
-into typed ``ResourceRef`` values at the boundary. ``EdgeOut`` carries live
+into typed ``ResourceRef`` values at the boundary. ``ConnectionOut`` carries live
 endpoint display (label + missing) so connections lists render without a
 second round trip; ``POST /resource-graph/resolve`` covers every other UI
 hydration need.
@@ -32,14 +32,6 @@ EDGE_ORIGIN_VALUES: tuple[str, ...] = get_args(EdgeOrigin)
 
 class ResourceGraphModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class CreateEdgeRequest(ResourceGraphModel):
-    """Body for POST /resource-graph/edges (user links + user stance edges)."""
-
-    source_ref: str
-    target_ref: str
-    kind: EdgeKind = "context"
 
 
 class AddContextRefRequest(ResourceGraphModel):
@@ -82,30 +74,6 @@ class ConnectionSummaryRequest(ResourceGraphModel):
 
     refs: list[str] = Field(min_length=1, max_length=200)
     origins: list[EdgeOrigin] | None = None
-
-
-class EdgeOut(ResourceGraphModel):
-    """One ``resource_edges`` row plus live endpoint display.
-
-    ``snapshot`` is the stored citation display payload
-    (title/excerpt/section_label/deep_link/result_type); ``*_label``/
-    ``*_missing`` are live resolver hydration for connections rendering.
-    """
-
-    id: UUID
-    kind: EdgeKind
-    origin: EdgeOrigin
-    source_ref: str
-    target_ref: str
-    source_order_key: str | None = None
-    target_order_key: str | None = None
-    ordinal: int | None = None
-    snapshot: dict[str, Any] | None = None
-    source_label: str
-    source_missing: bool
-    target_label: str
-    target_missing: bool
-    created_at: datetime
 
 
 class ConnectionEndpointOut(ResourceGraphModel):

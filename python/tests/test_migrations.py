@@ -19781,6 +19781,224 @@ class TestMigration0184UniversalLinkAuthoring:
                         ("note_block", note_id),
                     )
                 assert "uq_resource_edges_user_context_link_pair" in str(exc_info.value)
+            with Session(engine) as session:
+                # AC4/AC21: the ordered-adjacency uniqueness index the swap
+                # RETAINS still rejects a duplicate ordered occurrence (same
+                # source + order key as the surviving e_ordered). Ordered
+                # adjacency was neither canonicalized, collapsed, nor weakened.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("note_block", note_id),
+                        ("media", media_2),
+                        source_order_key="a0",
+                    )
+                assert "uq_resource_edges_source_order" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0184_phase4_convergence_self_edge_and_stance_collapse(self):
+        """Phase 4's two convergence branches the primary fixture never reaches.
+
+        (a) An edge whose BOTH derived endpoints materialize onto the same
+        passage anchor becomes a self-edge: phase 4 dead-marks it (never
+        rewrites it) and its edge-bound view state is deleted with it.
+
+        (b) Two live directed stance edges whose distinct derived endpoints
+        canonicalize to the SAME anchor mint an exact duplicate that phase 4
+        itself collapses (NOT phase-5 Link canonicalization) to the earliest
+        (created_at, id) winner, before the stance uniqueness index is created;
+        the loser's view state rebinds to the winner and its derived ref is
+        remapped onto the anchor.
+        """
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_1 = uuid4()
+            media_stance = uuid4()
+            block_1 = uuid4()
+            # media_1 has NO fragments, so every span quote below resolves to
+            # no_match and its anchor is durable-but-unresolved. Spans that share
+            # an owner and an (unresolved) quote converge onto one anchor.
+            span_self_a = uuid4()
+            span_self_b = uuid4()
+            span_stance_a = uuid4()
+            span_stance_b = uuid4()
+
+            e_self = uuid4()
+            e_stance_win = uuid4()
+            e_stance_lose = uuid4()
+            vs_self = uuid4()
+            vs_stance_lose = uuid4()
+
+            t0 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
+            t1 = datetime(2026, 7, 1, 11, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_1, user_id)
+                self._insert_media(session, media_stance, user_id)
+                self._insert_content_block(session, block_1, media_1, self.TEXT)
+                self._insert_evidence_span(
+                    session, span_self_a, media_1, block_1, "zzz self edge quote"
+                )
+                self._insert_evidence_span(
+                    session, span_self_b, media_1, block_1, "zzz self edge quote"
+                )
+                self._insert_evidence_span(
+                    session, span_stance_a, media_1, block_1, "zzz stance dup quote"
+                )
+                self._insert_evidence_span(
+                    session, span_stance_b, media_1, block_1, "zzz stance dup quote"
+                )
+
+                # (a) Both endpoints derived + convergent -> self-edge on rewrite.
+                self._insert_edge(
+                    session,
+                    e_self,
+                    user_id,
+                    ("evidence_span", span_self_a),
+                    ("evidence_span", span_self_b),
+                    created_at=t0,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_self,
+                    user_id,
+                    ("media", media_1),
+                    e_self,
+                    ("evidence_span", span_self_a),
+                )
+
+                # (b) Two directed stances with distinct derived targets that
+                # converge onto one anchor: the earliest (t0) wins, the later
+                # (t1) is collapsed by phase 4's dedupe.
+                self._insert_edge(
+                    session,
+                    e_stance_win,
+                    user_id,
+                    ("media", media_stance),
+                    ("evidence_span", span_stance_a),
+                    kind="supports",
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_stance_lose,
+                    user_id,
+                    ("media", media_stance),
+                    ("evidence_span", span_stance_b),
+                    kind="supports",
+                    created_at=t1,
+                )
+                # The loser's view state must rebind to the winner (its derived
+                # target remapped onto the shared anchor) before loser deletion.
+                self._insert_view_state(
+                    session,
+                    vs_stance_lose,
+                    user_id,
+                    ("media", media_stance),
+                    e_stance_lose,
+                    ("evidence_span", span_stance_b),
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            assert "self edge after materialization" in result.stdout
+            assert f"deleted dead edge {e_self}" in result.stdout
+            assert f"collapsed duplicate stance edge {e_stance_lose}" in result.stdout
+            assert str(e_stance_win) in result.stdout
+
+            with Session(engine) as session:
+                # Exactly two anchors: one per convergent quote identity, both
+                # durable-but-unresolved (no owner fragment text to resolve to).
+                anchor_rows = session.execute(
+                    text(
+                        "SELECT id, selector FROM passage_anchors"
+                        " WHERE user_id = :u ORDER BY created_at, id"
+                    ),
+                    {"u": user_id},
+                ).fetchall()
+                assert len(anchor_rows) == 2
+                anchor_by_exact = {row[1]["quote"]["exact"]: str(row[0]) for row in anchor_rows}
+                for row in anchor_rows:
+                    assert row[1]["quote"]["prefix"] == ""
+                    assert row[1]["quote"]["suffix"] == ""
+                    assert row[1]["locator_hint"] is None
+                anchor_stance = anchor_by_exact["zzz stance dup quote"]
+
+                # (a) The self-edge is gone; no self-loop survives anywhere, and
+                # its edge-bound view state was deleted with the dead edge.
+                assert self._edge_row(session, e_self) is None
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT id FROM resource_edges"
+                            " WHERE source_scheme = target_scheme AND source_id = target_id"
+                        )
+                    ).fetchall()
+                    == []
+                )
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"),
+                        {"id": vs_self},
+                    ).fetchone()
+                    is None
+                )
+
+                # (b) Exactly one stance survives — the earliest winner — now
+                # pointing at the shared anchor with its direction preserved.
+                assert self._edge_row(session, e_stance_lose) is None
+                row = self._edge_row(session, e_stance_win)
+                assert row is not None
+                assert (row[0], str(row[1])) == ("media", str(media_stance))
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_stance)
+                assert row[4] == "supports"
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT count(*) FROM resource_edges"
+                            " WHERE kind = 'supports' AND user_id = :u"
+                        ),
+                        {"u": user_id},
+                    ).scalar_one()
+                    == 1
+                )
+                # The loser's view state rebound onto the winner and its derived
+                # target was remapped onto the anchor.
+                vs_row = session.execute(
+                    text(
+                        "SELECT edge_id, target_scheme, target_id"
+                        " FROM resource_view_states WHERE id = :id"
+                    ),
+                    {"id": vs_stance_lose},
+                ).fetchone()
+                assert str(vs_row[0]) == str(e_stance_win)
+                assert (vs_row[1], str(vs_row[2])) == ("passage_anchor", anchor_stance)
+
+            # The stance uniqueness index phase 4 protects by collapsing is live:
+            # re-inserting the collapsed duplicate is now rejected.
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("media", media_stance),
+                        ("passage_anchor", UUID(anchor_stance)),
+                        kind="supports",
+                    )
+                assert "uq_resource_edges_user_stance_directed_pair" in str(exc_info.value)
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -19797,6 +20015,31 @@ class TestMigration0184UniversalLinkAuthoring:
             media_id = uuid4()
             fragment_empty = uuid4()
             edge_id = uuid4()
+            note_id = uuid4()
+            view_state_id = uuid4()
+
+            # The unconvertible ref is reached three ways so the abort must name
+            # all of them (spec step 2): a Link edge, a note object_ref chip
+            # (with its exact JSON path), and an edge-bound view state.
+            doc = {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "See "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "fragment",
+                                    "objectId": str(fragment_empty),
+                                    "label": "an empty span",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
 
             with Session(engine) as session:
                 self._insert_user(session, user_id)
@@ -19804,11 +20047,20 @@ class TestMigration0184UniversalLinkAuthoring:
                 # Live fragment with no durable quote identity: readable but
                 # unconvertible — the migration must abort, never guess.
                 self._insert_fragment(session, fragment_empty, media_id, "")
+                self._insert_note(session, note_id, user_id, doc, "See an empty span")
                 self._insert_edge(
                     session,
                     edge_id,
                     user_id,
                     ("media", media_id),
+                    ("fragment", fragment_empty),
+                )
+                self._insert_view_state(
+                    session,
+                    view_state_id,
+                    user_id,
+                    ("media", media_id),
+                    edge_id,
                     ("fragment", fragment_empty),
                 )
                 session.commit()
@@ -19825,8 +20077,13 @@ class TestMigration0184UniversalLinkAuthoring:
             assert result.returncode != 0, "0184 must abort on a live unconvertible ref"
             combined = (result.stdout or "") + (result.stderr or "")
             assert "unconvertible" in combined
+            # The abort names the raw ref, the referencing edge, the note chip
+            # with its exact JSON path, and the edge-bound view state (step 2).
             assert f"fragment:{fragment_empty}" in combined
             assert str(edge_id) in combined
+            assert str(note_id) in combined
+            assert "content[0].content[1]" in combined
+            assert str(view_state_id) in combined
 
             with Session(engine) as session:
                 version = session.execute(
