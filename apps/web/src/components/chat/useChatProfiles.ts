@@ -48,12 +48,22 @@ function loadChatProfiles(): Promise<LlmProfilesOut> {
     const requestEpoch = profilesCacheEpoch;
     profilesLoadPromise = apiFetch<{ data: LlmProfilesOut }>(
       "/api/llm-profiles",
-    ).then((response) => {
-      if (requestEpoch === profilesCacheEpoch) {
-        cachedProfiles = response.data;
-      }
-      return response.data;
-    });
+    )
+      .then((response) => {
+        if (requestEpoch === profilesCacheEpoch) {
+          cachedProfiles = response.data;
+        }
+        return response.data;
+      })
+      .catch((error: unknown) => {
+        // Drop the rejected promise so the next load retries instead of
+        // permanently returning this failure (which would disable SEND for the
+        // whole session on one transient blip).
+        if (requestEpoch === profilesCacheEpoch) {
+          profilesLoadPromise = null;
+        }
+        throw error;
+      });
   }
   return profilesLoadPromise;
 }

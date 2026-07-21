@@ -82,7 +82,11 @@ export default function AssistantMessage({
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
-  const showReconnectCard = Boolean(connectionLost) && !isTerminalFailure;
+  // The reconnect card is a client-only state for an IN-FLIGHT run whose stream
+  // dropped; any terminal status — including a rehydrated `complete` — replaces
+  // it (§10), so gate on non-terminal, not merely non-failure.
+  const isTerminal = isTerminalFailure || message.status === "complete";
+  const showReconnectCard = Boolean(connectionLost) && !isTerminal;
 
   const {
     answerRef,

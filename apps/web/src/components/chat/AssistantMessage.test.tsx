@@ -211,6 +211,28 @@ describe("AssistantMessage", () => {
     expect(onReconnectAssistant).toHaveBeenCalledWith("assistant-1");
   });
 
+  it("suppresses a stale Reconnect card once the run rehydrates to complete", () => {
+    // A terminal (complete) status replaces the client-only connection-lost card
+    // (§10): a lingering lostConnections entry must not render Reconnect beneath a
+    // finished answer.
+    const message: ConversationMessage = {
+      ...assistantMessage("The finished answer"),
+      status: "complete",
+    };
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        connectionLost
+        onReconnectAssistant={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("The finished answer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reconnect" })).toBeNull();
+  });
+
   it("captures assistant selection and branches from it", async () => {
     const user = userEvent.setup();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
