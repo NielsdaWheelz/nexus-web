@@ -353,65 +353,14 @@ def create_highlight_for_fragment(
         ApiError(E_HIGHLIGHT_INVALID_RANGE): If offsets out of bounds.
         ApiError(E_HIGHLIGHT_CONFLICT): If highlight already exists at this range.
     """
-    # 1. Get fragment with visibility check
-    fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
-
-    # 2. Require a readable document surface
-    _require_media_readable_for_highlight(db, fragment.media_id)
-
-    # Serialize duplicate-span checks on the fragment row before canonical
-    # anchor writes.
-    _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
-
-    # 3. Validate offsets
-    validate_offsets_or_400(fragment.canonical_text, req.start_offset, req.end_offset)
-
-    if _fragment_highlight_span_conflict_exists(
-        db,
-        viewer_id=viewer_id,
-        fragment_id=fragment_id,
-        start_offset=req.start_offset,
-        end_offset=req.end_offset,
-    ):
-        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
-
-    # 4. Derive exact/prefix/suffix
-    exact, prefix, suffix = derive_exact_prefix_suffix(
-        fragment.canonical_text, req.start_offset, req.end_offset
-    )
-
-    # 5. Create highlight row plus canonical fragment anchor
-    highlight = Highlight(
-        user_id=viewer_id,
-        anchor_kind="fragment_offsets",
-        anchor_media_id=fragment.media_id,
-        color=req.color,
-        exact=exact,
-        prefix=prefix,
-        suffix=suffix,
-    )
-
-    # 6. Persist with integrity error handling
     try:
-        db.add(highlight)
-        db.flush()
-
-        fragment_anchor = HighlightFragmentAnchor(
-            highlight_id=highlight.id,
+        highlight = _build_fragment_highlight(
+            db,
+            viewer_id=viewer_id,
             fragment_id=fragment_id,
             start_offset=req.start_offset,
             end_offset=req.end_offset,
-        )
-        db.add(fragment_anchor)
-        db.flush()
-
-        from nexus.services import synapse
-
-        synapse.queue_synapse_scan(
-            db,
-            user_id=viewer_id,
-            ref=ResourceRef(scheme="highlight", id=highlight.id),
-            reason="highlight_create",
+            color=req.color,
         )
         db.commit()
     except IntegrityError as e:
@@ -420,6 +369,142 @@ def create_highlight_for_fragment(
 
     db.refresh(highlight)
     return project_highlight(highlight, viewer_id)
+
+
+def create_fragment_highlight_in_txn(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    highlight_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    color: str,
+) -> Highlight:
+    """Create a fresh fragment Highlight with a client-stable id; flush-only.
+
+    Composes inside the Link service's caller-owned (retryable) transaction: it
+    never commits, and a first-insert race on ``highlights_pkey`` is left to the
+    caller's retry allowlist. Reusing the client-stable id for a *different*
+    selection is ``E_HIGHLIGHT_CONFLICT`` (§ Mutation APIs); reusing it for the
+    same selection returns the existing row so an in-flight retry converges.
+    """
+    existing = db.get(Highlight, highlight_id)
+    if existing is not None:
+        _assert_fragment_selection_matches(
+            db,
+            existing=existing,
+            viewer_id=viewer_id,
+            fragment_id=fragment_id,
+            start_offset=start_offset,
+            end_offset=end_offset,
+        )
+        return existing
+
+    return _build_fragment_highlight(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=start_offset,
+        end_offset=end_offset,
+        color=color,
+        highlight_id=highlight_id,
+    )
+
+
+def _build_fragment_highlight(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+    color: str,
+    highlight_id: UUID | None = None,
+) -> Highlight:
+    """Shared flush-only fragment-highlight construction (fragment lookup through
+    span-conflict check, quote derivation, Highlight + anchor rows, synapse enqueue).
+
+    The one pipeline behind both the committing route entry point
+    (``create_highlight_for_fragment``) and the Link service's caller-owned
+    ``create_fragment_highlight_in_txn``, so validation and anchor construction
+    can never drift between them. Flush-only: the caller owns commit/refresh (or
+    a wider transaction). ``highlight_id`` names a client-stable id when given;
+    otherwise the DB assigns one.
+    """
+    fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
+    _require_media_readable_for_highlight(db, fragment.media_id)
+    # Serialize duplicate-span checks on the fragment row before anchor writes.
+    _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
+    validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
+    if _fragment_highlight_span_conflict_exists(
+        db,
+        viewer_id=viewer_id,
+        fragment_id=fragment_id,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    ):
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
+
+    exact, prefix, suffix = derive_exact_prefix_suffix(
+        fragment.canonical_text, start_offset, end_offset
+    )
+    highlight = Highlight(
+        user_id=viewer_id,
+        anchor_kind="fragment_offsets",
+        anchor_media_id=fragment.media_id,
+        color=color,
+        exact=exact,
+        prefix=prefix,
+        suffix=suffix,
+    )
+    if highlight_id is not None:
+        highlight.id = highlight_id
+    db.add(highlight)
+    db.flush()
+    db.add(
+        HighlightFragmentAnchor(
+            highlight_id=highlight.id,
+            fragment_id=fragment_id,
+            start_offset=start_offset,
+            end_offset=end_offset,
+        )
+    )
+    db.flush()
+
+    from nexus.services import synapse
+
+    synapse.queue_synapse_scan(
+        db,
+        user_id=viewer_id,
+        ref=ResourceRef(scheme="highlight", id=highlight.id),
+        reason="highlight_create",
+    )
+    return highlight
+
+
+def _assert_fragment_selection_matches(
+    db: Session,
+    *,
+    existing: Highlight,
+    viewer_id: UUID,
+    fragment_id: UUID,
+    start_offset: int,
+    end_offset: int,
+) -> None:
+    """Guard a client-stable Highlight id against naming a different selection."""
+    anchor = db.get(HighlightFragmentAnchor, existing.id)
+    if (
+        existing.user_id != viewer_id
+        or existing.anchor_kind != "fragment_offsets"
+        or anchor is None
+        or anchor.fragment_id != fragment_id
+        or anchor.start_offset != start_offset
+        or anchor.end_offset != end_offset
+    ):
+        raise ApiError(
+            ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
+        )
 
 
 def list_highlights_for_fragment(

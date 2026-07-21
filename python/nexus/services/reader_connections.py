@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -16,12 +17,8 @@ from nexus.schemas.reader import (
     ReaderConnectionPageOut,
     ReaderConnectionRowOut,
 )
-from nexus.schemas.resource_graph import (
-    ConnectionCitationOut,
-    ConnectionEndpointOut,
-    ConnectionOut,
-    ConnectionReaderTargetOut,
-)
+from nexus.schemas.resource_graph import connection_out
+from nexus.services import passage_anchors, text_quote
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import reader_target_for_citation_target
@@ -31,7 +28,6 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
     EdgeOrigin,
-    snapshot_to_jsonb,
 )
 
 READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
@@ -69,8 +65,20 @@ def list_reader_connections(
             cursor=cursor,
         ),
     )
+    # One request-scoped memo of normalized owner sources: a page whose passage
+    # anchors share the media being read then reloads+renormalizes it once, not
+    # once per anchor.
+    sources_cache: text_quote.MediaSourceCache = {}
     rows = [
-        _row(db, viewer_id=viewer_id, media_id=media_id, connection=item) for item in page.items
+        row
+        for item in page.items
+        for row in _rows(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            connection=item,
+            sources_cache=sources_cache,
+        )
     ]
     anchored = sorted((row for row in rows if row.anchor is not None), key=_row_order_key)
     unanchored = [row for row in rows if row.anchor is None]
@@ -81,34 +89,102 @@ def list_reader_connections(
     )
 
 
-def _row(
-    db: Session, *, viewer_id: UUID, media_id: UUID, connection: Connection
-) -> ReaderConnectionRowOut:
-    anchor_ref = (
-        connection.target_ref if connection.direction == "incoming" else connection.source_ref
+def _rows(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    connection: Connection,
+    sources_cache: text_quote.MediaSourceCache,
+) -> list[ReaderConnectionRowOut]:
+    """One reader row per LOCAL endpoint of the edge.
+
+    An endpoint is local when it anchors into ``media_id``. A cross-document edge
+    has one local endpoint → one row; a same-media Link between two local
+    passages/highlights has two → two rows, each activating the opposite endpoint
+    with a distinct ``edge:{edge_id}:anchor:{local_ref}`` identity. Storage
+    direction is never read here — locality alone decides the split (Invariant 2).
+    When neither endpoint is local the edge still surfaces as one unanchored row.
+    """
+    source_anchor = _anchor_for_ref(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        ref=connection.source_ref,
+        sources_cache=sources_cache,
     )
-    source = connection.source if connection.direction == "incoming" else connection.target
-    anchor = _anchor_for_ref(db, viewer_id=viewer_id, media_id=media_id, ref=anchor_ref)
-    excerpt = source.description
+    target_anchor = _anchor_for_ref(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        ref=connection.target_ref,
+        sources_cache=sources_cache,
+    )
+    rows: list[ReaderConnectionRowOut] = []
+    if source_anchor is not None:
+        rows.append(
+            _build_row(
+                connection,
+                anchor_ref=connection.source_ref,
+                anchor=source_anchor,
+                other=connection.target,
+            )
+        )
+    if target_anchor is not None:
+        rows.append(
+            _build_row(
+                connection,
+                anchor_ref=connection.target_ref,
+                anchor=target_anchor,
+                other=connection.source,
+            )
+        )
+    if rows:
+        return rows
+    # Neither endpoint anchors locally: one unanchored row. ``connection.other``
+    # already names the far endpoint by locality (matched_incoming in the read
+    # model), never by canonical storage direction, so an undirected neutral Link
+    # surfaces its true peer rather than self-referencing the open document
+    # (Invariant 2, AC17).
+    other = connection.other
+    anchor_ref = (
+        connection.source_ref if other.ref == connection.target_ref else connection.target_ref
+    )
+    return [_build_row(connection, anchor_ref=anchor_ref, anchor=None, other=other)]
+
+
+def _build_row(
+    connection: Connection,
+    *,
+    anchor_ref: ResourceRef,
+    anchor: ReaderConnectionAnchorOut | None,
+    other: ConnectionEndpoint,
+) -> ReaderConnectionRowOut:
+    excerpt = other.description
     if connection.snapshot is not None and connection.snapshot.excerpt:
         excerpt = connection.snapshot.excerpt
     if connection.citation is not None and connection.citation.snapshot.excerpt:
         excerpt = connection.citation.snapshot.excerpt
     return ReaderConnectionRowOut(
         id=f"edge:{connection.edge_id}:anchor:{anchor_ref.uri}",
-        connection=_connection_out(connection),
+        connection=connection_out(replace(connection, other=other)),
         anchor=anchor,
         source_category=_source_category(connection),
-        title=source.label or source.ref.uri,
+        title=other.label or other.ref.uri,
         subtitle=f"{connection.origin} · {connection.kind}",
         excerpt=excerpt,
-        activation=source.activation,
-        href=source.href,
+        activation=other.activation,
+        href=other.href,
     )
 
 
 def _anchor_for_ref(
-    db: Session, *, viewer_id: UUID, media_id: UUID, ref: ResourceRef
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    ref: ResourceRef,
+    sources_cache: text_quote.MediaSourceCache,
 ) -> ReaderConnectionAnchorOut | None:
     if ref.scheme == "evidence_span":
         target_media_id, locator = reader_target_for_citation_target(
@@ -195,6 +271,81 @@ def _anchor_for_ref(
         return _highlight_anchor(
             db, viewer_id=viewer_id, media_id=media_id, highlight_id=ref.id, ref=ref.uri
         )
+    if ref.scheme == "passage_anchor":
+        return _passage_anchor_anchor(
+            db, viewer_id=viewer_id, media_id=media_id, ref=ref, sources_cache=sources_cache
+        )
+    return None
+
+
+def _passage_anchor_anchor(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    ref: ResourceRef,
+    sources_cache: text_quote.MediaSourceCache,
+) -> ReaderConnectionAnchorOut | None:
+    """Anchor a passage_anchor endpoint at its LIVE current locator.
+
+    Never persisted: ``passage_anchors.resolve_current_location`` re-resolves the
+    quote against current owner text on every read. Fail-closed — an anchor owned
+    by another media/viewer, or one that no longer resolves uniquely, returns
+    ``None`` so the row stays visible in the unanchored collection with no false
+    jump.
+    """
+    location = passage_anchors.resolve_current_location(
+        db, viewer_id=viewer_id, passage_anchor_id=ref.id, sources_cache=sources_cache
+    )
+    if location is None or location.owner_scheme != "media" or location.owner_id != media_id:
+        return None
+    if not location.resolved or location.locator is None:
+        return None
+    reader_locator = _reader_locator_from_passage(media_id, location.locator)
+    if reader_locator is None:
+        return None
+    return ReaderConnectionAnchorOut(
+        ref=ref.uri,
+        media_id=media_id,
+        locator=reader_locator,
+        page_number=_locator_page(reader_locator),
+        fragment_id=_locator_fragment(reader_locator),
+        passage_anchor_id=ref.id,
+        order_key=_locator_order_key(db, reader_locator),
+    )
+
+
+def _reader_locator_from_passage(media_id: UUID, locator: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a passage-anchor selector locator to a reader retrieval locator."""
+    kind = locator.get("kind")
+    if kind == "text":
+        fragment_id = locator.get("fragment_id")
+        if fragment_id is None:
+            return None
+        return {
+            "type": "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(fragment_id),
+            "start_offset": locator.get("start_offset"),
+            "end_offset": locator.get("end_offset"),
+        }
+    if kind == "pdf":
+        page_number = locator.get("page_number")
+        if page_number is None:
+            return None
+        return {
+            "type": "pdf_page_geometry",
+            "media_id": str(media_id),
+            "page_number": int(page_number),
+            "quads": locator.get("quads", []),
+        }
+    if kind == "time":
+        return {
+            "type": "transcript_time_range",
+            "media_id": str(media_id),
+            "t_start_ms": locator.get("t_start_ms"),
+            "t_end_ms": locator.get("t_end_ms"),
+        }
     return None
 
 
@@ -364,52 +515,3 @@ def _locator_order_key(db: Session, locator: dict[str, object]) -> str | None:
 def _decimal_key(value: object) -> str:
     numeric = value if isinstance(value, Decimal) else Decimal(0)
     return f"{numeric:012.4f}"
-
-
-def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
-    return ConnectionEndpointOut(
-        ref=endpoint.ref.uri,
-        scheme=endpoint.ref.scheme,
-        id=endpoint.ref.id,
-        label=endpoint.label,
-        description=endpoint.description,
-        activation=endpoint.activation,
-        href=endpoint.href,
-        missing=endpoint.missing,
-    )
-
-
-def _connection_out(item: Connection) -> ConnectionOut:
-    citation = None
-    if item.citation is not None:
-        target_reader = None
-        if item.citation.target_media_id is not None or item.citation.target_locator is not None:
-            target_reader = ConnectionReaderTargetOut(
-                media_id=item.citation.target_media_id,
-                locator=item.citation.target_locator,
-            )
-        citation = ConnectionCitationOut(
-            ordinal=item.citation.ordinal,
-            role=item.citation.role,
-            snapshot=snapshot_to_jsonb(item.citation.snapshot),
-            activation=item.citation.activation,
-            target_reader=target_reader,
-            target_status=item.citation.target_status,
-        )
-    return ConnectionOut(
-        edge_id=item.edge_id,
-        direction=item.direction,
-        kind=item.kind,
-        origin=item.origin,
-        snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
-        source_order_key=item.source_order_key,
-        target_order_key=item.target_order_key,
-        ordinal=item.ordinal,
-        source_ref=item.source_ref.uri,
-        target_ref=item.target_ref.uri,
-        source=_endpoint_out(item.source),
-        target=_endpoint_out(item.target),
-        other=_endpoint_out(item.other),
-        citation=citation,
-        created_at=item.created_at,
-    )

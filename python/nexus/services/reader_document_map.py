@@ -326,7 +326,7 @@ def get_reader_document_map(
         if row.connection.citation is not None and not row.anchor:
             target_status = _connection_target_status(row.connection.citation.target_status)
         item = ReaderDocumentMapConnectionItemOut(
-            id=f"connection:{row.connection.edge_id}",
+            id=row.id,
             lens_ids=["connections"],
             kind="connection",
             source_domain="generated_citation"
@@ -563,6 +563,7 @@ def _document_map_anchor(anchor: ReaderConnectionAnchorOut) -> ReaderDocumentMap
         fragment_id=anchor.fragment_id,
         highlight_id=anchor.highlight_id,
         evidence_span_id=anchor.evidence_span_id,
+        passage_anchor_id=anchor.passage_anchor_id,
         order_key=anchor.order_key,
         precision="exact",
     )
@@ -584,6 +585,7 @@ def _anchor_from_locator(
         fragment_id=_locator_fragment(locator),
         highlight_id=UUID(ref.removeprefix("highlight:")) if ref.startswith("highlight:") else None,
         evidence_span_id=None,
+        passage_anchor_id=None,
         order_key=_order_key_from_locator(locator, fragment_indexes),
         precision=precision,
     )

@@ -16,6 +16,7 @@ Flush-only: deletes run inside the caller's transaction.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -32,8 +33,14 @@ from nexus.db.models import (
 )
 from nexus.services.resource_graph.refs import ResourceRef
 
+_Pair = tuple[str, UUID]
+
 
 def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
+    # A dying endpoint takes its whole Link-note motif with it (both attachment
+    # halves, view states first); the sibling half targets a surviving endpoint,
+    # so Rule 2's touch-either-endpoint delete would otherwise leave it dangling.
+    _delete_link_note_motifs_for_targets(db, target_pairs=[(ref.scheme, ref.id)])
     bare_edge_ids = select(ResourceEdge.id).where(
         ResourceEdge.ordinal.is_(None),
         or_(_source_is(ref), _target_is(ref)),
@@ -73,6 +80,7 @@ def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRe
     pairs = [(ref.scheme, ref.id) for ref in refs]
     if not pairs:
         return
+    _delete_link_note_motifs_for_targets(db, target_pairs=pairs)
     source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(pairs)
     target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(pairs)
     bare_edge_ids = select(ResourceEdge.id).where(
@@ -171,6 +179,87 @@ def assert_no_dangling_bare_edges(db: Session, *, ref: ResourceRef) -> None:
         # justify-defect: a bare edge to a deleted resource means a deletion
         # path skipped graph cleanup — a code defect, not an input failure.
         raise AssertionError(f"dangling bare edge {dangling} still touches {ref.uri}")
+
+
+def clear_edge_view_state(db: Session, *, edge_id: UUID) -> None:
+    """Delete the ``resource_view_states`` referencing one edge before it is removed.
+
+    The single-edge form of the "view states before the edge" ordering used when
+    Remove Link / Delete stance drops a specific relation (§ Graph Shapes).
+    Flush-only: the caller deletes the edge through ``edges.delete_edge``.
+    """
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == edge_id))
+
+
+def detach_link_note_motif(db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef) -> None:
+    """Delete both attachment edges of the Link-note motif between ``a`` and ``b``.
+
+    The motif is the ``note_block`` carrying an ``origin='link_note'`` edge to
+    BOTH endpoints; its view states go before its edges. The authored note prose
+    is never touched — it survives as detached standalone prose. Remove Link and
+    Delete Link note (which additionally deletes the note) both call this
+    (§ Graph Shapes).
+    """
+    a_key = (a.scheme, a.id)
+    b_key = (b.scheme, b.id)
+    targets_by_note: dict[_Pair, set[_Pair]] = defaultdict(set)
+    for ss, si, ts, ti in db.execute(
+        select(
+            ResourceEdge.source_scheme,
+            ResourceEdge.source_id,
+            ResourceEdge.target_scheme,
+            ResourceEdge.target_id,
+        ).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "link_note",
+            or_(_target_is(a), _target_is(b)),
+        )
+    ).all():
+        targets_by_note[(ss, si)].add((ts, ti))
+    note_pairs = [
+        note_key
+        for note_key, targets in targets_by_note.items()
+        if a_key in targets and b_key in targets
+    ]
+    _delete_link_note_edges_from_notes(db, note_pairs=note_pairs)
+
+
+def _delete_link_note_motifs_for_targets(db: Session, *, target_pairs: list[_Pair]) -> None:
+    """Delete every Link-note motif that attaches to any of ``target_pairs``.
+
+    Resource-death is global (no viewer filter): the whole motif dies when any
+    one endpoint does, so both attachment halves are removed together.
+    """
+    if not target_pairs:
+        return
+    note_pairs = [
+        (scheme, note_id)
+        for scheme, note_id in db.execute(
+            select(ResourceEdge.source_scheme, ResourceEdge.source_id)
+            .where(
+                ResourceEdge.origin == "link_note",
+                tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(target_pairs),
+            )
+            .distinct()
+        ).all()
+    ]
+    _delete_link_note_edges_from_notes(db, note_pairs=note_pairs)
+
+
+def _delete_link_note_edges_from_notes(db: Session, *, note_pairs: list[_Pair]) -> None:
+    if not note_pairs:
+        return
+    motif_edge_ids = select(ResourceEdge.id).where(
+        ResourceEdge.origin == "link_note",
+        tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(note_pairs),
+    )
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(motif_edge_ids)))
+    db.execute(
+        delete(ResourceEdge).where(
+            ResourceEdge.origin == "link_note",
+            tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(note_pairs),
+        )
+    )
 
 
 def _source_is(ref: ResourceRef):

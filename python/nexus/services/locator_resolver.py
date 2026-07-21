@@ -50,6 +50,7 @@ def resolve_passage_selector(
     prefix: str = "",
     suffix: str = "",
     locator_hint: dict[str, Any] | None = None,
+    sources_cache: text_quote.MediaSourceCache | None = None,
 ) -> PassageSelectorResolution:
     """Resolve a normalized passage quote against its owner's CURRENT text.
 
@@ -57,7 +58,8 @@ def resolve_passage_selector(
     matched by the shared unique/ambiguous/no-match matchers; the replaceable
     ``locator_hint`` only contributes presentation geometry the text match
     cannot recompute (PDF quads, time range), and only when consistent with
-    the unique match. No status is persisted.
+    the unique match. No status is persisted. ``sources_cache`` memoizes the
+    owner-media fetch+normalize across quotes that share one owner.
     """
     if not exact:
         return PassageSelectorResolution(QuoteStatus.empty_exact, "", "", None)
@@ -75,7 +77,13 @@ def resolve_passage_selector(
             )
 
     match = text_quote.resolve_owner_quote(
-        db, owner_scheme=owner_scheme, owner_id=owner_id, exact=exact, prefix=prefix, suffix=suffix
+        db,
+        owner_scheme=owner_scheme,
+        owner_id=owner_id,
+        exact=exact,
+        prefix=prefix,
+        suffix=suffix,
+        sources_cache=sources_cache,
     )
     if match.status is not QuoteStatus.unique:
         return PassageSelectorResolution(match.status, "", "", None)

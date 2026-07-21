@@ -221,16 +221,34 @@ class NormalizedOwnerSource:
     normalized: NormalizedText
 
 
-def load_normalized_media_sources(db: Session, *, media_id: UUID) -> list[NormalizedOwnerSource]:
-    """Fetch and normalize a media's fragments once for repeated quote matching."""
+# Request-scoped memo of one media's normalized fragment sources, keyed by
+# media_id. A read that resolves many quotes against the same owner threads one
+# of these so the O(fragments) fetch+normalize happens once, not per quote.
+MediaSourceCache = dict[UUID, list["NormalizedOwnerSource"]]
+
+
+def load_normalized_media_sources(
+    db: Session, *, media_id: UUID, cache: MediaSourceCache | None = None
+) -> list[NormalizedOwnerSource]:
+    """Fetch and normalize a media's fragments once for repeated quote matching.
+
+    When ``cache`` is supplied the fetch+normalize is memoized by ``media_id``,
+    so a caller resolving many quotes against the same owner (e.g. a reader
+    connections page of same-media passage anchors) reloads the document once.
+    """
+    if cache is not None and media_id in cache:
+        return cache[media_id]
     rows = db.execute(
         select(Fragment.id, Fragment.canonical_text, Fragment.t_start_ms, Fragment.t_end_ms)
         .where(Fragment.media_id == media_id)
         .order_by(Fragment.idx)
     ).all()
-    return [
+    sources = [
         NormalizedOwnerSource(row[0], row[2], row[3], normalize_for_match(row[1])) for row in rows
     ]
+    if cache is not None:
+        cache[media_id] = sources
+    return sources
 
 
 def match_quote_in_sources(
@@ -285,13 +303,15 @@ def resolve_owner_quote(
     exact: str,
     prefix: str = "",
     suffix: str = "",
+    sources_cache: MediaSourceCache | None = None,
 ) -> OwnerQuoteMatch:
     """Resolve a normalized quote within one owner's current text.
 
     Owners are ``media`` (fragment canonical_text; web/EPUB/transcript) or
     ``note_block`` (body_text). Unique hits carry raw codepoint offsets into the
     matched text plus the recomputed 64-scalar normalized context. Visibility is
-    the caller's concern.
+    the caller's concern. ``sources_cache`` memoizes the media fetch+normalize
+    across quotes that share one owner.
     """
     if not exact:
         return OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
@@ -304,6 +324,6 @@ def resolve_owner_quote(
             return _NO_OWNER_MATCH
         sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
     else:
-        sources = load_normalized_media_sources(db, media_id=owner_id)
+        sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
 
     return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)

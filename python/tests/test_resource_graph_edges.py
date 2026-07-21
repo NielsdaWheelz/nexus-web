@@ -16,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, NoteBlock, ResourceEdge
-from nexus.errors import InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, InvalidRequestError, NotFoundError
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.note_indexing import rebuild_note_content_index
@@ -29,6 +29,7 @@ from nexus.services.resource_graph.citations import (
 from nexus.services.resource_graph.cleanup import (
     assert_no_dangling_bare_edges,
     delete_edges_for_deleted_resource,
+    detach_link_note_motif,
 )
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
@@ -509,20 +510,31 @@ def test_replace_citations_swaps_the_citation_set(db_session: Session, bootstrap
 # =============================================================================
 
 
-def test_create_edge_rejects_duplicate_directed_pair(db_session: Session, bootstrapped_user: UUID):
+def test_create_edge_returns_existing_neutral_link_idempotently(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """A duplicate neutral Link is successful idempotency, not another edge (§ Mutation APIs)."""
     source = _page_ref(db_session, bootstrapped_user)
     target = _media_ref(db_session, bootstrapped_user)
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
-    with pytest.raises(InvalidRequestError):
-        create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
+    first = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
+    again = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(source, target))
+    assert again.id == first.id, "the exact same Link row is returned, not a duplicate"
+    rows = db_session.scalar(
+        text("SELECT count(*) FROM resource_edges WHERE origin = 'user' AND kind = 'context'")
+    )
+    assert rows == 1
 
 
-def test_user_link_dedup_checks_both_directions(db_session: Session, bootstrapped_user: UUID):
+def test_user_link_reverse_creation_returns_existing_link(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """Reverse creation resolves to the existing canonical Link, either orientation."""
     a = _page_ref(db_session, bootstrapped_user)
     b = _media_ref(db_session, bootstrapped_user)
-    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b, origin="user"))
-    with pytest.raises(InvalidRequestError):
-        create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(b, a, origin="user"))
+    first = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b, origin="user"))
+    reverse = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(b, a, origin="user"))
+    assert reverse.id == first.id
+    assert reverse.source == a and reverse.target == b, "the stored orientation is preserved"
 
 
 def test_machine_origin_dedup_is_directed_only(db_session: Session, bootstrapped_user: UUID):
@@ -812,6 +824,81 @@ def test_user_ordered_adjacency_allows_shared_target_and_rejects_target_order_ke
         )
 
 
+def test_link_stance_and_ordered_occurrence_coexist_on_one_pair(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """A Link, a stance, and an ordered occurrence may share endpoints (AC4)."""
+    page = _page_ref(db_session, bootstrapped_user)
+    block = _note_block_ref(db_session, bootstrapped_user)
+
+    graph_adjacency.replace_ordered_targets(
+        db_session,
+        user_id=bootstrapped_user,
+        source=page,
+        targets=[graph_adjacency.OrderedTarget(block, "0000000001")],
+    )
+    link = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, block))
+    stance = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=page, target=block, kind="supports", origin="user"),
+    )
+
+    rows = db_session.execute(
+        text(
+            "SELECT kind, source_order_key FROM resource_edges"
+            " WHERE user_id = :uid AND origin = 'user'"
+            " AND source_scheme = 'page' AND source_id = :sid"
+            " AND target_scheme = 'note_block' AND target_id = :tid"
+        ),
+        {"uid": bootstrapped_user, "sid": page.id, "tid": block.id},
+    ).all()
+    assert {(kind, order is not None) for kind, order in rows} == {
+        ("context", True),  # ordered occurrence
+        ("context", False),  # neutral Link
+        ("supports", False),  # stance
+    }, f"Link, stance, and ordered occurrence must all survive; got {rows}"
+    assert link.source_order_key is None and stance.kind == "supports"
+
+
+def test_replace_ordered_targets_rejects_duplicate_target_ref(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """Two order keys pointing at one target in a single set is rejected in app
+    validation now that the broad ordinal-null pair index is gone."""
+    page = _page_ref(db_session, bootstrapped_user)
+    block = _note_block_ref(db_session, bootstrapped_user)
+    with pytest.raises(ApiError):
+        graph_adjacency.replace_ordered_targets(
+            db_session,
+            user_id=bootstrapped_user,
+            source=page,
+            targets=[
+                graph_adjacency.OrderedTarget(block, "0000000001"),
+                graph_adjacency.OrderedTarget(block, "0000000002"),
+            ],
+        )
+
+
+def test_replace_ordered_targets_preserves_a_neutral_link_on_the_same_pair(
+    db_session: Session, bootstrapped_user: UUID
+):
+    """Adding an outline occurrence must not silently destroy an existing Link
+    on the same endpoints (the removed pre-delete data-loss bug)."""
+    page = _page_ref(db_session, bootstrapped_user)
+    block = _note_block_ref(db_session, bootstrapped_user)
+    link = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(page, block))
+
+    graph_adjacency.replace_ordered_targets(
+        db_session,
+        user_id=bootstrapped_user,
+        source=page,
+        targets=[graph_adjacency.OrderedTarget(block, "0000000001")],
+    )
+
+    assert db_session.get(ResourceEdge, link.id) is not None, "the neutral Link must survive"
+
+
 # =============================================================================
 # replace_edges_for_origin scoping
 # =============================================================================
@@ -970,6 +1057,66 @@ def test_cleanup_cited_edges_die_with_their_source(db_session: Session, bootstra
     assert _connection_edges(db_session, viewer_id=bootstrapped_user, ref=message) == [], (
         "Rule 1: a citation dies with its domain parent (the source)"
     )
+
+
+# =============================================================================
+# Link-note motif cleanup (§ Graph Shapes)
+# =============================================================================
+
+
+def _attach_link_note(
+    db: Session, user_id: UUID, note: ResourceRef, *endpoints: ResourceRef
+) -> None:
+    for endpoint in endpoints:
+        create_edge(
+            db,
+            viewer_id=user_id,
+            input=EdgeCreate(source=note, target=endpoint, kind="context", origin="link_note"),
+        )
+
+
+def _link_note_edge_count(db: Session, note: ResourceRef) -> int:
+    return db.scalar(
+        text(
+            "SELECT count(*) FROM resource_edges WHERE origin = 'link_note'"
+            " AND source_scheme = 'note_block' AND source_id = :nid"
+        ),
+        {"nid": note.id},
+    )
+
+
+def test_endpoint_deletion_removes_both_link_note_halves_preserving_note(
+    db_session: Session, bootstrapped_user: UUID
+):
+    a = _media_ref(db_session, bootstrapped_user, title="Endpoint A")
+    b = _media_ref(db_session, bootstrapped_user, title="Endpoint B")
+    create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b))
+    note = _note_block_ref(db_session, bootstrapped_user, text="why a and b relate")
+    _attach_link_note(db_session, bootstrapped_user, note, a, b)
+    assert _link_note_edge_count(db_session, note) == 2
+
+    delete_edges_for_deleted_resource(db_session, ref=a)
+
+    assert _link_note_edge_count(db_session, note) == 0, (
+        "the sibling half targeting the surviving endpoint dies with the motif"
+    )
+    assert db_session.get(NoteBlock, note.id) is not None, "note prose is preserved"
+
+
+def test_detach_link_note_motif_preserves_link_and_note(
+    db_session: Session, bootstrapped_user: UUID
+):
+    a = _media_ref(db_session, bootstrapped_user, title="Detach A")
+    b = _media_ref(db_session, bootstrapped_user, title="Detach B")
+    link = create_edge(db_session, viewer_id=bootstrapped_user, input=_bare(a, b))
+    note = _note_block_ref(db_session, bootstrapped_user, text="detachable rationale")
+    _attach_link_note(db_session, bootstrapped_user, note, a, b)
+
+    detach_link_note_motif(db_session, viewer_id=bootstrapped_user, a=a, b=b)
+
+    assert _link_note_edge_count(db_session, note) == 0
+    assert db_session.get(ResourceEdge, link.id) is not None, "Remove-note keeps the Link"
+    assert db_session.get(NoteBlock, note.id) is not None, "note survives as detached prose"
 
 
 def test_citations_accept_note_owned_evidence_and_build_note_targets(

@@ -231,7 +231,7 @@ def _passage_target(
     excerpt: str | None,
     source_ref: ResourceRef | None,
 ) -> ResourceTargetPassageOut | None:
-    quote = _passage_quote(db, ref=candidate_ref)
+    quote = candidate_owner_and_quote(db, ref=candidate_ref)
     if quote is None:
         return None  # underlying index row is gone (stale candidate)
     owner_ref, exact = quote
@@ -360,7 +360,7 @@ def _existing_anchor_id(
     ).scalar_one_or_none()
 
 
-def _passage_quote(db: Session, *, ref: ResourceRef) -> tuple[ResourceRef, str] | None:
+def candidate_owner_and_quote(db: Session, *, ref: ResourceRef) -> tuple[ResourceRef, str] | None:
     """Durable owner ref + quote text for one passage-candidate index row."""
     if ref.scheme in ("content_chunk", "evidence_span"):
         table, column = {

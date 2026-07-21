@@ -20,7 +20,7 @@ from nexus.schemas.reader_apparatus import (
 )
 from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.resource_graph.schemas import ConnectionDirection
+from nexus.services.resource_graph.schemas import ConnectionResultDirection
 
 ReaderDocumentMapLensId = Literal[
     "contents", "embeds", "highlights", "citations", "connections", "chat"
@@ -123,7 +123,7 @@ class ReaderDocumentMapConnectionItemOut(ReaderDocumentMapItemBaseOut):
     kind: Literal["connection"]
     source_domain: Literal["resource_graph", "generated_citation"]
     edge_id: UUID
-    direction: ConnectionDirection
+    direction: ConnectionResultDirection
     origin: EdgeOrigin
     edge_kind: EdgeKind
     source_category: str

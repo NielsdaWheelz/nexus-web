@@ -510,6 +510,14 @@ def expand_owned_child_refs(
                 ref.id,
                 viewer_id=viewer_id,
             ),
+            *_child_refs(
+                db,
+                "passage_anchor",
+                "SELECT id FROM passage_anchors "
+                "WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id",
+                ref.id,
+                viewer_id=viewer_id,
+            ),
         )
     if policy == "page_note_blocks":
         return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)

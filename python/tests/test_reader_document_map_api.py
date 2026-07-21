@@ -125,7 +125,12 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     assert apparatus["source_domain"] == "reader_apparatus"
     assert apparatus["target_stable_keys"] == ["target"]
     assert "highlight_id" not in apparatus
-    connection = _item(items, f"connection:{citation_edge.id}")
+    connection = next(
+        item
+        for item in items
+        if item["kind"] == "connection" and item["edge_id"] == str(citation_edge.id)
+    )
+    assert connection["id"] == f"edge:{citation_edge.id}:anchor:fragment:{fragment_id}"
     assert connection["source_domain"] == "generated_citation"
     assert connection["edge_id"] == str(citation_edge.id)
     assert "conversation_id" not in connection
@@ -282,7 +287,12 @@ def test_document_map_anchors_content_chunk_summary_locator(auth_client, direct_
         for item in data["connections"]["anchored"]
         if item["connection"]["edge_id"] == str(edge.id)
     )
-    connection = _item(data["items"], f"connection:{edge.id}")
+    connection = next(
+        item
+        for item in data["items"]
+        if item["kind"] == "connection" and item["edge_id"] == str(edge.id)
+    )
+    assert connection["id"] == f"edge:{edge.id}:anchor:content_chunk:{chunk_id}"
     assert row["anchor"]["ref"] == f"content_chunk:{chunk_id}"
     assert row["anchor"]["fragment_id"] == str(fragment_id)
     assert row["anchor"]["locator"]["start_offset"] == 6

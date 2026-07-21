@@ -4,20 +4,23 @@ Transaction discipline (§9.0): every mutator flushes within the caller's
 transaction and never commits, so conversation create, chat-run citation
 write-through, Oracle phase persistence, and the LI promote compose atomically.
 
-Dedup is explicit SELECT-then-write (database.md: no ``ON CONFLICT``): bare
-edges (``ordinal IS NULL``) are unique per viewer, origin, and directed endpoint
-pair. ``origin=user`` links additionally dedup both directions (undirected, §5.4).
-Ordered adjacency is owned by ``resource_graph.adjacency`` because it replaces a
-source's ordered occurrence set and view state together.
+Dedup is explicit SELECT-then-write (database.md: no ``ON CONFLICT``): machine
+bare edges (``ordinal IS NULL``, non-user origin) are unique per viewer, origin,
+and directed endpoint pair. A neutral user Link is unique per viewer and
+*unordered* pair; a duplicate (either orientation) returns the existing row
+idempotently rather than raising, and a Link, a stance, and an ordered occurrence
+may coexist on one pair. Ordered adjacency is owned by ``resource_graph.adjacency``
+because it replaces a source's ordered occurrence set and view state together.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
@@ -30,6 +33,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeKind,
     EdgeOrigin,
     EdgeOut,
+    is_neutral_link_shape,
     snapshot_from_jsonb,
     snapshot_to_jsonb,
 )
@@ -39,35 +43,48 @@ from nexus.services.resource_items.capabilities import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class EdgeWrite:
+    """A create-or-reuse outcome so the Link service can set ``created`` (§ Mutation APIs)."""
+
+    edge: EdgeOut
+    created: bool
+
+
 def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
-    """Validate and insert one edge; flush-only. Duplicates are rejected."""
+    """Validate and insert one edge; flush-only.
+
+    Non-user duplicates and ordered/stance/citation conflicts stay typed
+    rejections. A duplicate neutral Link (the exact predicate, either
+    orientation) returns the existing row idempotently, never raising, so a
+    race that slips past the caller's pre-check converges instead of surfacing
+    a raw duplicate error (§ Graph Shapes; Mutation APIs).
+    """
     _validate_edge_input(db, viewer_id=viewer_id, edge=input)
     if input.origin == "user" and input.kind != "context" and input.source_order_key is not None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Ordered adjacency must be written through the resource adjacency service",
         )
-    if input.ordinal is None:
+    if is_neutral_link_shape(input):
+        existing = _existing_link_pair_id(db, viewer_id=viewer_id, a=input.source, b=input.target)
+        if existing is not None:
+            return _edge_out(db.get(ResourceEdge, existing))
+    elif input.ordinal is None:
+        # Directed same-origin dedup for machine bare edges
+        # (uq_resource_edges_nonuser_orderless_pair). User edges are not deduped
+        # here: neutral Links took the exact idempotent path above, and stance
+        # (uq_resource_edges_user_stance_directed_pair) plus user ordered
+        # adjacency are transaction-owned so a Link, a stance, and an ordered
+        # occurrence may coexist on one pair (§ Graph Shapes).
         if (
-            _existing_bare_pair_id(
+            input.origin != "user"
+            and _existing_bare_pair_id(
                 db,
                 viewer_id=viewer_id,
                 source=input.source,
                 target=input.target,
                 origin=input.origin,
-            )
-            is not None
-        ):
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Edge already exists")
-        if (
-            input.origin == "user"
-            and input.source_order_key is None
-            and _existing_bare_pair_id(
-                db,
-                viewer_id=viewer_id,
-                source=input.target,
-                target=input.source,
-                origin="user",
             )
             is not None
         ):
@@ -92,6 +109,43 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
     db.add(row)
     db.flush()
     return _edge_out(row)
+
+
+def existing_link_edge(
+    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
+) -> EdgeOut | None:
+    """The viewer's neutral Link between ``a`` and ``b``, either orientation, or ``None``.
+
+    Matches the exact neutral-Link predicate only — never a stance or ordered
+    occurrence on the same pair. The Link service uses this to decide
+    ``created`` before writing (§ Mutation APIs).
+    """
+    edge_id = _existing_link_pair_id(db, viewer_id=viewer_id, a=a, b=b)
+    if edge_id is None:
+        return None
+    return _edge_out(db.get(ResourceEdge, edge_id))
+
+
+def create_link(
+    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef
+) -> EdgeWrite:
+    """Idempotent neutral-Link create for the Link service; flush-only.
+
+    ``source``/``target`` are the already-canonicalized endpoints (the caller
+    orders the pair by ``(scheme, id)`` per PLAN). Returns the existing canonical
+    Link with ``created=False``, otherwise inserts it with ``created=True``. A
+    concurrent create is caught by ``uq_resource_edges_user_context_link_pair``
+    and converges on retry (both mutation IDs then read one existing row).
+    """
+    existing = existing_link_edge(db, viewer_id=viewer_id, a=source, b=target)
+    if existing is not None:
+        return EdgeWrite(edge=existing, created=False)
+    edge = create_edge(
+        db,
+        viewer_id=viewer_id,
+        input=EdgeCreate(source=source, target=target, kind="context", origin="user"),
+    )
+    return EdgeWrite(edge=edge, created=True)
 
 
 def get_owned_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> EdgeOut | None:
@@ -187,7 +241,12 @@ def _target_is(ref: ResourceRef):
 def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> None:
     """Boundary validation plus visibility checks for edge writes."""
     validate_edge_shape(edge)
-    if edge.origin == "user":
+    # The user-Link verb governs endpoint linkability; only the neutral Link
+    # shape is subject to it. Ordered conversation-context edges use their own
+    # ``resource_can_attach`` gate (services/resource_graph/context.py), and
+    # stances validate source/target in ``user_relations.put_stance`` — both
+    # with the precise E_LINK_* codes, so this backstop must not reject them.
+    if is_neutral_link_shape(edge):
         if not resource_can_link_source(edge.source):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
         if not resource_can_link_target(edge.target):
@@ -222,6 +281,32 @@ def _existing_bare_pair_id(
     if viewer_id is not None:
         query = query.where(ResourceEdge.user_id == viewer_id)
     return db.execute(query).scalar_one_or_none()
+
+
+def _existing_link_pair_id(
+    db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
+) -> UUID | None:
+    """Id of the viewer's neutral Link on the unordered pair ``{a, b}``, or ``None``.
+
+    Both orientations are checked; the predicate mirrors
+    ``uq_resource_edges_user_context_link_pair`` exactly so a stance or ordered
+    occupancy of the same pair never matches.
+    """
+    return db.execute(
+        select(ResourceEdge.id).where(
+            ResourceEdge.user_id == viewer_id,
+            ResourceEdge.origin == "user",
+            ResourceEdge.kind == "context",
+            ResourceEdge.ordinal.is_(None),
+            ResourceEdge.snapshot.is_(None),
+            ResourceEdge.source_order_key.is_(None),
+            ResourceEdge.target_order_key.is_(None),
+            or_(
+                and_(_source_is(a), _target_is(b)),
+                and_(_source_is(b), _target_is(a)),
+            ),
+        )
+    ).scalar_one_or_none()
 
 
 def _existing_source_order_id(

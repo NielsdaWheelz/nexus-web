@@ -40,6 +40,7 @@ class ReaderConnectionAnchorOut(BaseModel):
     fragment_id: UUID | None = None
     highlight_id: UUID | None = None
     evidence_span_id: UUID | None = None
+    passage_anchor_id: UUID | None = None
     order_key: str | None = None
 
 

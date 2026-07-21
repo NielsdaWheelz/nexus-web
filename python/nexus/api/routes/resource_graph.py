@@ -1,13 +1,18 @@
-"""Resource provenance graph routes (spec §10.2/§10.3).
+"""Resource provenance graph routes (spec §10.2/§10.3, § Mutation APIs).
 
 - POST   /resource-graph/connections/query hydrated connection reads
-- POST   /resource-graph/edges      user links and user stance edges
-- DELETE /resource-graph/edges/{id} user-origin rows only
-- POST   /resource-graph/resolve    batch ref hydration for UI display
+- POST   /resource-graph/connections/summary batch per-ref aggregates
+- POST   /resource-graph/links       create-or-reuse one neutral Link
+- DELETE /resource-graph/links/{id}   Remove Link (idempotent)
+- PUT    /resource-graph/links/{id}/note   add/edit the Link's one note
+- DELETE /resource-graph/links/{id}/note   delete the Link's note
+- PUT    /resource-graph/stances      replace the one directed stance on a pair
+- DELETE /resource-graph/stances/{id} remove a stance (idempotent)
+- POST   /resource-graph/resolve      batch ref hydration for UI display
 
 Routes parse ref strings and the kind/origin vocabulary at the boundary, call
-graph services, and return envelopes. Graph semantics (dedup, permission
-checks, hydration) live in ``nexus.services.resource_graph``.
+graph services, and return envelopes. Graph semantics (dedup, permission checks,
+hydration, replay) live in ``nexus.services.resource_graph``.
 """
 
 from typing import Annotated
@@ -18,37 +23,34 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.resource_graph import (
-    ConnectionCitationOut,
     ConnectionEndpointOut,
     ConnectionFiltersRequest,
-    ConnectionOut,
     ConnectionPageOut,
     ConnectionQueryRequest,
-    ConnectionReaderTargetOut,
     ConnectionSummaryOut,
     ConnectionSummaryPageOut,
     ConnectionSummaryRequest,
-    CreateEdgeRequest,
-    EdgeOut,
+    CreateLinkRequest,
+    PutLinkNoteRequest,
+    PutStanceRequest,
     ResolvedResourceOut,
     ResolveRefsRequest,
+    connection_out,
 )
 from nexus.services.resource_graph import connection_summaries as connection_summaries_service
 from nexus.services.resource_graph import connections as connections_service
-from nexus.services.resource_graph import edges as edges_service
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph import resolve as resolve_service
+from nexus.services.resource_graph import user_relations as user_relations_service
 from nexus.services.resource_graph.connection_summaries import ConnectionSummary
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import (
-    Connection,
     ConnectionEndpoint,
     ConnectionFilters,
     ConnectionQuery,
-    snapshot_to_jsonb,
 )
 
 router = APIRouter(prefix="/resource-graph", tags=["resource-graph"])
@@ -62,38 +64,6 @@ def _parse_ref_or_400(raw: str) -> ResourceRef:
             f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
         )
     return parsed
-
-
-def _edge_outs(db: Session, viewer_id: UUID, edge_rows: list) -> list[EdgeOut]:
-    """Map service edges to wire schemas, batch-hydrating endpoint display."""
-    endpoint_refs: list[ResourceRef] = []
-    for edge in edge_rows:
-        endpoint_refs.append(edge.source)
-        endpoint_refs.append(edge.target)
-    resolved = resolve_service.resolve_refs(db, viewer_id=viewer_id, refs=endpoint_refs)
-    outs: list[EdgeOut] = []
-    for index, edge in enumerate(edge_rows):
-        source_resolved = resolved[2 * index]
-        target_resolved = resolved[2 * index + 1]
-        outs.append(
-            EdgeOut(
-                id=edge.id,
-                kind=edge.kind,
-                origin=edge.origin,
-                source_ref=edge.source.uri,
-                target_ref=edge.target.uri,
-                source_order_key=edge.source_order_key,
-                target_order_key=edge.target_order_key,
-                ordinal=edge.ordinal,
-                snapshot=snapshot_to_jsonb(edge.snapshot) if edge.snapshot else None,
-                source_label=source_resolved.label,
-                source_missing=source_resolved.missing,
-                target_label=target_resolved.label,
-                target_missing=target_resolved.missing,
-                created_at=edge.created_at,
-            )
-        )
-    return outs
 
 
 @router.post("/connections/query")
@@ -117,7 +87,7 @@ def query_connections(
     )
     return ok(
         ConnectionPageOut(
-            items=[_connection_out(item) for item in page.items], next_cursor=page.next_cursor
+            items=[connection_out(item) for item in page.items], next_cursor=page.next_cursor
         )
     )
 
@@ -163,74 +133,105 @@ def summarize_connections(
     )
 
 
-@router.post("/edges", status_code=201)
-def create_edge(
-    body: CreateEdgeRequest,
+@router.post("/links", status_code=201)
+def create_link(
+    body: CreateLinkRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Create a user link or user stance edge. ``origin`` is forced to ``user``.
+    """Create-or-reuse one neutral Link (§ Mutation APIs).
 
     Errors:
-        E_INVALID_REQUEST (400): malformed ref, or duplicate pair.
-        E_NOT_FOUND (404): an endpoint resource does not exist or is not visible.
+        E_INVALID_REQUEST (400): malformed ref or non-passage candidate target.
+        E_NOT_FOUND (404): a masked missing/hidden endpoint or owner.
+        E_LINK_SELF / E_LINK_CAPABILITY / E_LINK_TARGET_AMBIGUOUS (422).
+        E_LINK_TARGET_STALE / E_HIGHLIGHT_CONFLICT /
+        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409).
     """
-    source = _parse_ref_or_400(body.source_ref)
-    target = _parse_ref_or_400(body.target_ref)
-    # Stance (Take a Side): a stance edge from a highlight to its own anchor media
-    # is upgraded to the covering evidence_span when one resolves (span-preferred,
-    # media-fallback — D-5/D-8). The margin has no BE endpoint of its own (N-5), so
-    # this best-effort passage-grain upgrade rides the one user-edge writer.
-    if (
-        body.kind in ("supports", "contradicts")
-        and source.scheme == "highlight"
-        and target.scheme == "media"
-    ):
-        span = resolve_service.covering_evidence_span_for_highlight(
-            db, viewer_id=viewer.user_id, highlight_id=source.id
-        )
-        if span is not None:
-            target = span
-    edge = edges_service.create_edge(
-        db,
-        viewer_id=viewer.user_id,
-        input=edges_service.EdgeCreate(
-            source=source,
-            target=target,
-            kind=body.kind,
-            origin="user",
-        ),
-    )
-    db.commit()
-    return ok(_edge_outs(db, viewer.user_id, [edge])[0])
+    result = user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body)
+    return ok(result)
 
 
-@router.delete("/edges/{edge_id}", status_code=204)
-def delete_edge(
-    edge_id: UUID,
+@router.delete("/links/{link_id}", status_code=204)
+def delete_link(
+    link_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Delete a user-origin edge.
-
-    The origin gate is route policy (spec §10.2): only ``origin = 'user'`` rows
-    are deletable here, while ``edges.delete_edge`` stays origin-agnostic for
-    the writers that own the other origins. The gate reads the row through the
-    ``get_owned_edge`` accessor (no route imports a graph ORM model, AC15).
+    """Remove a Link (idempotent); detaches attachment motifs, preserves note prose.
 
     Errors:
-        E_NOT_FOUND (404): edge does not exist or is not the viewer's.
-        E_FORBIDDEN (403): edge exists but was not created by the user.
+        E_FORBIDDEN (403): the edge exists but is not user-authored.
+        E_NOT_FOUND (404): the id is the viewer's but is not a neutral Link.
     """
-    edge = edges_service.get_owned_edge(db, viewer_id=viewer.user_id, edge_id=edge_id)
-    if edge is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Edge not found")
-    if edge.origin != "user":
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN, "Only user-created edges can be deleted here"
-        )
-    edges_service.delete_edge(db, viewer_id=viewer.user_id, edge_id=edge_id)
-    db.commit()
+    user_relations_service.delete_link(db, viewer_id=viewer.user_id, link_id=link_id)
+    return Response(status_code=204)
+
+
+@router.put("/links/{link_id}/note")
+def put_link_note(
+    link_id: UUID,
+    body: PutLinkNoteRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Add/Edit the Link's single ordinary note (§ Mutation APIs).
+
+    Errors:
+        E_NOT_FOUND (404): no such Link for the viewer.
+        E_NOTE_CONFLICT (409): the Link already has a different note.
+    """
+    result = user_relations_service.put_link_note(
+        db, viewer_id=viewer.user_id, link_id=link_id, request=body
+    )
+    return ok(result)
+
+
+@router.delete("/links/{link_id}/note", status_code=204)
+def delete_link_note(
+    link_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Delete the Link's note and its attachments; the Link is preserved.
+
+    Errors:
+        E_NOT_FOUND (404): no such Link for the viewer.
+    """
+    user_relations_service.delete_link_note(db, viewer_id=viewer.user_id, link_id=link_id)
+    return Response(status_code=204)
+
+
+@router.put("/stances")
+def put_stance(
+    body: PutStanceRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Replace the one directed stance on an unordered pair (§ Stance).
+
+    Errors:
+        E_INVALID_REQUEST (400): a malformed ref.
+        E_NOT_FOUND (404): a masked missing/hidden endpoint.
+        E_LINK_SELF / E_LINK_CAPABILITY (422).
+    """
+    result = user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body)
+    return ok(result)
+
+
+@router.delete("/stances/{stance_id}", status_code=204)
+def delete_stance(
+    stance_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """Remove a stance (idempotent).
+
+    Errors:
+        E_FORBIDDEN (403): the edge exists but is not user-authored.
+        E_NOT_FOUND (404): the id is the viewer's but is not a stance.
+    """
+    user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)
 
 
@@ -290,40 +291,4 @@ def _connection_summary_out(summary: ConnectionSummary) -> ConnectionSummaryOut:
         last_connected_at=summary.last_connected_at,
         dominant_kind=summary.dominant_kind,
         top_peers=[_endpoint_out(peer) for peer in summary.top_peers],
-    )
-
-
-def _connection_out(item: Connection) -> ConnectionOut:
-    citation = None
-    if item.citation is not None:
-        target_reader = None
-        if item.citation.target_media_id is not None or item.citation.target_locator is not None:
-            target_reader = ConnectionReaderTargetOut(
-                media_id=item.citation.target_media_id,
-                locator=item.citation.target_locator,
-            )
-        citation = ConnectionCitationOut(
-            ordinal=item.citation.ordinal,
-            role=item.citation.role,
-            snapshot=snapshot_to_jsonb(item.citation.snapshot),
-            activation=item.citation.activation,
-            target_reader=target_reader,
-            target_status=item.citation.target_status,
-        )
-    return ConnectionOut(
-        edge_id=item.edge_id,
-        direction=item.direction,
-        kind=item.kind,
-        origin=item.origin,
-        snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
-        source_order_key=item.source_order_key,
-        target_order_key=item.target_order_key,
-        ordinal=item.ordinal,
-        source_ref=item.source_ref.uri,
-        target_ref=item.target_ref.uri,
-        source=_endpoint_out(item.source),
-        target=_endpoint_out(item.target),
-        other=_endpoint_out(item.other),
-        citation=citation,
-        created_at=item.created_at,
     )

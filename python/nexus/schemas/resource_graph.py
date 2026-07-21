@@ -8,18 +8,22 @@ hydration need.
 """
 
 from datetime import datetime
-from typing import Any, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
+from nexus.schemas.resource_items import ResourceActivationOut, validate_note_body_pm_json
 from nexus.services.resource_graph.refs import ResourceScheme
 
 # The edge vocabularies are single-sourced in the graph-schema module (LOW #20);
 # this wire layer re-exports them and derives the route-boundary value-tuples.
+from nexus.services.resource_graph.schemas import Connection as Connection
+from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
 from nexus.services.resource_graph.schemas import EdgeKind as EdgeKind
 from nexus.services.resource_graph.schemas import EdgeOrigin as EdgeOrigin
+from nexus.services.resource_graph.schemas import snapshot_to_jsonb
 
 # Route-boundary vocabulary for query params (Literal values, importable as data).
 EDGE_KIND_VALUES: tuple[str, ...] = get_args(EdgeKind)
@@ -129,9 +133,21 @@ class ConnectionCitationOut(ResourceGraphModel):
     target_status: Literal["current", "missing", "forbidden", "unanchorable"]
 
 
+class ConnectionLinkNoteOut(ResourceGraphModel):
+    """The one ordinary note folded onto a user/context Link (§ Graph Shapes).
+
+    Resolved from the two structural ``link_note`` attachment edges; the
+    structural rows never appear as their own connections (Invariant 12).
+    """
+
+    ref: str
+    note_block_id: UUID
+    preview: str | None
+
+
 class ConnectionOut(ResourceGraphModel):
     edge_id: UUID
-    direction: Literal["incoming", "outgoing"]
+    direction: Literal["incoming", "outgoing", "undirected"]
     kind: EdgeKind
     origin: EdgeOrigin
     snapshot: dict[str, Any] | None
@@ -144,6 +160,7 @@ class ConnectionOut(ResourceGraphModel):
     target: ConnectionEndpointOut
     other: ConnectionEndpointOut
     citation: ConnectionCitationOut | None
+    link_note: ConnectionLinkNoteOut | None = None
     created_at: datetime
 
 
@@ -204,3 +221,178 @@ class ResolvedResourceOut(ResourceGraphModel):
     label: str
     summary: str
     missing: bool
+
+
+# =============================================================================
+# Link / stance / link-note mutation payloads (§ Mutation APIs)
+# =============================================================================
+
+
+class LinkResourceSource(ResourceGraphModel):
+    """A durable Resource as the Link source (no fresh Highlight)."""
+
+    kind: Literal["resource"] = "resource"
+    ref: str
+
+
+class LinkFragmentSelectionSource(ResourceGraphModel):
+    """A fresh reflowable selection materialized as a Highlight on confirmation."""
+
+    kind: Literal["fragment_selection"] = "fragment_selection"
+    highlight_id: UUID
+    fragment_id: UUID
+    start_offset: int = Field(..., ge=0)
+    end_offset: int = Field(..., gt=0)
+    color: HIGHLIGHT_COLORS
+
+
+class LinkPdfSelectionSource(ResourceGraphModel):
+    """A fresh PDF page-space selection materialized as a Highlight on confirmation."""
+
+    kind: Literal["pdf_selection"] = "pdf_selection"
+    highlight_id: UUID
+    media_id: UUID
+    page_number: int = Field(..., ge=1)
+    quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
+    exact: str = ""
+    color: HIGHLIGHT_COLORS
+
+
+LinkSource = Annotated[
+    LinkResourceSource | LinkFragmentSelectionSource | LinkPdfSelectionSource,
+    Field(discriminator="kind"),
+]
+
+
+class LinkResourceTarget(ResourceGraphModel):
+    """A durable Resource as the Link target."""
+
+    kind: Literal["resource"] = "resource"
+    ref: str
+
+
+class LinkPassageTarget(ResourceGraphModel):
+    """A transient passage candidate; materialized into a ``passage_anchor`` on confirm."""
+
+    kind: Literal["passage"] = "passage"
+    candidate_ref: str
+
+
+LinkTarget = Annotated[LinkResourceTarget | LinkPassageTarget, Field(discriminator="kind")]
+
+
+class CreateLinkRequest(ResourceGraphModel):
+    """Body for POST /resource-graph/links."""
+
+    client_mutation_id: str = Field(..., min_length=1, max_length=120)
+    source: LinkSource
+    target: LinkTarget
+
+
+class CreateLinkOut(ResourceGraphModel):
+    """One confirmation's result: the neutral Link and any minted source Highlight."""
+
+    created: bool
+    created_source_ref: str | None = None
+    connection: ConnectionOut
+
+
+class PutLinkNoteRequest(ResourceGraphModel):
+    """Body for PUT /resource-graph/links/{link_id}/note."""
+
+    client_mutation_id: str = Field(..., min_length=1, max_length=120)
+    note_block_id: UUID
+    body_pm_json: dict[str, Any]
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def _validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        validated = validate_note_body_pm_json(value)
+        if validated is None:
+            raise ValueError("body_pm_json is required")
+        return validated
+
+
+class LinkNoteOut(ResourceGraphModel):
+    """The Link's single ordinary note folded onto its refreshed connection."""
+
+    note_block_id: UUID
+    connection: ConnectionOut
+
+
+class PutStanceRequest(ResourceGraphModel):
+    """Body for PUT /resource-graph/stances (supports/contradicts, one per pair)."""
+
+    source_ref: str
+    target_ref: str
+    kind: Literal["supports", "contradicts"]
+
+
+class StanceOut(ResourceGraphModel):
+    """The single directed stance edge for an unordered pair."""
+
+    connection: ConnectionOut
+
+
+def connection_out(item: Connection) -> ConnectionOut:
+    """Map one hydrated ``Connection`` to its wire ``ConnectionOut``.
+
+    Single source of the connection projection (routes, reader, and the Link
+    service all serialize through this): neutral Links carry
+    ``direction="undirected"`` and their folded ``link_note`` payload, while the
+    structural attachment rows never surface on their own (Invariant 12).
+    """
+    citation = None
+    if item.citation is not None:
+        target_reader = None
+        if item.citation.target_media_id is not None or item.citation.target_locator is not None:
+            target_reader = ConnectionReaderTargetOut(
+                media_id=item.citation.target_media_id,
+                locator=item.citation.target_locator,
+            )
+        citation = ConnectionCitationOut(
+            ordinal=item.citation.ordinal,
+            role=item.citation.role,
+            snapshot=snapshot_to_jsonb(item.citation.snapshot),
+            activation=item.citation.activation,
+            target_reader=target_reader,
+            target_status=item.citation.target_status,
+        )
+    link_note = None
+    if item.link_note is not None:
+        link_note = ConnectionLinkNoteOut(
+            ref=item.link_note.ref.uri,
+            note_block_id=item.link_note.ref.id,
+            preview=item.link_note.preview,
+        )
+    return ConnectionOut(
+        edge_id=item.edge_id,
+        direction=item.direction,
+        kind=item.kind,
+        origin=item.origin,
+        snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
+        source_order_key=item.source_order_key,
+        target_order_key=item.target_order_key,
+        ordinal=item.ordinal,
+        source_ref=item.source_ref.uri,
+        target_ref=item.target_ref.uri,
+        source=_endpoint_out(item.source),
+        target=_endpoint_out(item.target),
+        other=_endpoint_out(item.other),
+        citation=citation,
+        link_note=link_note,
+        created_at=item.created_at,
+    )
+
+
+def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
+    return ConnectionEndpointOut(
+        ref=endpoint.ref.uri,
+        scheme=endpoint.ref.scheme,
+        id=endpoint.ref.id,
+        label=endpoint.label,
+        description=endpoint.description,
+        activation=endpoint.activation,
+        href=endpoint.href,
+        missing=endpoint.missing,
+    )
