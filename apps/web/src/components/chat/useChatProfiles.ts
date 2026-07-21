@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
 import type { LlmProfile, LlmProfilesOut } from "@/lib/conversations/types";
 import { useResource } from "@/lib/api/useResource";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 
 let cachedProfiles: LlmProfilesOut | null = null;
 let profilesLoadPromise: Promise<LlmProfilesOut> | null = null;
@@ -56,6 +57,9 @@ function loadChatProfiles(): Promise<LlmProfilesOut> {
         return response.data;
       })
       .catch((error: unknown) => {
+        // A 401 here means the session expired mid-session — route it to the
+        // re-auth boundary rather than surfacing "profiles unavailable".
+        handleUnauthenticatedApiError(error);
         // Drop the rejected promise so the next load retries instead of
         // permanently returning this failure (which would disable SEND for the
         // whole session on one transient blip).
