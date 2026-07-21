@@ -87,9 +87,26 @@ export function pdfHighlightsForActivePage<
 
 export function toTextAnchoredReaderRow(
   highlight: HighlightMetadata,
-  anchor: { fragment_id: string; start_offset: number; end_offset: number },
+  anchor: {
+    fragment_id: string | null;
+    start_offset: number | null;
+    end_offset: number | null;
+  },
   fragment: TextAnchorFragmentTiming | null,
 ): AnchoredReaderRow {
+  // Unresolved locator cache (null offsets after a reindex/refresh dropped the
+  // cached fragment row): the highlight stays in the evidence list but carries
+  // no paintable anchor. The projection treats an anchorless row as a missing
+  // target, and — lacking a stable_order_key — it sorts after every resolved
+  // row, so it never paints at a wrong location (universal-link-authoring-hard-
+  // cutover.md, Highlight Durability).
+  if (
+    anchor.fragment_id === null ||
+    anchor.start_offset === null ||
+    anchor.end_offset === null
+  ) {
+    return { ...highlight };
+  }
   return {
     ...highlight,
     anchor: {

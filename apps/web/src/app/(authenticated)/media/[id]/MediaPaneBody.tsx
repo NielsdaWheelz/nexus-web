@@ -105,10 +105,10 @@ import {
 } from "@/lib/highlights/useHighlightInteraction";
 import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
 import MarginRail from "@/components/reader/MarginRail";
-import CitePicker from "@/components/reader/CitePicker";
+import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import { buildMarginItems } from "@/lib/reader/marginItems";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
-import { useCiteComposer } from "@/lib/reader/useCiteComposer";
+import { useLinkComposer } from "@/lib/reader/useLinkComposer";
 import {
   useReaderKeyChord,
   useStanceComposer,
@@ -4560,6 +4560,45 @@ export default function MediaPaneBody() {
     [],
   );
 
+  // Remove a stable user Link/stance row: neutral (context) Links delete via the
+  // Link command, stances via the stance command (mirrors ConnectionsSurface's
+  // kind dispatch). The row carries the edge id and kind, so presenters never
+  // infer meaning from storage direction.
+  const handleRemoveReaderLink = useCallback(
+    async (row: ReaderConnectionRow) => {
+      const { edge_id, kind } = row.connection;
+      if (kind === "context") {
+        const { deleteLink } = await import("@/lib/resourceGraph/links");
+        await deleteLink(edge_id);
+      } else {
+        const { deleteStance } = await import("@/lib/resourceGraph/stances");
+        await deleteStance(edge_id);
+      }
+      setDocumentMapVersion((v) => v + 1);
+    },
+    [],
+  );
+
+  const handleSaveReaderLinkNote = useCallback(
+    async (
+      linkId: string,
+      noteBlockId: string,
+      bodyPmJson: Record<string, unknown>,
+    ) => {
+      const { putLinkNote } = await import("@/lib/resourceGraph/links");
+      const result = await putLinkNote(linkId, { noteBlockId, bodyPmJson });
+      setDocumentMapVersion((v) => v + 1);
+      return { note_block_id: result.note_block_id };
+    },
+    [],
+  );
+
+  const handleDeleteReaderLinkNote = useCallback(async (linkId: string) => {
+    const { deleteLinkNote } = await import("@/lib/resourceGraph/links");
+    await deleteLinkNote(linkId);
+    setDocumentMapVersion((v) => v + 1);
+  }, []);
+
   const isReflowableReader = canRead && !isPdf;
 
   // Read-state verb driver: the exact Lectern row's consumption when this media
@@ -5256,16 +5295,39 @@ export default function MediaPaneBody() {
     return created?.id ?? null;
   }, [handleCreateHighlight]);
 
-  const citeComposer = useCiteComposer({
-    createHighlightForSelection,
-    onCited: refreshMediaHighlights,
+  const linkComposer = useLinkComposer({
+    onLinked: refreshMediaHighlights,
+    // The Connection's note lives on the Evidence sidecar's Link card, where the
+    // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
+    onAddLinkNote: () => requestSecondarySurface?.("reader-evidence"),
+    onViewConnection: () => requestSecondarySurface?.("reader-evidence"),
   });
 
-  const handleCite = useCallback(
+  // Open the Link session with a source built from the gesture — an existing
+  // Highlight is a durable `resource` ref; a fresh reflowable selection carries
+  // its raw fragment offsets + a client-stable `highlight_id`, materialized as a
+  // Highlight only when the Link is confirmed (invariant 6). Fresh PDF selections
+  // Link through the PdfReader's own `onLink` prop (true page-space quads).
+  const handleLink = useCallback(
     (target: HighlightActionTarget) => {
-      void citeComposer.openCite(target);
+      if (target.kind === "existing") {
+        const ref = `highlight:${target.highlight.id}`;
+        linkComposer.openLink({ source: { kind: "resource", ref }, sourceRef: ref });
+        return;
+      }
+      if (!selection) return;
+      linkComposer.openLink({
+        source: {
+          kind: "fragment_selection",
+          highlight_id: createRandomId(),
+          fragment_id: selection.fragmentId,
+          start_offset: selection.startOffset,
+          end_offset: selection.endOffset,
+          color: target.color,
+        },
+      });
     },
-    [citeComposer],
+    [linkComposer, selection],
   );
 
   const stanceEdges = useMemo<StanceEdgeRef[]>(() => {
@@ -5280,7 +5342,7 @@ export default function MediaPaneBody() {
         out.push({
           sourceHighlightId: source_ref.slice("highlight:".length),
           kind,
-          edgeId: edge_id,
+          stanceId: edge_id,
         });
       }
     }
@@ -5462,6 +5524,17 @@ export default function MediaPaneBody() {
       }
 
       const fragmentId = anchor.fragment_id;
+      if (
+        fragmentId === null ||
+        anchor.start_offset === null ||
+        anchor.end_offset === null
+      ) {
+        // Unresolved locator cache (the cached fragment row vanished on a
+        // reindex/refresh and the quote no longer resolves uniquely). The
+        // highlight stays visible in the evidence list, but there is no
+        // location to navigate to — never paint it at a wrong spot.
+        return;
+      }
       const fragment = fragments.find((item) => item.id === fragmentId);
       const target: ReaderPulseTarget = isTranscriptMedia
         ? {
@@ -5684,7 +5757,7 @@ export default function MediaPaneBody() {
             onFocusHighlight={focusHighlight}
             onHoverHighlight={setHoveredHighlightId}
             onQuoteToChat={quoteHighlightToChat}
-            onCite={handleCite}
+            onLink={handleLink}
             onColorChange={handleColorChange}
             onDelete={handleDelete}
             onStartEditBounds={startEditBounds}
@@ -5697,6 +5770,9 @@ export default function MediaPaneBody() {
             onOpenConnectionSource={handleOpenReaderConnectionSource}
             onActivateConnectionTarget={handleActivateReaderConnectionTarget}
             onDismissSynapse={handleDismissSynapse}
+            onRemoveLink={handleRemoveReaderLink}
+            onSaveLinkNote={handleSaveReaderLinkNote}
+            onDeleteLinkNote={handleDeleteReaderLinkNote}
           />
         </div>
       ),
@@ -5716,10 +5792,13 @@ export default function MediaPaneBody() {
     focusState.editingBounds,
     focusState.focusedId,
     handleActivateReaderConnectionTarget,
-    handleCite,
+    handleLink,
     handleColorChange,
     handleDelete,
     handleDismissSynapse,
+    handleRemoveReaderLink,
+    handleSaveReaderLinkNote,
+    handleDeleteReaderLinkNote,
     handleNoteDelete,
     handleNoteSave,
     handleOpenConversation,
@@ -6082,6 +6161,19 @@ export default function MediaPaneBody() {
                       creation,
                     })
                   }
+                  onLink={({ pageNumber, quads, exact }) =>
+                    linkComposer.openLink({
+                      source: {
+                        kind: "pdf_selection",
+                        highlight_id: createRandomId(),
+                        media_id: id,
+                        page_number: pageNumber,
+                        quads,
+                        exact,
+                        color: DEFAULT_COLOR,
+                      },
+                    })
+                  }
                   temporaryHighlight={temporaryPdfHighlight}
                   navigateToHighlight={pdfHighlightNavigation}
                   onHighlightNavigationComplete={() => {
@@ -6181,13 +6273,15 @@ export default function MediaPaneBody() {
         ) : null}
       </div>
 
-      {citeComposer.open ? (
-        <div className={styles.citePickerOverlay} role="presentation" onClick={citeComposer.close}>
-          <div onClick={(event) => event.stopPropagation()}>
-            <CitePicker onPick={(ref) => void citeComposer.cite(ref)} onClose={citeComposer.close} />
-          </div>
-        </div>
-      ) : null}
+      <LinkTargetDialog
+        open={linkComposer.open}
+        sourceRef={linkComposer.sourceRef}
+        excludeRefs={linkComposer.sourceRef ? [linkComposer.sourceRef] : undefined}
+        busy={linkComposer.committing}
+        onPick={(target, label) => void linkComposer.confirm(target, label)}
+        onClose={linkComposer.close}
+      />
+
 
       {readerApparatusPreview ? (
         <HoverPreview
@@ -6229,7 +6323,7 @@ export default function MediaPaneBody() {
                 : undefined
             }
             onAddNote={handleAddNoteToSelection}
-            onCite={() => handleCite({ kind: "selection", color: DEFAULT_COLOR })}
+            onLink={() => handleLink({ kind: "selection", color: DEFAULT_COLOR })}
             onDismiss={handleDismissPopover}
             isCreating={isCreating}
           />
@@ -6255,8 +6349,8 @@ export default function MediaPaneBody() {
             });
             dismissHighlightActions();
           }}
-          onCite={() => {
-            handleCite({ kind: "existing", highlight: highlightActionTarget });
+          onLink={() => {
+            handleLink({ kind: "existing", highlight: highlightActionTarget });
             dismissHighlightActions();
           }}
           onDelete={() => handleDelete(highlightActionTarget.id)}

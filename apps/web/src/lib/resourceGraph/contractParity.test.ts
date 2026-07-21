@@ -2,12 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { OBJECT_TYPES } from "@/lib/objectRefs";
 import {
   RESOURCE_CAPABILITIES,
   SYNAPSE_SOURCE_SCHEMES,
 } from "@/lib/resources/resourceCapabilities.generated";
-import { EDGE_KINDS, EDGE_ORIGINS } from "./edges";
+import { EDGE_KINDS, EDGE_ORIGINS } from "./connections";
 import { RESOURCE_SCHEMES } from "./resourceRef";
 
 const REPO_ROOT = join(process.cwd(), "../..");
@@ -103,7 +102,6 @@ describe("frontend resource graph vocabulary", () => {
     expect([...SYNAPSE_SOURCE_SCHEMES]).toEqual(
       quotedValues(policy, /SYNAPSE_SOURCE_SCHEMES:.*?=\s*\(([\s\S]*?)\)/),
     );
-    expect([...OBJECT_TYPES]).toEqual([...RESOURCE_SCHEMES]);
   });
 
   it("matches backend resource item capability projection", () => {

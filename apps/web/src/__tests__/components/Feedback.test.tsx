@@ -80,6 +80,22 @@ function ToastHarness() {
       >
         Show failed without retry
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          feedback.show({
+            severity: "success",
+            title: "Linked to Some Media",
+            dedupeKey: "link",
+            action: [
+              { label: "Undo", onClick: () => {} },
+              { label: "Add note to link", onClick: () => {} },
+            ],
+          })
+        }
+      >
+        Show linked with two actions
+      </button>
       <button type="button" onClick={() => feedback.dismissByDedupeKey("save")}>
         Dismiss save
       </button>
@@ -359,5 +375,26 @@ describe("feedback layer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show failed without retry" }));
     expect(screen.getByText("Save forbidden")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("renders two ordered actions for an actionable toast and never auto-dismisses it", () => {
+    vi.useFakeTimers();
+    render(
+      <FeedbackProvider>
+        <ToastHarness />
+      </FeedbackProvider>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show linked with two actions" }));
+    expect(screen.getByText("Linked to Some Media")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add note to link" })).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByText("Linked to Some Media")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.queryByText("Linked to Some Media")).not.toBeInTheDocument();
   });
 });

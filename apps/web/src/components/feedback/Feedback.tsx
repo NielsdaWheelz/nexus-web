@@ -32,22 +32,30 @@ export interface FeedbackContent {
   requestId?: string;
 }
 
-interface FeedbackAction {
+export interface FeedbackAction {
   label: string;
   onClick: () => void;
+}
+
+/** One action, or an ordered pair (e.g. "Undo · Add note to link"). */
+type FeedbackActions = FeedbackAction | FeedbackAction[];
+
+function feedbackActionList(action: FeedbackActions | undefined): FeedbackAction[] {
+  if (!action) return [];
+  return Array.isArray(action) ? action : [action];
 }
 
 interface ToastFeedback extends FeedbackContent {
   id: number;
   dedupeKey?: string;
-  action?: FeedbackAction;
+  action?: FeedbackActions;
   duration: number;
   exiting: boolean;
 }
 
 interface FeedbackContextValue {
   show: (feedback: FeedbackContent & {
-    action?: FeedbackAction;
+    action?: FeedbackActions;
     dedupeKey?: string;
     duration?: number;
   }) => void;
@@ -214,11 +222,14 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
 
   const show = useCallback(
     (feedback: FeedbackContent & {
-      action?: FeedbackAction;
+      action?: FeedbackActions;
       dedupeKey?: string;
       duration?: number;
     }) => {
-      const duration = feedback.duration ?? (feedback.action ? 0 : 5000);
+      // Actionable toasts never auto-dismiss: a click target that vanishes
+      // out from under the user defeats the action.
+      const duration =
+        feedback.duration ?? (feedbackActionList(feedback.action).length > 0 ? 0 : 5000);
       if (feedback.dedupeKey) {
         const existing = toastsRef.current.find(
           (toast) => toast.dedupeKey === feedback.dedupeKey
@@ -368,18 +379,23 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                 {toast.requestId ? (
                   <div className={styles.meta}>Nexus request ID: {toast.requestId}</div>
                 ) : null}
-                {toast.action ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className={styles.action}
-                    onClick={() => {
-                      toast.action?.onClick();
-                      dismiss(toast.id);
-                    }}
-                  >
-                    {toast.action.label}
-                  </Button>
+                {feedbackActionList(toast.action).length > 0 ? (
+                  <div className={styles.actions}>
+                    {feedbackActionList(toast.action).map((action, index) => (
+                      <Button
+                        key={`${index}-${action.label}`}
+                        variant="secondary"
+                        size="sm"
+                        className={styles.action}
+                        onClick={() => {
+                          action.onClick();
+                          dismiss(toast.id);
+                        }}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
               <Button

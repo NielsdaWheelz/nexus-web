@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
-import { createUserEdge, deleteUserEdge } from "@/lib/resourceGraph/edges";
+import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
 
 export type StanceKind = "supports" | "contradicts";
 
@@ -37,16 +37,17 @@ export function useReaderKeyChord(args: {
 export interface StanceEdgeRef {
   sourceHighlightId: string;
   kind: StanceKind;
-  edgeId: string;
+  stanceId: string;
 }
 
 /**
  * Owns the two stance chords (Take a Side, §4.6): concede (`supports`) and doubt
- * (`contradicts`) mint a user-origin stance edge from the focused passage with no
- * dialog and no AI (N-2). The server upgrades the `media` target to its covering
- * evidence_span when one resolves (span-preferred, media-fallback). Pressing the
- * same key again toggles the mark off; the opposite key replaces it. createUserEdge
- * sends only source/target/kind — the server forbids any edge payload here (N-3).
+ * (`contradicts`) drive the stance command from the focused passage with no
+ * dialog and no AI (N-2). The server materializes a passage anchor when the
+ * focused passage resolves, falling back to durable media. Pressing the same key
+ * again toggles the mark off through DELETE; the opposite key is ONE `putStance`
+ * that transactionally replaces the single directed stance — never a client
+ * delete-then-create (§ Stance).
  */
 export function useStanceComposer({
   resolveTarget,
@@ -55,7 +56,7 @@ export function useStanceComposer({
 }: {
   /** Resolve the focused/created source highlight + its media-grain target ref. */
   resolveTarget: () => Promise<{ highlightId: string; targetRef: string } | null>;
-  /** Current user stance edges anchored in this reader (derived from connections). */
+  /** Current user stances anchored in this reader (derived from connections). */
   stanceEdges: StanceEdgeRef[];
   onChanged: () => void;
 }): { mintStance: (kind: StanceKind) => Promise<void> } {
@@ -69,17 +70,11 @@ export function useStanceComposer({
         (edge) => edge.sourceHighlightId === highlightId && edge.kind === kind,
       );
       if (same) {
-        await deleteUserEdge(same.edgeId);
+        await deleteStance(same.stanceId);
         onChanged();
         return;
       }
-      const opposite = stanceEdges.find(
-        (edge) => edge.sourceHighlightId === highlightId && edge.kind !== kind,
-      );
-      if (opposite) {
-        await deleteUserEdge(opposite.edgeId);
-      }
-      await createUserEdge({ sourceRef: `highlight:${highlightId}`, targetRef, kind });
+      await putStance({ sourceRef: `highlight:${highlightId}`, targetRef, kind });
       onChanged();
     },
     [onChanged, resolveTarget, stanceEdges],

@@ -194,6 +194,17 @@ interface PdfReaderProps {
     anchorRect: DOMRect;
     creation: Promise<{ id: string } | null>;
   }) => void;
+  /**
+   * Open a Link over a FRESH PDF selection using its true page-space quads. Unlike
+   * highlight/note creation this performs no write — the Link service creates the
+   * Highlight atomically on confirmation (invariant 6). The caller mints the
+   * client-stable `highlight_id`.
+   */
+  onLink?: (selection: {
+    pageNumber: number;
+    quads: PdfHighlightQuad[];
+    exact: string;
+  }) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
   /** Resume seed: intra-page scroll progression to apply after first render */
@@ -512,6 +523,7 @@ export default function PdfReader({
   onQuoteToNewChat,
   onQuoteToExtantChat,
   onAddNote,
+  onLink,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -1747,6 +1759,28 @@ export default function PdfReader({
     });
   }, [handleCreateHighlight, onAddNote, selection]);
 
+  // Link verb over a fresh selection: compute the true page-space quads/quote
+  // WITHOUT persisting a Highlight (invariant 6); the Link service materializes
+  // the source Highlight on confirmation. Gated on reliable text geometry, like
+  // note/quote, so `exact` carries real quote identity.
+  const handleLink = useCallback(() => {
+    const activeSelection = selection ?? selectionSnapshotRef.current;
+    if (!activeSelection) return;
+    const exact = activeSelection.range.toString().trim();
+    const quads = buildSelectionQuads(
+      activeSelection.range,
+      activeSelection.pageNumber,
+    );
+    if (quads.length === 0) {
+      setSelectionError(
+        "No selectable text geometry was found for this selection.",
+      );
+      clearSelection();
+      return;
+    }
+    onLink?.({ pageNumber: activeSelection.pageNumber, quads, exact });
+  }, [buildSelectionQuads, clearSelection, onLink, selection]);
+
   useHighlightNoteChord({
     enabled: Boolean(onAddNote && selection && textGeometryReliable),
     onTrigger: handleAddNote,
@@ -2507,6 +2541,7 @@ export default function PdfReader({
           onAddNote={
             onAddNote && textGeometryReliable ? handleAddNote : undefined
           }
+          onLink={onLink && textGeometryReliable ? handleLink : undefined}
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

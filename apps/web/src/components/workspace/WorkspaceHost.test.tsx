@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";

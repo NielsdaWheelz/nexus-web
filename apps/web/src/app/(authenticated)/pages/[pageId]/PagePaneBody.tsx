@@ -29,7 +29,8 @@ import {
   useSetPaneTitle,
 } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
-import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { useResource } from "@/lib/api/useResource";
 import {
@@ -627,11 +628,14 @@ export default function PagePaneBody({
 
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
-      if (!isObjectType(objectType)) return;
+      const ref = `${objectType}:${objectId}`;
+      if (!parseResourceRef(ref)) return;
       let href: string | null = null;
       try {
-        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-        href = resolved?.route ?? null;
+        const [resolved] = await resolveResourceLocators([
+          { kind: "resource_ref", ref },
+        ]);
+        href = resolved?.resourceItem.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
         setFeedback(
@@ -722,10 +726,10 @@ export default function PagePaneBody({
   const dawnWrite =
     dawnWriteResource.status === "ready" ? dawnWriteResource.data : null;
 
-  const backlinkObjectRef = useMemo(
+  const backlinkResourceRef = useMemo(
     () => ({
-      objectType: focusBlockId ? ("note_block" as const) : ("page" as const),
-      objectId: focusBlockId ?? pageId,
+      scheme: focusBlockId ? ("note_block" as const) : ("page" as const),
+      id: focusBlockId ?? pageId,
     }),
     [focusBlockId, pageId],
   );
@@ -769,7 +773,7 @@ export default function PagePaneBody({
           );
         }}
       />
-      <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />
+      <ConnectionsSurface resourceRef={backlinkResourceRef} onOpenRoute={openRoute} />
     </div>
     </>
   );

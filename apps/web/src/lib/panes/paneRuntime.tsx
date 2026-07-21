@@ -16,7 +16,7 @@ import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";

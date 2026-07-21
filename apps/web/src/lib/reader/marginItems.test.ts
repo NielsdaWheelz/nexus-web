@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MARGIN_MAX_ITEMS,
+  anchoredRowFromConnection,
   buildMarginItems,
   stackAnchoredRows,
   type MarginSources,
@@ -31,6 +32,7 @@ function connectionRow(
     sourceCategory: ReaderConnectionRow["source_category"];
     title?: string;
     excerpt?: string;
+    locator?: Record<string, unknown>;
   },
 ): ReaderConnectionRow {
   return {
@@ -55,7 +57,7 @@ function connectionRow(
     anchor: {
       ref: "evidence_span:x",
       media_id: "m1",
-      locator: {
+      locator: opts.locator ?? {
         type: "web_text_offsets",
         media_id: "m1",
         fragment_id: "frag",
@@ -66,6 +68,7 @@ function connectionRow(
       fragment_id: "frag",
       highlight_id: null,
       evidence_span_id: "x",
+      passage_anchor_id: null,
       order_key: orderKey,
     },
     source_category: opts.sourceCategory,
@@ -78,7 +81,7 @@ function connectionRow(
 }
 
 describe("buildMarginItems", () => {
-  it("classifies each kind exactly once (stance→footnote→synapse→note)", () => {
+  it("classifies each kind exactly once (stance→link→synapse→note)", () => {
     const sources: MarginSources = {
       highlights: [highlightWithNote("h1", "document:0001", "a note")],
       connectionRows: [
@@ -102,10 +105,10 @@ describe("buildMarginItems", () => {
       ],
     };
     const { items } = buildMarginItems(sources, ALL_ON);
-    expect(items.map((item) => item.kind)).toEqual(["note", "synapse", "footnote", "stance"]);
+    expect(items.map((item) => item.kind)).toEqual(["note", "synapse", "link", "stance"]);
   });
 
-  it("emits exactly one item for a stance edge (no footnote+stance double)", () => {
+  it("emits exactly one item for a stance edge (no link+stance double)", () => {
     const sources: MarginSources = {
       highlights: [],
       connectionRows: [
@@ -122,7 +125,7 @@ describe("buildMarginItems", () => {
     expect(items[0]?.stance).toBe("contradicts");
   });
 
-  it("hides footnote+stance+synapse when the connection filter is off", () => {
+  it("hides link+stance+synapse when the connection filter is off", () => {
     const sources: MarginSources = {
       highlights: [highlightWithNote("h1", "document:0001", "kept note")],
       connectionRows: [
@@ -167,6 +170,35 @@ describe("buildMarginItems", () => {
     };
     const { items } = buildMarginItems({ highlights: [bare], connectionRows: [] }, ALL_ON);
     expect(items).toEqual([]);
+  });
+});
+
+describe("anchoredRowFromConnection", () => {
+  it("keeps a page-only PDF passage-anchor locator (no quads) instead of dropping it", () => {
+    // A Link resolved through a passage_anchor on PDF media carries only
+    // `page_number` until a fresh selection supplies real quads (the
+    // passage-anchor resolver never recomputes geometry). This must not be
+    // dropped from margin/Evidence projection just because it is coarse.
+    const row = connectionRow("e-pdf", "document:0001", {
+      origin: "user",
+      kind: "context",
+      sourceCategory: "user_link",
+      locator: { type: "pdf_page_geometry", media_id: "m1", page_number: 3 },
+    });
+    const anchor = anchoredRowFromConnection(row);
+    expect(anchor).not.toBeNull();
+    expect(anchor?.page_number).toBe(3);
+    expect(anchor?.quads).toEqual([]);
+  });
+
+  it("still drops a pdf_page_geometry locator with no page_number", () => {
+    const row = connectionRow("e-pdf", "document:0001", {
+      origin: "user",
+      kind: "context",
+      sourceCategory: "user_link",
+      locator: { type: "pdf_page_geometry", media_id: "m1" },
+    });
+    expect(anchoredRowFromConnection(row)).toBeNull();
   });
 });
 

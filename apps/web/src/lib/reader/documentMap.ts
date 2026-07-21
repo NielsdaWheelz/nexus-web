@@ -3,7 +3,7 @@ import { apiFetch } from "@/lib/api/client";
 import type { MediaHighlight } from "@/lib/highlights/api";
 import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
 import type { ConnectionOut } from "@/lib/resourceGraph/connections";
-import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/edges";
+import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
 import { assertReaderApparatusResponse } from "@/lib/reader/apparatus";
@@ -55,6 +55,7 @@ export interface ReaderConnectionAnchor {
   fragment_id: string | null;
   highlight_id: string | null;
   evidence_span_id: string | null;
+  passage_anchor_id: string | null;
   order_key: string | null;
   precision?: "exact" | "container";
 }

@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
-import { normalizeResourceItem, type ResourceItem } from "@/lib/notes/api";
+import { normalizeResourceItem, type ResourceItem } from "@/lib/resources/resourceItems";
 import type { PaneResourceLocator } from "@/lib/panes/paneResourceLocator";
 import { isRecord } from "@/lib/validation";
 

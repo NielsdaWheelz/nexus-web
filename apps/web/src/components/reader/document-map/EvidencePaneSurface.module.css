@@ -219,3 +219,31 @@
   background: var(--surface-hover);
   color: var(--ink-secondary);
 }
+
+.connectionNote {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.connectionNoteLoading {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-tertiary);
+}
+
+.connectionNoteRemoveButton {
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  color: var(--ink-tertiary);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.connectionNoteRemoveButton:hover {
+  color: var(--ink-secondary);
+}

@@ -620,6 +620,7 @@ function noteTargetConnectionPage(): ReaderConnectionPage {
           fragment_id: "fragment-1",
           highlight_id: "22222222-2222-4222-8222-222222222222",
           evidence_span_id: null,
+          passage_anchor_id: null,
           order_key: "fragment:0000000000:0000000000",
         },
         source_category: "highlight_note",
@@ -968,6 +969,7 @@ describe("MediaPaneBody pane sizing", () => {
           fragment_id: "fragment-1",
           highlight_id: null,
           evidence_span_id: null,
+          passage_anchor_id: null,
           order_key: "fragment:0000000000:0000000008",
           precision: "exact",
         },
@@ -1170,7 +1172,9 @@ describe("MediaPaneBody pane sizing", () => {
       });
 
       const body = await getApparatusSurfaceBody(onSetPaneSecondary);
-      const view = render(<>{body}</>);
+      // EvidencePaneSurface reads useFeedback (Link-note toasts); production
+      // supplies the provider from app/layout.tsx, so the harness mirrors it.
+      const view = render(<FeedbackProvider>{body}</FeedbackProvider>);
       const surface = within(view.container);
 
       expect(surface.getByRole("heading", { name: "Evidence" })).toBeVisible();

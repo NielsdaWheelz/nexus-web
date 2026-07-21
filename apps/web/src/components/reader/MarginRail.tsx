@@ -242,18 +242,18 @@ export function MarginItemBody({
       </div>
     );
   }
-  if (item.kind === "footnote") {
+  if (item.kind === "link") {
     return (
       <button
         type="button"
-        className={styles.footnote}
+        className={styles.link}
         disabled={!item.targetHref}
         onClick={() => {
           if (item.targetHref && onActivateFootnote) onActivateFootnote(item.targetHref);
         }}
       >
-        <span className={styles.footnoteKicker}>Cite</span>
-        <span className={styles.footnoteTitle}>{item.targetTitle}</span>
+        <span className={styles.linkKicker}>Link</span>
+        <span className={styles.linkTitle}>{item.targetTitle}</span>
       </button>
     );
   }

@@ -10,7 +10,7 @@ import type { PillTone } from "@/components/ui/Pill";
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
-import type { EdgeKind } from "@/lib/resourceGraph/edges";
+import type { EdgeKind } from "@/lib/resourceGraph/connections";
 
 export type CollectionItemKind =
   | "media"

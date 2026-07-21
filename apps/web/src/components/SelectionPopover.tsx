@@ -24,7 +24,7 @@ interface SelectionPopoverProps<H extends { id: string }> {
   onQuoteToNewChat?: (highlight: H) => void | Promise<void>;
   onQuoteToExtantChat?: (highlight: H) => void | Promise<void>;
   onAddNote?: () => void;
-  onCite?: () => void;
+  onLink?: () => void;
   onDismiss: () => void;
   isCreating?: boolean;
 }
@@ -39,7 +39,7 @@ export default function SelectionPopover<H extends { id: string }>({
   onQuoteToNewChat,
   onQuoteToExtantChat,
   onAddNote,
-  onCite,
+  onLink,
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps<H>) {
@@ -75,7 +75,7 @@ export default function SelectionPopover<H extends { id: string }>({
         busy={isCreating}
         onSelectColor={onCreateHighlight}
         onAddNote={onAddNote}
-        onCite={onCite}
+        onLink={onLink}
         onQuoteToNewChat={() => quoteHighlight(onQuoteToNewChat)}
         onQuoteToExistingChat={() => quoteHighlight(onQuoteToExtantChat)}
       />

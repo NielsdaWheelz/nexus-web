@@ -13,6 +13,8 @@ import { ExternalLink, X } from "lucide-react";
 import { MessageSquare } from "lucide-react";
 import {
   FeedbackNotice,
+  toFeedback,
+  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
@@ -23,6 +25,8 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 import ItemCard from "@/components/items/ItemCard";
 import Pill from "@/components/ui/Pill";
 import MachineText from "@/components/ui/MachineText";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { fetchNoteBlock } from "@/lib/notes/api";
 import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
@@ -80,7 +84,7 @@ export interface EvidencePaneSurfaceProps {
   onFocusHighlight: (highlightId: string) => void;
   onHoverHighlight: (highlightId: string | null) => void;
   onQuoteToChat: (highlightId: string) => void;
-  onCite: (target: HighlightActionTarget) => void;
+  onLink: (target: HighlightActionTarget) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
   onStartEditBounds: () => void;
@@ -104,6 +108,19 @@ export interface EvidencePaneSurfaceProps {
   onOpenConnectionSource: (row: ReaderConnectionRow, event?: MouseEvent) => void;
   onActivateConnectionTarget: (row: ReaderConnectionRow) => void;
   onDismissSynapse: (edgeId: string) => void;
+  /** Remove a stable user Link/stance row; the caller dispatches by `row.connection.kind`
+   * (`links.ts` `deleteLink` for `context`, `stances.ts` `deleteStance` otherwise). */
+  onRemoveLink: (row: ReaderConnectionRow) => void;
+  /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
+   * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
+  onSaveLinkNote: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  /** Remove the Link's note; mirrors `links.ts` `deleteLinkNote(linkId)`. The Link
+   * itself is preserved. */
+  onDeleteLinkNote: (linkId: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +149,7 @@ export default function EvidencePaneSurface({
   onFocusHighlight,
   onHoverHighlight,
   onQuoteToChat,
-  onCite,
+  onLink,
   onColorChange,
   onDelete,
   onStartEditBounds,
@@ -145,14 +162,22 @@ export default function EvidencePaneSurface({
   onOpenConnectionSource,
   onActivateConnectionTarget,
   onDismissSynapse,
+  onRemoveLink,
+  onSaveLinkNote,
+  onDeleteLinkNote,
 }: EvidencePaneSurfaceProps) {
   const { filter, toggleFilter } = filters;
+  const feedback = useFeedback();
 
   const noteLayoutTimerRef = useRef<number | null>(null);
   const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
   const expandedTextIds = useStringIdSet();
   const draftNoteEditorKeysRef = useRef(new Map<string, string>());
   const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
+  const expandedLinkNoteIds = useStringIdSet();
+  const [fetchedLinkNotes, setFetchedLinkNotes] = useState(
+    new Map<string, HighlightLinkedNoteBlock>(),
+  );
 
   const getDraftNoteEditorKey = useCallback((highlightId: string) => {
     const existing = draftNoteEditorKeysRef.current.get(highlightId);
@@ -206,6 +231,95 @@ export default function EvidencePaneSurface({
       return onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson, clientMutationId);
     },
     [getDraftNoteEditorKey, onNoteSave],
+  );
+
+  // Add/Edit/Remove note on a neutral (context) Link connection row. The
+  // connection projection only carries a `preview` string (§ ConnectionOut);
+  // the full ProseMirror body is fetched lazily on expand so Edit never
+  // clobbers existing rich content with a plain-text reconstruction.
+  const toggleLinkNote = useCallback(
+    (connRow: ReaderConnectionRow) => {
+      if (expandedLinkNoteIds.has(connRow.id)) {
+        expandedLinkNoteIds.remove(connRow.id);
+        return;
+      }
+      expandedLinkNoteIds.add(connRow.id);
+      const linkNote = connRow.connection.link_note;
+      if (!linkNote || fetchedLinkNotes.has(linkNote.note_block_id)) return;
+      void fetchNoteBlock(linkNote.note_block_id)
+        .then((block) => {
+          setFetchedLinkNotes((previous) => {
+            const next = new Map(previous);
+            next.set(linkNote.note_block_id, {
+              note_block_id: block.id,
+              body_pm_json: block.bodyPmJson,
+              body_text: block.bodyText,
+            });
+            return next;
+          });
+        })
+        .catch((thrown: unknown) => {
+          if (handleUnauthenticatedApiError(thrown)) return;
+          feedback.show(toFeedback(thrown, { fallback: "Failed to load note" }));
+        });
+    },
+    [expandedLinkNoteIds, feedback, fetchedLinkNotes],
+  );
+
+  const handleSaveLinkNote = useCallback(
+    async (
+      linkId: string,
+      noteBlockId: string | null,
+      createBlockId: string,
+      bodyPmJson: Record<string, unknown>,
+    ): Promise<HighlightLinkedNoteBlock> => {
+      const targetNoteBlockId = noteBlockId ?? createBlockId;
+      const saved = await onSaveLinkNote(linkId, targetNoteBlockId, bodyPmJson);
+      const block: HighlightLinkedNoteBlock = {
+        note_block_id: saved.note_block_id,
+        body_pm_json: bodyPmJson,
+        body_text: "",
+      };
+      setFetchedLinkNotes((previous) => {
+        const next = new Map(previous);
+        next.set(saved.note_block_id, block);
+        return next;
+      });
+      return block;
+    },
+    [onSaveLinkNote],
+  );
+
+  const removeLinkNote = useCallback(
+    async (linkId: string, noteBlockId: string) => {
+      await onDeleteLinkNote(linkId);
+      setFetchedLinkNotes((previous) => {
+        if (!previous.has(noteBlockId)) return previous;
+        const next = new Map(previous);
+        next.delete(noteBlockId);
+        return next;
+      });
+    },
+    [onDeleteLinkNote],
+  );
+
+  const handleDeleteLinkNote = useCallback(
+    async (linkId: string, noteBlockId: string, _clientMutationId: string, shouldApply: () => boolean) => {
+      // shouldApply guards the editor's own auto-delete-on-empty-body path
+      // (see HighlightNoteEditor.saveDoc) against a resourceKey/edit-version
+      // race; the explicit "Remove note" button below calls `removeLinkNote`
+      // directly since it has no such race to guard against.
+      await onDeleteLinkNote(linkId);
+      if (shouldApply()) {
+        setFetchedLinkNotes((previous) => {
+          if (!previous.has(noteBlockId)) return previous;
+          const next = new Map(previous);
+          next.delete(noteBlockId);
+          return next;
+        });
+      }
+    },
+    [onDeleteLinkNote],
   );
 
   const capabilities = readerApparatus?.capabilities ?? null;
@@ -315,7 +429,7 @@ export default function EvidencePaneSurface({
                 isReflowable={isReflowable}
                 isEditingBounds={isFocused && isEditingBounds}
                 onSelectColor={(color) => onColorChange(highlight.id, color)}
-                onCite={() => onCite({ kind: "existing", highlight })}
+                onLink={() => onLink({ kind: "existing", highlight })}
                 onDelete={() => onDelete(highlight.id)}
                 onQuoteToNewChat={() => onQuoteToChat(highlight.id)}
                 onQuoteToExistingChat={() => onQuoteToChat(highlight.id)}
@@ -441,6 +555,14 @@ export default function EvidencePaneSurface({
         const { data: connRow } = row;
         const Icon = resourceIconForUri(connRow.connection.other.ref);
         const isSynapse = connRow.connection.origin === "synapse";
+        // "Stable" here means persisted (every row read off the connections
+        // page is), as opposed to the Synapse-suggested rows that are only
+        // ever dismissed, never removed as a user relation.
+        const isUserLink = connRow.source_category === "user_link";
+        const isNeutralLink = isUserLink && connRow.connection.kind === "context";
+        const linkNote = connRow.connection.link_note ?? null;
+        const noteExpanded = expandedLinkNoteIds.has(connRow.id);
+        const fetchedNote = linkNote ? fetchedLinkNotes.get(linkNote.note_block_id) : undefined;
         const targetState = connectionTargetStatusText(connRow);
         return (
           <article
@@ -495,6 +617,32 @@ export default function EvidencePaneSurface({
                   Target
                 </button>
               ) : null}
+              {isNeutralLink ? (
+                <button
+                  type="button"
+                  className={styles.connectionTargetButton}
+                  aria-pressed={noteExpanded}
+                  aria-label={
+                    linkNote
+                      ? `Edit note on link to ${connRow.title}`
+                      : `Add note to link to ${connRow.title}`
+                  }
+                  onClick={() => toggleLinkNote(connRow)}
+                >
+                  <MessageSquare size={13} aria-hidden="true" />
+                  {linkNote ? "Note" : "Add note"}
+                </button>
+              ) : null}
+              {isUserLink ? (
+                <button
+                  type="button"
+                  className={styles.connectionDismissButton}
+                  onClick={() => onRemoveLink(connRow)}
+                  aria-label={`Remove connection to ${connRow.title}`}
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
+              ) : null}
               {isSynapse ? (
                 <button
                   type="button"
@@ -506,6 +654,38 @@ export default function EvidencePaneSurface({
                 </button>
               ) : null}
             </div>
+            {isNeutralLink && noteExpanded ? (
+              <div className={styles.connectionNote}>
+                {linkNote && fetchedNote === undefined ? (
+                  <p className={styles.connectionNoteLoading}>Loading note…</p>
+                ) : (
+                  <>
+                    <HighlightNoteEditor
+                      highlightId={connRow.connection.edge_id}
+                      note={linkNote ? fetchedNote ?? null : null}
+                      editable
+                      onSave={(linkId, noteBlockId, createBlockId, bodyPmJson) =>
+                        handleSaveLinkNote(linkId, noteBlockId, createBlockId, bodyPmJson)
+                      }
+                      onDelete={handleDeleteLinkNote}
+                      onOpenLink={onOpenNoteLink}
+                    />
+                    {linkNote ? (
+                      <button
+                        type="button"
+                        className={styles.connectionNoteRemoveButton}
+                        onClick={() => {
+                          expandedLinkNoteIds.remove(connRow.id);
+                          void removeLinkNote(connRow.connection.edge_id, linkNote.note_block_id);
+                        }}
+                      >
+                        Remove note
+                      </button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
           </article>
         );
       }
@@ -515,18 +695,22 @@ export default function EvidencePaneSurface({
     [
       canQuoteToChat,
       capabilities,
+      expandedLinkNoteIds,
       expandedTextIds,
+      fetchedLinkNotes,
       focusedApparatusItemId,
       focusedHighlightId,
       getNoteEditorKey,
+      handleDeleteLinkNote,
       handleNoteSave,
+      handleSaveLinkNote,
       hoveredId,
       isEditingBounds,
       isReflowable,
       onActivateConnectionTarget,
       onApparatusRowActivate,
       onCancelEditBounds,
-      onCite,
+      onLink,
       onColorChange,
       onDelete,
       onDismissSynapse,
@@ -538,8 +722,11 @@ export default function EvidencePaneSurface({
       onOpenConversation,
       onOpenNoteLink,
       onQuoteToChat,
+      onRemoveLink,
       onStartEditBounds,
+      removeLinkNote,
       scheduleNoteLayoutMeasure,
+      toggleLinkNote,
     ],
   );
 

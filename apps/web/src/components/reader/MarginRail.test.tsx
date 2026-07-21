@@ -38,14 +38,14 @@ describe("MarginItemBody", () => {
     expect(onDismiss).toHaveBeenCalledWith("e1");
   });
 
-  it("renders a footnote with a small-caps kicker and the target title", () => {
+  it("renders a link with a small-caps kicker and the target title", () => {
     render(
       <MarginItemBody
-        item={item("footnote", { targetTitle: "The Other Work", targetHref: "/media/x#p" })}
+        item={item("link", { targetTitle: "The Other Work", targetHref: "/media/x#p" })}
         onDismissSynapse={vi.fn()}
       />,
     );
-    expect(screen.getByText("Cite")).toBeInTheDocument();
+    expect(screen.getByText("Link")).toBeInTheDocument();
     expect(screen.getByText("The Other Work")).toBeInTheDocument();
   });
 

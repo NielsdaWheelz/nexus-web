@@ -9,7 +9,7 @@ import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
 // globals.css / config.py. Overflow past this feeds the "+N more" foot.
 export const MARGIN_MAX_ITEMS = 24 as const;
 
-export type MarginItemKind = "note" | "synapse" | "footnote" | "stance";
+export type MarginItemKind = "note" | "synapse" | "link" | "stance";
 
 export interface MarginItem {
   id: string;
@@ -21,9 +21,9 @@ export interface MarginItem {
   noteText?: string;
   /** synapse: the machine-hand rationale (rendered via MachineText inline). */
   excerpt?: string;
-  /** footnote: the target work's title · section. */
+  /** link: the target work's title · section. */
   targetTitle?: string;
-  /** footnote: deep link to the other work, when jumpable. */
+  /** link: deep link to the other work, when jumpable. */
   targetHref?: string | null;
   /** stance: the position glyph. */
   stance?: "supports" | "contradicts";
@@ -78,8 +78,16 @@ export function anchoredRowFromConnection(row: ReaderConnectionRow): AnchoredRea
   if (!locator) return null;
   const exact = row.excerpt ?? row.title;
   if (locator.type === "pdf_page_geometry") {
+    if (typeof locator.page_number !== "number") return null;
+    // A Link resolving through a passage_anchor locator is legitimately
+    // page-only: the passage-anchor resolver recomputes quote identity but
+    // never geometry (§ Passage Anchor), so its `locator_hint` carries no
+    // `quads` until a fresh selection supplies one. Coarse (page-only)
+    // projection beats dropping the row from the margin/Evidence sidecar
+    // entirely — `parseRawPdfQuads` degrades to `[]` and downstream
+    // projection falls back to its own missing-target handling rather than
+    // painting at an incorrect location.
     const quads = parseRawPdfQuads(locator.quads);
-    if (quads.length === 0 || typeof locator.page_number !== "number") return null;
     return {
       id: row.id,
       exact,
@@ -122,16 +130,16 @@ export interface MarginSources {
 }
 
 function classifyConnection(row: ReaderConnectionRow): MarginItemKind | null {
-  // Single if/else-if chain (F4), stance → footnote → synapse. A stance edge is
+  // Single if/else-if chain (F4), stance → link → synapse. A stance edge is
   // also a user_link row, so the stance-first ordering + the kind==="context"
-  // guard on footnote keep one edge from emitting two items.
+  // guard on link keep one edge from emitting two items.
   const kind = row.connection.kind;
   const origin = row.connection.origin;
   if ((kind === "supports" || kind === "contradicts") && origin === "user") {
     return "stance";
   }
   if (row.source_category === "user_link" && kind === "context") {
-    return "footnote";
+    return "link";
   }
   if (row.source_category === "synapse") {
     return "synapse";
@@ -141,7 +149,7 @@ function classifyConnection(row: ReaderConnectionRow): MarginItemKind | null {
 
 /**
  * Whether a MarginItem kind is currently visible under the shared filter. D-12:
- * `note` maps under Highlights; `footnote`/`stance`/`synapse` all map under
+ * `note` maps under Highlights; `link`/`stance`/`synapse` all map under
  * Connections — the same `EvidenceRowKind` mapping the sidecar uses, so a toggle
  * hides the kind in both presenters identically (AC-9).
  */
@@ -192,9 +200,9 @@ export function buildMarginItems(
           stance: row.connection.kind === "supports" ? "supports" : "contradicts",
           edgeId: row.connection.edge_id,
         });
-      } else if (kind === "footnote") {
+      } else if (kind === "link") {
         items.push({
-          id: `footnote:${row.connection.edge_id}`,
+          id: `link:${row.connection.edge_id}`,
           kind,
           orderKey,
           anchor,

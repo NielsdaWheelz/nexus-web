@@ -18,6 +18,7 @@ export const RESULT_TYPE_VALUES = [
   "message",
   "evidence_span",
   "conversation",
+  "artifact",
   "web_result",
   "reader_apparatus_item",
 ] as const;
@@ -132,6 +133,13 @@ export interface SearchConversationResult extends SearchBaseResult {
   type: "conversation";
 }
 
+export interface SearchArtifactResult extends SearchBaseResult {
+  type: "artifact";
+  revision_id: string;
+  subject_ref: string;
+  kind: string;
+}
+
 export interface SearchWebResult extends SearchBaseResult {
   type: "web_result";
   result_type: "web_result";
@@ -161,6 +169,7 @@ export type SearchApiResult =
   | SearchEvidenceSpanResult
   | SearchReaderApparatusItemResult
   | SearchConversationResult
+  | SearchArtifactResult
   | SearchWebResult;
 
 export interface SearchResponseShape {

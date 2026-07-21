@@ -1,8 +1,8 @@
 import {
+  Link2,
   MessageSquarePlus,
   MessagesSquare,
   NotebookPen,
-  Quote,
   TextSelect,
   Trash2,
 } from "lucide-react";
@@ -47,7 +47,7 @@ export function buildHighlightActions({
   handlers: {
     onSelectColor: (color: HighlightColor) => void;
     onAddNote?: () => void;
-    onCite?: () => void;
+    onLink?: () => void;
     onQuoteToNewChat: () => void;
     onQuoteToExistingChat: () => void;
     onToggleEditBounds: () => void;
@@ -91,15 +91,16 @@ export function buildHighlightActions({
     });
   }
 
-  if (handlers.onCite) {
-    // Cite mints a cross-document footnote (§4.5); available on both an existing
-    // highlight and a bare selection (create-then-annotate, like the note verb).
+  if (handlers.onLink) {
+    // Link opens the universal target search (§ Reader); available on both an
+    // existing highlight and a bare selection (a fresh selection materializes as
+    // a Highlight only when the Link is confirmed, invariant 6).
     options.push({
-      id: "cite",
-      label: "Cite a passage…",
-      icon: <Quote size={14} aria-hidden="true" />,
+      id: "link",
+      label: "Link…",
+      icon: <Link2 size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
-      onSelect: handlers.onCite,
+      onSelect: handlers.onLink,
     });
   }
 
