@@ -95,7 +95,7 @@ def get_artifact(db: Session, *, viewer_id: UUID, library_id: UUID) -> ArtifactV
                     FROM llm_calls
                     WHERE owner_kind = 'artifact_revision'
                       AND owner_id = r.id
-                      AND llm_operation = 'li_reduce'
+                      AND llm_operation = 'library_dossier'
                       AND outcome = 'succeeded'
                     ORDER BY call_seq DESC
                     LIMIT 1

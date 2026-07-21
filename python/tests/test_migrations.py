@@ -19439,6 +19439,149 @@ class TestMigration0186LlmProviderRuntimeHardCutover:
             engine.dispose()
             reset_test_schema()
 
+    def test_preflight_aborts_on_contradictory_reasoning_effort(self):
+        """The preflight's SECOND branch: one chat_run whose calls agree on
+        (provider_route, model_name) but carry two different non-'default'
+        reasoning_effort values must abort — the migration never guesses which
+        effort was representative. (The first branch is covered by
+        test_preflight_aborts_on_contradictory_call_history.)"""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade to 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 3)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                self._seed_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                # Same target, two distinct NON-'default' efforts -> branch 2.
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=2,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="high",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on contradictory reasoning_effort"
+            assert str(run_id) in result.stderr
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+            assert version == "0183", (
+                "a failed preflight must leave the schema at the prior revision"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_collapses_provider_route_into_logical_provider_preserving_transport(self):
+        """0186 collapses llm_calls.provider (legacy TRANSPORT/wire) and
+        provider_route (legacy LOGICAL target) into the surviving LOGICAL
+        `provider`, preserving the old transport as `upstream_provider` ONLY for
+        routed rows (provider <> provider_route). Non-chat owners are used so the
+        collapse is isolated from the chat_runs backfill/preflight."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade to 0183 failed: {result.stderr}"
+
+            routed_owner = uuid4()
+            direct_owner = uuid4()
+            with Session(engine) as session:
+                # A routed call: transport 'openrouter' fronting the logical
+                # 'anthropic' target (both valid under the 0183 provider CHECKs;
+                # 'moonshot' is a post-cutover value the 0183 check would reject).
+                self._seed_llm_call(
+                    session,
+                    owner_kind="synapse_scan",
+                    owner_id=routed_owner,
+                    call_seq=1,
+                    provider="openrouter",
+                    provider_route="anthropic",
+                    model_name="claude-sonnet-5",
+                    reasoning_effort="high",
+                )
+                # A direct call: transport == logical -> no upstream_provider.
+                self._seed_llm_call(
+                    session,
+                    owner_kind="synapse_scan",
+                    owner_id=direct_owner,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["owner_id"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT owner_id, provider, upstream_provider FROM llm_calls"
+                            " WHERE owner_kind = 'synapse_scan'"
+                        )
+                    ).mappings()
+                }
+
+            routed = rows[routed_owner]
+            assert routed["provider"] == "anthropic", (
+                "routed provider must become the LOGICAL value"
+            )
+            assert routed["upstream_provider"] == "openrouter", (
+                "the old transport provider must be preserved as upstream_provider"
+            )
+            direct = rows[direct_owner]
+            assert direct["provider"] == "openai"
+            assert direct["upstream_provider"] is None, (
+                "a direct call (transport == logical) has no upstream_provider"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
     def test_frozen_error_class_map_backfills_llm_calls_outcome_origin_code(self):
         """One row per legacy `error_class` bucket: a recognized transient
         class (mapped origin/code), the two non-Failed outcome tags

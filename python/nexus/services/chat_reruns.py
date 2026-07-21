@@ -11,14 +11,18 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job
 from nexus.schemas.conversation import ChatRunResponse
-from nexus.services.chat_failure import compute_has_write_tool_attempt, rerun_eligibility
+from nexus.services.chat_failure import (
+    compute_has_write_tool_attempt,
+    profile_selection_active,
+    rerun_eligibility,
+)
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_idempotency import (
     compute_rerun_payload_hash,
@@ -30,6 +34,7 @@ from nexus.services.chat_run_idempotency import (
 from nexus.services.chat_run_message_blocks import message_document
 from nexus.services.chat_run_response import build_chat_run_response
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
+from nexus.services.llm_profiles import LlmProfile
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.seq import assign_next_message_seq
 
@@ -204,7 +209,11 @@ def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
             ApiErrorCode.E_RETRY_INVALID_STATE,
             "Assistant response is not a terminal failed or cancelled run",
         )
-    profile_active = lookup_profile(source_run.profile_id) is not None
+    # Same drift-aware eligibility the projection uses (retired/uncertified/
+    # changed profile, or a reasoning option no longer offered → not
+    # rerunnable), re-evaluated here against freshly queried facts.
+    active_profile = lookup_profile(source_run.profile_id)
+    profile_active = profile_selection_active(source_run)
     has_write_tool_attempt = compute_has_write_tool_attempt(db, source_run)
     eligible = rerun_eligibility(
         error_code=error_code,
@@ -214,3 +223,37 @@ def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
     )
     if not eligible:
         raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Assistant response is not rerunnable")
+
+    # Defense in depth (§10: "rerun never remaps a historical target"): the
+    # projection compares the run's stored resolved-target snapshot, which a run
+    # may not have recorded. The authoritative historical target lives on the
+    # run's terminal `llm_calls` ledger row; if the current profile now resolves
+    # to a different provider/model, the rerun would silently execute elsewhere.
+    if active_profile is not None and _ledger_target_drifted(db, source_run, active_profile):
+        raise ApiError(
+            ApiErrorCode.E_RETRY_NOT_ALLOWED,
+            "Assistant response's profile now resolves to a different target",
+        )
+
+
+def _ledger_target_drifted(db: Session, source_run: ChatRun, active_profile: LlmProfile) -> bool:
+    """Whether the run's historical resolved target (its terminal `llm_calls`
+    row's provider/model_name — always the logical target the plan resolved to)
+    differs from what the current profile resolves to. No ledger row (a run that
+    failed before any call) ⇒ no drift evidence."""
+    row = db.execute(
+        text(
+            "SELECT provider, model_name FROM llm_calls "
+            "WHERE owner_kind = 'chat_run' AND owner_id = :run_id "
+            "ORDER BY call_seq DESC LIMIT 1"
+        ),
+        {"run_id": source_run.id},
+    ).first()
+    if row is None:
+        return False
+    provider, model_name = row
+    if provider is not None and provider != active_profile.target.provider:
+        return True
+    if model_name is not None and model_name != active_profile.target.model:
+        return True
+    return False

@@ -54,6 +54,11 @@ _CODE_TABLE: list[tuple[str, str | None, type, bool, bool]] = [
 _ALL_CODES = [row[0] for row in _CODE_TABLE]
 
 
+# A reasoning option the active ("balanced") profile actually offers; a run's
+# selection must still resolve for its profile to count as rerunnable-active.
+_ACTIVE_REASONING_OPTION_ID = "medium"
+
+
 def _make_run(
     *,
     status: str,
@@ -61,8 +66,16 @@ def _make_run(
     error_origin: str | None = None,
     support_id: str | None = None,
     profile_id: str | None = _ACTIVE_PROFILE_ID,
+    reasoning_option_id: str | None = _ACTIVE_REASONING_OPTION_ID,
+    provider: str | None = None,
+    model_name: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> ChatRun:
-    """A bare (unpersisted) ChatRun carrying only the facts this module reads."""
+    """A bare (unpersisted) ChatRun carrying only the facts this module reads.
+
+    `provider`/`model_name`/`reasoning_effort` default to None (no resolved
+    snapshot recorded ⇒ no drift evidence); pass them to exercise the §10
+    changed-profile drift gate."""
     run = ChatRun()
     run.id = uuid4()
     run.owner_user_id = uuid4()
@@ -73,6 +86,10 @@ def _make_run(
     run.payload_hash = "test-payload-hash"
     run.status = status
     run.profile_id = profile_id
+    run.reasoning_option_id = reasoning_option_id
+    run.provider = provider
+    run.model_name = model_name
+    run.reasoning_effort = reasoning_effort
     run.error_code = error_code
     run.error_origin = error_origin
     run.support_id = support_id
@@ -148,26 +165,81 @@ def test_absent_support_id_when_run_has_no_support_id() -> None:
     assert result.support_id == Absent()
 
 
+# F2 (§10 576-579): an unrepresentable terminal state degrades on the READ path
+# to the generic non-rerunnable card (failure=None) plus a loud operator log —
+# never an AssertionError that 500s ChatRunOut / hydration / SSE-fold / trust
+# trail. (The write side that produces these columns stays strict.)
+
+
 @pytest.mark.parametrize("code", [c for c in TRANSIENT_CODES])
-def test_transient_codes_require_attempts(code: str) -> None:
+def test_transient_code_without_attempts_degrades_to_none(code: str) -> None:
     origin = next(row[1] for row in _CODE_TABLE if row[0] == code)
     run = _make_run(status="error", error_code=code, error_origin=origin)
-    with pytest.raises(AssertionError, match="attempts is required"):
-        chat_failure_projection(run, has_write_tool_attempt=False, attempts=None)
+    assert chat_failure_projection(run, has_write_tool_attempt=False, attempts=None) is None
 
 
-def test_invalid_origin_for_a_code_is_a_defect() -> None:
+def test_invalid_origin_for_a_code_degrades_to_none() -> None:
     # 'transport' is not a valid origin for 'refused' (only provider_http /
-    # provider_stream are) — a stored mismatch is a broken write invariant.
+    # provider_stream are) — an unrepresentable terminal, not a read outage.
     run = _make_run(status="error", error_code="refused", error_origin="transport")
-    with pytest.raises(AssertionError, match="not valid for"):
-        chat_failure_projection(run, has_write_tool_attempt=False)
+    assert chat_failure_projection(run, has_write_tool_attempt=False) is None
 
 
-def test_unrecognized_error_code_is_a_defect() -> None:
+def test_unrecognized_error_code_degrades_to_none() -> None:
     run = _make_run(status="error", error_code="not_a_real_code")
-    with pytest.raises(AssertionError, match="unrecognized ChatRun.error_code"):
-        chat_failure_projection(run, has_write_tool_attempt=False)
+    assert chat_failure_projection(run, has_write_tool_attempt=False) is None
+
+
+# =============================================================================
+# F1: changed-profile drift makes a conditionally-rerunnable outcome
+# non-rerunnable (§10: "a retired, uncertified, or CHANGED profile makes
+# can_rerun=false; rerun never remaps a historical target").
+# =============================================================================
+
+
+def test_retired_profile_makes_conditionally_rerunnable_not_rerunnable() -> None:
+    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
+                    profile_id=_INACTIVE_PROFILE_ID)
+    result = chat_failure_projection(run, has_write_tool_attempt=False)
+    assert isinstance(result, IncompleteChatFailure)
+    assert result.can_rerun is False
+
+
+def test_missing_reasoning_option_selection_is_not_rerunnable() -> None:
+    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
+                    reasoning_option_id=None)
+    result = chat_failure_projection(run, has_write_tool_attempt=False)
+    assert isinstance(result, IncompleteChatFailure)
+    assert result.can_rerun is False
+
+
+def test_reasoning_option_no_longer_offered_is_not_rerunnable() -> None:
+    # 'minimal' is offered by gemini, not by the active 'balanced' profile.
+    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
+                    reasoning_option_id="minimal")
+    result = chat_failure_projection(run, has_write_tool_attempt=False)
+    assert result is not None
+    assert result.can_rerun is False
+
+
+def test_drifted_target_snapshot_makes_it_not_rerunnable() -> None:
+    # Operator repointed the profile: the run's recorded resolved target no
+    # longer matches what 'balanced' resolves to today (openai/gpt-5.6-terra).
+    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
+                    provider="anthropic", model_name="claude-sonnet-5")
+    result = chat_failure_projection(run, has_write_tool_attempt=False)
+    assert isinstance(result, IncompleteChatFailure)
+    assert result.can_rerun is False
+
+
+def test_matching_target_snapshot_stays_rerunnable() -> None:
+    # Snapshot matches the current 'balanced' resolution ⇒ no drift ⇒ rerunnable.
+    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
+                    provider="openai", model_name="gpt-5.6-terra",
+                    reasoning_effort=_ACTIVE_REASONING_OPTION_ID)
+    result = chat_failure_projection(run, has_write_tool_attempt=False)
+    assert isinstance(result, IncompleteChatFailure)
+    assert result.can_rerun is True
 
 
 # =============================================================================

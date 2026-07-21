@@ -95,6 +95,35 @@ SYNAPSE_MAX_OUTPUT_TOKENS = 1000
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
 
+# The only genuinely transient generation outcomes: retrying re-bills a fresh
+# provider call, so a scan may retry ONLY these. Every other failure
+# (structured-output decode, refusal, context_too_large, budget/billing) is
+# deterministic — retrying re-runs the same billed call up to the ladder depth
+# for the same result, so those short-circuit to a non-retryable terminal.
+_TRANSIENT_SCAN_CODES = frozenset(
+    {"provider_unavailable", "rate_limited", "timeout", "stream_interrupted"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScanResult:
+    """One scan's worker outcome. ``status`` drives the queue retry ladder:
+    ``failed`` is in ``synapse_scan``'s ``failed_result_statuses`` (retryable);
+    ``terminal_failed`` is not (deterministic — completes without a re-billing
+    retry). ``ok``/``skipped`` are non-failure completions. ``error_code`` is
+    persisted in the job ``result_payload`` for operator correlation."""
+
+    status: Literal["ok", "skipped", "failed", "terminal_failed"]
+    error_code: str | None = None
+
+
+def _generation_failure_result(code: str | None) -> ScanResult:
+    """Classify a generation-failure ``error_code`` into a retryable
+    (``failed``) or deterministic (``terminal_failed``) scan outcome."""
+    if code is not None and code in _TRANSIENT_SCAN_CODES:
+        return ScanResult("failed", error_code=code)
+    return ScanResult("terminal_failed", error_code=code)
+
 
 # ---------- public contract -------------------------------------------------
 
@@ -159,13 +188,17 @@ def scan_status(
 
 async def run_synapse_scan(
     db: Session, *, user_id: UUID, ref: ResourceRef, runtime: ExecutionRuntime
-) -> Literal["ok", "skipped", "failed"]:
+) -> ScanResult:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
     ``skipped`` (quiet, no edge changes): engine disabled, source missing or
     not visible, or dossier unavailable (media unit not ready, page never
-    indexed). ``failed`` (queue retry ladder, prior edges intact):
-    entitlement/rate-limit/budget rejection or LLM/synthesis error. ``ok``
+    indexed). ``failed`` (queue retry ladder, prior edges intact): a
+    genuinely transient rejection (inflight rate-limit, limiter outage,
+    transient-exhausted generation) worth another billed attempt.
+    ``terminal_failed`` (prior edges intact, NOT retried): a deterministic
+    failure (structured-output decode, refusal, context_too_large,
+    budget/billing) a re-run would only re-bill for the same result. ``ok``
     replace-sets the ``(source, origin='synapse')`` edge set — possibly to
     empty (current-only, D6).
 
@@ -175,24 +208,25 @@ async def run_synapse_scan(
     """
     if not get_settings().synapse_enabled:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="disabled")
-        return "skipped"
+        return ScanResult("skipped")
     try:
         assert_ref_visible(db, viewer_id=user_id, ref=ref)
     except NotFoundError:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="source_missing")
-        return "skipped"
+        return ScanResult("skipped")
 
     rate_limiter = get_rate_limiter()
     try:
         rate_limiter.acquire_inflight_slot(user_id)
     except ApiError as exc:
+        # Inflight-slot contention is transient — another attempt is warranted.
         logger.warning("synapse_scan_rate_limited", ref=ref.uri, error_code=exc.code.value)
-        return "failed"
+        return ScanResult("failed", error_code=exc.code.value)
     try:
         dossier = _build_dossier(db, user_id=user_id, ref=ref)
         if dossier is None:
             logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
-            return "skipped"
+            return ScanResult("skipped")
 
         # Retrieval runs before any uncommitted writes in this session
         # (build_query_embedding rolls back a non-entry transaction around its
@@ -221,7 +255,7 @@ async def run_synapse_scan(
             )
             db.commit()
             logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-            return "ok"
+            return ScanResult("ok")
 
         user_content = _build_synapse_user_content(dossier.text, candidates)
         profile = operation_profile(SYNAPSE_OPERATION)
@@ -246,8 +280,12 @@ async def run_synapse_scan(
                 settings=get_settings(),
             )
         except ApiError as exc:
+            # Only a limiter outage is transient here; budget/billing denials
+            # are deterministic (a retry re-denies without dispatching).
             logger.warning("synapse_scan_llm_rejected", ref=ref.uri, error_code=exc.code.value)
-            return "failed"
+            if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:
+                return ScanResult("failed", error_code=exc.code.value)
+            return ScanResult("terminal_failed", error_code=exc.code.value)
 
         if not isinstance(call.outcome, Succeeded):
             code, _detail = outcome_failure_facts(call.outcome)
@@ -255,14 +293,16 @@ async def run_synapse_scan(
             # Keep the failed-attempt llm_calls row; run_llm_task only closes
             # the session, it never commits.
             db.commit()
-            return "failed"
+            return _generation_failure_result(code)
 
         try:
             value = decode_structured_synthesis(call.outcome, schema=SynapseSynthesis)
         except StructuredSynthesisError as exc:
+            # Deterministic decode failure (no repair round): a retry re-bills
+            # the same call for the same malformed output — do not retry.
             logger.warning("synapse_scan_llm_failure", ref=ref.uri, error=str(exc)[:200])
             db.commit()
-            return "failed"
+            return ScanResult("terminal_failed", error_code="invalid_structured_output")
 
         # Commit the per-attempt llm_calls rows now so a write failure below
         # cannot erase them (media-unit precedent).
@@ -313,7 +353,7 @@ async def run_synapse_scan(
         )
         db.commit()
         logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-        return "ok"
+        return ScanResult("ok")
     finally:
         rate_limiter.release_inflight_slot(user_id)
 

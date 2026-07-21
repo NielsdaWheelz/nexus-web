@@ -172,6 +172,8 @@ def _create_failed_chat_run(
     idempotency_key: str,
     error_code: str = "timeout",
     error_origin: str = "transport",
+    ledger_provider: str = "openai",
+    ledger_model_name: str = "gpt-5.6-terra",
 ) -> UUID:
     """Seed a terminal ``status='error'`` ChatRun with a coherent
     ``(error_code, error_origin)`` failure pair from the post-cutover
@@ -212,8 +214,12 @@ def _create_failed_chat_run(
                 owner_kind="chat_run",
                 owner_id=run_id,
                 call_seq=1,
-                provider="openai",
-                model_name="gpt-test",
+                # The real 'balanced' resolved target: the rerun transaction
+                # compares this ledger target against the current profile to
+                # reject a silent remap, so the fixture must match it (override
+                # to simulate a drifted historical target).
+                provider=ledger_provider,
+                model_name=ledger_model_name,
                 llm_operation="chat",
                 streaming=True,
                 reasoning_effort="medium",
@@ -1789,6 +1795,55 @@ class TestChatResponseRetry:
 
         assert response.status_code == 409, (
             f"Expected nonretryable retry to fail, got {response.status_code}: {response.text}"
+        )
+        assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
+        direct_db.register_cleanup("conversations", "id", conversation_id)
+        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
+
+    def test_retry_rejects_run_whose_profile_target_drifted(
+        self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
+    ):
+        """§10: 'a retired, uncertified, or CHANGED profile makes
+        can_rerun=false; rerun never remaps a historical target.' A rerunnable
+        (transient) failure whose historical resolved target no longer matches
+        what its profile resolves to today must 409 — never silently rerun on a
+        different model."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        _seed_ai_plus_billing(direct_db, user_id)
+        with direct_db.session() as session:
+            conversation_id = create_test_conversation(session, user_id)
+            source_user_id = create_test_message(
+                session, conversation_id, 1, "user", "Drifted profile?"
+            )
+            failed_assistant_id = create_test_message(
+                session,
+                conversation_id,
+                2,
+                "assistant",
+                "The model timed out while responding.",
+                status="error",
+                parent_message_id=source_user_id,
+            )
+            session.commit()
+        # Transient (rerunnable) code, but the ledger target is a DIFFERENT
+        # model than 'balanced' resolves to today — the operator repointed it.
+        _create_failed_chat_run(
+            direct_db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_message_id=source_user_id,
+            assistant_message_id=failed_assistant_id,
+            idempotency_key="failed-drifted-source",
+            ledger_provider="anthropic",
+            ledger_model_name="claude-sonnet-5",
+        )
+
+        response = _post_rerun(auth_client, user_id, failed_assistant_id, "retry-drifted")
+
+        assert response.status_code == 409, (
+            f"Expected a drifted-target rerun to be rejected, got "
+            f"{response.status_code}: {response.text}"
         )
         assert response.json()["error"]["code"] == "E_RETRY_NOT_ALLOWED"
         direct_db.register_cleanup("conversations", "id", conversation_id)

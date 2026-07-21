@@ -20,10 +20,17 @@ def synapse_scan(user_id: str, ref: str, reason: str) -> dict:
     parsed_ref = assert_resource_ref(ref)
 
     async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
-        status = await run_synapse_scan(db, user_id=user_uuid, ref=parsed_ref, runtime=runtime)
+        result = await run_synapse_scan(db, user_id=user_uuid, ref=parsed_ref, runtime=runtime)
         # "trigger", not "reason": the worker failure protocol reads
-        # result["reason"] as the error message for failed statuses.
-        return {"status": status, "ref": ref, "trigger": reason}
+        # result["reason"] as the error message for failed statuses. `status`
+        # 'failed' is retryable (queue ladder); 'terminal_failed' is not; both
+        # persist `error_code` in the job result_payload for correlation.
+        return {
+            "status": result.status,
+            "error_code": result.error_code,
+            "ref": ref,
+            "trigger": reason,
+        }
 
     # No on_worker_exception: there is no head row to fail; the queue's retry
     # ladder owns unexpected exceptions, and prior edges stay intact (D6).

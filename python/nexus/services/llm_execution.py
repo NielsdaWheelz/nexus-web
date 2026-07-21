@@ -76,7 +76,6 @@ from provider_runtime import (
     ReasoningLevel,
     RuntimeDefect,
     RuntimeStreamEvent,
-    StreamOutcome,
     TerminalEvent,
     TokenUsage,
     plan_generate,
@@ -268,22 +267,50 @@ async def execute_generation(
         generation_id=generation_id,
         plan=plan,
     )
-    commit_plan_facts(session_factory, generation_id=generation_id, profile=req.profile, plan=plan)
 
+    # One settle-guarded region for every step past a successful reserve
+    # (commit_plan_facts, dispatch, terminalize, success-settle): any exit that
+    # has not already settled routes through the `finally`'s `_settle_defect`,
+    # so a post-reserve failure is never left to limiter TTL expiry (§9 step
+    # 7). `settled` makes settlement happen exactly once.
     dispatch_attempted = False
+    settled = False
     defect: BaseException | None = None
-    outcome: ProviderCallOutcome | None = None
     started = time.monotonic()
     try:
+        commit_plan_facts(
+            session_factory, generation_id=generation_id, profile=req.profile, plan=plan
+        )
         credential = generation_credential(settings, req.profile.target.provider)
         dispatch_attempted = True
         started = time.monotonic()
         outcome = await runtime.generate(req.intent, plan, credential)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        facts = terminalize(
+            session_factory,
+            generation_id=generation_id,
+            outcome=outcome,
+            accounting=Present(plan.accounting),
+            latency_ms=latency_ms,
+        )
+        # terminalize committed the terminal row; this call now owns the
+        # success-settle. Mark settled *before* it so a raise inside
+        # `_settle_success` cannot trigger a second (defect) settle.
+        settled = True
+        _settle_success(
+            rate_limiter,
+            user_id=req.owner.user_id,
+            generation_id=generation_id,
+            reservation_amount=plan.accounting.platform_token_reservation,
+            billability=facts.billability,
+            usage=facts.usage,
+        )
+        return CallOutcome(generation_id, outcome, facts.support_id)
     except BaseException as exc:
         defect = exc
         raise
     finally:
-        if outcome is None:
+        if not settled:
             _settle_defect(
                 rate_limiter,
                 session_factory,
@@ -293,27 +320,6 @@ async def execute_generation(
                 dispatch_attempted=dispatch_attempted,
                 defect=defect,
             )
-    # The `except` clause above always re-raises, so control only reaches
-    # here when `runtime.generate` returned normally.
-    assert outcome is not None
-
-    latency_ms = int((time.monotonic() - started) * 1000)
-    facts = terminalize(
-        session_factory,
-        generation_id=generation_id,
-        outcome=outcome,
-        accounting=Present(plan.accounting),
-        latency_ms=latency_ms,
-    )
-    _settle_success(
-        rate_limiter,
-        user_id=req.owner.user_id,
-        generation_id=generation_id,
-        reservation_amount=plan.accounting.platform_token_reservation,
-        billability=facts.billability,
-        usage=facts.usage,
-    )
-    return CallOutcome(generation_id, outcome, facts.support_id)
 
 
 # =============================================================================
@@ -362,27 +368,36 @@ async def execute_generation_stream(
         generation_id=generation_id,
         plan=plan,
     )
-    commit_plan_facts(session_factory, generation_id=generation_id, profile=req.profile, plan=plan)
-
+    # One settle-guarded region for every step past a successful reserve
+    # (commit_plan_facts, dispatch, terminalize, success-settle) — see the
+    # non-stream twin. `settled` is set only after terminalize *and* the
+    # success-settle return, so a terminalize failure (or a consumer closing
+    # the iterator early) leaves it False and the `finally` settles the
+    # reservation exactly once rather than leaking it to limiter TTL (§9 step 7).
     dispatch_attempted = False
+    settled = False
     defect: BaseException | None = None
-    terminal_outcome: StreamOutcome | None = None
     started = time.monotonic()
     try:
+        commit_plan_facts(
+            session_factory, generation_id=generation_id, profile=req.profile, plan=plan
+        )
         credential = generation_credential(settings, req.profile.target.provider)
         dispatch_attempted = True
         started = time.monotonic()
         async for event in runtime.stream(req.intent, plan, credential, cancel=cancel):
             if isinstance(event.event, TerminalEvent):
-                terminal_outcome = event.event.outcome
                 latency_ms = int((time.monotonic() - started) * 1000)
                 facts = terminalize(
                     session_factory,
                     generation_id=generation_id,
-                    outcome=terminal_outcome,
+                    outcome=event.event.outcome,
                     accounting=Present(plan.accounting),
                     latency_ms=latency_ms,
                 )
+                # See the non-stream twin: mark settled only after terminalize
+                # returns and *before* the success-settle.
+                settled = True
                 _settle_success(
                     rate_limiter,
                     user_id=req.owner.user_id,
@@ -396,7 +411,7 @@ async def execute_generation_stream(
         defect = exc
         raise
     finally:
-        if terminal_outcome is None:
+        if not settled:
             _settle_defect(
                 rate_limiter,
                 session_factory,
@@ -455,15 +470,36 @@ def _reserve(
         rate_limiter.reserve_token_budget(
             user_id, generation_id, plan.accounting.platform_token_reservation
         )
-    except ApiError:
+    except ApiError as exc:
+        origin, code, detail = _reservation_defect_facts(exc)
         terminalize_defect(
             session_factory,
             generation_id=generation_id,
-            origin="budget",
-            code="budget_exceeded",
-            detail="token budget reservation denied",
+            origin=origin,
+            code=code,
+            detail=detail,
         )
         raise
+
+
+def _reservation_defect_facts(exc: ApiError) -> tuple[FailureOrigin, str, str]:
+    """Faithful (origin, code, detail) for a reservation denial. All three
+    denials arise in the token-budget subsystem, so origin is the representable
+    ``"budget"`` FailureOrigin leaf (no ``platform``/``entitlement`` origin
+    exists in provider_runtime's closed set); the *code* carries the true
+    cause. Only a real quota denial is ``budget_exceeded`` — a rate-limiter
+    outage or a billing gate must never be mislabelled as quota-exhaustion
+    (which the chat surface would render as "Monthly AI token quota exceeded").
+    For chat these non-budget codes route through ``finalize_defect`` (generic
+    non-rerunnable card); no ``ExpectedChatFailure`` variant asserts on them."""
+    if exc.code == ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED:
+        return "budget", "budget_exceeded", "token budget reservation denied"
+    if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:
+        return "budget", "rate_limiter_unavailable", "token-budget limiter unavailable"
+    if exc.code == ApiErrorCode.E_BILLING_REQUIRED:
+        return "budget", "billing_required", "platform LLM billing required"
+    # Any other reservation ApiError: faithful generic, never silent budget.
+    return "budget", "reservation_denied", sanitize_provider_text(str(exc))
 
 
 def _settle_success(

@@ -32,11 +32,15 @@ Transform (spec §11):
    reasoning_effort — the migration never guesses which call was
    representative.
 4. In ``llm_calls``, collapse ``provider``/``provider_route`` into the
-   surviving wire ``provider`` column. The old ``provider`` column already
-   held the transport/wire value (ground-map-db.md: "provider = transport
-   provider; provider_route = model.route or model.provider"), so this is a
-   pure drop of ``provider_route`` with no data movement. Add nullable
-   ``upstream_provider``, ``outcome``, ``catalog_revision``,
+   surviving ``provider`` column, which now holds the LOGICAL provider (the
+   live runtime writes ``provider = profile.target.provider``). The legacy
+   ``provider`` held the TRANSPORT/wire value and ``provider_route`` the
+   LOGICAL one (ground-map-db.md: "provider = transport provider;
+   provider_route = model.route or model.provider"), so backfill new
+   ``provider`` <- ``COALESCE(provider_route, provider)`` and preserve the old
+   transport value as ``upstream_provider`` for routed rows (where
+   ``provider <> provider_route``) before dropping ``provider_route``. Add
+   nullable ``upstream_provider``, ``outcome``, ``catalog_revision``,
    ``request_fingerprint``, ``cache_strategy``, ``cache_ttl``,
    ``error_origin``, and ``error_code``; backfill the latter three (as
    ``outcome``/``error_origin``/``error_code``) through one frozen legacy
@@ -79,7 +83,9 @@ INFERRED, not literal spec text (flagged per Phase D instructions):
   rows (support_id is a runtime-generated terminalize-time value with no
   retroactive equivalent).
 - ``catalog_revision``/``request_fingerprint``/``cache_strategy``/
-  ``cache_ttl``/``upstream_provider`` have no legacy source; added NULL.
+  ``cache_ttl`` have no legacy source; added NULL. ``upstream_provider`` DOES
+  have a legacy source — the old transport ``provider`` value for routed rows
+  (see point 4) — and is NULL only for direct (non-routed) history.
 
 Downgrade is blocked: step 4/5/6 drop columns, checks, and two whole tables
 with no reconstructable inverse (the collapsed provider/provider_route pair,
@@ -293,9 +299,29 @@ def upgrade() -> None:
     )
     _report(f"backfilled outcome/error_origin/error_code on {result.rowcount} llm_calls row(s)")
 
-    # --- llm_calls: collapse provider/provider_route, drop retired columns -
-    # The surviving `provider` column already holds the wire value; only
-    # `provider_route` is dropped (no data movement — spec §11 point 4).
+    # --- llm_calls: collapse provider/provider_route into the LOGICAL provider
+    # Legacy `provider` = TRANSPORT/wire (e.g. 'openrouter', 'cloudflare');
+    # legacy `provider_route` = LOGICAL target (model.route or model.provider,
+    # e.g. 'moonshot'). The live runtime writes the LOGICAL provider
+    # (llm_ledger writes `provider = profile.target.provider`), so collapse to
+    # the logical value and preserve the transport as `upstream_provider` only
+    # where the two differ (a routed call). Both SET expressions read the
+    # pre-update row, so one statement is correct. (spec §11 point 4)
+    result = bind.execute(
+        sa.text("""
+            UPDATE llm_calls
+            SET
+                upstream_provider = CASE
+                    WHEN provider_route IS NOT NULL
+                     AND provider IS DISTINCT FROM provider_route
+                    THEN provider
+                    ELSE NULL
+                END,
+                provider = COALESCE(provider_route, provider)
+        """)
+    )
+    _report(f"collapsed provider/provider_route on {result.rowcount} llm_calls row(s)")
+
     op.execute("ALTER TABLE llm_calls DROP CONSTRAINT ck_llm_calls_provider")
     op.execute("ALTER TABLE llm_calls DROP CONSTRAINT ck_llm_calls_provider_route")
     op.execute("""

@@ -551,6 +551,153 @@ class TestStreamedRefusal:
         assert call.streaming is True
 
 
+class TestReservationDefectFaithfulCode:
+    """F3: a reservation ApiError must terminalize with its *faithful* code, not
+    an unconditional budget_exceeded. F4/F5: any failure after a successful
+    reserve settles the reservation exactly once — never leaked to limiter TTL."""
+
+    async def test_reserve_rate_limiter_unavailable_uses_faithful_code(
+        self, db_session, factory, entitled_user_id, monkeypatch
+    ):
+        req = _req(_owner(entitled_user_id))
+        runtime = _ScriptedRuntime()
+        limiter = get_rate_limiter()
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise ApiError(ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE, "budget limiter down")
+
+        monkeypatch.setattr(limiter, "reserve_token_budget", _raise)
+
+        with pytest.raises(ApiError) as exc_info:
+            await execute_generation(
+                req, session_factory=factory, runtime=runtime, settings=_settings()
+            )
+        assert exc_info.value.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE
+        assert runtime.calls == []
+
+        db_session.expire_all()
+        (generation_id,) = db_session.execute(
+            text("SELECT id FROM llm_calls WHERE owner_id = :id"), {"id": req.owner.id}
+        ).one()
+        call = db_session.get(LLMCall, generation_id)
+        assert call.outcome == "failed"
+        assert call.error_origin == "budget"
+        # Faithful — NOT the budget_exceeded a real quota denial would carry.
+        assert call.error_code == "rate_limiter_unavailable"
+        assert _reservation_count(db_session, generation_id) == 0
+        assert _charge_amount(db_session, generation_id) is None
+
+    async def test_commit_plan_facts_failure_after_reserve_releases(
+        self, db_session, factory, entitled_user_id, monkeypatch
+    ):
+        req = _req(_owner(entitled_user_id))
+        outcome = Succeeded(
+            meta=_meta(),
+            response=ResponsePayload(
+                content=TextContent(text="x", tool_calls=()), continuation=Absent()
+            ),
+        )
+        runtime = _ScriptedRuntime(outcome=outcome)
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("commit_plan_facts DB failure")
+
+        monkeypatch.setattr("nexus.services.llm_execution.commit_plan_facts", _boom)
+
+        with pytest.raises(RuntimeError):
+            await execute_generation(
+                req, session_factory=factory, runtime=runtime, settings=_settings()
+            )
+        # commit_plan_facts precedes dispatch: no provider call happened.
+        assert runtime.calls == []
+
+        db_session.expire_all()
+        (generation_id,) = db_session.execute(
+            text("SELECT id FROM llm_calls WHERE owner_id = :id"), {"id": req.owner.id}
+        ).one()
+        call = db_session.get(LLMCall, generation_id)
+        assert call.outcome == "failed"
+        # Settled (not left to TTL) and RELEASED — no dispatch was attempted.
+        assert _reservation_count(db_session, generation_id) == 0
+        assert _charge_amount(db_session, generation_id) is None
+
+    async def test_terminalize_failure_still_settles_committed_full(
+        self, db_session, factory, entitled_user_id, monkeypatch
+    ):
+        req = _req(_owner(entitled_user_id))
+        outcome = Succeeded(
+            meta=_meta(),
+            response=ResponsePayload(
+                content=TextContent(text="x", tool_calls=()), continuation=Absent()
+            ),
+        )
+        runtime = _ScriptedRuntime(outcome=outcome)
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("terminalize DB failure")
+
+        monkeypatch.setattr("nexus.services.llm_execution.terminalize", _boom)
+
+        with pytest.raises(RuntimeError):
+            await execute_generation(
+                req, session_factory=factory, runtime=runtime, settings=_settings()
+            )
+        assert runtime.calls == ["generate"]
+
+        db_session.expire_all()
+        (generation_id,) = db_session.execute(
+            text("SELECT id FROM llm_calls WHERE owner_id = :id"), {"id": req.owner.id}
+        ).one()
+        call = db_session.get(LLMCall, generation_id)
+        # terminalize raised -> defect-settle wrote the terminal row and
+        # committed-full (dispatch attempted); reservation not leaked to TTL.
+        assert call.outcome == "failed"
+        assert _reservation_count(db_session, generation_id) == 0
+        charged = _charge_amount(db_session, generation_id)
+        assert charged is not None and charged > 0
+
+    async def test_stream_terminalize_failure_still_settles(
+        self, db_session, factory, entitled_user_id, monkeypatch
+    ):
+        req = _req(_owner(entitled_user_id))
+        terminal = Succeeded(
+            meta=_meta(),
+            response=ResponsePayload(
+                content=TextContent(text="x", tool_calls=()), continuation=Absent()
+            ),
+        )
+        events = [
+            RuntimeStreamEvent(seq=1, event=TextDelta(text="partial")),
+            RuntimeStreamEvent(seq=2, event=TerminalEvent(outcome=terminal)),
+        ]
+        runtime = _ScriptedRuntime(events=events)
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("terminalize DB failure")
+
+        monkeypatch.setattr("nexus.services.llm_execution.terminalize", _boom)
+
+        with pytest.raises(RuntimeError):
+            async for _ in execute_generation_stream(
+                req,
+                session_factory=factory,
+                runtime=runtime,
+                settings=_settings(),
+                cancel=asyncio.Event(),
+            ):
+                pass
+
+        db_session.expire_all()
+        (generation_id,) = db_session.execute(
+            text("SELECT id FROM llm_calls WHERE owner_id = :id"), {"id": req.owner.id}
+        ).one()
+        call = db_session.get(LLMCall, generation_id)
+        assert call.outcome == "failed"
+        assert _reservation_count(db_session, generation_id) == 0
+        charged = _charge_amount(db_session, generation_id)
+        assert charged is not None and charged > 0
+
+
 class TestExecutionRuntimeProtocol:
     def test_production_execution_runtime_is_structurally_an_execution_runtime(self):
         from nexus.services.llm_execution import ProductionExecutionRuntime

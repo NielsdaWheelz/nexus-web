@@ -1432,6 +1432,22 @@ async def _execute_chat_run(
                 iterations=MAX_TOOL_ITERATIONS,
             )
 
+        # A cancel that lands in the final tool-loop round — after the last
+        # provider stream produced its Succeeded terminal, or during tool
+        # execution — has no live provider event left to fold into a Cancelled
+        # outcome. Re-check before finalizing `complete` so a late cancel
+        # finalizes `cancelled`, not `complete`.
+        if is_cancel_requested(db, run.id):
+            finalize_cancelled(
+                db,
+                run,
+                assistant_content=full_content,
+                usage=usage_provider_json(final_usage),
+                last_provider_event_seq=last_provider_event_seq,
+            )
+            log_stream_observed(status="cancelled", error_code=None, terminal_cause="cancelled")
+            return {"status": "cancelled"}
+
         try:
             emit_citation_index(db, run, full_content, emitter=emitter)
         except InvalidRequestError as exc:

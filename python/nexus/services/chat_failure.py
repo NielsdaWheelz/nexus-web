@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
+from nexus.logging import get_logger
 from nexus.schemas.llm import (
     BudgetExceededChatFailure,
     CancelledChatFailure,
@@ -48,6 +49,17 @@ from nexus.schemas.llm import (
 )
 from nexus.schemas.presence import Absent, Present, presence_from_nullable
 from nexus.services.llm_profiles import profile as lookup_profile
+from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
+
+logger = get_logger(__name__)
+
+
+class _UnrepresentableTerminal(Exception):
+    """Internal signal: a stored terminal state cannot be projected onto the
+    closed `ExpectedChatFailure` union (unrecognized code, an origin outside a
+    code's valid set, or a transient code with no attempts). On the READ path
+    this degrades to the generic non-rerunnable card (`failure=None`), never a
+    500 — see `chat_failure_projection`. The write side stays strict."""
 
 # The closed §10 code set a terminal ChatRun can carry as error_code, plus the
 # statusonly "cancelled" pseudo-code (ChatRun never stores error_code=
@@ -115,21 +127,47 @@ def chat_failure_projection(
 
     `attempts` is required (and used) only for the four transient codes; pass
     `compute_terminal_attempts(db, run)` for those. Every other code ignores it.
+
+    §10 (lines 576-579): a terminal state this projection cannot represent
+    degrades here to `failure=None` (the generic non-rerunnable card) plus a
+    loud operator log — never an `AssertionError` that would 500 `ChatRunOut`,
+    message hydration, terminal SSE folding, or the trust trail. The write-side
+    invariants that produce `ChatRun.error_code`/`error_origin` stay strict.
     """
+    try:
+        return _project_failure(
+            run, has_write_tool_attempt=has_write_tool_attempt, attempts=attempts
+        )
+    except _UnrepresentableTerminal as exc:
+        logger.error(
+            "chat_failure.unrepresentable_terminal",
+            run_id=str(run.id),
+            error_code=run.error_code,
+            error_origin=run.error_origin,
+            run_status=run.status,
+            reason=str(exc),
+        )
+        return None
+
+
+def _project_failure(
+    run: ChatRun,
+    *,
+    has_write_tool_attempt: bool,
+    attempts: int | None,
+) -> ExpectedChatFailure | None:
     support_id = presence_from_nullable(run.support_id)
-    profile_active = _profile_active(run.profile_id)
+    profile_active = profile_selection_active(run)
 
     code = "cancelled" if run.status == "cancelled" else run.error_code
     if code is None:
         return None
     if code not in _NEVER_RERUNNABLE_CODES and code not in _CONDITIONALLY_RERUNNABLE_CODES:
-        # justify-defect: see the matching guard at the bottom of this
-        # function — the closed code set is exhaustively covered by the two
-        # sets above. Checked up front so the failure mode is this function's
-        # own message, not rerun_eligibility's.
-        raise AssertionError(
-            f"chat_failure_projection: unrecognized ChatRun.error_code {code!r} (run_id={run.id})"
-        )
+        # The closed code set is exhaustively covered by the two sets above;
+        # any other stored value is an unrepresentable terminal (a future
+        # write regression or a new code — e.g. reserve's rate_limiter_
+        # unavailable) → generic card on read, loud log for operators.
+        raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
 
     can_rerun = rerun_eligibility(
         error_code=code,
@@ -172,23 +210,18 @@ def chat_failure_projection(
         )
     if code in TRANSIENT_CODES:
         if attempts is None:
-            # justify-defect: every transient code is written by the terminal
-            # fold from a TransientExhausted leaf, which always carries
-            # attempts (§9). A caller reaching this without supplying
-            # attempts (from compute_terminal_attempts) has a broken query,
-            # not a legitimately absent fact.
-            raise AssertionError(
-                f"chat_failure_projection: attempts is required to project "
-                f"ChatRun.error_code {code!r} (run_id={run.id})"
+            # Every transient code is written by the terminal fold from a
+            # TransientExhausted leaf, which always carries attempts (§9). A
+            # caller reaching this without supplying attempts (from
+            # compute_terminal_attempts) has a broken query — unrepresentable
+            # on read → generic card + loud log.
+            raise _UnrepresentableTerminal(
+                f"attempts is required to project ChatRun.error_code {code!r}"
             )
         return _transient_variant(run, code, attempts, support_id, can_rerun)
 
-    # justify-defect: ChatRun.error_code is written exactly once by the
-    # terminal fold from the closed §9/§10 code set; any other stored value is
-    # a broken write invariant, not a legitimately unrecognized product state.
-    raise AssertionError(
-        f"chat_failure_projection: unrecognized ChatRun.error_code {code!r} (run_id={run.id})"
-    )
+    # Unreachable given the up-front guard; kept as a total-match backstop.
+    raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
 
 
 def _transient_variant(
@@ -230,22 +263,46 @@ def _transient_variant(
 def _origin[T: str](run: ChatRun, code: str, allowed: tuple[T, ...]) -> T:
     origin = run.error_origin
     if origin not in allowed:
-        # justify-defect: each code fixes its valid origin Literal(s) at write
-        # time (schemas/llm.py); a stored origin outside that set is a broken
-        # terminal-fold invariant, not a legitimate product state.
-        raise AssertionError(
-            f"chat_failure_projection: ChatRun.error_origin {origin!r} is not valid for "
-            f"error_code {code!r} (run_id={run.id}); allowed origins: {allowed!r}"
+        # Each code fixes its valid origin Literal(s) at write time
+        # (schemas/llm.py); a stored origin outside that set is an
+        # unrepresentable terminal → generic card on read + loud log.
+        raise _UnrepresentableTerminal(
+            f"ChatRun.error_origin {origin!r} is not valid for error_code {code!r}; "
+            f"allowed origins: {allowed!r}"
         )
     return cast(T, origin)
 
 
-def _profile_active(profile_id: str | None) -> bool:
-    """A run with no stored profile snapshot (legacy backfilled row, or a run
-    that failed before profile resolution) has nothing to rerun against."""
-    if profile_id is None:
+def profile_selection_active(run: ChatRun) -> bool:
+    """Whether the run's exact profile *selection* is still rerunnable-active
+    (§10: "a retired, uncertified, or CHANGED profile makes can_rerun=false;
+    rerun never remaps a historical target").
+
+    Beyond the profile id still resolving, this requires:
+      * the selected reasoning option is still offered by that profile, and
+      * the run's resolved target snapshot (provider/model_name/reasoning_
+        effort), when recorded, still matches what the profile + selected
+        reasoning option resolve to today.
+    A run with no stored profile/selection snapshot has nothing to rerun
+    against. A run that recorded no *resolved-target* snapshot (all three
+    NULL) carries no drift evidence here; the rerun transaction closes that gap
+    against the ledger (`chat_reruns._ledger_target_drifted`)."""
+    if run.profile_id is None or run.reasoning_option_id is None:
         return False
-    return lookup_profile(profile_id) is not None
+    active = lookup_profile(run.profile_id)
+    if active is None:
+        return False
+    resolved_reasoning = lookup_reasoning_level(active, run.reasoning_option_id)
+    if resolved_reasoning is None:
+        # The selected reasoning option is no longer offered by this profile.
+        return False
+    if run.provider is not None and run.provider != active.target.provider:
+        return False
+    if run.model_name is not None and run.model_name != active.target.model:
+        return False
+    if run.reasoning_effort is not None and run.reasoning_effort != resolved_reasoning:
+        return False
+    return True
 
 
 def rerun_eligibility(

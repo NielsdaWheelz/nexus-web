@@ -90,7 +90,7 @@ def list_revisions(db: Session, *, viewer_id: UUID, library_id: UUID) -> list[Re
                     FROM llm_calls
                     WHERE owner_kind = 'artifact_revision'
                       AND owner_id = r.id
-                      AND llm_operation = 'li_reduce'
+                      AND llm_operation = 'library_dossier'
                       AND outcome = 'succeeded'
                     ORDER BY call_seq DESC
                     LIMIT 1
@@ -165,7 +165,7 @@ def get_revision(
                     FROM llm_calls
                     WHERE owner_kind = 'artifact_revision'
                       AND owner_id = r.id
-                      AND llm_operation = 'li_reduce'
+                      AND llm_operation = 'library_dossier'
                       AND outcome = 'succeeded'
                     ORDER BY call_seq DESC
                     LIMIT 1

@@ -81,6 +81,7 @@ from nexus.services.resource_graph.schemas import (
 from nexus.services.search import search
 from nexus.services.search.query import SearchQuery
 from nexus.services.synapse import (
+    ScanResult,
     SynapseConnectionOut,
     dismiss_synapse_edge,
     queue_synapse_scan,
@@ -388,8 +389,12 @@ def _add_note_page(
     return page.id, block_ids
 
 
-def _scan(db: Session, *, user_id: UUID, ref: ResourceRef, runtime) -> str:
+def _scan_result(db: Session, *, user_id: UUID, ref: ResourceRef, runtime) -> ScanResult:
     return asyncio.run(run_synapse_scan(db, user_id=user_id, ref=ref, runtime=runtime))
+
+
+def _scan(db: Session, *, user_id: UUID, ref: ResourceRef, runtime) -> str:
+    return _scan_result(db, user_id=user_id, ref=ref, runtime=runtime).status
 
 
 def _synapse_edges(db: Session, *, user_id: UUID, ref: ResourceRef) -> list[EdgeOut]:
@@ -903,8 +908,10 @@ class TestRunSynapseScan:
 
     def test_decode_failure_preserves_prior_edges(self, db_session: Session) -> None:
         # A provider Succeeded whose strict-JSON payload does not validate into
-        # SynapseSynthesis is a terminal decode defect (no repair round): the scan
-        # returns "failed" and leaves the prior edge set intact (AC5).
+        # SynapseSynthesis is a deterministic decode defect (no repair round):
+        # the scan returns a NON-retryable "terminal_failed" (a retry would
+        # re-bill the same call for the same malformed output — F6), persists
+        # the error_code, and leaves the prior edge set intact (AC5).
         user_id = _seed_user(db_session)
         _page1, (source_block,) = _add_note_page(
             db_session, user_id, title="Resonance", bodies=[_NOTE_BODY]
@@ -915,9 +922,11 @@ class TestRunSynapseScan:
         before = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert before, "happy-path seed must write at least one edge"
 
-        status = _scan(db_session, user_id=user_id, ref=ref, runtime=_SchemaDefectRuntime())
+        result = _scan_result(db_session, user_id=user_id, ref=ref, runtime=_SchemaDefectRuntime())
 
-        assert status == "failed"
+        # NOT in synapse_scan's failed_result_statuses ⇒ the queue does not retry.
+        assert result.status == "terminal_failed"
+        assert result.error_code == "invalid_structured_output"
         after = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert {edge.id for edge in after} == {edge.id for edge in before}, (
             "a failed scan must leave the previous synapse edge set intact (AC5)"
@@ -954,9 +963,12 @@ class TestRunSynapseScan:
         before = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert before, "happy-path seed must write at least one edge"
 
-        status = _scan(db_session, user_id=user_id, ref=ref, runtime=_FailingRuntime())
+        result = _scan_result(db_session, user_id=user_id, ref=ref, runtime=_FailingRuntime())
 
-        assert status == "failed"
+        # provider_unavailable is genuinely transient ⇒ retryable "failed"
+        # (in synapse_scan's failed_result_statuses), error_code persisted.
+        assert result.status == "failed"
+        assert result.error_code == "provider_unavailable"
         after = _synapse_edges(db_session, user_id=user_id, ref=ref)
         assert {edge.id for edge in after} == {edge.id for edge in before}, (
             "a failed scan must leave the previous synapse edge set intact (AC5)"
@@ -1088,7 +1100,7 @@ class TestQueueSynapseScan:
         assert (
             asyncio.run(
                 run_synapse_scan(db_session, user_id=user_id, ref=ref, runtime=_SynapseRuntime())
-            )
+            ).status
             == "skipped"
         )
 
