@@ -196,7 +196,7 @@ export default function CollectionRow({
       selected={row.selected}
       rootProps={rootProps}
       leading={
-        <ResourceThumb spec={row.lead} alt={row.headline.text} size={density === "compact" ? "sm" : "md"} />
+        <ResourceThumb spec={row.lead} alt="" size={density === "compact" ? "sm" : "md"} />
       }
       title={<>{headline}</>}
       eyebrow={

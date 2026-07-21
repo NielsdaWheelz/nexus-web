@@ -145,7 +145,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
         json={"media_id": str(media_id)},
         headers=auth_headers(owner_id),
     )
-    assert add_response.status_code == 201, add_response.json()
+    assert add_response.status_code == 204, add_response.text
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 200
 
     # The member has a latent Lectern row for this media (spec §3: viewer-scoped
@@ -183,7 +183,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
         json={"media_id": str(media_id)},
         headers=auth_headers(member_id),
     )
-    assert save_response.status_code == 201, save_response.json()
+    assert save_response.status_code == 204, save_response.text
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 200
 
     with direct_db.session() as session:
@@ -226,7 +226,7 @@ def test_delete_document_removes_default_and_administered_libraries(
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 201, response.json()
+        assert response.status_code == 204, response.text
 
     response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -402,7 +402,7 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
         json={"media_id": str(media_id)},
         headers=auth_headers(user_id),
     )
-    assert add_response.status_code == 201, add_response.text
+    assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -495,7 +495,7 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
         json={"media_id": str(media_id)},
         headers=auth_headers(user_id),
     )
-    assert add_response.status_code == 201, add_response.json()
+    assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -615,7 +615,7 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
         json={"media_id": str(parent_id)},
         headers=auth_headers(user_id),
     )
-    assert add_response.status_code == 201, add_response.json()
+    assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{parent_id}", headers=auth_headers(user_id))
 
@@ -725,7 +725,7 @@ def test_delete_document_detaches_document_embed_target_rows(
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert add_response.status_code == 201, add_response.json()
+        assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
@@ -870,7 +870,7 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert add_response.status_code == 201, add_response.json()
+        assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
@@ -1143,7 +1143,7 @@ def test_delete_document_applies_graph_cleanup_two_rules(
         json={"media_id": str(media_id)},
         headers=auth_headers(user_id),
     )
-    assert add_response.status_code == 201, add_response.json()
+    assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 

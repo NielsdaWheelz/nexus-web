@@ -646,6 +646,152 @@ class TestMigrationUpgradeDowngrade:
             reset_test_schema()
             run_alembic_command("upgrade head")
 
+    def test_0186_stores_and_recomputes_source_word_counts(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0185")
+        assert result.returncode == 0, f"upgrade 0185 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        article_id = uuid4()
+        pdf_ids = [uuid4() for _ in range(5)]
+        fragment_rows = [
+            (uuid4(), 0, ""),
+            (uuid4(), 1, " "),
+            (uuid4(), 2, "\t"),
+            (uuid4(), 3, "\n"),
+            (uuid4(), 4, "..."),
+            (uuid4(), 5, "one,two\tthree\nfour!"),
+        ]
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title)"
+                        " VALUES (:id, 'web_article', 'Existing article')"
+                    ),
+                    {"id": article_id},
+                )
+                for title, media_id, plain_text in (
+                    ("Null PDF", pdf_ids[0], None),
+                    ("Empty PDF", pdf_ids[1], ""),
+                    ("Whitespace PDF", pdf_ids[2], " \t\n"),
+                    ("Punctuation PDF", pdf_ids[3], "..."),
+                    ("Mixed PDF", pdf_ids[4], "one,two\tthree\nfour!"),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, plain_text)"
+                            " VALUES (:id, 'pdf', :title, :plain_text)"
+                        ),
+                        {"id": media_id, "title": title, "plain_text": plain_text},
+                    )
+                for fragment_id, idx, canonical_text in fragment_rows:
+                    session.execute(
+                        text(
+                            "INSERT INTO fragments"
+                            " (id, media_id, idx, canonical_text, html_sanitized)"
+                            " VALUES (:id, :media_id, :idx, :canonical_text, '')"
+                        ),
+                        {
+                            "id": fragment_id,
+                            "media_id": article_id,
+                            "idx": idx,
+                            "canonical_text": canonical_text,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0186")
+            assert result.returncode == 0, f"upgrade 0186 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                generated_columns = dict(
+                    session.execute(
+                        text(
+                            "SELECT table_name, is_generated"
+                            " FROM information_schema.columns"
+                            " WHERE table_schema = 'public'"
+                            " AND (table_name, column_name) IN ("
+                            " ('fragments', 'canonical_text_word_count'),"
+                            " ('media', 'plain_text_word_count')"
+                            " )"
+                        )
+                    ).all()
+                )
+                fragment_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT idx, canonical_text_word_count"
+                            " FROM fragments WHERE media_id = :media_id"
+                            " ORDER BY idx"
+                        ),
+                        {"media_id": article_id},
+                    ).all()
+                )
+                pdf_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT id, plain_text_word_count FROM media WHERE id = ANY(:media_ids)"
+                        ),
+                        {"media_ids": pdf_ids},
+                    ).all()
+                )
+
+                assert generated_columns == {"fragments": "ALWAYS", "media": "ALWAYS"}
+                assert fragment_counts == {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 3}
+                assert pdf_counts == {
+                    pdf_ids[0]: None,
+                    pdf_ids[1]: 0,
+                    pdf_ids[2]: 0,
+                    pdf_ids[3]: 1,
+                    pdf_ids[4]: 3,
+                }
+
+                session.execute(
+                    text(
+                        "UPDATE fragments SET canonical_text = 'now four words here' WHERE id = :id"
+                    ),
+                    {"id": fragment_rows[0][0]},
+                )
+                session.execute(
+                    text("UPDATE media SET plain_text = 'two words' WHERE id = :id"),
+                    {"id": pdf_ids[0]},
+                )
+                session.commit()
+
+                assert (
+                    session.scalar(
+                        text("SELECT canonical_text_word_count FROM fragments WHERE id = :id"),
+                        {"id": fragment_rows[0][0]},
+                    )
+                    == 4
+                )
+                assert (
+                    session.scalar(
+                        text("SELECT plain_text_word_count FROM media WHERE id = :id"),
+                        {"id": pdf_ids[0]},
+                    )
+                    == 2
+                )
+
+            result = run_alembic_command("downgrade 0185")
+            assert result.returncode == 0, f"downgrade 0185 failed: {result.stderr}"
+            with Session(engine) as session:
+                remaining_columns = session.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND column_name IN ("
+                        " 'canonical_text_word_count', 'plain_text_word_count'"
+                        " )"
+                    )
+                )
+                assert remaining_columns == 0
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
     def test_0137_rewrites_legacy_processing_statuses_and_replaces_enum(self):
         reset_test_schema()
         assert run_alembic_command("upgrade 0136").returncode == 0

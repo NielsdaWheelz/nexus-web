@@ -23,6 +23,7 @@ import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { parseContributorHandle } from "@/lib/contributors/handle";
+import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import type {
   ContributorDetail,
   ContributorWorkItem,
@@ -144,9 +145,13 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
       const params = { id: p.id };
       const [library, entries] = await Promise.all([
         request<{ id: string }, { data: unknown }>(libraryResource, params),
-        request<{ id: string }, { data: unknown; page: unknown }>(libraryEntriesResource, params),
+        request<{ id: string }, { data: object[]; page: unknown }>(libraryEntriesResource, params),
       ]);
-      return { library: library.data, entries: entries.data, entriesPage: entries.page };
+      return {
+        library: library.data,
+        entries: entries.data.map(decodeLibraryReadingTimeEntry),
+        entriesPage: entries.page,
+      };
     },
   },
 

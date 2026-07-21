@@ -15,17 +15,28 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { mediaProcessingStatusPill, type MediaProcessingStatus } from "@/lib/status/mediaProcessing";
+import {
+  readingTimeSignal,
+  type LibraryMediaKind,
+  type ReadingTimeEstimatePresence,
+} from "@/lib/libraries/readingTime";
 
 export interface MediaPresenterItem extends ReadStateFields {
   id: string;
-  kind: string;
+  kind: LibraryMediaKind;
   title: string;
   canonical_source_url: string | null;
   processing_status: MediaProcessingStatus;
   published_date?: string | null;
   publisher?: string | null;
   contributors?: ContributorCredit[];
-  capabilities?: unknown;
+  capabilities: {
+    can_quote: boolean;
+    can_delete?: boolean;
+    can_retry?: boolean;
+    can_refresh_source?: boolean;
+    can_retry_metadata?: boolean;
+  };
 }
 
 export type MediaPresenterContext = Omit<
@@ -33,14 +44,15 @@ export type MediaPresenterContext = Omit<
   "media" | "readState"
 > & {
   connectionSummary?: ConnectionSummaryOut;
+  readingTimeEstimate: ReadingTimeEstimatePresence;
 };
 
 export function presentMedia(item: MediaPresenterItem, ctx: MediaPresenterContext): CollectionRowView {
-  const { connectionSummary, ...actionCtx } = ctx;
+  const { connectionSummary, readingTimeEstimate, ...actionCtx } = ctx;
   const status = mediaProcessingStatusPill(item.processing_status);
   const actions = mediaResourceOptions({
     media: item,
-    readState: item.read_state ?? undefined,
+    readState: item.read_state,
     ...actionCtx,
   });
   // The read-state override verb is the primary swipe (D-11): mark-finished on
@@ -54,6 +66,8 @@ export function presentMedia(item: MediaPresenterItem, ctx: MediaPresenterContex
   );
 
   const signals: SignalFact[] = [];
+  const readingTime = readingTimeSignal(readingTimeEstimate, item);
+  if (readingTime) signals.push({ value: readingTime });
   if (item.publisher) signals.push({ value: item.publisher });
   if (item.published_date) signals.push({ value: item.published_date });
 

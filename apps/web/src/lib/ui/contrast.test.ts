@@ -91,3 +91,22 @@ describe("machine-ink contrast gate (AC-7)", () => {
     }
   }
 });
+
+describe("collection metadata contrast", () => {
+  const css = globalsCss();
+  const rooms = [
+    { theme: "dark", block: themeBlock(css, ":root") },
+    { theme: "light", block: themeBlock(css, '[data-theme="light"]') },
+  ];
+
+  for (const { theme, block } of rooms) {
+    const ink = hexToken(block, "ink-muted");
+    for (const surface of ["surface-1", "surface-canvas"] as const) {
+      it(`${theme}: --ink-muted on --${surface} clears AA`, () => {
+        expect(contrastRatio(ink, hexToken(block, surface))).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      });
+    }
+  }
+});

@@ -1,13 +1,15 @@
 """Library-related request and response schemas."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.alias_generators import to_camel
 
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.media import MediaOut, MediaReadState
+from nexus.schemas.media import MediaOut
+from nexus.schemas.presence import Presence
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
@@ -16,6 +18,9 @@ PodcastSubscriptionStatusValue = Literal["active", "unsubscribed"]
 PodcastSyncStatusValue = Literal[
     "pending", "running", "partial", "complete", "source_limited", "failed"
 ]
+
+_INT32_MAX = 2_147_483_647
+_PositiveInt32 = Annotated[int, Field(strict=True, ge=1, le=_INT32_MAX)]
 
 
 class CreateLibraryRequest(BaseModel):
@@ -128,6 +133,13 @@ class LibraryPodcastSubscriptionOut(BaseModel):
     updated_at: datetime
 
 
+class ReadingTimeEstimateOut(BaseModel):
+    total_minutes: _PositiveInt32
+    remaining_minutes: Presence[_PositiveInt32]
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
 class LibraryEntryOut(BaseModel):
     id: UUID
     library_id: UUID
@@ -141,15 +153,14 @@ class LibraryEntryOut(BaseModel):
     # collection-surface cutover). `last_engaged_at` is the entry target's most
     # recent read/listen recency (None when never engaged); `surfaced_today`
     # evaluates GREATEST(created_at, last_engaged_at, last_connected_at,
-    # published_at) against the viewer-timezone day boundary. `read_state`/
-    # `progress_fraction` are projected at entry level for media targets so
-    # collection presenters do not need to know the nested target shape.
+    # published_at) against the viewer-timezone day boundary.
     surfaced_today: bool = False
-    read_state: MediaReadState | None = None
-    progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
+    reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
+        serialization_alias="readingTimeEstimate"
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class LibraryMemberOut(BaseModel):

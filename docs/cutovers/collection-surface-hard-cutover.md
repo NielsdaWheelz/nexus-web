@@ -32,10 +32,10 @@ is introduced above them.
 This is a hard-cutover plan. No legacy rendering path, no compatibility shims, no fallbacks,
 no feature flags on the rendering layer. When a slice lands, the per-pane inline slot-mapping
 and bespoke per-pane CSS for that surface are deleted in the same change; every row-shaped list
-surface moves to the new presenter + collection layer together. The only forward-compatibility
-hook is explicit and named: read-state is **derived** in v1 and a unified `consumption_state` table is
-left as a documented v2 follow-up (§ Non-Goals N6), and synapse (AI) edges are **excluded** from
-v1 connection surfacing (§ Key Decision 3).
+surface moves to the new presenter + collection layer together. Read-state is
+derived through the canonical consumption projection; it is not duplicated by
+collection surfaces. Synapse (AI) edges are **excluded** from v1 connection
+surfacing (§ Key Decision 3).
 
 Verification gate for each slice: `cd apps/web && bun run typecheck && bun run lint &&
 bun run lint:css-tokens` green; `make check-bundle` ≤ 115 kB gz; FE unit + browser suites
@@ -67,8 +67,8 @@ CollectionRowView` that own the decision of what earns weight per kind — feedi
   navigation, CSS-native virtualization, reflow motion, and read-state/connection affordances.
 This collapses the current row-surface inventory into 10 presenters and thin panes. **(3)** Make the list
 *radiate* what the substrate knows, deterministically and AI-free: per-row connection summaries
-from `resource_edges`, computed similarity/shared-author "related" peers, derived read-state +
-progress, and a "Surfaced today" recency lane and "Resonance" ordering over a library.
+from `resource_edges`, computed similarity/shared-author "related" peers, canonical consumption
+state + progress, and a "Surfaced today" recency lane and "Resonance" ordering over a library.
 
 First migration slice (S0) introduces the new aesthetic + shared atoms; the rendering cutover
 (S2) is the load-bearing one; backend slices (S3–S5) are additive to storage (no legacy backend
@@ -86,12 +86,13 @@ questions, the ones an information-design practitioner asks:
   and re-entry, not curation (per Spotify Research's finding that users have "limits of interest
   in spending effort manually organizing their libraries" → design for retrieval over curation).
 - **What single fact decides the next action for *this kind* of item?** Book → progress + time
-  left. Podcast → unplayed count. Episode → played-state + duration. Search hit → the matching
+  left. Podcast → unplayed count. Episode → played-state + progress. Search hit → the matching
   snippet. Author → how present they are. A surface that gives every fact equal weight has made
   no decision. The presenter layer is where that decision finally has an owner.
 - **What does the substrate already know that we are hiding?** The provenance graph
-  (`resource_edges`), document resume (`reader_media_state`), audio play-state
-  (`podcast_listening_states`), and authorship (`contributor_credits`) all exist. Authorship is
+  (`resource_edges`), canonical consumption projection (explicit overrides plus
+  `reader_engagement_states` / `podcast_listening_states`), and authorship
+  (`contributor_credits`) all exist. Authorship is
   partially visible, and podcast episodes expose local progress, but the substrate is not surfaced
   consistently across collection lists. "Surface what exists" (`docs/horizons.md`) is the
   differentiator: a knowledge tool's list should expose connection and progress at rest, which a
@@ -126,9 +127,10 @@ These boundaries stay intact.
   (`connection_summaries.py`) for counts/top peers, but it must stay inside
   `services/resource_graph`, reuse the same ref parsing, visibility, endpoint hydration, and
   `ConnectionEndpointOut` wire shape, and leave edge writers plus `resource_edges` shape untouched.
-- **Reader resume + listening state.** `reader_media_state` / `podcast_listening_states` and their
-  services (`services/reader.py`, `services/listening_state.py`) remain the source of truth;
-  read-state is derived from them, not duplicated.
+- **Consumption state.** `services/consumption/` is the sole owner. Its projection
+  derives state/progress from `consumption_overrides`, `reader_engagement_states`,
+  and `podcast_listening_states`; collection surfaces consume that projection and
+  never read or write those tables directly.
 - **`SortableList`** (`components/sortable/SortableList.tsx`, dnd-kit) stays the drag-reorder owner
   for manual library-entry ordering. It can opt into `ResourceList` semantics for collection
   rows, so dnd is still one owner without creating a parallel list surface.
@@ -262,8 +264,8 @@ After the cutover:
 - **N3** No "Shortlist"/saved-priority lane (it is another library; future).
 - **N4** No Peek/Quick-Look hover-detail surface (future).
 - **N5** No dedicated "Continue/Resume" button — Enter/click/tap on the row resumes.
-- **N6** No `consumption_state` migration in v1; read-state is derived (§ Key Decision 4). The
-  unified table + true "opened" event + highlight-count index are a documented v2 follow-up.
+- **N6** S3 creates no collection-owned consumption storage. Read-state remains
+  derived by the canonical `services/consumption/` projection (§ Key Decision 4).
 - **N7** No universal resource fetch adapter (pane-surface-kit N7 stands); CT-1 layers on
   `useResource`, it does not replace per-pane keys/hydration.
 - **N8** Reader document-map sidecars and `ItemCard` are not merged into `CollectionRow`; only
@@ -291,8 +293,8 @@ After the cutover:
   delete inline mappings + bespoke CSS; reconcile the two icon maps. The hard gate is source
   based, not count based: no direct `<ResourceRow>` outside the approved collection/search
   wrappers after S2.
-- Backend (additive to storage, no Alembic migration expected): derive
-  `read_state`/`progress_fraction`/`last_engaged_at` on `MediaOut`; add a
+- Backend (additive to storage, no Alembic migration expected): expose canonical
+  `read_state`/`progress_fraction`/`last_engaged_at` through `MediaOut`; add a
   `connection_summaries` batch service + `POST /resource-graph/connections/summary`; add
   `GET /media/{id}/related` (similarity + shared-author); add library `?sort=resonance` +
   `surfaced_today` fields. These are still contract changes: schemas, routes, BFF proxy routes,
@@ -301,7 +303,7 @@ After the cutover:
 
 ### Out Of Scope
 
-- Synapse surfacing, Shortlist, Peek, consumption_state migration, real-time deltas, reader
+- Synapse surfacing, Shortlist, Peek, real-time deltas, reader
   sidecar/`ItemCard` merge (N2–N9).
 - Settings `keys`/`billing`/`local-vault`/`appearance`/`account`/`reader` form surfaces (not
   row-shaped); they keep `PaneSection`. They adopt `lib/status/*` only for status pills they
@@ -330,7 +332,7 @@ After the cutover:
 | Connection summary (read) | `services/resource_graph/connection_summaries.py` | one aggregate query; reuses graph ref parsing, visibility, resolve, and activation helpers for peers |
 | Related peers (similarity + author) | `services/media_related.py` + `api/routes/media.py` `GET /media/{id}/related` | precomputed vectors; no LLM |
 | Resonance ordering + surfaced-today | `services/library_entries` (`?sort=resonance`) | deterministic score over existing signals |
-| Read-state derivation | `services/media.py` → `MediaOut` | from `reader_media_state` + `podcast_listening_states` |
+| Read-state derivation | `services/consumption/_projection.py` → `services/media.py` → `MediaOut` | explicit override + reader engagement/listening state; one canonical projection |
 
 ### Dependency Direction
 
@@ -470,7 +472,8 @@ GET  /media/{id}/related?limit=N
 
 GET  /libraries/{id}/entries?sort=resonance
   res:  existing LibraryEntryOut[] ordered by deterministic score
-        + per-entry surfaced_today: bool, last_engaged_at, read_state, progress_fraction
+        + per-entry surfaced_today: bool, last_engaged_at
+        # nested media owns read_state/progress_fraction; the entry does not duplicate them
 
 MediaOut += read_state: "unread"|"in_progress"|"finished"|None,
             progress_fraction: float|None, last_engaged_at: datetime|None   # derived post-hoc
@@ -498,7 +501,8 @@ math only, with no request-time LLM. `surfaced_today` =
   one per row.
 - **Default-deny per surface.** Every connection read declares its origin allowlist explicitly.
 - **URL is the state.** View/density/sort/filter are a value-object serialized to the pane href.
-- **Derive, don't duplicate.** Read-state reads the authoritative resume/listening tables.
+- **Derive, don't duplicate.** Collection surfaces consume the authoritative
+  `services/consumption/` projection; they do not project state from storage.
 
 ## Composition With Other Systems
 
@@ -519,9 +523,10 @@ math only, with no request-time LLM. `surfaced_today` =
   `resource_edges`, and reuse endpoint hydration / `ConnectionEndpointOut` so peers carry live
   label+href with no per-peer frontend round trip. The reader Document Map connections lens is
   unchanged; the list uses the non-anchored summary path.
-- **Reader.** Read-state derives from `reader_media_state` (docs) and `podcast_listening_states`
-  (audio); opening a row morphs into the reader via the View Transitions API (same-document
-  `startViewTransition`).
+- **Reader.** Reader cursor saves feed `reader_engagement_states` through the
+  consumption owner; collection read-state comes back through that owner's
+  projection. Opening a row morphs into the reader via the View Transitions API
+  (same-document `startViewTransition`).
 - **CSS tokens / motion.** All visuals use semantic tokens; motion uses `--ease-*`/`--duration-*`;
   reduced-motion is auto-handled for token-driven CSS, with an explicit guard added for
   View-Transition pseudo-elements (outside the token cascade).
@@ -540,12 +545,13 @@ math only, with no request-time LLM. `surfaced_today` =
 3. **Connections in v1 are deterministic provenance edges only; synapse excluded.** Honors "leave
    AI out for v1 / no generated reasons." `LIST_CONNECTION_ORIGINS` omits `synapse`. Synapse
    becomes a labeled "Suggestions" lane in a later version (provenance discipline).
-4. **Read-state derived; no migration.** `reader_media_state.locator.total_progression` and
-   `podcast_listening_states.is_completed`/`position_ms` are authoritative today; deriving
-   `MediaOut.read_state` is schema+service only. Documented caveat: documents have no explicit
-   "opened" event, so `unread` means "no committed scroll position." The unified `consumption_state`
-   table (true `last_opened_at`, folds in listening-state, + `highlights(user_id, anchor_media_id)`
-   index for engagement counts) is the v2 follow-up.
+4. **Read-state is projected once.** `services/consumption/_projection.py`
+   combines explicit Unread/Finished overrides with reader engagement and
+   podcast listening state. A retained reader-engagement row means in-progress;
+   non-PDF `max_total_progression` supplies progress and the finished threshold,
+   while PDF engagement has no whole-document progression. `services/media.py`
+   applies that projection to `MediaOut`; collection surfaces do not derive it
+   again or own a second state table.
 5. **CSS-native `content-visibility`, not a virtualizer.** Zero JS/bundle, keeps native focus +
    in-page-find; arrow-nav uses `scrollIntoView({block:"nearest"})` to reveal. Revisit only at
    10k-row lists, and then inside the lazy pane body.
@@ -601,15 +607,16 @@ Acceptance for S2: every row-shaped list renders via `CollectionView`; direct `<
 usage exists only inside `components/collections/*` and `components/ui/ResourceRow.tsx`; source
 gates (below) pass; FE unit + browser suites green; bundle ≤ 115 kB; e2e/CSP green.
 
-### S3 — Derived read-state + progress + "Surfaced today" recency
+### S3 — Consumption state + progress + "Surfaced today" recency
 
-Files (BE): `services/media.py` derivation, `schemas/media.py` (`MediaOut` fields),
+Files (BE): `services/media.py` projection application, `schemas/media.py` (`MediaOut` fields),
 `services/library_entries` (`surfaced_today`, `last_engaged_at`, `sort` branch). Files (FE):
 `ReadStateBadge`/progress wiring in `CollectionRow`; `media` presenter `consumption`; recency
 lane in `CollectionView`.
-Work: derive read-state (docs from `reader_media_state`, audio from `podcast_listening_states`);
-expose recency timestamps; "Surfaced today" lane on the library; document the no-explicit-open
-caveat in code + this doc.
+Work: expose read-state from the canonical consumption projection (explicit
+overrides plus reader engagement/listening state), expose recency timestamps,
+and add the "Surfaced today" lane on the library. The original S3 storage wording
+is superseded by the consumption hard cutover; no collection-owned state path remains.
 Acceptance for S3: BE `ruff`/`pyright`/`test-back-integration` green; read-state shows correctly
 for a read doc, an in-progress episode, and an unopened item; `GET /libraries/{id}/entries`
 still defaults to position order; the surfaced-today lane orders deterministically.
@@ -779,8 +786,9 @@ PATH=/home/niels/.bun/bin:$PATH make test-csp
   `startViewTransition` when reduced.
 - **Risk: per-row connection fetch N+1.** Control: one batch `/connections/summary` per visible
   page (≤200 refs); peers carry label+href so no per-peer round trip.
-- **Risk: derived read-state misreads "opened but untouched" docs as unread.** Control: documented
-  caveat in code + this doc; v2 `consumption_state` adds a true opened event (N6).
+- **Risk: collection code drifts from consumption semantics.** Control: the
+  collection consumes `services/consumption/` output and does not inspect reader
+  or listening storage itself.
 - **Risk: bundle creep from new atoms.** Control: list/gallery/swipe/keyboard code lives in lazy
   pane bodies; `make check-bundle` gates every slice; no new dependency.
 - **Risk: swipe-only actions break keyboard/desktop.** Control: AC-7 requires menu + keyboard
@@ -792,11 +800,11 @@ PATH=/home/niels/.bun/bin:$PATH make test-csp
 - [x] Every row-shaped list surface renders through `CollectionView`; inline slot-mapping deleted.
 - [x] Editorial list + Gallery + density shipped; keyboard composite + type-ahead; reflow + morph
       with reduced-motion guards; mobile swipe with parity.
-- [x] Read-state + progress + "Surfaced today" + Resonance live; no migration shipped.
+- [x] Canonical consumption state + progress + "Surfaced today" + Resonance live;
+      no collection-owned state path shipped.
 - [x] Connection summaries + related peers live; deterministic; AI-free (no request-time LLM);
       synapse excluded.
 - [x] CT-1…CT-9 consolidated; bespoke CSS + duplicate icon map + per-pane boilerplate deleted.
 - [x] typecheck/lint/css-tokens/bundle green; FE unit+browser green; BE ruff/pyright/integration
       green; BFF proxy route-count guard green; e2e/csp status noted.
-- [x] v2 follow-ups recorded: `consumption_state` table + true opened-event + highlight-count
-      index; synapse "Suggestions" lane; Shortlist; Peek.
+- [x] Follow-ups recorded: synapse "Suggestions" lane; Shortlist; Peek.

@@ -258,7 +258,25 @@ describe("loadWorkspaceBootstrap", () => {
   it("composes the library detail resource from library and entries paths", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
     const library = { id: "lib-1", name: "Seeded Library" };
-    const entry = { id: "entry-1", media: { id: "media-1" } };
+    const entry = {
+      id: "entry-1",
+      kind: "media",
+      media: {
+        id: "media-1",
+        kind: "web_article",
+        processing_status: "ready_for_reading",
+        read_state: "unread",
+        progress_fraction: null,
+        capabilities: { can_quote: true },
+      },
+      readingTimeEstimate: {
+        kind: "Present",
+        value: {
+          totalMinutes: 15,
+          remainingMinutes: { kind: "Absent" },
+        },
+      },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries/lib-1": { data: library },

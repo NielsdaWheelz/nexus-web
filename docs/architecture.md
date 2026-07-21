@@ -333,15 +333,17 @@ The tables group into these domains:
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
 `reader_profiles`, `workspace_sessions`, `command_palette_usages`.
 
-**Media / ingestion** — `media` (the central readable entity), `media_file`
-(private original-file object metadata), `project_gutenberg_catalog`,
+**Media / ingestion** — `media` (the central readable entity; PDF `plain_text`
+has a same-row STORED `plain_text_word_count` derivative), `media_file` (private
+original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
 **Reader content / fragments** — `fragments` (current render units carrying
-`canonical_text` + `html_sanitized`), `fragment_blocks`, EPUB structure
+`canonical_text` + `html_sanitized` and a same-row STORED
+`canonical_text_word_count` derivative), `fragment_blocks`, EPUB structure
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
 `epub_resources` for private extracted asset object metadata),
-`pdf_page_text_spans`, `reader_media_state`.
+`pdf_page_text_spans`.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
@@ -406,9 +408,11 @@ message API responses include a
 `podcast_transcription_jobs`,
 `podcast_transcription_usage_daily`, `podcast_transcript_segments`.
 
-**Lectern / consumption** — `consumption_queue_items` (the Lectern: one
-ordered, mixed-media list per viewer, membership/order only — completion is
-never stored on the row), `consumption_overrides` (explicit `Unread`/
+**Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
+resume cursor only; consumption state does not derive directly from it),
+`consumption_queue_items` (the Lectern: one ordered, mixed-media list per
+viewer, membership/order only — completion is never stored on the row),
+`consumption_overrides` (explicit `Unread`/
 `Finished` state), `reader_engagement_states` (one current-state row per
 viewer/media: `last_engaged_at` recency and, for non-PDF locators, a
 monotonic `max_total_progression` — no session/device/span/dwell history),
@@ -941,6 +945,17 @@ predicates in `auth/permissions.py`; the search/object readers read
   order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
   any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
   reinterpretation.
+- **Library reading-time is a list projection, not shared media state.**
+  `services/media_document_metrics.py` batch-aggregates only the STORED integer
+  source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
+  owns the 240-WPM and coarse-rounding policy. Each `LibraryEntryOut` carries a
+  required `Presence<ReadingTimeEstimateOut>`. Total is available for positive
+  counts; remaining is derived only for in-progress web/EPUB media from the
+  canonical consumption projection's monotonic whole-document progression.
+  PDF remains total-only, and shared PDF quote readiness uses the stored
+  positive word count rather than reading `plain_text`. Nested `media` owns read
+  state/progress; the entry does not duplicate them, and no Library list path
+  scans source text.
 - **Library Intelligence** (`services/library_intelligence.py`) is one stable
   synthesis artifact head per library plus immutable generated revisions.
   Citations belong to `library_intelligence_revision:<id>`; the artifact head

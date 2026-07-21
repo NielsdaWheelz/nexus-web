@@ -16,10 +16,7 @@ import {
 } from "@/lib/api/resource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
-import {
-  requireDocumentProcessingStatus,
-  type DocumentProcessingStatus,
-} from "@/lib/media/documentReadiness";
+import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import {
   FeedbackNotice,
   toFeedback,
@@ -80,6 +77,11 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { isAbortError } from "@/lib/errors";
+import {
+  decodeLibraryReadingTimeEntry,
+  type LibraryMediaKind,
+  type ReadingTimeEstimatePresence,
+} from "@/lib/libraries/readingTime";
 import styles from "./page.module.css";
 
 interface Library {
@@ -96,18 +98,24 @@ interface Library {
 
 interface LibraryMediaEntry {
   id: string;
-  kind: string;
+  kind: LibraryMediaKind;
   title: string;
   contributors: ContributorCredit[];
   published_date: string | null;
   publisher: string | null;
   canonical_source_url: string | null;
   processing_status: DocumentProcessingStatus;
-  read_state?: "unread" | "in_progress" | "finished" | null;
-  progress_fraction?: number | null;
+  read_state: "unread" | "in_progress" | "finished";
+  progress_fraction: number | null;
   last_engaged_at?: string | null;
-  capabilities?: Partial<MediaActionCapabilities>;
+  capabilities: Partial<MediaActionCapabilities> &
+    Pick<MediaActionCapabilities, "can_quote">;
 }
+
+type LibraryMediaConsumption = Pick<
+  LibraryMediaEntry,
+  "read_state" | "progress_fraction"
+>;
 
 interface LibraryPodcastEntry {
   id: string;
@@ -134,10 +142,8 @@ interface LibraryEntryBase {
   id: string;
   position: number;
   created_at: string;
-  read_state?: "unread" | "in_progress" | "finished" | null;
-  progress_fraction?: number | null;
-  last_engaged_at?: string | null;
   surfaced_today?: boolean;
+  readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
 interface LibraryMediaListEntry extends LibraryEntryBase {
@@ -161,6 +167,13 @@ interface LibraryPageInfo {
 interface LibraryEntryPage {
   data: LibraryEntry[];
   page: LibraryPageInfo;
+}
+
+function decodeLibraryEntryPage(page: LibraryEntryPage): LibraryEntryPage {
+  return {
+    ...page,
+    data: page.data.map(decodeLibraryReadingTimeEntry),
+  };
 }
 
 interface LibraryPaneResource {
@@ -219,6 +232,23 @@ export default function LibraryPaneBody() {
   const refreshingMediaIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
+  const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
+  const patchMediaInViews = useCallback(
+    (
+      mediaId: string,
+      patch: (media: LibraryMediaEntry) => LibraryMediaEntry,
+    ) => {
+      const apply = (current: LibraryEntry[]) =>
+        current.map((entry) =>
+          entry.kind === "media" && entry.media.id === mediaId
+            ? { ...entry, media: patch(entry.media) }
+            : entry,
+        );
+      setEntries(apply);
+      setResonanceEntries(apply);
+    },
+    [],
+  );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
     params: { id },
@@ -272,7 +302,10 @@ export default function LibraryPaneBody() {
   const resonanceEntriesPath = libraryEntriesResource.clientPath({ id, sort: "resonance" });
   const resonanceFetch = useDebouncedFetch<LibraryEntryPage>(
     sort === "resonance" ? resonanceEntriesPath : null,
-    (signal) => apiFetch<LibraryEntryPage>(resonanceEntriesPath, { signal }),
+    async (signal) =>
+      decodeLibraryEntryPage(
+        await apiFetch<LibraryEntryPage>(resonanceEntriesPath, { signal }),
+      ),
   );
 
   const [editOpen, setEditOpen] = useState(false);
@@ -306,6 +339,7 @@ export default function LibraryPaneBody() {
   useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
   useEffect(() => {
     cancelEntryLoadMore();
+    consumptionOperationTokensRef.current.clear();
   }, [cancelEntryLoadMore, id]);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
@@ -534,66 +568,27 @@ export default function LibraryPaneBody() {
     async (args: {
       mediaId: string;
       busySet: StringIdSet;
-      endpoint: string;
+      action: "retry" | "refresh";
       successTitle: string;
       errorFallback: string;
-      capabilityPatch: Partial<MediaActionCapabilities>;
     }) => {
       if (args.busySet.ids.has(args.mediaId)) return;
       args.busySet.add(args.mediaId);
       try {
-        let nextProcessingStatus: LibraryMediaEntry["processing_status"] =
-          "extracting";
-        let sourceFeedback: { severity: "success" | "warning"; title: string } = {
-          severity: "success" as const,
-          title: args.successTitle,
-        };
-        let capabilityPatch = args.capabilityPatch;
-        if (args.endpoint === "/retry") {
-          const projection = await runSourceProcessingAction({
-            mediaId: args.mediaId,
-            action: "retry",
-            successTitle: args.successTitle,
-          });
-          nextProcessingStatus = requireDocumentProcessingStatus(
-            projection.processingStatus,
-          );
-          capabilityPatch = projection.capabilityPatch;
-          sourceFeedback = projection.feedback;
-        } else if (args.endpoint === "/refresh") {
-          const projection = await runSourceProcessingAction({
-            mediaId: args.mediaId,
-            action: "refresh",
-            successTitle: args.successTitle,
-          });
-          nextProcessingStatus = requireDocumentProcessingStatus(
-            projection.processingStatus,
-          );
-          capabilityPatch = projection.capabilityPatch;
-          sourceFeedback = projection.feedback;
-        } else {
-          await apiFetch(`/api/media/${args.mediaId}${args.endpoint}`, {
-            method: "POST",
-          });
-        }
-        setEntries((current) =>
-          current.map((entry) =>
-            entry.kind === "media" && entry.media.id === args.mediaId
-              ? {
-                  ...entry,
-                  media: {
-                    ...entry.media,
-                    processing_status: nextProcessingStatus,
-                    capabilities: {
-                      ...(entry.media.capabilities ?? {}),
-                      ...capabilityPatch,
-                    },
-                  },
-                }
-              : entry,
-          ),
-        );
-        feedback.show(sourceFeedback);
+        const projection = await runSourceProcessingAction({
+          mediaId: args.mediaId,
+          action: args.action,
+          successTitle: args.successTitle,
+        });
+        patchMediaInViews(args.mediaId, (media) => ({
+          ...media,
+          processing_status: projection.processingStatus,
+          capabilities: {
+            ...media.capabilities,
+            ...projection.capabilityPatch,
+          },
+        }));
+        feedback.show(projection.feedback);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -603,7 +598,7 @@ export default function LibraryPaneBody() {
         args.busySet.remove(args.mediaId);
       }
     },
-    [feedback],
+    [feedback, patchMediaInViews],
   );
 
   const handleRetryProcessing = useCallback(
@@ -611,10 +606,9 @@ export default function LibraryPaneBody() {
       runMediaProcessingMutation({
         mediaId,
         busySet: retryingMediaIds,
-        endpoint: "/retry",
+        action: "retry",
         successTitle: "Processing retry started.",
         errorFallback: "Failed to retry processing",
-        capabilityPatch: { can_retry: false },
       }),
     [retryingMediaIds, runMediaProcessingMutation],
   );
@@ -624,10 +618,9 @@ export default function LibraryPaneBody() {
       runMediaProcessingMutation({
         mediaId,
         busySet: refreshingMediaIds,
-        endpoint: "/refresh",
+        action: "refresh",
         successTitle: "Source refresh started.",
         errorFallback: "Failed to refresh source",
-        capabilityPatch: { can_refresh_source: false, can_retry: false },
       }),
     [refreshingMediaIds, runMediaProcessingMutation],
   );
@@ -670,23 +663,29 @@ export default function LibraryPaneBody() {
 
   const handleSetConsumption = useCallback(
     async (mediaId: string, status: "finished" | "unread") => {
-      const patch = <T extends { kind: string; media?: { id: string; read_state?: unknown } }>(
-        entry: T,
-      ): T =>
-        entry.kind === "media" && entry.media?.id === mediaId
-          ? { ...entry, media: { ...entry.media, read_state: status } }
-          : entry;
-
-      let previousEntries: LibraryEntry[] = [];
-      let previousResonance: LibraryEntry[] = [];
-      setEntries((current) => {
-        previousEntries = current;
-        return current.map(patch);
-      });
-      setResonanceEntries((current) => {
-        previousResonance = current;
-        return current.map(patch);
-      });
+      const capture = (current: LibraryEntry[]) => {
+        const previous = new Map<string, LibraryMediaConsumption>();
+        for (const entry of current) {
+          if (entry.kind === "media" && entry.media.id === mediaId) {
+            previous.set(entry.id, {
+              read_state: entry.media.read_state,
+              progress_fraction: entry.media.progress_fraction,
+            });
+          }
+        }
+        return previous;
+      };
+      const previousEntries = capture(entries);
+      const previousResonanceEntries = capture(resonanceEntries);
+      if (previousEntries.size === 0 && previousResonanceEntries.size === 0) {
+        throw new Error(`Library media ${mediaId} is not present`);
+      }
+      const operationToken = Symbol(mediaId);
+      consumptionOperationTokensRef.current.set(mediaId, operationToken);
+      patchMediaInViews(mediaId, (media) => ({
+        ...media,
+        read_state: status,
+      }));
 
       try {
         if (status === "finished") {
@@ -695,15 +694,38 @@ export default function LibraryPaneBody() {
           await lectern.setUnread(parseMediaId(mediaId));
         }
       } catch (err) {
-        setEntries(previousEntries);
-        setResonanceEntries(previousResonance);
+        if (
+          consumptionOperationTokensRef.current.get(mediaId) !== operationToken
+        ) {
+          return;
+        }
+        const restore = (
+          current: LibraryEntry[],
+          previous: Map<string, LibraryMediaConsumption>,
+        ) =>
+          current.map((entry) => {
+            const fields = previous.get(entry.id);
+            return entry.kind === "media" && entry.media.id === mediaId && fields
+              ? { ...entry, media: { ...entry.media, ...fields } }
+              : entry;
+          });
+        setEntries((current) => restore(current, previousEntries));
+        setResonanceEntries((current) =>
+          restore(current, previousResonanceEntries),
+        );
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
           ...toFeedback(err, { fallback: "Failed to update read state" }),
         });
+      } finally {
+        if (
+          consumptionOperationTokensRef.current.get(mediaId) === operationToken
+        ) {
+          consumptionOperationTokensRef.current.delete(mediaId);
+        }
       }
     },
-    [feedback, lectern],
+    [entries, feedback, lectern, patchMediaInViews, resonanceEntries],
   );
 
   const handleAddToLectern = useCallback(
@@ -917,6 +939,7 @@ export default function LibraryPaneBody() {
         }),
         { signal: controller.signal },
       )
+        .then(decodeLibraryEntryPage)
         .then((page) => {
           if (controller.signal.aborted || generation !== entryLoadMoreGenerationRef.current) {
             return;
@@ -1124,17 +1147,18 @@ export default function LibraryPaneBody() {
     }
     const row = presentMedia(item.media, {
       canManageLibraries: canEditEntries,
+      readingTimeEstimate: item.readingTimeEstimate,
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryBusy: retryingMediaIds.ids.has(item.media.id),
       refreshBusy: refreshingMediaIds.ids.has(item.media.id),
       onRetry:
-        canEditEntries && item.media.capabilities?.can_retry
+        canEditEntries && item.media.capabilities.can_retry
           ? () => {
               void handleRetryProcessing(item.media.id);
             }
           : undefined,
       onRefreshSource:
-        canEditEntries && item.media.capabilities?.can_refresh_source
+        canEditEntries && item.media.capabilities.can_refresh_source
           ? () => {
               void handleRefreshSource(item.media.id);
             }
@@ -1148,7 +1172,7 @@ export default function LibraryPaneBody() {
           }
         : undefined,
       onDelete:
-        canEditEntries && item.media.capabilities?.can_delete
+        canEditEntries && item.media.capabilities.can_delete
           ? () => {
               void handleDeleteMedia(item);
             }

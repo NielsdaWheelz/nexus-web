@@ -128,7 +128,8 @@ The one actor-authorized filing command used by REST and `agent_tools/writes.py`
 5. inserts/checks the physical entry;
 6. clears `user_media_deletions` even when the physical entry already exists;
 7. inserts direct Default intent even when virtual membership already exposes the media;
-8. returns idempotent present/inserted outcome for Undo correctness.
+8. returns an inserted-only boolean outcome (`false` means already present) for
+   Undo correctness.
 
 A narrow trusted system command serves Oracle seeding. Both call one private insertion primitive. For media, that primitive always calls existing `raise_if_media_teardown_pending()` before the library lock; the barrier stays in `library_entries.py`. Closure deletion must not delete or bypass it.
 

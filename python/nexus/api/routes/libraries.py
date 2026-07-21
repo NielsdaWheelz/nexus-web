@@ -363,49 +363,47 @@ def list_library_entries(
         sort=sort,
         viewer_timezone=viewer_tz,
     )
-    return ok_page(result, page)
+    return ok_page(result, page, by_alias=True)
 
 
-@router.patch("/libraries/{library_id}/entries/reorder")
+@router.patch("/libraries/{library_id}/entries/reorder", status_code=204)
 def patch_library_entry_order(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: LibraryEntryOrderRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Response:
     """Replace full entry ordering for a library."""
-    result = library_entries.reorder_entries(db, viewer.user_id, library_id, body)
-    return ok(result)
+    library_entries.reorder_entries(db, viewer.user_id, library_id, body)
+    return Response(status_code=204)
 
 
-@router.post("/libraries/{library_id}/media", status_code=201)
+@router.post("/libraries/{library_id}/media", status_code=204)
 def add_media_to_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: AddMediaRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Response:
     """Add media to a library.
 
     Only admins can add media. A Default target always creates/keeps a direct
     physical entry.
     """
-    outcome = library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
-    return ok(outcome.entry)
+    library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
+    return Response(status_code=204)
 
 
-@router.post("/libraries/{library_id}/podcasts", status_code=201)
+@router.post("/libraries/{library_id}/podcasts", status_code=204)
 def add_podcast_to_library(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: AddPodcastRequest,
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Response:
     """Add a subscribed podcast reference to a non-default library."""
-    outcome = library_entries.add_podcast_to_library(
-        db, viewer.user_id, library_id, body.podcast_id
-    )
-    return ok(outcome.entry)
+    library_entries.add_podcast_to_library(db, viewer.user_id, library_id, body.podcast_id)
+    return Response(status_code=204)
 
 
 @router.delete("/libraries/{library_id}/podcasts/{podcast_id}", status_code=204)
