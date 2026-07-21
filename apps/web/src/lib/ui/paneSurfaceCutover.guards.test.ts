@@ -23,7 +23,6 @@ const standardPaneBodies = [
   "src/app/(authenticated)/settings/billing/SettingsBillingPaneBody.tsx",
   "src/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody.tsx",
   "src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx",
-  "src/app/(authenticated)/settings/keys/SettingsKeysPaneBody.tsx",
   "src/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody.tsx",
   "src/app/(authenticated)/settings/reader/SettingsReaderPaneBody.tsx",
 ];

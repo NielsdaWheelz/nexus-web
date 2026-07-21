@@ -5,9 +5,8 @@ import type { BranchDraft } from "./types";
 const base = {
   conversationId: "conv-1",
   content: "hello",
-  modelId: "model-1",
-  reasoning: "default" as const,
-  keyMode: "auto" as const,
+  profileId: "profile-1",
+  reasoningOptionId: "reasoning-default",
   branchDraft: null,
   parentMessageId: null,
   chatSubject: null,
@@ -18,7 +17,8 @@ describe("buildChatRunBody", () => {
     const body = buildChatRunBody(base);
     expect(body.branch_anchor).toEqual({ kind: "none" });
     expect("parent_message_id" in body).toBe(false);
-    expect(body.key_mode).toBe("auto");
+    expect(body.profile_id).toBe("profile-1");
+    expect(body.reasoning_option_id).toBe("reasoning-default");
     expect(body.conversation_id).toBe("conv-1");
     expect(body).not.toHaveProperty("chat_subject");
   });
@@ -101,13 +101,14 @@ describe("buildChatRunBody", () => {
     expect("reader_selection" in body).toBe(false);
   });
 
-  it("forwards the selected key mode", () => {
-    expect(buildChatRunBody({ ...base, keyMode: "byok_only" }).key_mode).toBe(
-      "byok_only",
-    );
-    expect(buildChatRunBody({ ...base, keyMode: "platform_only" }).key_mode).toBe(
-      "platform_only",
-    );
+  it("forwards the profile and reasoning-option selection verbatim", () => {
+    const body = buildChatRunBody({
+      ...base,
+      profileId: "profile-9",
+      reasoningOptionId: "reasoning-high",
+    });
+    expect(body.profile_id).toBe("profile-9");
+    expect(body.reasoning_option_id).toBe("reasoning-high");
   });
 
   it("forwards the chat subject when present", () => {

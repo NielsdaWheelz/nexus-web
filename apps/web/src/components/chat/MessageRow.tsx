@@ -21,26 +21,18 @@ interface MessageRowProps {
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  retryAssistantMessageId?: string;
-  retryingAssistantMessageIds?: Set<string>;
-  onRetryAssistantResponse?: (assistantMessageId: string) => void;
-  resendingAssistantMessageIds?: Set<string>;
-  onResendAssistantResponse?: (assistantMessageId: string) => void;
+  /** One durable rerun from the failed assistant turn (replaces retry/resend). */
+  onRerunAssistantResponse?: (assistantMessageId: string) => void;
+  rerunningAssistantMessageIds?: Set<string>;
+  /** Assistant ids in the client-only ConnectionLostStatusUnknown state (§10). */
+  connectionLostAssistantIds?: Set<string>;
+  onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
-}
-
-function errorLabel(message: ConversationMessage): string {
-  if (message.error_code === "E_CANCELLED") return "Response cancelled.";
-  if (message.error_code === "E_LLM_INCOMPLETE")
-    return "Response stopped before completion.";
-  if (message.error_code === "E_STREAM_INTERRUPTED")
-    return "The connection was interrupted. Reload to continue.";
-  return "The response failed.";
 }
 
 // Memoized so a streaming text delta — which replaces only the streaming
@@ -52,11 +44,10 @@ export const MessageRow = memo(function MessageRow({
   switchableLeafIds,
   onSelectFork,
   onReplyToAssistant,
-  retryAssistantMessageId,
-  retryingAssistantMessageIds,
-  onRetryAssistantResponse,
-  resendingAssistantMessageIds,
-  onResendAssistantResponse,
+  onRerunAssistantResponse,
+  rerunningAssistantMessageIds,
+  connectionLostAssistantIds,
+  onReconnectAssistant,
   onReaderSourceActivate,
   onStartWalk,
 }: MessageRowProps) {
@@ -72,63 +63,31 @@ export const MessageRow = memo(function MessageRow({
     [onReaderSourceActivate],
   );
 
-  const messageErrorLabel = errorLabel(message);
   const timestampLabel =
     formatDisplayDate(message.created_at, display, { month: "short", day: "numeric" }) ??
     "";
-  const resendAssistantMessageId =
-    message.role === "assistant" &&
-    message.can_resend_response === true &&
-    message.can_retry_response !== true
-      ? message.id
-      : undefined;
 
   switch (message.role) {
     case "user":
-      return (
-        <UserMessage
-          message={message}
-          errorLabel={messageErrorLabel}
-          timestampLabel={timestampLabel}
-          retryAssistantMessageId={retryAssistantMessageId}
-          retrying={
-            retryAssistantMessageId
-              ? retryingAssistantMessageIds?.has(retryAssistantMessageId) ===
-                true
-              : false
-          }
-          onRetryAssistantResponse={onRetryAssistantResponse}
-        />
-      );
+      return <UserMessage message={message} timestampLabel={timestampLabel} />;
     case "assistant":
       return (
         <AssistantMessage
           message={message}
-          errorLabel={messageErrorLabel}
           forkOptions={forkOptions}
           switchableLeafIds={switchableLeafIds}
           onSelectFork={onSelectFork}
           onReplyToAssistant={onReplyToAssistant}
           onCitationActivate={activateTarget}
-          resendAssistantMessageId={resendAssistantMessageId}
-          resending={
-            resendAssistantMessageId
-              ? resendingAssistantMessageIds?.has(resendAssistantMessageId) ===
-                true
-              : false
-          }
-          onResendAssistantResponse={onResendAssistantResponse}
+          onRerunAssistantResponse={onRerunAssistantResponse}
+          rerunning={rerunningAssistantMessageIds?.has(message.id) === true}
+          connectionLost={connectionLostAssistantIds?.has(message.id) === true}
+          onReconnectAssistant={onReconnectAssistant}
           onStartWalk={onStartWalk}
         />
       );
     case "system":
-      return (
-        <SystemMessage
-          message={message}
-          errorLabel={messageErrorLabel}
-          timestampLabel={timestampLabel}
-        />
-      );
+      return <SystemMessage message={message} timestampLabel={timestampLabel} />;
   }
 
   const _exhaustive: never = message.role;

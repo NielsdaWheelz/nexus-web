@@ -8,8 +8,7 @@ import type { ConversationMessage, ForkOption } from "@/lib/conversations/types"
 const baseMessage = {
   seq: 1,
   status: "complete",
-  error_code: null,
-  can_retry_response: false,
+  can_rerun: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
@@ -126,96 +125,64 @@ describe("ChatSurface", () => {
     expect(screen.getByText("It is about the tradeoff.")).toBeInTheDocument();
   });
 
-  it("puts retry actions on user prompts for retryable assistant children", () => {
-    const onRetryAssistantResponse = vi.fn();
+  it("renders a Run again action only on rerunnable failed assistant turns", () => {
+    const onRerunAssistantResponse = vi.fn();
     const messages: ConversationMessage[] = [
       userMessage("user-1", 1, "Try this"),
       {
         ...assistantMessage("assistant-1", 2, "", "user-1"),
         status: "error",
-        error_code: "E_INTERNAL",
-        can_retry_response: true,
+        can_rerun: true,
       },
       userMessage("user-2", 3, "Try that"),
       {
         ...assistantMessage("assistant-2", 4, "", "user-2"),
         status: "error",
-        error_code: "E_CONTEXT_TOO_LARGE",
-        can_retry_response: false,
+        can_rerun: false,
       },
     ];
 
     render(
       <ChatSurface
         messages={messages}
-        onRetryAssistantResponse={onRetryAssistantResponse}
+        onRerunAssistantResponse={onRerunAssistantResponse}
         composer={<textarea aria-label="Message" />}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry response" }));
-
-    expect(onRetryAssistantResponse).toHaveBeenCalledWith("assistant-1");
+    // Both failed turns render exactly one failure card (role=alert)…
     expect(screen.getAllByRole("alert")).toHaveLength(2);
+    // …but only the rerunnable one offers a single Run again action.
+    const rerunButtons = screen.getAllByRole("button", { name: "Run again" });
+    expect(rerunButtons).toHaveLength(1);
+    fireEvent.click(rerunButtons[0]);
+    expect(onRerunAssistantResponse).toHaveBeenCalledWith("assistant-1");
   });
 
-  it("puts resend actions on terminal nonretryable assistant messages", () => {
-    const onResendAssistantResponse = vi.fn();
+  it("renders a single Reconnect card (never Run again) for a connection-lost turn", () => {
+    const onReconnectAssistant = vi.fn();
     const messages: ConversationMessage[] = [
       userMessage("user-1", 1, "Try this"),
       {
-        ...assistantMessage("assistant-1", 2, "", "user-1"),
-        status: "error",
-        error_code: "E_LLM_BAD_REQUEST",
-        can_retry_response: false,
-        can_resend_response: true,
-      },
-      userMessage("user-2", 3, "Try that"),
-      {
-        ...assistantMessage("assistant-2", 4, "", "user-2"),
-        status: "error",
-        error_code: "E_INTERNAL",
-        can_retry_response: true,
+        ...assistantMessage("assistant-1", 2, "partial answer", "user-1"),
+        status: "pending",
       },
     ];
 
     render(
       <ChatSurface
         messages={messages}
-        onResendAssistantResponse={onResendAssistantResponse}
+        connectionLostAssistantIds={new Set(["assistant-1"])}
+        onReconnectAssistant={onReconnectAssistant}
         composer={<textarea aria-label="Message" />}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Resend response" }));
-
-    expect(onResendAssistantResponse).toHaveBeenCalledWith("assistant-1");
-    expect(screen.queryByRole("button", { name: "Retry response" })).toBeNull();
-  });
-
-  it("does not infer resend for client-side stream interruption rows", () => {
-    const onResendAssistantResponse = vi.fn();
-    const messages: ConversationMessage[] = [
-      userMessage("user-1", 1, "Try this"),
-      {
-        ...assistantMessage("assistant-1", 2, "", "user-1"),
-        status: "error",
-        error_code: "E_STREAM_INTERRUPTED",
-        can_retry_response: false,
-      },
-    ];
-
-    render(
-      <ChatSurface
-        messages={messages}
-        onResendAssistantResponse={onResendAssistantResponse}
-        composer={<textarea aria-label="Message" />}
-      />,
-    );
-
-    expect(screen.getByText("The connection was interrupted. Reload to continue."))
-      .toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Resend response" })).toBeNull();
+    // Partial text survives the connection loss.
+    expect(screen.getByText("partial answer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(onReconnectAssistant).toHaveBeenCalledWith("assistant-1");
   });
 
   it("renders inline fork previews and supports keyboard fork selection", () => {

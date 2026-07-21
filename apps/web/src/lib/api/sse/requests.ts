@@ -16,9 +16,8 @@ export interface ReaderSelectionInput {
 export interface ChatRunCreateRequest {
   conversation_id: string;
   content: string;
-  model_id: string;
-  reasoning: "default" | "none" | "minimal" | "low" | "medium" | "high" | "max";
-  key_mode: "auto" | "byok_only" | "platform_only";
+  profile_id: string;
+  reasoning_option_id: string;
   parent_message_id?: string;
   branch_anchor?: BranchAnchor;
   chat_subject?: ChatSubjectInput | null;

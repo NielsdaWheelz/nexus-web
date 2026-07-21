@@ -4,9 +4,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Params = Promise<{ keyId: string }>;
+type Params = Promise<{ messageId: string }>;
 
 export async function POST(req: Request, { params }: { params: Params }) {
-  const { keyId } = await params;
-  return proxyToFastAPI(req, `/keys/${keyId}/test`);
+  const { messageId } = await params;
+  return proxyToFastAPI(req, `/messages/${messageId}/rerun`);
 }

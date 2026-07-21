@@ -121,12 +121,6 @@ export const DESTINATIONS: Destination[] = [
     keywords: ["typography", "font", "theme"],
   },
   {
-    id: "keys",
-    label: "API Keys",
-    href: "/settings/keys",
-    keywords: ["credentials", "providers"],
-  },
-  {
     id: "identities",
     label: "Linked Identities",
     href: "/settings/identities",

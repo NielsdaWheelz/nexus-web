@@ -1,9 +1,35 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
-import type { ConversationMessage, MessageToolCall } from "@/lib/conversations/types";
+import type {
+  AssistantTrustTrail,
+  ConversationMessage,
+  ExpectedChatFailure,
+  MessageToolCall,
+} from "@/lib/conversations/types";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantMessage from "./AssistantMessage";
+
+type TrustRun = NonNullable<AssistantTrustTrail["run"]>;
+
+function failureRun(failure: ExpectedChatFailure): TrustRun {
+  return {
+    run_id: "run-1",
+    profile_id: "balanced",
+    reasoning_option_id: "default",
+    provider: null,
+    model_name: null,
+    status: "error",
+    usage: null,
+    error_code: null,
+    error_origin: null,
+    failure,
+    final_chars: 0,
+    started_at: null,
+    completed_at: null,
+    total_cost_usd_micros: null,
+  };
+}
 
 function writeToolCall(
   overrides: Partial<MessageToolCall> & Pick<MessageToolCall, "tool_name">,
@@ -33,8 +59,7 @@ function assistantMessage(text = "Alpha beta gamma"): ConversationMessage {
     seq: 2,
     role: "assistant",
     status: "complete",
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: "2026-06-03T00:00:00Z",
     updated_at: "2026-06-03T00:00:00Z",
     message_document: {
@@ -82,27 +107,108 @@ describe("AssistantMessage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders a resend action for terminal nonretryable assistant failures", () => {
-    const onResendAssistantResponse = vi.fn();
-    const message = {
-      ...assistantMessage("The response failed."),
-      status: "error" as const,
-      error_code: "E_LLM_BAD_REQUEST",
+  function failedMessage(
+    failure: ExpectedChatFailure,
+    text = "",
+    canRerun = true,
+  ): ConversationMessage {
+    const message: ConversationMessage = {
+      ...assistantMessage(text),
+      status: "error",
+      can_rerun: canRerun,
+    };
+    message.trust_trail = {
+      ...message.trust_trail!,
+      status: "error",
+      run: failureRun(failure),
+    };
+    return message;
+  }
+
+  it("renders a Run again action on a rerunnable failure and fires the rerun", () => {
+    const onRerunAssistantResponse = vi.fn();
+    const message = failedMessage({
+      code: "incomplete",
+      origin: "provider_response",
+      support_id: "sup-1",
+      can_rerun: true,
+    });
+
+    render(
+      <AssistantMessage
+        message={message}
+        forkOptions={[]}
+        onRerunAssistantResponse={onRerunAssistantResponse}
+      />,
+    );
+
+    expect(screen.getByText("Response incomplete")).toBeInTheDocument();
+    expect(screen.getByText("Support ID: sup-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(onRerunAssistantResponse).toHaveBeenCalledWith("assistant-1");
+  });
+
+  it("shows the generic defect card (no failure, no rerun) for a DEFECT", () => {
+    const message: ConversationMessage = {
+      ...assistantMessage(""),
+      status: "error",
+      can_rerun: false,
+    };
+    message.trust_trail = { ...message.trust_trail!, status: "error", run: null };
+
+    render(<AssistantMessage message={message} forkOptions={[]} />);
+
+    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("renders valid partial text ABOVE the card for a non-refusal failure", () => {
+    const message = failedMessage(
+      { code: "incomplete", origin: "provider_response", support_id: null, can_rerun: true },
+      "Here is a partial answer",
+    );
+
+    render(<AssistantMessage message={message} forkOptions={[]} />);
+
+    expect(screen.getByText("Here is a partial answer")).toBeInTheDocument();
+    expect(screen.getByText("Response incomplete")).toBeInTheDocument();
+  });
+
+  it("suppresses all partial text for a Fable refusal (card is the only projection)", () => {
+    const message = failedMessage(
+      { code: "refused", origin: "provider_stream", support_id: null, can_rerun: false },
+      "leaked refusal preamble",
+      false,
+    );
+
+    render(<AssistantMessage message={message} forkOptions={[]} />);
+
+    expect(screen.getByText("Response declined")).toBeInTheDocument();
+    expect(screen.queryByText("leaked refusal preamble")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("renders exactly one Reconnect action for the client-only connection-lost state", () => {
+    const onReconnectAssistant = vi.fn();
+    const message: ConversationMessage = {
+      ...assistantMessage("Partial so far"),
+      status: "pending",
     };
 
     render(
       <AssistantMessage
         message={message}
         forkOptions={[]}
-        errorLabel="The response failed."
-        resendAssistantMessageId="assistant-1"
-        onResendAssistantResponse={onResendAssistantResponse}
+        connectionLost
+        onReconnectAssistant={onReconnectAssistant}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Resend response" }));
-
-    expect(onResendAssistantResponse).toHaveBeenCalledWith("assistant-1");
+    // Partial text is preserved while offering a single Reconnect action.
+    expect(screen.getByText("Partial so far")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    expect(onReconnectAssistant).toHaveBeenCalledWith("assistant-1");
   });
 
   it("captures assistant selection and branches from it", async () => {
@@ -117,7 +223,6 @@ describe("AssistantMessage", () => {
         message={assistantMessage()}
         forkOptions={[]}
         onReplyToAssistant={onReplyToAssistant}
-        errorLabel="The response failed."
       />,
     );
 
@@ -154,7 +259,6 @@ describe("AssistantMessage", () => {
         message={assistantMessage()}
         forkOptions={[]}
         onReplyToAssistant={vi.fn()}
-        errorLabel="The response failed."
       />,
     );
 
@@ -202,14 +306,15 @@ describe("AssistantMessage", () => {
       ...message.trust_trail!,
       run: {
         run_id: "run-1",
-        model_id: "model-1",
+        profile_id: "balanced",
+        reasoning_option_id: "medium",
         provider: "openai",
         model_name: "gpt-test",
-        reasoning_mode: "medium",
-        key_mode: "auto",
         status: "complete",
         usage: null,
         error_code: null,
+        error_origin: null,
+        failure: null,
         final_chars: 11,
         started_at: null,
         completed_at: null,
@@ -337,7 +442,6 @@ describe("AssistantMessage", () => {
         message={message}
         forkOptions={[]}
         onCitationActivate={onCitationActivate}
-        errorLabel="The response failed."
       />,
     );
 
@@ -395,7 +499,6 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 
@@ -436,7 +539,7 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+      <AssistantMessage message={message} forkOptions={[]} />,
     );
 
     expect(screen.getByText("Filed to")).toBeInTheDocument();
@@ -471,7 +574,7 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+      <AssistantMessage message={message} forkOptions={[]} />,
     );
 
     expect(screen.getByText("Connected")).toBeInTheDocument();
@@ -504,7 +607,7 @@ describe("AssistantMessage", () => {
     };
 
     render(
-      <AssistantMessage message={message} forkOptions={[]} errorLabel="The response failed." />,
+      <AssistantMessage message={message} forkOptions={[]} />,
     );
 
     await user.click(screen.getByRole("button", { name: /^Undo:/ }));
@@ -522,7 +625,6 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={assistantMessage()}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 
@@ -577,14 +679,15 @@ describe("AssistantMessage", () => {
       ...message.trust_trail!,
       run: {
         run_id: "run-1",
-        model_id: "model-1",
+        profile_id: "balanced",
+        reasoning_option_id: "medium",
         provider: "anthropic",
         model_name: "claude-sonnet-4-6",
-        reasoning_mode: "medium",
-        key_mode: "auto",
         status: "complete",
         usage: { input_tokens: 3200, output_tokens: 1100 },
         error_code: null,
+        error_origin: null,
+        failure: null,
         final_chars: 15,
         started_at: null,
         completed_at: null,
@@ -599,7 +702,6 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={completedWithRun()}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 
@@ -625,7 +727,6 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 
@@ -635,13 +736,11 @@ describe("AssistantMessage", () => {
   it("omits the colophon on an errored turn (AC-5)", () => {
     const message = completedWithRun();
     message.status = "error";
-    message.error_code = "E_LLM_BAD_REQUEST";
 
     render(
       <AssistantMessage
         message={message}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 
@@ -656,7 +755,6 @@ describe("AssistantMessage", () => {
       <AssistantMessage
         message={message}
         forkOptions={[]}
-        errorLabel="The response failed."
       />,
     );
 

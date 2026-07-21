@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { GitBranch, RefreshCcw, Search } from "lucide-react";
-import { FeedbackNotice } from "@/components/feedback/Feedback";
+import { GitBranch, Search } from "lucide-react";
 import Button from "@/components/ui/Button";
 import MachineText, { type MachineSignatureTime } from "@/components/ui/MachineText";
-import { collapseWhitespace } from "@/lib/collapseWhitespace";
 import { formatDisplayDate } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
@@ -22,6 +20,7 @@ import type { CitationOut } from "@/lib/conversations/citationOut";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantEvidenceDisclosure from "./AssistantEvidenceDisclosure";
 import AssistantTrustInspector, { AssistantWriteTrail } from "./AssistantTrustInspector";
+import ChatFailureCard from "./ChatFailureCard";
 import Colophon from "./Colophon";
 import MessageFootnotes from "./MessageFootnotes";
 import ForkStrip from "./ForkStrip";
@@ -36,10 +35,10 @@ export default function AssistantMessage({
   onSelectFork,
   onReplyToAssistant,
   onCitationActivate,
-  errorLabel,
-  resendAssistantMessageId,
-  resending,
-  onResendAssistantResponse,
+  onRerunAssistantResponse,
+  rerunning,
+  connectionLost,
+  onReconnectAssistant,
   onStartWalk,
 }: {
   message: ConversationMessage;
@@ -52,10 +51,10 @@ export default function AssistantMessage({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  errorLabel: string;
-  resendAssistantMessageId?: string;
-  resending?: boolean;
-  onResendAssistantResponse?: (assistantMessageId: string) => void;
+  onRerunAssistantResponse?: (assistantMessageId: string) => void;
+  rerunning?: boolean;
+  connectionLost?: boolean;
+  onReconnectAssistant?: (assistantMessageId: string) => void;
   onStartWalk?: (citations: CitationOut[], text: string) => void;
 }) {
   const display = useRenderEnvironment();
@@ -68,16 +67,23 @@ export default function AssistantMessage({
   );
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
-  const canResendAssistant =
-    Boolean(resendAssistantMessageId) && Boolean(onResendAssistantResponse);
   const canWalk =
     !!onStartWalk &&
     message.status === "complete" &&
     (message.citations?.length ?? 0) >= 2;
-  const resendAssistant = () => {
-    if (!resendAssistantMessageId) return;
-    onResendAssistantResponse?.(resendAssistantMessageId);
-  };
+
+  // The one card-bearing failure read: the failure folds onto the run inside the
+  // trust trail (null for a DEFECT → the generic card). A terminal message status
+  // is what shows the card; a Fable `refused` failure SUPPRESSES all partial text
+  // (the card is the only projection). Any rehydrated terminal status replaces the
+  // client-only ConnectionLostStatusUnknown card.
+  const failure = message.trust_trail?.run?.failure ?? null;
+  const isRefused = failure?.code === "refused";
+  const isTerminalFailure =
+    message.status === "error" || message.status === "cancelled";
+  const showFailureCard = isTerminalFailure;
+  const showReconnectCard = Boolean(connectionLost) && !isTerminalFailure;
+
   const {
     answerRef,
     selection,
@@ -89,10 +95,11 @@ export default function AssistantMessage({
     enabled: canBranchFromAssistant,
     onReplyToAssistant,
   });
-  const renderAssistantBody =
-    message.status !== "error" ||
-    (assistantText.trim().length > 0 &&
-      !isGenericAssistantFailureContent(assistantText));
+  const renderAssistantBody = isRefused
+    ? false
+    : showFailureCard
+      ? assistantText.trim().length > 0
+      : true;
   // The head signature carries this turn's time (hh:mm), so AssistantMessage owns
   // its own formatting — the parent row's label is a month/day string (D-9).
   const signatureTime = formatDisplayDate(message.created_at, display, {
@@ -125,7 +132,7 @@ export default function AssistantMessage({
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
-      {canBranchFromAssistant || canResendAssistant || canWalk ? (
+      {canBranchFromAssistant || canWalk ? (
         <div className={styles.messageActions}>
           {canBranchFromAssistant ? (
             <Button
@@ -136,18 +143,6 @@ export default function AssistantMessage({
               aria-label="Fork from this answer"
             >
               Fork
-            </Button>
-          ) : null}
-          {canResendAssistant ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              leadingIcon={<RefreshCcw size={14} aria-hidden="true" />}
-              loading={resending}
-              onClick={resendAssistant}
-              aria-label="Resend response"
-            >
-              Resend
             </Button>
           ) : null}
           {canWalk ? (
@@ -164,7 +159,9 @@ export default function AssistantMessage({
           ) : null}
         </div>
       ) : null}
-      {message.status === "pending" ? <StreamingGutterCue /> : null}
+      {message.status === "pending" && !showReconnectCard ? (
+        <StreamingGutterCue />
+      ) : null}
       <MachineText origin={{ label: "Assistant" }} {...signature}>
         <ToolActivity toolCalls={toolCalls} />
         {renderAssistantBody ? (
@@ -193,7 +190,7 @@ export default function AssistantMessage({
         ) : null}
         {message.status === "complete" && message.trust_trail?.run ? (
           <Colophon
-            modelName={message.trust_trail.run.model_name}
+            modelName={message.trust_trail.run.model_name ?? ""}
             inputTokens={
               typeof message.trust_trail.run.usage?.input_tokens === "number"
                 ? message.trust_trail.run.usage.input_tokens
@@ -216,18 +213,21 @@ export default function AssistantMessage({
           onDismiss={clearSelection}
         />
       ) : null}
-      {message.status === "error" && errorLabel ? (
-        <FeedbackNotice
-          severity="error"
-          title={errorLabel}
-          className={styles.messageFeedback}
+      {showFailureCard ? (
+        <ChatFailureCard
+          failure={failure}
+          canRerun={message.can_rerun}
+          rerunning={rerunning}
+          onRerun={
+            onRerunAssistantResponse
+              ? () => onRerunAssistantResponse(message.id)
+              : undefined
+          }
         />
-      ) : null}
-      {message.status === "cancelled" ? (
-        <FeedbackNotice
-          severity="neutral"
-          title="Response cancelled."
-          className={styles.messageFeedback}
+      ) : showReconnectCard ? (
+        <ChatFailureCard
+          mode="reconnect"
+          onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}
       {onSelectFork ? (
@@ -238,14 +238,6 @@ export default function AssistantMessage({
         />
       ) : null}
     </div>
-  );
-}
-
-function isGenericAssistantFailureContent(content: string): boolean {
-  const normalized = collapseWhitespace(content);
-  return (
-    normalized === "An unexpected error occurred. Please try again." ||
-    normalized === "The response failed."
   );
 }
 

@@ -353,19 +353,13 @@ describe("loadWorkspaceBootstrap", () => {
     );
   });
 
-  it("seeds settings account, keys, and billing resources with their pane keys", async () => {
+  it("seeds settings account and billing resources with their pane keys", async () => {
     const cases = [
       {
         href: "/settings/account",
         path: "/me",
         key: "settings-account:me",
         body: { data: { email: "seed@example.com", display_name: "Seed" } },
-      },
-      {
-        href: "/settings/keys",
-        path: "/keys",
-        key: "settings-keys:0",
-        body: { data: [] },
       },
       {
         href: "/settings/billing",

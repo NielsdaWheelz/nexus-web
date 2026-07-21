@@ -8,7 +8,6 @@ import {
   FolderOpen,
   Globe,
   Keyboard,
-  KeyRound,
   Library,
   Link2,
   ListMusic,
@@ -134,10 +133,6 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   settingsAppearance: {
     icon: Palette,
     getChrome: () => ({ title: "Appearance" }),
-  },
-  settingsKeys: {
-    icon: KeyRound,
-    getChrome: () => ({ title: "API Keys" }),
   },
   settingsLocalVault: {
     icon: FolderOpen,

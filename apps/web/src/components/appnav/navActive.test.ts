@@ -43,7 +43,7 @@ describe("resolveActiveDestinationId", () => {
   });
 
   it("matches settings by prefix and exact", () => {
-    expect(resolve("/settings/keys")).toBe("settings");
+    expect(resolve("/settings/appearance")).toBe("settings");
     expect(resolve("/settings")).toBe("settings");
   });
 

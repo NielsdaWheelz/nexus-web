@@ -26,7 +26,6 @@ const ROUTE_SECTION = {
   settingsBilling: "settings",
   settingsReader: "settings",
   settingsAppearance: "settings",
-  settingsKeys: "settings",
   settingsLocalVault: "settings",
   settingsIdentities: "settings",
   settingsKeybindings: "settings",

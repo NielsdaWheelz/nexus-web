@@ -100,7 +100,6 @@ export type MessageUpdateAction =
       type: "finalize_done";
       assistantId: string;
       status: TerminalRunStatus;
-      errorCode: string | null;
       /** Any text still buffered when the run finished (the RAF flush remainder). */
       delta?: string;
     }
@@ -388,7 +387,6 @@ function finalizeDone(
   state: ConversationMessage[],
   assistantId: string,
   status: TerminalRunStatus,
-  errorCode: string | null,
   delta: string | undefined,
 ): ConversationMessage[] {
   return state.map((m) => {
@@ -400,7 +398,6 @@ function finalizeDone(
       ...m,
       message_document: messageDocumentWithText(content),
       status,
-      error_code: errorCode,
       trust_trail: m.trust_trail
         ? { ...m.trust_trail, status }
         : m.trust_trail,
@@ -445,13 +442,7 @@ export function messageUpdateReducer(
     case "apply_context_ref":
       return applyContextRef(state, action.assistantId, action.data);
     case "finalize_done":
-      return finalizeDone(
-        state,
-        action.assistantId,
-        action.status,
-        action.errorCode,
-        action.delta,
-      );
+      return finalizeDone(state, action.assistantId, action.status, action.delta);
     case "merge_run_pair":
       return selectedPathAfterRun(state, action.run, [...action.idsToReplace]);
     default: {

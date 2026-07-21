@@ -115,15 +115,8 @@ function apiErrorTitle(error: ApiError, fallback: string) {
   if (error.code === "E_TRANSCRIPTION_TIMEOUT") return "Transcription timed out";
   if (error.code === "E_BROWSE_PROVIDER_UNAVAILABLE") return "Browse is temporarily unavailable";
   if (error.code === "E_PODCAST_PROVIDER_UNAVAILABLE") return "Podcast search is temporarily unavailable";
-  if (error.code === "E_LLM_NO_KEY") return "Add an API key to continue";
-  if (error.code === "E_LLM_RATE_LIMIT") return "The model provider is rate limiting requests";
-  if (error.code === "E_LLM_INVALID_KEY") return "The API key was rejected";
-  if (error.code === "E_LLM_PROVIDER_DOWN") return "The model provider is temporarily unavailable";
-  if (error.code === "E_LLM_TIMEOUT") return "The model provider timed out";
-  if (error.code === "E_LLM_CONTEXT_TOO_LARGE") return "The context is too large";
   if (error.code === "E_MESSAGE_TOO_LONG") return "The message is too long";
   if (error.code === "E_CONTEXT_TOO_LARGE") return "The context is too large";
-  if (error.code === "E_MODEL_NOT_AVAILABLE") return "That model is not available";
   if (error.code === "E_CONVERSATION_BUSY") return "This conversation is already responding";
   return fallback;
 }

@@ -18,11 +18,6 @@ const SETTINGS_ITEMS: {
     description: "Manage your plan, usage, and Stripe subscription.",
   },
   {
-    href: "/settings/keys",
-    title: "API Keys",
-    description: "Configure OpenAI, Anthropic, Gemini, and OpenRouter keys.",
-  },
-  {
     href: "/settings/appearance",
     title: "Appearance",
     description: "Study, Press, or follow your operating system.",

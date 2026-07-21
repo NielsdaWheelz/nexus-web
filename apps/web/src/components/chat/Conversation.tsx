@@ -444,10 +444,10 @@ export default function Conversation() {
             switchableLeafIds={branch?.switchableLeafIds}
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
-            onRetryAssistantResponse={convo.retryAssistantResponse}
-            retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
-            onResendAssistantResponse={convo.resendAssistantResponse}
-            resendingAssistantMessageIds={convo.resendingAssistantMessageIds.ids}
+            onRerunAssistantResponse={convo.rerunAssistantResponse}
+            rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds.ids}
+            connectionLostAssistantIds={convo.connectionLostAssistantIds}
+            onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={
               <ChatComposer
                 conversationId={convo.conversationId}

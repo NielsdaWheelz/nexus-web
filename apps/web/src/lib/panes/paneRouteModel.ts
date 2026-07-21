@@ -47,7 +47,6 @@ export type PaneRouteId =
   | "settingsBilling"
   | "settingsReader"
   | "settingsAppearance"
-  | "settingsKeys"
   | "settingsLocalVault"
   | "settingsIdentities"
   | "settingsKeybindings"
@@ -242,14 +241,6 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
     id: "settingsAppearance",
     pattern: ["settings", "appearance"],
     staticTitle: "Appearance",
-    titleMode: "static",
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
-    id: "settingsKeys",
-    pattern: ["settings", "keys"],
-    staticTitle: "API Keys",
     titleMode: "static",
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,

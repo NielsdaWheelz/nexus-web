@@ -200,12 +200,19 @@ export default function AssistantTrustInspector({
                 </dd>
               </div>
               <div>
-                <dt>Mode</dt>
-                <dd>
-                  {trustTrail.run.reasoning_mode ?? "default"} /{" "}
-                  {trustTrail.run.key_mode ?? "auto"}
-                </dd>
+                <dt>Profile</dt>
+                <dd>{trustTrail.run.profile_id ?? "—"}</dd>
               </div>
+              <div>
+                <dt>Reasoning</dt>
+                <dd>{trustTrail.run.reasoning_option_id ?? "—"}</dd>
+              </div>
+              {trustTrail.run.failure ? (
+                <div>
+                  <dt>Failure</dt>
+                  <dd>{trustTrail.run.failure.code}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Output</dt>
                 <dd>{trustTrail.run.final_chars ?? 0} chars</dd>

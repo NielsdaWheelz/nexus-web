@@ -12,7 +12,6 @@ import {
   noteBlockResource,
   notePagesResource,
   settingsAccountResource,
-  settingsKeysResource,
 } from "@/lib/api/resource";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
@@ -185,11 +184,6 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
   settingsAccount: {
     cacheKey: () => settingsAccountResource.cacheKey({}),
     load: (request) => request(settingsAccountResource, {}),
-  },
-
-  settingsKeys: {
-    cacheKey: () => settingsKeysResource.cacheKey({ refreshVersion: 0 }),
-    load: (request) => request(settingsKeysResource, { refreshVersion: 0 }),
   },
 
   settingsBilling: {
