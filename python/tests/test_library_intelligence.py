@@ -66,41 +66,6 @@ from tests.helpers import create_test_user_id
 from tests.utils.db import task_session_factory
 
 # =============================================================================
-# A confirmed, out-of-scope source bug this file works around (see final
-# report): nexus/services/artifacts/dossier.py's get_artifact and
-# nexus/services/artifacts/revisions.py's get_revision/list_revisions all run
-# a `LEFT JOIN LATERAL (... FROM llm_calls WHERE ... AND error_class IS NULL
-# ...)` subquery. Migration 0186 (llm-provider-runtime-hard-cutover) dropped
-# `llm_calls.error_class` outright (replaced by outcome/error_origin/
-# error_code) but neither dossier.py nor revisions.py was touched by that
-# migration's changeset, so the column reference is now invalid Postgres.
-# Confirmed directly against this worktree's migrated test DB: any raw query
-# referencing `error_class` raises `psycopg.errors.UndefinedColumn`. Since
-# `get_artifact` only reaches that subquery once a library head has a
-# `current_revision_id` (i.e. any test that promotes a revision and then
-# reads it back), every such call now raises instead of returning a view.
-# (There is a second, independent staleness in the same three queries: the
-# `llm_operation = 'li_reduce'` filter no longer matches — the reducer's
-# actual llm_operation is "library_dossier" per
-# LIBRARY_DOSSIER_REDUCER.llm_operation / llm_ledger.start_call, which
-# persists the operation string verbatim — so even after an error_class fix,
-# `model_provider`/`model_name`/`total_tokens` would still read back None.)
-# Not fixed here: out of this test file's scope ("only edit the test file").
-# The affected tests below are marked xfail(strict=True) with this reason so
-# a future fix flips them back to real failures (XPASS) instead of silently
-# staying green with no coverage.
-_DOSSIER_READ_MODEL_BROKEN = (
-    "nexus/services/artifacts/dossier.py get_artifact and "
-    "nexus/services/artifacts/revisions.py get_revision/list_revisions filter "
-    "on llm_calls.error_class, a column migration 0186 dropped without "
-    "updating these two files; any call once a library has a "
-    "current_revision_id raises sqlalchemy.exc.ProgrammingError "
-    "(psycopg.errors.UndefinedColumn), confirmed directly against the test "
-    "DB. Flagged, not fixed (out of this test file's scope)."
-)
-
-
-# =============================================================================
 # Unit tests (pure helpers, no DB)
 # =============================================================================
 
@@ -654,7 +619,6 @@ def _citation_edges(db: Session, source_scheme: str, source_id: UUID) -> list[Re
 
 @pytest.mark.integration
 class TestGenerateReduce:
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_generate_over_seeded_library_produces_grounded_citation(
         self, db_session: Session
     ) -> None:
@@ -734,7 +698,6 @@ class TestGenerateReduce:
         assert view.model_provider == _LI_PROFILE.target.provider
         assert view.model_name == _LI_PROFILE.target.model
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_budget_omissions_are_reported(self, db_session: Session, monkeypatch) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Budget Library")
@@ -852,8 +815,8 @@ class TestGenerateReduce:
             "revision_id": str(revision_id),
         }
         # A failed revision never gets a current_revision_id, so get_artifact's
-        # early-return branch is hit and never reaches the broken llm_calls
-        # LATERAL subquery (see _DOSSIER_READ_MODEL_BROKEN) — safe to call here.
+        # early-return branch is hit and never reaches the llm_calls LATERAL
+        # subquery that reads model/token attribution.
         view = get_artifact(db_session, viewer_id=owner_id, library_id=library_id)
         assert view.status == "failed"
         # AC22: only the promoting path writes citation edges.
@@ -864,7 +827,6 @@ class TestGenerateReduce:
         )
         assert _citation_edges(db_session, "artifact", view.artifact_id) == []
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_first_generate_builds_units_inline_and_succeeds(self, db_session: Session) -> None:
         # A fresh library whose per-media units were NOT pre-built: generation must
         # build them inline (fix for the first-generate race) and still produce a
@@ -928,7 +890,6 @@ class TestGenerateReduce:
 
 @pytest.mark.integration
 class TestStaleness:
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_reingest_flips_stale(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Stale Library")
@@ -964,7 +925,6 @@ class TestStaleness:
 
         assert get_artifact(db_session, viewer_id=owner_id, library_id=library_id).status == "stale"
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_new_member_media_flips_stale(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Membership Library")
@@ -985,7 +945,6 @@ class TestStaleness:
         db_session.expire_all()
         assert get_artifact(db_session, viewer_id=owner_id, library_id=library_id).status == "stale"
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_stale_source_count_is_none_when_current(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Fresh Count Library")
@@ -1004,7 +963,6 @@ class TestStaleness:
             f"A current artifact must not report a stale count; got {view.stale_source_count}"
         )
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_stale_source_count_counts_added_media(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Added Count Library")
@@ -1029,7 +987,6 @@ class TestStaleness:
             f"Two added sources should count as 2 changed; got {view.stale_source_count}"
         )
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_stale_source_count_counts_reingested_media(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Reingest Count Library")
@@ -1072,7 +1029,6 @@ class TestStaleness:
 
 @pytest.mark.integration
 class TestPodcastExpansion:
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_podcast_episode_media_is_covered_and_new_episode_flips_stale(
         self, db_session: Session
     ) -> None:
@@ -1213,7 +1169,6 @@ class TestVirtualMediaSet:
             f"system-only media must never enter the Default dossier; got {covered_media_ids}"
         )
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_non_owner_member_generation_still_covers_library_media(
         self, db_session: Session
     ) -> None:
@@ -1287,7 +1242,6 @@ class TestVirtualMediaSet:
 
 @pytest.mark.integration
 class TestRevisionsAndPromote:
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_regenerate_keeps_current_visible_then_promotes(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Regen Library")
@@ -1353,7 +1307,6 @@ class TestRevisionsAndPromote:
         assert prior["status"] == "ready"
         assert prior["promoted_at"] is not None
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_instructionful_generate_stores_metadata_and_prompts_reduce(
         self, db_session: Session
     ) -> None:
@@ -1405,7 +1358,6 @@ class TestRevisionsAndPromote:
         assert summaries[0].custom_instruction == instruction
         assert summaries[0].source_count == 1
 
-    @pytest.mark.xfail(reason=_DOSSIER_READ_MODEL_BROKEN, strict=True)
     def test_promote_restores_prior_revision(self, db_session: Session) -> None:
         owner_id = _create_owner(db_session)
         library_id = create_test_library(db_session, owner_id, "Restore Library")
