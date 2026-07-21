@@ -15,6 +15,10 @@ import {
 } from "@/lib/keybindings";
 import { useKeybindingsController } from "@/lib/keybindingsProvider";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import {
+  getDestination,
+  type DestinationId,
+} from "@/lib/navigation/destinations";
 import styles from "./page.module.css";
 
 interface BindableAction {
@@ -22,19 +26,28 @@ interface BindableAction {
   label: string;
 }
 
-// Bindable ids match the launcher's resolvable actions: "open-launcher" + the shared
-// destination registry ids (lib/navigation/destinations.ts) + workspace pane navigation.
+const BINDABLE_DESTINATION_IDS = [
+  "lectern",
+  "libraries",
+  "podcasts",
+  "chats",
+  "notes",
+  "atlas",
+  "oracle",
+  "authors",
+  "search",
+  "settings",
+] as const satisfies readonly DestinationId[];
+
+// Bindable ids match the launcher's resolvable actions: "open-launcher" + a
+// deliberate projection of the shared destination registry + workspace actions.
 const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "open-launcher", label: "Open launcher" },
-  { id: "libraries", label: "Go to Libraries" },
-  { id: "authors", label: "Go to Authors" },
-  { id: "podcasts", label: "Go to Podcasts" },
-  { id: "chats", label: "Go to Chats" },
-  { id: "notes", label: "Go to Notes" },
+  ...BINDABLE_DESTINATION_IDS.map((id) => ({
+    id,
+    label: `Go to ${getDestination(id).label}`,
+  })),
   { id: "today", label: "Go to Today" },
-  { id: "oracle", label: "Go to Oracle" },
-  { id: "search", label: "Go to Search" },
-  { id: "settings", label: "Go to Settings" },
   { id: "pane-next", label: "Next pane" },
   { id: "pane-previous", label: "Previous pane" },
 ];

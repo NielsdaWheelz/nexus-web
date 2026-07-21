@@ -8,7 +8,7 @@
 
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { clamp } from "@/lib/clamp";
-import type { ChapterOut } from "@/lib/lectern/client";
+import type { ChapterOut } from "@/lib/lectern/contract";
 
 /** A chapter tick on the seek track, positioned by its start against duration. */
 export interface ChapterMarker {

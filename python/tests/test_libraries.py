@@ -1229,6 +1229,166 @@ class TestPodcastLibraryEntries:
         assert data["kind"] == "podcast"
         assert data["podcast"]["id"] == str(podcast_id)
 
+    def test_podcast_recency_uses_only_visible_heartbeat_engagement(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        from datetime import UTC, datetime
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        podcast_id = uuid4()
+        visible_episode_id = uuid4()
+        hidden_episode_id = uuid4()
+        visible_engaged_at = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
+        hidden_engaged_at = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
+
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Truthful Podcast Recency")
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (
+                        :podcast_id, 'podcast_index', :provider_podcast_id,
+                        'Truthful Recency', 'https://example.com/truthful-recency.xml'
+                    )
+                    """
+                ),
+                {
+                    "podcast_id": podcast_id,
+                    "provider_podcast_id": f"truthful-recency-{podcast_id}",
+                },
+            )
+            for title, media_id in (
+                ("Visible episode", visible_episode_id),
+                ("Hidden episode", hidden_episode_id),
+            ):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, processing_status, external_playback_url
+                        ) VALUES (
+                            :media_id, 'podcast_episode', :title,
+                            'ready_for_reading', :playback_url
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "title": title,
+                        "playback_url": f"https://cdn.example.com/{media_id}.mp3",
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_episodes (
+                            media_id, podcast_id, provider_episode_id, guid,
+                            fallback_identity, duration_seconds
+                        ) VALUES (
+                            :media_id, :podcast_id, :provider_episode_id, :guid,
+                            :fallback_identity, 300
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "podcast_id": podcast_id,
+                        "provider_episode_id": f"episode-{media_id}",
+                        "guid": f"guid-{media_id}",
+                        "fallback_identity": f"fallback-{media_id}",
+                    },
+                )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_entries (
+                        library_id, podcast_id, media_id, position
+                    ) VALUES
+                        (:library_id, :podcast_id, NULL, 0),
+                        (:library_id, NULL, :visible_episode_id, 1),
+                        (:library_id, NULL, :hidden_episode_id, 2)
+                    """
+                ),
+                {
+                    "library_id": library_id,
+                    "podcast_id": podcast_id,
+                    "visible_episode_id": visible_episode_id,
+                    "hidden_episode_id": hidden_episode_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_listening_states (
+                        user_id, media_id, position_ms, is_completed,
+                        updated_at, last_engaged_at
+                    ) VALUES
+                        (:user_id, :visible_episode_id, 0, true, now(), NULL),
+                        (:user_id, :hidden_episode_id, 1000, false, now(), :hidden_engaged_at)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "visible_episode_id": visible_episode_id,
+                    "hidden_episode_id": hidden_episode_id,
+                    "hidden_engaged_at": hidden_engaged_at,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_media_deletions (user_id, media_id)
+                    VALUES (:user_id, :media_id)
+                    """
+                ),
+                {"user_id": user_id, "media_id": hidden_episode_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        for media_id in (visible_episode_id, hidden_episode_id):
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+            direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("user_media_deletions", "media_id", hidden_episode_id)
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+
+        response = _list_library_entries(auth_client, user_id, str(library_id))
+        assert response.status_code == 200, response.text
+        podcast_entry = next(row for row in response.json()["data"] if row["kind"] == "podcast")
+        assert podcast_entry["last_engaged_at"] is None, (
+            "manual completion and hidden episode engagement are not podcast recency"
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_listening_states
+                    SET last_engaged_at = :last_engaged_at
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {
+                    "last_engaged_at": visible_engaged_at,
+                    "user_id": user_id,
+                    "media_id": visible_episode_id,
+                },
+            )
+            session.commit()
+
+        refreshed = _list_library_entries(auth_client, user_id, str(library_id))
+        assert refreshed.status_code == 200, refreshed.text
+        refreshed_podcast = next(
+            row for row in refreshed.json()["data"] if row["kind"] == "podcast"
+        )
+        assert datetime.fromisoformat(refreshed_podcast["last_engaged_at"]) == visible_engaged_at
+
     def test_add_podcast_default_library_forbidden(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -1609,14 +1769,16 @@ class TestListLibraryMedia:
                         position_ms,
                         duration_ms,
                         playback_speed,
-                        is_completed
+                        is_completed,
+                        last_engaged_at
                     ) VALUES (
                         :user_id,
                         :media_id,
                         12000,
                         180000,
                         1.25,
-                        false
+                        false,
+                        now()
                     )
                 """),
                 {"user_id": user_id, "media_id": media_id},
@@ -5273,10 +5435,10 @@ class TestLibraryEntryResonanceOrdering:
                     """
                     INSERT INTO podcast_listening_states (
                         user_id, media_id, position_ms, duration_ms,
-                        playback_speed, is_completed, updated_at
+                        playback_speed, is_completed, updated_at, last_engaged_at
                     ) VALUES (
                         :user_id, :media_id, 120000, 300000,
-                        1.0, false, now()
+                        1.0, false, now(), now()
                     )
                     """
                 ),

@@ -15,6 +15,15 @@ Android local verification remains environment-blocked in this worktree:
 `./gradlew :app:testDebugUnitTest -PnexusGoogleWebClientId=test-web-client-id`
 requires an Android SDK location (`ANDROID_HOME` or `apps/android/local.properties`).
 
+> **Current-state supersession (2026-07-20):** the canonical authenticated
+> home is now `/lectern`, not `/libraries`. Auth, root redirect, workspace
+> fallback, Share Capture, and the app brand derive that value from
+> `APP_AUTHENTICATED_HOME_HREF`. Explicit Lectern intent is preserved alongside
+> restored panes rather than acting as a neutral restore placeholder. See
+> [`docs/modules/app-navigation.md`](../modules/app-navigation.md). The
+> `/libraries` examples below remain historical evidence for this cutover and
+> must not be read as the current home contract.
+
 This is a hard-cutover plan. It does not preserve legacy auth-return URL
 builders, duplicate password sign-in APIs, route-local `next` setters, ad hoc
 path checks, or transport-layer login redirects.

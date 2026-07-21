@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { present } from "@/lib/api/presence";
-import type { ChapterOut } from "@/lib/lectern/client";
+import type { ChapterOut } from "@/lib/lectern/contract";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import {

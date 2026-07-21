@@ -28,7 +28,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { parseMediaId } from "@/lib/lectern/client";
+import { parseMediaId } from "@/lib/lectern/contract";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceChat } from "@/lib/resources/resourceChat";

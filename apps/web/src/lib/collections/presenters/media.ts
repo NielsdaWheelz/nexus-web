@@ -72,7 +72,7 @@ export function presentMedia(item: MediaPresenterItem, ctx: MediaPresenterContex
     consumption: readConsumption(item),
     status: status ?? undefined,
     connections: connectionsFromSummary(connectionSummary),
-    recency: item.last_engaged_at ? { at: item.last_engaged_at, reason: "read" } : undefined,
+    recency: item.last_engaged_at ? { at: item.last_engaged_at } : undefined,
     contributors:
       item.contributors && item.contributors.length > 0
         ? { credits: item.contributors, maxVisible: 3 }

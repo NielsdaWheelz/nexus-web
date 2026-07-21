@@ -21,7 +21,7 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { assumeMediaId, type Placement } from "@/lib/lectern/client";
+import { assumeMediaId, type Placement } from "@/lib/lectern/contract";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";

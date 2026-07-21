@@ -557,7 +557,7 @@ export function useLauncherController(): LauncherController {
         if (!destination) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
         event.preventDefault();
         void dispatchTarget(
-          { kind: "href", href: destination.href, externalShell: destination.externalShell ?? false },
+          { kind: "href", href: destination.href, externalShell: false },
           dispatchCtx,
         ).catch(fail);
         return;

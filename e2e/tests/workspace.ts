@@ -6,6 +6,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
+import { AUTHENTICATED_HOME_PATH } from "./app-routes";
 
 type WorkspacePaneVisibility = "visible" | "minimized";
 
@@ -14,7 +15,7 @@ type WorkspacePaneVisibility = "visible" | "minimized";
 const DEVICE_COOKIE_NAME = "nx_device";
 
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
-const WORKSPACE_DEFAULT_FALLBACK_HREF = "/libraries";
+const WORKSPACE_DEFAULT_FALLBACK_HREF = AUTHENTICATED_HOME_PATH;
 const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
   back: ["/notes"],
   forward: [],

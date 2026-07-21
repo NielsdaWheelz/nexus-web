@@ -208,7 +208,7 @@ describe("POST /auth/password", () => {
         {
           email: "ada@example.com",
           password: "wrong-password",
-          next: "/libraries",
+          next: "/lectern",
         },
         { origin: "http://localhost:3000" },
       ),
@@ -238,7 +238,7 @@ describe("POST /auth/password", () => {
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/libraries"
+      "http://localhost:3000/lectern"
     );
   });
 
@@ -279,7 +279,7 @@ describe("POST /auth/password", () => {
       "Display-name PATCH timed out",
     );
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("http://localhost:3000/libraries");
+    expect(response.headers.get("location")).toBe("http://localhost:3000/lectern");
     expect(response.headers.get("set-cookie")).toContain(
       "sb-local-auth-token=new-session-cookie",
     );

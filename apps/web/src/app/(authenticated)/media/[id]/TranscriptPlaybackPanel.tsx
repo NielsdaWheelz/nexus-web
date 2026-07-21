@@ -7,7 +7,7 @@ import Button from "@/components/ui/Button";
 import { YOUTUBE_EMBED_HOSTS } from "@/lib/security/youtube";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/client";
+import { parseMediaId, type PlayerDescriptor } from "@/lib/lectern/contract";
 import {
   normalizeTrackChapters,
   type GlobalPlayerChapter,

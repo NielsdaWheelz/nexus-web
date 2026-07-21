@@ -37,7 +37,7 @@ export function presentConversation(
     lead: { icon: resourceIconForScheme("conversation") },
     headline: { text: item.title },
     signals: [],
-    recency: { at: item.updated_at, reason: "read" },
+    recency: { at: item.updated_at },
     actions,
     swipeActions: deleteAction
       ? [
@@ -68,6 +68,6 @@ export function presentContextRefChat(
     lead: { icon: resourceIconForScheme("conversation") },
     headline: { text: item.title },
     signals: [{ value: pluralize(item.message_count, "message") }],
-    recency: { at: item.updated_at, reason: "read" },
+    recency: { at: item.updated_at },
   };
 }

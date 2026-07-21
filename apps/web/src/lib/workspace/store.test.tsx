@@ -194,6 +194,36 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("restores and activates an existing matching Lectern pane", async () => {
+    const workspace = await mountWorkspaceStore();
+
+    act(() => {
+      workspace().openPane({ href: "/lectern", activate: false });
+    });
+    await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(2));
+    const lecternPaneId = primaryPanes(workspace().state)[1]!.id;
+
+    act(() => {
+      workspace().minimizePane(lecternPaneId);
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[1]?.visibility).toBe("minimized");
+    });
+
+    act(() => {
+      workspace().openPane({ href: "/lectern" });
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      expect(workspace().state.activePrimaryPaneId).toBe(lecternPaneId);
+      expect(primaryPanes(workspace().state)[1]).toMatchObject({
+        href: "/lectern",
+        visibility: "visible",
+      });
+    });
+    flushWorkspaceSession();
+  });
+
   it("opens new panes at the workspace default width", async () => {
     const workspace = await mountWorkspaceStore();
 
@@ -861,7 +891,7 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(1);
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/lectern");
     });
     flushWorkspaceSession();
   });

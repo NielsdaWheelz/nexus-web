@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/client";
+import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/contract";
 import {
   LECTERN_COMMAND_DEADLINE_MS,
   LecternProvider,
@@ -27,6 +27,7 @@ function wireItem(itemId: string, mediaId: string, title: string): Record<string
   return {
     itemId,
     mediaId,
+    kind: "podcast_episode",
     title,
     subtitle: { kind: "Absent" },
     href: `/media/${mediaId}`,

@@ -166,7 +166,7 @@ describe("handleAuthCallback", () => {
     });
 
     expect(response.headers.get("location")).toBe(
-      "https://app.example.com/libraries"
+      "https://app.example.com/lectern"
     );
   });
 
@@ -247,7 +247,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );
@@ -276,7 +276,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );
@@ -294,7 +294,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&error=server_error&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&error=server_error&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );
@@ -314,7 +314,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&error=access_denied&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&error=access_denied&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );
@@ -332,7 +332,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );
@@ -355,7 +355,7 @@ describe("handleAuthCallback", () => {
 
       const response = await handleAuthCallback(
         new Request(
-          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=bad-code&next=%2Flibraries"
+          "https://app.example.com/auth/callback?flow=handoff&hc=challenge-abc&code=bad-code&next=%2Flectern"
         ),
         { exchangeCodeForSession, mintHandoffCode }
       );

@@ -10,7 +10,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   decodePresentPlayerDescriptor,
   type PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 import {
   canRequestTranscript,
   shouldPollTranscriptProvisioning,

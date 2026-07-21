@@ -255,7 +255,7 @@ describe("GET /auth/callback", () => {
       const { GET } = await import("./route");
       const response = await GET(
         new Request(
-          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flectern"
         )
       );
 
@@ -303,7 +303,7 @@ describe("GET /auth/callback", () => {
       const { GET } = await import("./route");
       const response = await GET(
         new Request(
-          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flectern"
         )
       );
 
@@ -343,7 +343,7 @@ describe("GET /auth/callback", () => {
       const { GET } = await import("./route");
       const responsePromise = GET(
         new Request(
-          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flibraries"
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&code=test-code&next=%2Flectern"
         )
       );
 
@@ -360,7 +360,7 @@ describe("GET /auth/callback", () => {
       const { GET } = await import("./route");
       const response = await GET(
         new Request(
-          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&error=server_error&next=%2Flibraries"
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&error=server_error&next=%2Flectern"
         )
       );
 
@@ -375,7 +375,7 @@ describe("GET /auth/callback", () => {
       const { GET } = await import("./route");
       const response = await GET(
         new Request(
-          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&next=%2Flibraries"
+          "http://localhost:3000/auth/callback?flow=handoff&hc=challenge-abc&next=%2Flectern"
         )
       );
 

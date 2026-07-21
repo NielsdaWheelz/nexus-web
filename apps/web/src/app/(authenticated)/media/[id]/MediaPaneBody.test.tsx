@@ -1662,7 +1662,15 @@ describe("MediaPaneBody pane sizing", () => {
     // menuitem that keyboard traversal would skip.
     expect(statusRow.render).toBeDefined();
     expect(statusRow.onSelect).toBeUndefined();
-    render(<>{statusRow.render?.({ closeMenu: () => {}, triggerEl: null })}</>);
+    render(
+      <>
+        {statusRow.render?.({
+          closeMenu: () => {},
+          closeMenuWithoutFocus: () => {},
+          triggerEl: null,
+        })}
+      </>,
+    );
     expect(screen.getByText("PDF pages keep their source colors")).toBeInTheDocument();
 
     const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);

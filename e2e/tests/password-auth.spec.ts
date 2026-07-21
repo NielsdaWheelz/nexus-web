@@ -4,6 +4,7 @@ import {
   expectAuthCallbackTarget,
   waitForEmailChangeConfirmationLink,
 } from "./mailbox";
+import { isAuthenticatedHome } from "./app-routes";
 
 /**
  * Password authentication E2E coverage for docs/password-auth.md.
@@ -27,7 +28,7 @@ function freshEmail(label: string): string {
 }
 
 test.describe("password auth", () => {
-  test("AC1: sign up with a fresh email lands on /libraries with a session", async ({
+  test("AC1: sign up with a fresh email lands on /lectern with a session", async ({
     browser,
   }) => {
     const context = await browser.newContext({
@@ -43,7 +44,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
 
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
       await expect(
         page.getByRole("link", { name: /libraries/i })
       ).toBeVisible();
@@ -68,7 +69,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
 
       // Sign out via the account menu.
       await signOutViaAccountMenu(page);
@@ -102,7 +103,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
 
       // Change password from /settings/identities.
       await page.goto("/settings/identities");
@@ -134,7 +135,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(newPassword);
       await page.getByRole("button", { name: /^continue$/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
     } finally {
       await context.close();
     }
@@ -157,7 +158,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(oldEmail);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
 
       // Change email on /settings/account.
       await page.goto("/settings/account");
@@ -177,9 +178,11 @@ test.describe("password auth", () => {
         "/settings/account"
       );
       await page.goto(confirmationLink);
-      await page.waitForURL(/\/settings\/account|\/libraries/, {
-        timeout: 60_000,
-      });
+      await page.waitForURL(
+        (url) =>
+          url.pathname === "/settings/account" || isAuthenticatedHome(url),
+        { timeout: 60_000 },
+      );
 
       // Sign out.
       await signOutViaAccountMenu(page);
@@ -198,7 +201,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(newEmail);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /^continue$/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
     } finally {
       await context.close();
     }
@@ -221,7 +224,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
 
       // Change display name on /settings/account.
       await page.goto("/settings/account");
@@ -256,7 +259,7 @@ test.describe("password auth", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(PASSWORD);
       await page.getByRole("button", { name: /create account/i }).click();
-      await expect(page).toHaveURL(/\/libraries/);
+      await expect(page).toHaveURL(isAuthenticatedHome);
 
       // Sign out.
       await signOutViaAccountMenu(page);

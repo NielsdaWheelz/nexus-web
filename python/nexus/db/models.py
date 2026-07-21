@@ -233,7 +233,6 @@ class Page(Base):
         server_default=text("now()"),
         nullable=False,
     )
-
     __table_args__ = (
         CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
     )
@@ -943,71 +942,6 @@ class SynapseSuppression(Base):
             "user_id",
             "target_scheme",
             "target_id",
-        ),
-    )
-
-
-class PinnedObjectRef(Base):
-    """User-pinned navigation item backed by a hydrated ObjectRef."""
-
-    __tablename__ = "user_pinned_objects"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    object_type: Mapped[str] = mapped_column(Text, nullable=False)
-    object_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    surface_key: Mapped[str] = mapped_column(Text, nullable=False)
-    order_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "object_type IN ('page', 'note_block', 'media', 'highlight', 'conversation', "
-            "'message', 'podcast', 'content_chunk', 'fragment', 'contributor', "
-            "'evidence_span', 'reader_apparatus_item')",
-            name="ck_user_pinned_objects_type",
-        ),
-        CheckConstraint(
-            "char_length(surface_key) BETWEEN 1 AND 64",
-            name="ck_user_pinned_objects_surface_key_length",
-        ),
-        CheckConstraint(
-            "char_length(order_key) BETWEEN 1 AND 64",
-            name="ck_user_pinned_objects_order_key_length",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "surface_key",
-            "object_type",
-            "object_id",
-            name="uix_user_pinned_objects_surface_ref",
-        ),
-        Index(
-            "ix_user_pinned_objects_active_order",
-            "user_id",
-            "surface_key",
-            "order_key",
-            "created_at",
-            "id",
-            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
@@ -2570,6 +2504,12 @@ class PodcastListeningState(Base):
         server_default=text("now()"),
         nullable=False,
     )
+    # Engagement recency is advanced by listening heartbeats only. ``updated_at``
+    # remains the operational mutation clock (manual Finished/Unread included).
+    last_engaged_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -2585,6 +2525,13 @@ class PodcastListeningState(Base):
             name="ck_podcast_listening_states_playback_speed_positive",
         ),
         Index("ix_podcast_listening_states_media_id", "media_id"),
+        Index(
+            "ix_podcast_listening_states_user_last_engaged",
+            "user_id",
+            text("last_engaged_at DESC"),
+            text("media_id DESC"),
+            postgresql_where=text("last_engaged_at IS NOT NULL"),
+        ),
     )
 
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
@@ -6027,6 +5974,12 @@ class ReaderEngagementState(Base):
             "max_total_progression IS NULL"
             " OR (max_total_progression >= 0.0 AND max_total_progression <= 1.0)",
             name="ck_reader_engagement_states_max_total_progression",
+        ),
+        Index(
+            "ix_reader_engagement_states_user_last_engaged",
+            "user_id",
+            text("last_engaged_at DESC"),
+            text("media_id DESC"),
         ),
     )
 

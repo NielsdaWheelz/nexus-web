@@ -494,20 +494,20 @@ def _apply_consumption_state(
     doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
 
     if audio_media_ids:
-        listening_updated_at_by_id = consumption_service.listening_recency(
+        listening_engaged_at_by_id = consumption_service.listening_recency(
             db, viewer_id=viewer_id, media_ids=audio_media_ids
         )
         for media in media_outs:
             if media.listening_state is not None:
-                media.last_engaged_at = listening_updated_at_by_id.get(media.id)
+                media.last_engaged_at = listening_engaged_at_by_id.get(media.id)
 
     if doc_media_ids:
-        doc_updated_at_by_id = consumption_service.reader_engagement_recency(
+        doc_engaged_at_by_id = consumption_service.reader_engagement_recency(
             db, viewer_id=viewer_id, media_ids=doc_media_ids
         )
         for media in media_outs:
             if media.listening_state is None:
-                media.last_engaged_at = doc_updated_at_by_id.get(media.id)
+                media.last_engaged_at = doc_engaged_at_by_id.get(media.id)
 
     # Player descriptor (spec §6): server-derived FooterAudio descriptor for
     # podcast-episode media, batched through the one projection owner to avoid

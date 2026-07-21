@@ -31,7 +31,7 @@ describe("client auth return target", () => {
   });
 
   it("omits default next from current-location login URLs", () => {
-    stubLocation("/libraries");
+    stubLocation("/lectern");
 
     expect(buildLoginUrlForCurrentLocation()).toBe(
       "http://localhost:3000/login"

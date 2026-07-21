@@ -32,6 +32,28 @@ def _record_selection(auth_client, user_id, **overrides):
 
 
 class TestPaletteSelections:
+    @pytest.mark.parametrize("target_href", ["/lectern", "/atlas"])
+    def test_post_accepts_static_navigation_targets(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        target_href: str,
+    ):
+        user_id = create_test_user_id()
+        _bootstrap_user(auth_client, user_id)
+        direct_db.register_cleanup("command_palette_usages", "user_id", user_id)
+
+        response = _record_selection(
+            auth_client,
+            user_id,
+            target_key=target_href,
+            target_href=target_href,
+            title_snapshot=target_href.removeprefix("/").title(),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["target_href"] == target_href
+
     def test_post_updates_existing_query_target_row_and_caps_timestamp_history(
         self, auth_client, direct_db: DirectSessionManager
     ):

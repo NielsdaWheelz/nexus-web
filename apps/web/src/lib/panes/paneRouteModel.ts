@@ -2,6 +2,7 @@
 // server data root resolves the initial pane with the SAME resolver the client
 // uses (D-5: one resolver). No "use client" — this module is isomorphic.
 import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
+import type { DestinationId } from "@/lib/navigation/destinations";
 import {
   getSecondaryGroupForSurface,
   type WorkspaceSecondaryGroupId,
@@ -27,50 +28,14 @@ export interface PaneRouteContext {
   androidShell?: boolean;
 }
 
-export type PaneRouteId =
-  | "lectern"
-  | "libraries"
-  | "library"
-  | "media"
-  | "conversations"
-  | "conversationNew"
-  | "conversation"
-  | "podcasts"
-  | "podcastDetail"
-  | "search"
-  | "author"
-  | "notes"
-  | "page"
-  | "note"
-  | "settings"
-  | "settingsAccount"
-  | "settingsBilling"
-  | "settingsReader"
-  | "settingsAppearance"
-  | "settingsKeys"
-  | "settingsLocalVault"
-  | "settingsIdentities"
-  | "settingsKeybindings"
-  | "atlas"
-  | "oracle"
-  | "oracleReading";
-
-export interface PaneRouteModelDefinition extends PaneWidthContract {
-  id: PaneRouteId;
+interface PaneRouteModelDefinitionBase extends PaneWidthContract {
+  id: string;
+  sectionDestinationId: DestinationId;
   pattern: RoutePattern;
   staticTitle: string;
   titleMode: "static" | "dynamic";
   bodyMode: PaneBodyMode;
   secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
-}
-
-export interface ResolvedPaneRouteModel {
-  id: PaneRouteId | "unsupported";
-  pathname: string;
-  params: RouteParams;
-  staticTitle: string;
-  titleMode: "static" | "dynamic";
-  definition: PaneRouteModelDefinition | null;
 }
 
 const STANDARD_WIDTH_CONTRACT: PaneWidthContract = {
@@ -83,16 +48,16 @@ const MEDIA_READER_WIDTH_CONTRACT: PaneWidthContract = {
   allowsIntrinsicPrimaryWidth: true,
 };
 
-function route(
-  definition: Omit<PaneRouteModelDefinition, keyof PaneWidthContract> &
-    PaneWidthContract
-): PaneRouteModelDefinition {
+function route<const Definition extends PaneRouteModelDefinitionBase>(
+  definition: Definition,
+): Definition {
   return definition;
 }
 
-export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
+export const PANE_ROUTE_MODELS = [
   route({
     id: "lectern",
+    sectionDestinationId: "lectern",
     pattern: ["lectern"],
     staticTitle: "Lectern",
     titleMode: "static",
@@ -101,6 +66,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "libraries",
+    sectionDestinationId: "libraries",
     pattern: ["libraries"],
     staticTitle: "Libraries",
     titleMode: "static",
@@ -109,6 +75,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "library",
+    sectionDestinationId: "libraries",
     pattern: ["libraries", ":id"],
     staticTitle: "Library",
     titleMode: "dynamic",
@@ -117,6 +84,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "media",
+    sectionDestinationId: "libraries",
     pattern: ["media", ":id"],
     staticTitle: "Media",
     titleMode: "dynamic",
@@ -126,6 +94,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "conversations",
+    sectionDestinationId: "chats",
     pattern: ["conversations"],
     staticTitle: "Chats",
     titleMode: "static",
@@ -134,6 +103,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "conversationNew",
+    sectionDestinationId: "chats",
     pattern: ["conversations", "new"],
     staticTitle: "New chat",
     titleMode: "static",
@@ -143,6 +113,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "conversation",
+    sectionDestinationId: "chats",
     pattern: ["conversations", ":id"],
     staticTitle: "Chat",
     titleMode: "dynamic",
@@ -152,6 +123,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "podcasts",
+    sectionDestinationId: "podcasts",
     pattern: ["podcasts"],
     staticTitle: "Podcasts",
     titleMode: "static",
@@ -160,6 +132,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "podcastDetail",
+    sectionDestinationId: "podcasts",
     pattern: ["podcasts", ":podcastId"],
     staticTitle: "Podcast",
     titleMode: "dynamic",
@@ -168,6 +141,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "search",
+    sectionDestinationId: "search",
     pattern: ["search"],
     staticTitle: "Search",
     titleMode: "static",
@@ -176,6 +150,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "author",
+    sectionDestinationId: "authors",
     pattern: ["authors", ":handle"],
     staticTitle: "Author",
     titleMode: "dynamic",
@@ -184,6 +159,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "notes",
+    sectionDestinationId: "notes",
     pattern: ["notes"],
     staticTitle: "Notes",
     titleMode: "static",
@@ -192,6 +168,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "page",
+    sectionDestinationId: "notes",
     pattern: ["pages", ":pageId"],
     staticTitle: "Page",
     titleMode: "dynamic",
@@ -200,6 +177,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "note",
+    sectionDestinationId: "notes",
     pattern: ["notes", ":blockId"],
     staticTitle: "Note",
     titleMode: "dynamic",
@@ -208,6 +186,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settings",
+    sectionDestinationId: "settings",
     pattern: ["settings"],
     staticTitle: "Settings",
     titleMode: "static",
@@ -216,6 +195,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsAccount",
+    sectionDestinationId: "settings",
     pattern: ["settings", "account"],
     staticTitle: "Account",
     titleMode: "static",
@@ -224,6 +204,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsBilling",
+    sectionDestinationId: "settings",
     pattern: ["settings", "billing"],
     staticTitle: "Billing",
     titleMode: "static",
@@ -232,6 +213,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsReader",
+    sectionDestinationId: "settings",
     pattern: ["settings", "reader"],
     staticTitle: "Reader settings",
     titleMode: "static",
@@ -240,6 +222,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsAppearance",
+    sectionDestinationId: "settings",
     pattern: ["settings", "appearance"],
     staticTitle: "Appearance",
     titleMode: "static",
@@ -248,6 +231,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsKeys",
+    sectionDestinationId: "settings",
     pattern: ["settings", "keys"],
     staticTitle: "API Keys",
     titleMode: "static",
@@ -256,6 +240,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsLocalVault",
+    sectionDestinationId: "settings",
     pattern: ["settings", "local-vault"],
     staticTitle: "Local vault",
     titleMode: "static",
@@ -264,6 +249,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsIdentities",
+    sectionDestinationId: "settings",
     pattern: ["settings", "identities"],
     staticTitle: "Linked identities",
     titleMode: "static",
@@ -272,6 +258,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "settingsKeybindings",
+    sectionDestinationId: "settings",
     pattern: ["settings", "keybindings"],
     staticTitle: "Keyboard shortcuts",
     titleMode: "static",
@@ -280,6 +267,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "atlas",
+    sectionDestinationId: "atlas",
     pattern: ["atlas"],
     staticTitle: "The Atlas",
     titleMode: "static",
@@ -288,6 +276,7 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "oracle",
+    sectionDestinationId: "oracle",
     pattern: ["oracle"],
     staticTitle: "Oracle",
     titleMode: "static",
@@ -296,13 +285,30 @@ export const PANE_ROUTE_MODELS: readonly PaneRouteModelDefinition[] = [
   }),
   route({
     id: "oracleReading",
+    sectionDestinationId: "oracle",
     pattern: ["oracle", ":readingId"],
     staticTitle: "Reading",
     titleMode: "static",
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
-];
+] as const satisfies readonly PaneRouteModelDefinitionBase[];
+
+/** Route identity is derived from the one literal registry and cannot drift. */
+export type PaneRouteId = (typeof PANE_ROUTE_MODELS)[number]["id"];
+
+export type PaneRouteModelDefinition = PaneRouteModelDefinitionBase & {
+  id: PaneRouteId;
+};
+
+export interface ResolvedPaneRouteModel {
+  id: PaneRouteId | "unsupported";
+  pathname: string;
+  params: RouteParams;
+  staticTitle: string;
+  titleMode: "static" | "dynamic";
+  definition: PaneRouteModelDefinition | null;
+}
 
 function toPathSegments(pathname: string): string[] {
   return pathname
@@ -376,6 +382,20 @@ export function resolvePaneRouteModel(href: string): ResolvedPaneRouteModel {
     titleMode: "static",
     definition: null,
   };
+}
+
+export function sectionDestinationIdForRoute(routeId: PaneRouteId): DestinationId {
+  const definition = PANE_ROUTE_MODELS.find((candidate) => candidate.id === routeId);
+  if (!definition) {
+    // justify-defect: PaneRouteId is derived from PANE_ROUTE_MODELS, so a miss
+    // means the runtime module no longer matches its compiled type contract.
+    throw new Error(`Pane route ${routeId} has no model definition`);
+  }
+  return definition.sectionDestinationId;
+}
+
+export function sectionDestinationIdForHref(href: string): DestinationId | null {
+  return resolvePaneRouteModel(href).definition?.sectionDestinationId ?? null;
 }
 
 export function resolvePaneRouteWidthContract(href: string): PaneWidthContract {

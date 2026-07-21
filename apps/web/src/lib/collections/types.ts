@@ -67,10 +67,10 @@ export interface CollectionRowView {
   connections?: { total: number; dominantKind?: EdgeKind; topPeers: ConnectionEndpointOut[] };
   /** Similarity + shared-author peers (S5). */
   related?: ConnectionEndpointOut[];
-  /** Optional media id for media-backed rows whose stable row id is not the media id. */
-  relatedMediaId?: string;
+  /** Media id for related-item lookup. Omit for the media-row default; null opts out. */
+  relatedMediaId?: string | null;
   contributors?: { credits: ContributorCredit[]; maxVisible: number; showRole?: boolean };
-  recency?: { at: string; reason: "added" | "connected" | "read" | "published" };
+  recency?: { at: string };
   actions?: ActionMenuOption[];
   swipeActions?: SwipeAction[];
   selected?: boolean;

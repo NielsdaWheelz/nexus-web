@@ -7,6 +7,8 @@ import {
   librariesResource,
   libraryEntriesResource,
   libraryResource,
+  LECTERN_RECENT_LIMIT,
+  lecternRecentResource,
   mediaFragmentsResource,
   mediaResource,
   noteBlockResource,
@@ -14,6 +16,7 @@ import {
   settingsAccountResource,
   settingsKeysResource,
 } from "@/lib/api/resource";
+import { decodeRecentConsumptionEnvelope } from "@/lib/lectern/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
@@ -93,11 +96,22 @@ export interface PaneResourceLoader {
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // settingsLocalVault (client-only File System data), search (query-driven,
-// no route-keyed primary), lectern (the shell-mounted LecternProvider is the one
-// snapshot owner — it issues its own initial GET /api/lectern through its FIFO
-// lane and never reads ResourceCache, so a pane loader would create a second,
-// non-canonical fetch path). Intent still warms their chunk; only the data is skipped.
+// no route-keyed primary). Lectern's canonical ordered queue remains exclusively
+// owned by the shell-mounted LecternProvider; only its independent, read-only
+// recent-consumption resource is seeded here.
 export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
+  lectern: {
+    cacheKey: () =>
+      lecternRecentResource.cacheKey({ limit: LECTERN_RECENT_LIMIT, refreshVersion: 0 }),
+    load: async (request) =>
+      decodeRecentConsumptionEnvelope(
+        await request(lecternRecentResource, {
+          limit: LECTERN_RECENT_LIMIT,
+          refreshVersion: 0,
+        }),
+      ),
+  },
+
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
     load: (request) => request(librariesResource, { refreshVersion: 0 }),

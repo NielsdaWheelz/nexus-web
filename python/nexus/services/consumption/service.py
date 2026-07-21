@@ -3,8 +3,8 @@
 Command facades (``run_lectern_command`` / ``run_consumption_command``) each open
 a fresh session and own one ``retry_serializable`` transaction: viewer lock ->
 replay claim -> validation -> domain writes -> semantic memo -> snapshot read
-(spec §5). Read facades (``get_lectern`` / ``get_listening_state``) run on the
-request-scoped session. The heartbeat facade is the separately specified
+(spec §5). Read facades (``get_lectern`` / ``get_recent_consumption`` /
+``get_listening_state``) run on the request-scoped session. The heartbeat facade is the separately specified
 unreplayable CAS mutation. Narrow in-transaction helpers exist only for media
 lifecycle cleanup and the trusted ensure path.
 """
@@ -51,6 +51,7 @@ from nexus.schemas.consumption import (
     PlacedOutcome,
     PlaceItemsCommand,
     PlayerDescriptor,
+    RecentConsumptionSnapshot,
     RemovedOutcome,
     RemoveItemCommand,
     SetBatchStateCommand,
@@ -92,6 +93,13 @@ def get_lectern(db: Session, viewer_id: UUID) -> LecternSnapshot:
     """Canonical Lectern snapshot for a viewer (visible rows only)."""
     rows = _lectern_store.load_rows(db, viewer_id=viewer_id)
     return _projection.build_snapshot(db, viewer_id=viewer_id, rows=rows)
+
+
+def get_recent_consumption(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> RecentConsumptionSnapshot:
+    """Bounded visible media ordered by truthful reader/listener engagement."""
+    return _projection.recent_consumption(db, viewer_id=viewer_id, limit=limit)
 
 
 def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> ListeningStateOut:
@@ -182,11 +190,9 @@ def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) 
     )
 
 
-def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
-    """Scalar subquery -> MAX listening recency across a podcast's episodes."""
-    return _projection.listening_recency_max_subquery_sql(
-        user_param=user_param, podcast_expr=podcast_expr
-    )
+def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
+    """Scalar subquery -> MAX listening recency across visible podcast episodes."""
+    return _projection.listening_recency_max_subquery_sql(podcast_expr=podcast_expr)
 
 
 # ---------------------------------------------------------------------------

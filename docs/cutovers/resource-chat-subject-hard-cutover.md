@@ -1033,8 +1033,8 @@ Frontend:
 - remove the manual `library` special case;
 - stop using `resourceObjectTypeForScheme` as a route decision for context refs.
 
-`objectRefs` remains the owner for note editor object refs, pins, and object
-search if those features still need it. It is not the route owner for chat
+`objectRefs` remains the owner for note editor object refs and object search if
+those features still need it. It is not the route owner for chat
 context refs.
 
 ## Library Intelligence Composition
@@ -1238,7 +1238,7 @@ Contributor resource subjects:
 - `apps/web/src/lib/resources/resourceKind.ts`
   - keep icons, stop acting as route resolver.
 - `apps/web/src/lib/objectRefs.ts`
-  - keep for note editor/pins/search, not chat context opening.
+  - keep for note editor/search, not chat context opening.
 - `apps/web/src/lib/actions/resourceActions.ts`
   - replace document-specific chat option with resource subject action.
 - Pane files:

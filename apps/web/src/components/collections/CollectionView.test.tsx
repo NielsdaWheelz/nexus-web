@@ -119,7 +119,7 @@ describe("CollectionView", () => {
     renderView({ status: "loading", rows: [] });
 
     // PaneLoadingState exposes an sr-only label inside a polite live region.
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading Documents…")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
   });
 
@@ -164,6 +164,30 @@ describe("CollectionView", () => {
     renderView({ rows: [{ ...ROWS[0], consumption: { status: "unread" } }] });
 
     expect(screen.getByText("Unread")).toBeInTheDocument();
+  });
+
+  it("labels listening state, progress, and recency semantically", () => {
+    renderView({
+      rows: [
+        {
+          ...ROWS[0],
+          kind: "podcast_episode",
+          consumption: { status: "in_progress" },
+          recency: { at: "2026-05-25T12:00:00Z" },
+        },
+        {
+          ...ROWS[1],
+          kind: "podcast_episode",
+          consumption: { status: "in_progress", fraction: 0.42 },
+        },
+      ],
+    });
+
+    expect(screen.getByText("Listening")).toBeInTheDocument();
+    expect(screen.getByRole("time")).toHaveAttribute("datetime", "2026-05-25T12:00:00Z");
+    expect(
+      screen.getByRole("progressbar", { name: "Listening progress for Second document" }),
+    ).toHaveAttribute("aria-valuenow", "42");
   });
 
   it("keeps compact collection rows inside a 320px mobile width", async () => {
@@ -249,7 +273,13 @@ describe("CollectionView", () => {
     expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
 
     await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Actions" })).toHaveFocus());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Actions for A compact collection row with a very long title that should clamp on mobile",
+        }),
+      ).toHaveFocus(),
+    );
   });
 
   it("keeps gallery fallback icons inside the narrowest grid card", async () => {
@@ -439,7 +469,7 @@ describe("CollectionView", () => {
     first.focus();
 
     const firstRow = within(screen.getAllByRole("listitem")[0]);
-    const trigger = screen.getByRole("button", { name: "Actions" });
+    const trigger = screen.getByRole("button", { name: "Actions for First document" });
     const related = firstRow.getByRole("button", { name: "Related" });
     await waitFor(() => expect(trigger).toHaveAttribute("tabindex", "-1"));
     expect(related).toHaveAttribute("tabindex", "-1");

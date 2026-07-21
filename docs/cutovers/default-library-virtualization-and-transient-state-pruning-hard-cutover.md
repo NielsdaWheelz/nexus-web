@@ -169,7 +169,7 @@ Projection precedence:
 3. reader engagement: `max_total_progression >= 0.95` → finished; any row → in progress;
 4. absent → unread.
 
-Document `last_engaged_at` comes from `reader_engagement_states`; audio recency remains `podcast_listening_states.updated_at`. `MediaOut`, library `surfaced_today`, and non-default resonance consume those owner-level recency queries. This preserves reader-progress AC17 without retaining history.
+Document `last_engaged_at` comes from `reader_engagement_states`; audio recency comes from the heartbeat-only `podcast_listening_states.last_engaged_at`. Migration 0185 copies operational `updated_at` only when post-fencing state proves the latest mutation was a heartbeat (`write_revision > 0`, incomplete, and either positive position or no reset). Pre-fencing, completed, and post-reset zero-position rows stay absent because they prove at most that listening once occurred, not when it occurred. Manual Finished/Unread mutations may advance operational `updated_at` but preserve engagement recency. `MediaOut`, library `surfaced_today`, non-default resonance, and the independent Lectern recent projection consume those owner-level recency queries. This preserves reader-progress AC17 without retaining history or fabricating engagement from state-only commands.
 
 Post-cut `ListeningHeartbeatIn` remains strict camel-case, all-required, CAS-fenced, and has **no completion field**. It contains exactly:
 

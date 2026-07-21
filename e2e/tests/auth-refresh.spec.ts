@@ -4,6 +4,10 @@ import {
   expireAccessTokenKeepingRefreshToken,
   expireAccessTokenWithRevokedRefreshToken,
 } from "./session-cookie-fixtures";
+import {
+  AUTHENTICATED_HOME_PATH,
+  isAuthenticatedHome,
+} from "./app-routes";
 
 /**
  * Silent-refresh E2E coverage for the auth target cutover.
@@ -113,7 +117,7 @@ test.describe("auth silent refresh", () => {
       await leaveAppDocument(page);
       await expireAccessTokenWithRevokedRefreshToken(context, APP_BASE_URL);
 
-      await gotoAllowingTerminalRedirectAbort(page, "/libraries");
+      await gotoAllowingTerminalRedirectAbort(page, AUTHENTICATED_HOME_PATH);
 
       // The failed refresh is terminal: default app home does not add `next`.
       await page.waitForURL(
@@ -178,8 +182,8 @@ test.describe("auth silent refresh", () => {
       await expireAccessTokenKeepingRefreshToken(context, APP_BASE_URL);
 
       const startedAt = Date.now();
-      await gotoAllowingTerminalRedirectAbort(page, "/libraries");
-      await expect(page).toHaveURL(/\/libraries/, {
+      await gotoAllowingTerminalRedirectAbort(page, AUTHENTICATED_HOME_PATH);
+      await expect(page).toHaveURL(isAuthenticatedHome, {
         timeout: PROMPT_RESOLUTION_MS,
       });
       expect(

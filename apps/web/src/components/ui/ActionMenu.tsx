@@ -27,6 +27,7 @@ export interface ActionMenuOption {
   pressed?: boolean;
   render?: (controls: {
     closeMenu: () => void;
+    closeMenuWithoutFocus: () => void;
     triggerEl: HTMLButtonElement | null;
   }) => ReactNode;
   onSelect?: (detail: { triggerEl: HTMLButtonElement | null }) => void;
@@ -278,7 +279,11 @@ export default function ActionMenu({
               {option.render ? (
                 <li role="none">
                   <div role="group" aria-label={option.label}>
-                    {option.render({ closeMenu, triggerEl: toggleRef.current })}
+                    {option.render({
+                      closeMenu,
+                      closeMenuWithoutFocus: () => closeMenu(false),
+                      triggerEl: toggleRef.current,
+                    })}
                   </div>
                 </li>
               ) : (
@@ -306,8 +311,9 @@ export default function ActionMenu({
                           event.preventDefault();
                           return;
                         }
-                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        const triggerEl = toggleRef.current;
                         closeMenu(option.restoreFocusOnClose !== false);
+                        option.onSelect?.({ triggerEl });
                       }}
                     >
                       {option.label}
@@ -322,8 +328,9 @@ export default function ActionMenu({
                       disabled={option.disabled}
                       onClick={(e) => {
                         e.stopPropagation();
-                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        const triggerEl = toggleRef.current;
                         closeMenu(option.restoreFocusOnClose !== false);
+                        option.onSelect?.({ triggerEl });
                       }}
                     >
                       {option.label}

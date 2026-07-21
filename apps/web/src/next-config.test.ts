@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NextConfig } from "next";
+import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 const deployedEnv = {
   NEXUS_ENV: "prod",
@@ -56,6 +57,19 @@ describe("next.config images", () => {
     ]);
     expect(config.images?.localPatterns).not.toContainEqual({
       pathname: "/api/media/image",
+    });
+  });
+});
+
+describe("next.config redirects", () => {
+  it("redirects the root to the canonical authenticated home", async () => {
+    const config = await loadConfig(deployedEnv);
+    const redirects = await config.redirects?.();
+
+    expect(redirects?.find(({ source }) => source === "/")).toEqual({
+      source: "/",
+      destination: APP_AUTHENTICATED_HOME_HREF,
+      permanent: false,
     });
   });
 });

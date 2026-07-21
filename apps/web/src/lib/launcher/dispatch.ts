@@ -12,7 +12,7 @@
 import type { useFeedback } from "@/components/feedback/Feedback";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { createRandomId } from "@/lib/createRandomId";
-import { parseMediaId } from "@/lib/lectern/client";
+import { parseMediaId } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";

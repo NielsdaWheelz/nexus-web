@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { flushSync } from "react-dom";
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
@@ -75,6 +77,44 @@ describe("ActionMenu", () => {
 
     expect(handleSelect).toHaveBeenCalledWith({ triggerEl: trigger });
     expect(trigger).not.toHaveFocus();
+  });
+
+  it("closes before onSelect synchronously updates a parent", async () => {
+    const user = userEvent.setup();
+    const menuStateObservedBySelect = vi.fn();
+
+    function Parent() {
+      const [selectionCount, setSelectionCount] = useState(0);
+
+      return (
+        <>
+          <output aria-label="Selection count">{selectionCount}</output>
+          <ActionMenu
+            options={[
+              {
+                id: "select",
+                label: "Select",
+                onSelect: () => {
+                  flushSync(() => setSelectionCount((count) => count + 1));
+                  menuStateObservedBySelect(
+                    screen.queryByRole("menuitem", { name: "Select" }) !== null,
+                  );
+                },
+              },
+            ]}
+          />
+        </>
+      );
+    }
+
+    render(<Parent />);
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Select" }));
+
+    expect(screen.getByRole("status", { name: "Selection count" })).toHaveTextContent("1");
+    expect(menuStateObservedBySelect).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole("menuitem", { name: "Select" })).not.toBeInTheDocument();
   });
 
   it("mounts custom render content and closes the menu via the injected closeMenu", async () => {

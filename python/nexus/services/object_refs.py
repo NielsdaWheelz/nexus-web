@@ -1,17 +1,15 @@
-"""Hydration for universal object refs (pins, the note-editor picker, ref chips).
+"""Hydration for universal object refs (the note-editor picker and ref chips).
 
 Loading and permissions ride ``resource_graph.resolve`` — the single per-scheme
 data-access owner; only icon presentation for these surfaces lives here."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import assert_never, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from sqlalchemy import delete, func, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -22,7 +20,6 @@ from nexus.auth.permissions import (
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Conversation,
     Highlight,
@@ -30,14 +27,12 @@ from nexus.db.models import (
     Message,
     NoteBlock,
     Page,
-    PinnedObjectRef,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
+from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.resource_items import (
     OBJECT_TYPES,
     HydratedObjectRef,
     ObjectRef,
-    PinnedObjectRefOut,
 )
 from nexus.services.contributors import hydrate_contributor_object_ref
 from nexus.services.note_block_markdown import note_block_outline_markdown, page_outline_markdown
@@ -47,19 +42,6 @@ from nexus.services.resource_graph.resolve import (
     load_resource_batch,
 )
 from nexus.services.resource_items.routing import route_for_ref
-
-
-@dataclass(frozen=True)
-class PinObjectRefInput:
-    object_ref: ObjectRef
-    surface_key: str = "navbar"
-    order_key: str | None = None
-
-
-@dataclass(frozen=True)
-class UpdatePinnedObjectRefPatch:
-    surface_key: str | None = None
-    order_key: str | None = None
 
 
 def hydrate_object_ref(db: Session, viewer_id: UUID, ref: ObjectRef) -> HydratedObjectRef:
@@ -569,133 +551,6 @@ def search_object_refs(
 
 def _search_includes(object_types: set[OBJECT_TYPES] | None, object_type: OBJECT_TYPES) -> bool:
     return object_types is None or object_type in object_types
-
-
-def list_pinned_object_refs(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    surface_key: str = "navbar",
-) -> list[PinnedObjectRefOut]:
-    pins = db.scalars(
-        select(PinnedObjectRef)
-        .where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.surface_key == surface_key,
-            PinnedObjectRef.deleted_at.is_(None),
-        )
-        .order_by(
-            PinnedObjectRef.order_key.asc(),
-            PinnedObjectRef.created_at.asc(),
-            PinnedObjectRef.id.asc(),
-        )
-    ).all()
-    return [_pinned_out(db, viewer_id, pin) for pin in pins]
-
-
-def _commit_pin_or_conflict(db: Session) -> None:
-    """Commit a pinned-ref mutation, mapping the unique-pin constraint to a typed conflict."""
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        constraint_name = integrity_constraint_name(exc)
-        if constraint_name == "uix_user_pinned_objects_surface_ref" or (
-            constraint_name is None and "uix_user_pinned_objects_surface_ref" in str(exc.orig)
-        ):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Object ref is already pinned") from exc
-        raise
-
-
-def pin_object_ref(
-    db: Session,
-    viewer_id: UUID,
-    pin_input: PinObjectRefInput,
-) -> PinnedObjectRefOut:
-    hydrate_object_ref(db, viewer_id, pin_input.object_ref)
-    existing = db.scalar(
-        select(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.surface_key == pin_input.surface_key,
-            PinnedObjectRef.object_type == pin_input.object_ref.object_type,
-            PinnedObjectRef.object_id == pin_input.object_ref.object_id,
-            PinnedObjectRef.deleted_at.is_(None),
-        )
-    )
-    if existing is not None:
-        if pin_input.order_key is not None:
-            existing.order_key = pin_input.order_key
-            existing.updated_at = func.now()
-            db.commit()
-            db.refresh(existing)
-        return _pinned_out(db, viewer_id, existing)
-
-    pin = PinnedObjectRef(
-        user_id=viewer_id,
-        object_type=pin_input.object_ref.object_type,
-        object_id=pin_input.object_ref.object_id,
-        surface_key=pin_input.surface_key,
-        order_key=pin_input.order_key or _next_pin_order_key(db, viewer_id, pin_input.surface_key),
-    )
-    db.add(pin)
-    _commit_pin_or_conflict(db)
-    db.refresh(pin)
-    return _pinned_out(db, viewer_id, pin)
-
-
-def update_pinned_object_ref(
-    db: Session,
-    viewer_id: UUID,
-    pin_id: UUID,
-    patch: UpdatePinnedObjectRefPatch,
-) -> PinnedObjectRefOut:
-    pin = db.get(PinnedObjectRef, pin_id)
-    if pin is None or pin.user_id != viewer_id or pin.deleted_at is not None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Pinned object ref not found")
-    if patch.surface_key is not None:
-        pin.surface_key = patch.surface_key
-    if patch.order_key is not None:
-        pin.order_key = patch.order_key
-    pin.updated_at = func.now()
-    _commit_pin_or_conflict(db)
-    db.refresh(pin)
-    return _pinned_out(db, viewer_id, pin)
-
-
-def unpin_object_ref(db: Session, viewer_id: UUID, pin_id: UUID) -> None:
-    pin = db.get(PinnedObjectRef, pin_id)
-    if pin is None or pin.user_id != viewer_id or pin.deleted_at is not None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Pinned object ref not found")
-    db.execute(delete(PinnedObjectRef).where(PinnedObjectRef.id == pin.id))
-    db.commit()
-
-
-def _next_pin_order_key(db: Session, viewer_id: UUID, surface_key: str) -> str:
-    count = db.scalar(
-        select(func.count())
-        .select_from(PinnedObjectRef)
-        .where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.surface_key == surface_key,
-            PinnedObjectRef.deleted_at.is_(None),
-        )
-    )
-    return f"{int(count or 0) + 1:010d}"
-
-
-def _pinned_out(db: Session, viewer_id: UUID, pin: PinnedObjectRef) -> PinnedObjectRefOut:
-    return PinnedObjectRefOut(
-        id=pin.id,
-        object_ref=hydrate_object_ref(
-            db,
-            viewer_id,
-            ObjectRef(object_type=cast(OBJECT_TYPES, pin.object_type), object_id=pin.object_id),
-        ),
-        surface_key=pin.surface_key,
-        order_key=pin.order_key,
-        created_at=pin.created_at,
-        updated_at=pin.updated_at,
-    )
 
 
 def render_object_context(db: Session, viewer_id: UUID, ref: ObjectRef) -> str:

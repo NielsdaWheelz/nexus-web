@@ -67,7 +67,6 @@ function mockApi(
     if (url.pathname === "/api/search") {
       return jsonResponse({ results: [], page: { has_more: false, next_cursor: null } });
     }
-    if (url.pathname === "/api/pinned-objects") return jsonResponse({ data: { pins: [] } });
     if (url.pathname === "/api/lectern") return jsonResponse({ data: { items: [] } });
     throw new Error(`Unexpected fetch: ${url.pathname}`);
   });

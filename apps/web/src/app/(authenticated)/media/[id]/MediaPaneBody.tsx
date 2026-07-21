@@ -40,7 +40,7 @@ import {
   parseMediaId,
   type LecternSnapshot,
   type PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 import {
   mergePdfPageHighlights,
   pdfHighlightsForActivePage,

@@ -368,7 +368,7 @@ there is no self-FK, no merge/split/tombstone, and no status column),
 
 **Notes** — `pages` (title only), `daily_note_pages`, `note_blocks`
 (ProseMirror JSON + generated text only), `resource_versions`,
-`resource_mutations`, `resource_view_states`, and `user_pinned_objects`.
+`resource_mutations`, and `resource_view_states`.
 Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 
@@ -401,7 +401,9 @@ message API responses include a
 (`auto_queue_watermark_at`), `podcast_subscription_libraries`,
 `podcast_episodes` (PK = `media_id`), `podcast_episode_chapters`,
 `podcast_listening_states` (position/duration/speed +
-`write_revision`/`reset_epoch` heartbeat fencing), `podcast_transcription_jobs`,
+`write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
+`last_engaged_at`; operational `updated_at` is not engagement),
+`podcast_transcription_jobs`,
 `podcast_transcription_usage_daily`, `podcast_transcript_segments`.
 
 **Lectern / consumption** — `consumption_queue_items` (the Lectern: one
@@ -1008,7 +1010,11 @@ the sole DML owner of current-state reader recency — `last_engaged_at` plus,
 for non-PDF locators, a monotonic `max_total_progression`; no session,
 device, span, or dwell history), and `_projection.py` (the combined
 explicit-override + reader-engagement read model, plus batched
-`PlayerDescriptor`s reusing `derive_playback_source`). Two bounded
+`PlayerDescriptor`s reusing `derive_playback_source`, plus the visible,
+viewer-indexed recent-reading/listening projection). `GET /lectern/recent`
+is independent from the ordered Lectern snapshot: it merges truthful
+`last_engaged_at` from the reader/listener sources, excludes invisible and
+never-engaged media, and uses stable `media_id DESC` ties. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
@@ -1035,16 +1041,17 @@ OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
 [`modules/player.md`](modules/player.md) for the full file map.
 
-### 8.9 Search surfaces & command palette
+### 8.9 Search surfaces & Launcher
 
 The same `search()` backs the `/search` results page (`SearchPaneBody`), inline
-palette results, and the chat `app_search` tool — the page and the palette `@` lane
+Launcher results, and the chat `app_search` tool — the page and the Launcher `@` lane
 share one frontend query model (`lib/search`: `parseSearchInput` → `SearchQuery` →
 `fetchSearchResultPage`), so an identical input yields identical results and "See
-all" round-trips through the URL. The **command palette**
-(`components/CommandPalette.tsx`) aggregates open tabs, frecency-ranked recents
+all" round-trips through the URL. The **Launcher**
+(`components/launcher/`, `lib/launcher/`) aggregates open tabs, frecency-ranked recents
 (`command_palette` service), static nav/create commands, and live search results,
-ranked by `commandRanking.ts` and executed via `requestOpenInAppPane`. The
+ranked by the Launcher ranking pipeline and dispatched through the workspace pane
+contract. The
 **browse** surface (`services/browse.py`) is a global acquisition search across
 documents (incl. Gutenberg), videos (YouTube Data API), and podcasts.
 
@@ -1077,6 +1084,20 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   host's pane-activity capability, which reader progress uses for adoption-versus-
   handoff arbitration). Secondary panes (Document Map,
   conversation context, library tools) are runtime-published sidebars.
+- **App navigation is a curated projection, not a feature directory.**
+  `lib/navigation/destinations.ts` owns destination identity;
+  `components/appnav/navModel.ts` independently owns the flat fixed order
+  Lectern → Libraries → Podcasts → Chats → Notes → Atlas → Oracle for both rail
+  and mobile sheet. Every pane route declares a semantic `sectionDestinationId`,
+  so detail panes (notably `/media/{id}`) keep their owning section active without
+  another prefix map. Plain clicks dispatch through workspace `openPane` to
+  restore/reuse an exact pane or open a new one; modified/non-primary clicks remain
+  native anchor gestures. The activation result explicitly assigns focus to the
+  source trigger for an already-active destination or to the destination for a
+  real pane handoff, so closing mobile/account surfaces do not strand or steal
+  focus. Lectern is the brand and authenticated-home target.
+  Pinning is intentionally absent; personalization lives in Lectern recents and
+  Launcher ranking. See [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
   `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in
@@ -1112,7 +1133,10 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   URL-hash fold navigates the active pane (preserving the restored layout) rather than
   resetting state. The restore algebra lives in one isomorphic resolver
   (`workspaceRestore.ts`, server-safe, shared by the bootstrap and the store reducer;
-  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`).
+  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`). The
+  canonical `/lectern` request is explicit home intent: restore preserves the saved
+  layout, then reuses or appends and activates Lectern; it is not a neutral alias for
+  the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
   structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**

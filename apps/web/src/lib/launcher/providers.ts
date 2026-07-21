@@ -175,7 +175,7 @@ function commandItems(ctx: LauncherContext): LauncherItem[] {
     keywords: d.keywords,
     sectionId: d.href.startsWith("/settings/") ? "settings" : "go",
     icon: d.icon ?? getPaneRouteIcon(d.href),
-    target: { kind: "href", href: d.href, externalShell: d.externalShell ?? false },
+    target: { kind: "href", href: d.href, externalShell: false },
     source: "static",
     rank: { frecencyBoost: ctx.frecencyBoosts.get(d.href) ?? 0 },
     shortcutLabel: shortcutFor(ctx, d.id),

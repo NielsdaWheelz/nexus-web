@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
+import { AUTHENTICATED_HOME_PATH } from "./app-routes";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -74,7 +75,7 @@ test.describe("security headers (enforced CSP)", () => {
   test("document response carries the strict CSP and modern header suite", async ({
     page,
   }) => {
-    const response = await page.goto("/libraries");
+    const response = await page.goto(AUTHENTICATED_HOME_PATH);
     expect(response).not.toBeNull();
 
     const csp = await response!.headerValue("content-security-policy");

@@ -31,7 +31,12 @@ export default function NavTopBar({
     : "Search or ask anything";
 
   return (
-    <header className={styles.topBar} data-hidden={hidden ? "true" : "false"}>
+    <header
+      className={styles.topBar}
+      data-hidden={hidden ? "true" : "false"}
+      aria-hidden={hidden || undefined}
+      inert={hidden || undefined}
+    >
       <button
         type="button"
         className={`${styles.topBarButton} ${styles.topBarBrand}`}

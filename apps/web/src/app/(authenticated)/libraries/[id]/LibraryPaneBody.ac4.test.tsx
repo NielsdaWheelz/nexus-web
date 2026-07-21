@@ -197,10 +197,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     expect(await screen.findByText("Corpus Work")).toBeInTheDocument();
 
-    const actionButtons = await screen.findAllByRole("button", {
-      name: "Actions",
-    });
-    await user.click(actionButtons[actionButtons.length - 1]);
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Corpus Work" }),
+    );
 
     expect(
       await screen.findByRole("menuitem", {

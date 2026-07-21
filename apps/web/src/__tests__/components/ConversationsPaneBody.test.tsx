@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
+import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 
@@ -19,7 +21,7 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function withPaneRuntime(node: ReactNode) {
+function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
   const href = "/conversations";
   return (
     <PaneRuntimeProvider
@@ -32,7 +34,7 @@ function withPaneRuntime(node: ReactNode) {
       canGoForward={false}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
-      onNavigatePane={vi.fn()}
+      onNavigatePane={onNavigatePane}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
       onSetPaneTitle={vi.fn()}
@@ -76,6 +78,48 @@ describe("ConversationsPaneBody", () => {
     const link = await screen.findByRole("link", { name: /untitled chat/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute("href", "/conversations/conversation-1");
+    expect(screen.getByRole("link", { name: "New chat" })).toHaveAttribute(
+      "href",
+      "/conversations/new",
+    );
+  });
+
+  it("keeps starting a new chat visible when the recent list is empty", async () => {
+    const onNavigatePane = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations") {
+          return jsonResponse({ data: [], page: { next_cursor: null } });
+        }
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    render(
+      <div data-testid="mobile-chats-host" style={{ width: "320px", maxWidth: "320px" }}>
+        {withPaneRuntime(
+          <PaneRouteBoundary>
+            <ConversationsPaneBody />
+          </PaneRouteBoundary>,
+          onNavigatePane,
+        )}
+      </div>,
+    );
+
+    expect(await screen.findByText("No chats yet.")).toBeInTheDocument();
+    expect(screen.getByText("Choose New chat to begin.")).toBeInTheDocument();
+    const newChat = screen.getByRole("link", { name: "New chat" });
+    expect(newChat).toHaveAttribute(
+      "href",
+      "/conversations/new",
+    );
+    fireEvent.click(newChat);
+    expect(onNavigatePane).toHaveBeenCalledWith("pane-1", "/conversations/new", undefined);
+    const host = screen.getByTestId("mobile-chats-host");
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
   });
 
   it("renders a delete affordance for every row", async () => {
@@ -115,8 +159,8 @@ describe("ConversationsPaneBody", () => {
     await screen.findByRole("link", { name: /first chat/i });
     await screen.findByRole("link", { name: /second chat/i });
 
-    const actionTriggers = screen.getAllByRole("button", { name: "Actions" });
-    expect(actionTriggers).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Actions for First chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for Second chat" })).toBeInTheDocument();
   });
 
   it("aborts the in-flight list request on unmount", async () => {

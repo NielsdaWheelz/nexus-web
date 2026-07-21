@@ -3,9 +3,11 @@
 ## Scope
 
 The player module owns two related but distinct concerns: the **Lectern** (the
-one ordered, mixed-media list of outstanding intentions — podcast, video,
-reader, agent, and Launcher actions all address it) and **Now Playing** (one
-device-local audio session, not a second durable list). It is the consumer of
+daily return surface: one ordered, mixed-media list of outstanding intentions
+plus an independent recent-reading/listening projection) and **Now Playing**
+(one device-local audio session, not a second durable list). Podcast, video,
+reader, agent, and Launcher actions address the ordered list; recent activity is
+read-only and never becomes another queue. It is the consumer of
 podcast episodes (and YouTube videos) for playback; the
 [podcast module](podcast.md) owns discovery, sync, and transcription, and
 hands episodes to the Lectern via auto-subscription.
@@ -22,8 +24,9 @@ split one table per store:
   (`run_lectern_command` / `run_consumption_command`) each open a fresh
   session and own one `retry_serializable` transaction: viewer lock -> replay
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
-  facades (`get_lectern` / `get_listening_state`) run on the request-scoped
-  session. Two narrow in-transaction exceptions compose here rather than going
+  facades (`get_lectern` / `get_recent_consumption` /
+  `get_listening_state`) run on the request-scoped session. Two narrow
+  in-transaction exceptions compose here rather than going
   through a command: `ensure_missing_items_in_txn` (the auto-subscription
   watermark step; only caller is `services/podcasts/poll.py`) and
   `delete_media_consumption_state_in_txn` (media teardown; only caller is
@@ -34,7 +37,15 @@ split one table per store:
   `Unread`/`Finished` state).
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/speed, completion flag, and the heartbeat fencing tokens
-  `write_revision`/`reset_epoch`).
+  `write_revision`/`reset_epoch`). `last_engaged_at` is advanced by successful
+  heartbeats only. The separate operational `updated_at` still advances for
+  manual Finished/Unread mutations; those state-only commands preserve
+  `last_engaged_at`, and a new manual-Finished row starts with it absent.
+  Migration 0185 seeds the new clock from operational `updated_at` only when
+  post-fencing state proves the latest mutation was a heartbeat: revision is
+  positive, completion is false, and either position is positive or no reset
+  has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
+  absent because their timestamp is ambiguous.
 - `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`
@@ -54,6 +65,11 @@ split one table per store:
   directly except the one documented exception in `services/media.py`
   (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
   distinct from the derived read-state projection).
+  It also owns `GET /lectern/recent`: canonical visible media only, merging the
+  bounded top-N reader and listener streams by `last_engaged_at`, with
+  `media_id DESC` as the stable tie-break. Both sources have
+  `(user_id, last_engaged_at DESC, media_id DESC)` indexes; the listening index
+  is partial over non-null engagement.
 
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
@@ -71,14 +87,15 @@ media/podcast DTOs, and the Lectern snapshot so activation derivation
 
 ```http
 GET  /lectern
+GET  /lectern/recent?limit={1..50}
 POST /lectern/commands
 POST /consumption/commands
 GET  /media/{id}/listening-state
 PUT  /media/{id}/listening-state
 ```
 
-`python/nexus/api/routes/lectern.py` owns the three transport-only routes
-above the two command ports; `python/nexus/api/routes/listening_state.py`
+`python/nexus/api/routes/lectern.py` owns the Lectern reads and two
+transport-only command ports; `python/nexus/api/routes/listening_state.py`
 owns the singular heartbeat GET/PUT (no batch endpoint). The two POST ports
 are bounded aggregate command ports, not a generic command bus: `Lectern`
 commands (`PlaceItems`/`RemoveItem`/`SetOrder`) and `Consumption` commands
@@ -109,11 +126,25 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
 **Media player** that persists across pane navigation and is never an editor
 (the Lectern pane is the sole full-list editor).
 
-- `apps/web/src/lib/lectern/` — the Lectern capability: `client.ts` (the one
-  transport boundary that decodes every Lectern/consumption wire shape into
-  owned typed data), `LecternProvider.tsx` (the FIFO + optimistic-mutation
-  owner), `useCompletionUndo.ts` (the ten-second Undo toast after explicit
-  exact completion).
+- `apps/web/src/lib/lectern/` — the Lectern capability: `contract.ts` (the one
+  transport-free, isomorphic owner of every Lectern/consumption wire type and
+  strict decoder), `client.ts` (HTTP calls only), `LecternProvider.tsx` (the
+  FIFO + optimistic-mutation owner), and `useCompletionUndo.ts` (the ten-second
+  Undo toast after explicit exact completion). Server pane seeding imports the
+  pure contract directly and never imports the browser transport facade.
+- `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` — two
+  independently loading sections: canonical **On the lectern**, and
+  **Recently read & listened**. The latter requests the bounded maximum of 50,
+  removes media already in the queue, and shows at most 6. Fetching before
+  de-duplication prevents a full queued top slice from hiding the next useful
+  recent item. It reuses the same media link, consumption, and
+  `PlayerDescriptor` contracts. Playable rows expose a one-gesture
+  **Play**/**Resume**/**Replay** control; Add/Remove stay in the contextual
+  action menu. Queue rows render the server-owned exact media kind rather than
+  guessing an icon from activation. Its pane loader seeds only this read-only
+  resource at refresh version zero; a retained pane re-fetches recent activity
+  only when it transitions from inactive to active. `LecternProvider` remains
+  the sole queue snapshot owner.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
   `listeningHeartbeat.ts` (the single-flight, generation-keyed heartbeat

@@ -101,9 +101,7 @@ _LAST_ENGAGED_AT_SQL = f"""
             '-infinity'::timestamptz
         )
         WHEN le.podcast_id IS NOT NULL THEN {
-    consumption_service.listening_recency_max_subquery_sql(
-        user_param=":viewer_id", podcast_expr="le.podcast_id"
-    )
+    consumption_service.listening_recency_max_subquery_sql(podcast_expr="le.podcast_id")
 }
         ELSE NULL
     END
@@ -699,7 +697,11 @@ def _hydrate_entries(
                     )
                 } = 'unplayed'
                         ) AS unplayed_count,
-                        MAX(pls.updated_at) AS last_listened_at
+                        {
+                    consumption_service.listening_recency_max_subquery_sql(
+                        podcast_expr="pe.podcast_id"
+                    )
+                } AS last_listened_at
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {

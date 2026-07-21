@@ -66,7 +66,7 @@ export function presentPodcast(
     status: status ?? undefined,
     connections: connectionsFromSummary(connectionSummary),
     recency: item.latest_episode_published_at
-      ? { at: item.latest_episode_published_at, reason: "published" }
+      ? { at: item.latest_episode_published_at }
       : undefined,
     contributors:
       item.contributors && item.contributors.length > 0

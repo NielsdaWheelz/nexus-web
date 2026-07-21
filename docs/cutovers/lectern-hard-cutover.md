@@ -7,6 +7,12 @@
 sole runtime contract. This document's §§2–4 and 6–16 are superseded; §5 is
 retained as historical DDL provenance only.
 
+**Navigation supersession (2026-07-20):** N-6's unchanged-home/restore claim is
+superseded. Lectern is now the canonical authenticated home and the first item
+in the shared desktop/mobile app navigation. An explicit `/lectern` request
+restores or appends a Lectern pane and activates it while preserving the other
+saved panes. See [`docs/modules/app-navigation.md`](../modules/app-navigation.md).
+
 ## One-line
 
 Rename `playback_queue_items` → `consumption_queue_items` and widen it to hold any

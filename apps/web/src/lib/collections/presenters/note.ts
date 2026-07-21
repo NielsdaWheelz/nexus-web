@@ -15,6 +15,6 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     lead: { icon: resourceIconForScheme("page") },
     headline: { text: item.title },
     signals: [],
-    recency: item.updatedAt ? { at: item.updatedAt, reason: "added" } : undefined,
+    recency: item.updatedAt ? { at: item.updatedAt } : undefined,
   };
 }

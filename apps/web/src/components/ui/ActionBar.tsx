@@ -100,6 +100,7 @@ function PopoverAction({ option }: { option: ActionMenuOption }) {
       >
         {option.render?.({
           closeMenu: () => setOpen(false),
+          closeMenuWithoutFocus: () => setOpen(false),
           triggerEl: triggerRef.current,
         })}
       </FloatingActionSurface>

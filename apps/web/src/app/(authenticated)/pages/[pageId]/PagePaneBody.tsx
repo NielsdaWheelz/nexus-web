@@ -12,7 +12,6 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
   toFeedback,
-  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -30,7 +29,6 @@ import {
 } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
 import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
-import { pinObjectToNavbar } from "@/lib/pinnedObjects";
 import { useResource } from "@/lib/api/useResource";
 import {
   useNotePulseHighlight,
@@ -130,10 +128,8 @@ export default function PagePaneBody({
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPaneCommand = paneRuntime?.openInNewPane;
-  const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
-  const pinPageId = pageId;
 
   const [page, setPage] = useState<NotePage | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -662,27 +658,6 @@ export default function PagePaneBody({
     [router],
   );
 
-  const pinCurrentObject = useCallback(async () => {
-    try {
-      if (focusBlockId) {
-        await pinObjectToNavbar("note_block", focusBlockId);
-        toast.show({ severity: "success", title: "Note pinned to navbar." });
-        return;
-      }
-      await pinObjectToNavbar("page", pinPageId);
-      toast.show({ severity: "success", title: "Page pinned to navbar." });
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      toast.show(
-        toFeedback(error, {
-          fallback: focusBlockId
-            ? "Note could not be pinned."
-            : "Page could not be pinned.",
-        }),
-      );
-    }
-  }, [focusBlockId, pinPageId, toast]);
-
   const dailyLocalDate = page?.dailyNote?.localDate ?? null;
   const paneOptions = useMemo(
     () => [
@@ -700,15 +675,8 @@ export default function PagePaneBody({
             },
           ]
         : []),
-      {
-        id: focusBlockId ? "pin-current-note" : "pin-current-page",
-        label: focusBlockId ? "Pin current note" : "Pin current page",
-        onSelect: () => {
-          void pinCurrentObject();
-        },
-      },
     ],
-    [dailyLocalDate, focusBlockId, openDatedPage, pinCurrentObject],
+    [dailyLocalDate, openDatedPage],
   );
   usePaneChromeOverride({ options: paneOptions });
 

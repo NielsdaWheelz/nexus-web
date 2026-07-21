@@ -105,7 +105,7 @@ export default function CollectionView({
   const rowsForRender = status === "ready" ? displayRows : rows;
   const body =
     status === "loading" ? (
-      <PaneLoadingState />
+      <PaneLoadingState label={`Loading ${ariaLabel}…`} />
     ) : status === "error" ? (
       error
     ) : rowsForRender.length === 0 ? (

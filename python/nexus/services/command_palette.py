@@ -320,6 +320,8 @@ def _canonicalize_target_href(href: str) -> str:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")
 
     if len(segments) == 1:
+        if segments[0] == "lectern":
+            return "/lectern"
         if segments[0] == "libraries":
             return "/libraries"
         if segments[0] == "podcasts":
@@ -332,6 +334,8 @@ def _canonicalize_target_href(href: str) -> str:
             return "/settings"
         if segments[0] == "notes":
             return "/notes"
+        if segments[0] == "atlas":
+            return "/atlas"
         if segments[0] == "oracle":
             return "/oracle"
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported palette target")

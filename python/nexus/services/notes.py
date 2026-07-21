@@ -16,7 +16,6 @@ from nexus.db.models import (
     DailyNotePage,
     NoteBlock,
     Page,
-    PinnedObjectRef,
     ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
@@ -110,13 +109,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     ref = _page_ref(page.id)
     delete_edges_for_deleted_resource(db, ref=ref)
-    db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "page",
-            PinnedObjectRef.object_id == page.id,
-        )
-    )
     db.execute(
         delete(DailyNotePage).where(
             DailyNotePage.user_id == viewer_id,
@@ -456,13 +448,6 @@ def delete_highlight_note(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     ref = _note_ref(existing.id)
     delete_edges_for_deleted_resource(db, ref=ref)
-    db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "note_block",
-            PinnedObjectRef.object_id == existing.id,
-        )
-    )
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(existing)
     db.commit()

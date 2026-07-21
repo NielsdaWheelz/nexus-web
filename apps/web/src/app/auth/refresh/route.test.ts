@@ -119,7 +119,7 @@ describe("/auth/refresh route", () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3000/libraries"
+        "http://localhost:3000/lectern"
       );
     });
 
@@ -134,7 +134,7 @@ describe("/auth/refresh route", () => {
       );
 
       expect(response.headers.get("location")).toBe(
-        "http://localhost:3000/libraries"
+        "http://localhost:3000/lectern"
       );
     });
 
@@ -150,7 +150,7 @@ describe("/auth/refresh route", () => {
 
       const { GET } = await import("./route");
       const response = await GET(
-        new Request("http://localhost:3000/auth/refresh?next=%2Flibraries")
+        new Request("http://localhost:3000/auth/refresh?next=%2Flectern")
       );
 
       expect(response.status).toBe(307);

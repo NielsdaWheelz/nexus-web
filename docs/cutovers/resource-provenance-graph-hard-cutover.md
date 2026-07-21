@@ -54,7 +54,6 @@ Stores that **stay**, because they were never connections:
 
 - `message_retrievals` and `message_retrieval_candidate_ledgers` — chat run telemetry (what a tool returned, what entered the prompt, replay disclosures). They keep their chat owner, lose only their citation-numbering job, and gain a pointer to the citation edge.
 - Oracle folio content (marginalia, attribution, phase) — generated content, moved to `oracle_reading_folios` in the oracle domain, referencing its edge.
-- Pins (`object_refs.PinnedObjectRef`) — surface ordering state, not connections.
 
 The final product has one edge owner, one resolver vocabulary, one citation read-model, one cleanup owner, and one frontend citation adapter. The flatness is honest because everything that is not a connection has been evicted from the model, not flattened into it.
 
@@ -194,7 +193,7 @@ N5. No distributed/multi-user collaboration semantics. One viewer owns the graph
 
 N6. No metadata escape hatch at all. Rev 3 deletes `object_links.metadata_json` and the sidecar `metadata` column with it. The only JSON on an edge is the schema-validated display `snapshot`.
 
-N7. No folding of domain parents or run telemetry into the graph: `message_tool_calls`, chat runs, `message_retrievals`, `message_retrieval_candidate_ledgers`, Oracle readings and folio content, LI artifacts/revisions, and pins (`object_refs`) all stay in their domains.
+N7. No folding of domain parents or run telemetry into the graph: `message_tool_calls`, chat runs, `message_retrievals`, `message_retrieval_candidate_ledgers`, Oracle readings and folio content, and LI artifacts/revisions all stay in their domains.
 
 N8. No coverage/freshness ownership. Library Intelligence `covered_targets` stays revision metadata on `library_intelligence_artifact_revisions` — an entry-target snapshot plus derived expanded-media fingerprints (§5.6). The graph records citations, not corpus coverage.
 
