@@ -76,7 +76,6 @@ const EXPECTED_ROUTE_DEFAULTS = {
   settingsBilling: none("Settings"),
   settingsReader: none("Settings"),
   settingsAppearance: none("Settings"),
-  settingsKeys: none("Settings"),
   settingsLocalVault: none("Settings"),
   settingsIdentities: none("Settings"),
   settingsKeybindings: none("Settings"),
