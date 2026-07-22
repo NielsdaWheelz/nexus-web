@@ -230,7 +230,14 @@ def _connection_for_row(
 
 def _is_neutral_link_row(row: ResourceEdge) -> bool:
     """The exact canonical neutral-Link predicate (mirrors the unique index)."""
-    return is_neutral_link_shape(row)
+    return is_neutral_link_shape(
+        origin=row.origin,
+        kind=row.kind,
+        ordinal=row.ordinal,
+        snapshot=row.snapshot,
+        source_order_key=row.source_order_key,
+        target_order_key=row.target_order_key,
+    )
 
 
 _Pair = tuple[str, UUID]

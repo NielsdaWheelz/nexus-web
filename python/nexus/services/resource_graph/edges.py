@@ -66,10 +66,17 @@ def create_edge(db: Session, *, viewer_id: UUID, input: EdgeCreate) -> EdgeOut:
             ApiErrorCode.E_INVALID_REQUEST,
             "Ordered adjacency must be written through the resource adjacency service",
         )
-    if is_neutral_link_shape(input):
-        existing = _existing_link_pair_id(db, viewer_id=viewer_id, a=input.source, b=input.target)
+    if is_neutral_link_shape(
+        origin=input.origin,
+        kind=input.kind,
+        ordinal=input.ordinal,
+        snapshot=input.snapshot,
+        source_order_key=input.source_order_key,
+        target_order_key=input.target_order_key,
+    ):
+        existing = _existing_link_pair(db, viewer_id=viewer_id, a=input.source, b=input.target)
         if existing is not None:
-            return _edge_out(db.get(ResourceEdge, existing))
+            return _edge_out(existing)
     elif input.ordinal is None:
         # Directed same-origin dedup for machine bare edges
         # (uq_resource_edges_nonuser_orderless_pair). User edges are not deduped
@@ -120,10 +127,10 @@ def existing_link_edge(
     occurrence on the same pair. The Link service uses this to decide
     ``created`` before writing (§ Mutation APIs).
     """
-    edge_id = _existing_link_pair_id(db, viewer_id=viewer_id, a=a, b=b)
-    if edge_id is None:
+    row = _existing_link_pair(db, viewer_id=viewer_id, a=a, b=b)
+    if row is None:
         return None
-    return _edge_out(db.get(ResourceEdge, edge_id))
+    return _edge_out(row)
 
 
 def create_link(
@@ -246,7 +253,14 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
     # ``resource_can_attach`` gate (services/resource_graph/context.py), and
     # stances validate source/target in ``user_relations.put_stance`` — both
     # with the precise E_LINK_* codes, so this backstop must not reject them.
-    if is_neutral_link_shape(edge):
+    if is_neutral_link_shape(
+        origin=edge.origin,
+        kind=edge.kind,
+        ordinal=edge.ordinal,
+        snapshot=edge.snapshot,
+        source_order_key=edge.source_order_key,
+        target_order_key=edge.target_order_key,
+    ):
         if not resource_can_link_source(edge.source):
             raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be linked")
         if not resource_can_link_target(edge.target):
@@ -283,17 +297,17 @@ def _existing_bare_pair_id(
     return db.execute(query).scalar_one_or_none()
 
 
-def _existing_link_pair_id(
+def _existing_link_pair(
     db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
-) -> UUID | None:
-    """Id of the viewer's neutral Link on the unordered pair ``{a, b}``, or ``None``.
+) -> ResourceEdge | None:
+    """The viewer's neutral Link on the unordered pair ``{a, b}``, or ``None``.
 
     Both orientations are checked; the predicate mirrors
     ``uq_resource_edges_user_context_link_pair`` exactly so a stance or ordered
     occupancy of the same pair never matches.
     """
     return db.execute(
-        select(ResourceEdge.id).where(
+        select(ResourceEdge).where(
             ResourceEdge.user_id == viewer_id,
             ResourceEdge.origin == "user",
             ResourceEdge.kind == "context",

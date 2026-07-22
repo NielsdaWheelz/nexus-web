@@ -50,6 +50,7 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
     EdgeCreate,
+    EdgeKind,
     EdgeOut,
     is_neutral_link_shape,
 )
@@ -149,7 +150,14 @@ def delete_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
             raise ForbiddenError(
                 ApiErrorCode.E_FORBIDDEN, "Only user relations can be removed here"
             )
-        if not is_neutral_link_shape(edge):
+        if not is_neutral_link_shape(
+            origin=edge.origin,
+            kind=edge.kind,
+            ordinal=edge.ordinal,
+            snapshot=edge.snapshot,
+            source_order_key=edge.source_order_key,
+            target_order_key=edge.target_order_key,
+        ):
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
         cleanup.detach_link_note_motif(db, viewer_id=viewer_id, a=edge.source, b=edge.target)
         cleanup.clear_edge_view_state(db, edge_id=link_id)
@@ -412,7 +420,7 @@ def _focused_stance_target(
 
 
 def _replace_stance(
-    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef, kind: str
+    db: Session, *, viewer_id: UUID, source: ResourceRef, target: ResourceRef, kind: EdgeKind
 ) -> EdgeOut:
     """Replace any prior stance on the pair with ``source -> target`` at ``kind``.
 
@@ -472,7 +480,14 @@ def _canonical_pair(x: ResourceRef, y: ResourceRef) -> tuple[ResourceRef, Resour
 
 def _load_neutral_link(db: Session, *, viewer_id: UUID, link_id: UUID) -> EdgeOut:
     edge = edges.get_owned_edge(db, viewer_id=viewer_id, edge_id=link_id)
-    if edge is None or not is_neutral_link_shape(edge):
+    if edge is None or not is_neutral_link_shape(
+        origin=edge.origin,
+        kind=edge.kind,
+        ordinal=edge.ordinal,
+        snapshot=edge.snapshot,
+        source_order_key=edge.source_order_key,
+        target_order_key=edge.target_order_key,
+    ):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Link not found")
     return edge
 

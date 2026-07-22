@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol, get_args
+from typing import Literal, get_args
 from uuid import UUID
 
 from nexus.schemas.resource_items import ResourceActivationOut
@@ -106,22 +106,15 @@ class EdgeOut:
     created_at: datetime
 
 
-class _NeutralLinkShape(Protocol):
-    """The edge attributes the neutral-Link predicate reads.
-
-    Duck-typed so the same definition applies to ``EdgeCreate``, ``EdgeOut``,
-    and the ``ResourceEdge`` ORM row.
-    """
-
-    origin: str
-    kind: str
-    ordinal: int | None
-    snapshot: object | None
-    source_order_key: str | None
-    target_order_key: str | None
-
-
-def is_neutral_link_shape(edge: _NeutralLinkShape) -> bool:
+def is_neutral_link_shape(
+    *,
+    origin: str,
+    kind: str,
+    ordinal: int | None,
+    snapshot: object | None,
+    source_order_key: str | None,
+    target_order_key: str | None,
+) -> bool:
     """The exact canonical neutral-Link predicate (§ Graph Shapes).
 
     Matches ``uq_resource_edges_user_context_link_pair``: a user context Link
@@ -131,12 +124,12 @@ def is_neutral_link_shape(edge: _NeutralLinkShape) -> bool:
     share, so a change to the neutral-Link shape can never drift between them.
     """
     return (
-        edge.origin == "user"
-        and edge.kind == "context"
-        and edge.ordinal is None
-        and edge.snapshot is None
-        and edge.source_order_key is None
-        and edge.target_order_key is None
+        origin == "user"
+        and kind == "context"
+        and ordinal is None
+        and snapshot is None
+        and source_order_key is None
+        and target_order_key is None
     )
 
 
