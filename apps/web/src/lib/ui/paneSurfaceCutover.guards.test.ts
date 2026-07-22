@@ -213,11 +213,6 @@ describe("pane surface/resource row cutover source gates", () => {
       standingHeadLiteral.test(sourceText(path)),
     );
     expect(literalOffenders).toEqual([]);
-
-    // No dead BROWSE/TODAY standing head after siblings #6/#7.
-    expect(sourceText("src/lib/navigation/standingHead.ts")).not.toMatch(
-      /"BROWSE"|"TODAY"|standingHead.*Browse|standingHead.*Today/,
-    );
   });
 
   it("has no legacy resultRows/pageList class hooks remaining in src/app", () => {

@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Fragment, FragmentBlock
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.document_embeds import delete_document_embed_artifacts
-from nexus.services.reader_apparatus import delete_media_apparatus
 
 
 def delete_web_article_artifacts(
@@ -22,7 +21,6 @@ def delete_web_article_artifacts(
 ) -> None:
     """Delete rewriteable web-article artifacts for a media row."""
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
-    delete_media_apparatus(db, media_id)
     if include_content_index:
         delete_content_index(db, owner=IndexOwner("media", media_id))
 
@@ -48,4 +46,6 @@ def delete_web_article_artifacts(
     # re-fetches preserve it (AC 10), and a manual pin plus its replay memos
     # survive refresh (AC 13, spec 2.8). Deletion cleanup lives with true
     # deletions only: contributors.cleanup_credits_for_deleted_target.
+    # Apparatus likewise survives until replacement reconciles stable keys;
+    # media_deletion owns the only full apparatus delete.
     db.flush()

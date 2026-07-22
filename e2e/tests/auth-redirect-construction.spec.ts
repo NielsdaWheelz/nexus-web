@@ -3,6 +3,7 @@ import {
   expectAuthCallbackTarget,
   waitForEmailChangeConfirmationLink,
 } from "./mailbox";
+import { isAuthenticatedHome } from "./app-routes";
 
 const PASSWORD = "Hunter22Hunter22";
 
@@ -27,7 +28,7 @@ test("email-change confirmation targets the app auth callback", async ({
     await page.getByLabel(/email/i).fill(oldEmail);
     await page.getByLabel(/password/i).fill(PASSWORD);
     await page.getByRole("button", { name: /create account/i }).click();
-    await expect(page).toHaveURL(/\/libraries/);
+    await expect(page).toHaveURL(isAuthenticatedHome);
 
     await page.goto("/settings/account");
     await page.getByLabel(/new email/i).fill(newEmail);
@@ -46,9 +47,11 @@ test("email-change confirmation targets the app auth callback", async ({
       "/settings/account"
     );
     await page.goto(confirmationLink);
-    await page.waitForURL(/\/settings\/account|\/libraries/, {
-      timeout: 60_000,
-    });
+    await page.waitForURL(
+      (url) =>
+        url.pathname === "/settings/account" || isAuthenticatedHome(url),
+      { timeout: 60_000 },
+    );
   } finally {
     await context.close();
   }

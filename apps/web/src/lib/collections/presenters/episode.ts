@@ -90,7 +90,7 @@ export function presentEpisode(
     primary: {
       kind: "link",
       href: `/media/${item.id}`,
-      paneTitleHint: item.title,
+      paneLabelHint: item.title,
       viewTransition: "media-reader",
     },
     lead: { icon: mediaKindIcon(item.kind) },

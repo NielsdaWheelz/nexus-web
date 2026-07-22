@@ -49,7 +49,7 @@ function StatefulSearchPane({ initialHref }: { initialHref: string }) {
         setHref(nextHref);
       }}
       onOpenInNewPane={vi.fn()}
-      onSetPaneTitle={vi.fn()}
+      onSetPaneLabel={vi.fn()}
     >
       <SearchPaneBody />
     </PaneRuntimeProvider>

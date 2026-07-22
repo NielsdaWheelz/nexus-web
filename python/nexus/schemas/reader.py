@@ -1,12 +1,8 @@
 """Reader profile and per-media reader state schemas."""
 
 from typing import Annotated, Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from nexus.schemas.resource_graph import ConnectionOut
-from nexus.schemas.resource_items import ResourceActivationOut
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
@@ -30,47 +26,6 @@ class ReaderProfileOut(BaseModel):
     hyphenation: HyphenationValue
 
     model_config = ConfigDict(from_attributes=True, frozen=True)
-
-
-class ReaderConnectionAnchorOut(BaseModel):
-    ref: str
-    media_id: UUID
-    locator: dict[str, Any] | None
-    page_number: int | None = None
-    fragment_id: UUID | None = None
-    highlight_id: UUID | None = None
-    evidence_span_id: UUID | None = None
-    passage_anchor_id: UUID | None = None
-    order_key: str | None = None
-
-
-class ReaderConnectionRowOut(BaseModel):
-    id: str
-    connection: ConnectionOut
-    anchor: ReaderConnectionAnchorOut | None
-    source_category: Literal[
-        "chat",
-        "dossier",
-        "oracle",
-        "note",
-        "highlight_note",
-        "user_link",
-        "synapse",
-        "system",
-        "document_embed",
-        "other",
-    ]
-    title: str
-    subtitle: str | None = None
-    excerpt: str | None = None
-    activation: ResourceActivationOut
-    href: str | None = None
-
-
-class ReaderConnectionPageOut(BaseModel):
-    anchored: list[ReaderConnectionRowOut]
-    unanchored: list[ReaderConnectionRowOut]
-    next_cursor: str | None
 
 
 class ReaderProfilePatch(BaseModel):

@@ -19,10 +19,22 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function readMediaSeedId(name: string): string {
+interface TitledMediaSeed {
+  media_id: string;
+  title: string;
+}
+
+function readMediaSeedJson(name: string): unknown {
   const seedPath = path.join(__dirname, "..", ".seed", name);
-  const seed = JSON.parse(readFileSync(seedPath, "utf-8")) as { media_id: string };
-  return seed.media_id;
+  return JSON.parse(readFileSync(seedPath, "utf-8")) as unknown;
+}
+
+function readMediaSeedId(name: string): string {
+  return (readMediaSeedJson(name) as { media_id: string }).media_id;
+}
+
+function readTitledMediaSeed(name: string): TitledMediaSeed {
+  return readMediaSeedJson(name) as TitledMediaSeed;
 }
 
 // PUT the author surface directly through the BFF (transport-only proxy). The
@@ -38,6 +50,15 @@ interface MediaAuthorsResult {
   authorMode: "automatic" | "manual";
   authors: SeededAuthor[];
   canEditAuthors: boolean;
+}
+
+interface MediaAuthorSnapshot {
+  authorMode: "automatic" | "manual";
+  authors: Array<{
+    contributorHandle: string | null;
+    creditedName: string;
+    displayName: string;
+  }>;
 }
 
 async function putMediaAuthors(
@@ -64,21 +85,91 @@ async function seedManualAuthor(
   mediaId: string,
   displayName: string,
 ): Promise<SeededAuthor> {
-  const result = await putMediaAuthors(page, mediaId, {
-    clientMutationId: randomUUID(),
-    mode: "manual",
-    authors: [{ creditedName: displayName, binding: { kind: "new", displayName } }],
-  });
-  const seeded = result.authors[0];
+  const [seeded] = await seedManualAuthors(page, mediaId, [displayName]);
   expect(seeded, `expected one seeded author for ${mediaId}`).toBeTruthy();
   return seeded!;
 }
 
-async function resetAuthorsToAutomatic(page: Page, mediaId: string): Promise<void> {
+async function seedManualAuthors(
+  page: Page,
+  mediaId: string,
+  displayNames: readonly string[],
+): Promise<SeededAuthor[]> {
+  const result = await putMediaAuthors(page, mediaId, {
+    clientMutationId: randomUUID(),
+    mode: "manual",
+    authors: displayNames.map((displayName) => ({
+      creditedName: displayName,
+      binding: { kind: "new", displayName },
+    })),
+  });
+  expect(result.authors).toHaveLength(displayNames.length);
+  return result.authors;
+}
+
+async function resetAuthorsToAutomatic(
+  page: Page,
+  mediaId: string,
+): Promise<void> {
   await putMediaAuthors(page, mediaId, {
     clientMutationId: randomUUID(),
     mode: "automatic",
   });
+}
+
+async function readMediaAuthorSnapshot(
+  page: Page,
+  mediaId: string,
+): Promise<MediaAuthorSnapshot> {
+  const response = await page.request.get(`/api/media/${mediaId}`);
+  expect(
+    response.ok(),
+    `GET /api/media/${mediaId} failed while snapshotting authors: ${response.status()}`,
+  ).toBeTruthy();
+  const payload = (await response.json()) as {
+    data: {
+      author_mode?: "automatic" | "manual" | null;
+      contributors?: Array<{
+        contributor_handle?: string | null;
+        contributor_display_name?: string | null;
+        credited_name: string;
+        role: string;
+      }>;
+    };
+  };
+  return {
+    authorMode: payload.data.author_mode === "manual" ? "manual" : "automatic",
+    authors: (payload.data.contributors ?? [])
+      .filter((credit) => credit.role === "author")
+      .map((credit) => ({
+        contributorHandle: credit.contributor_handle ?? null,
+        creditedName: credit.credited_name,
+        displayName: credit.contributor_display_name ?? credit.credited_name,
+      })),
+  };
+}
+
+async function restoreMediaAuthorSnapshot(
+  page: Page,
+  mediaId: string,
+  snapshot: MediaAuthorSnapshot,
+): Promise<void> {
+  await putMediaAuthors(page, mediaId, {
+    clientMutationId: randomUUID(),
+    mode: "manual",
+    authors: snapshot.authors.map((author) => ({
+      creditedName: author.creditedName,
+      binding: author.contributorHandle
+        ? {
+            kind: "existing",
+            contributorHandle: author.contributorHandle,
+          }
+        : { kind: "new", displayName: author.displayName },
+    })),
+  });
+  if (snapshot.authorMode === "automatic") {
+    await resetAuthorsToAutomatic(page, mediaId);
+  }
 }
 
 test.describe("author journeys", () => {
@@ -116,7 +207,9 @@ test.describe("author journeys", () => {
 
     // Lands on the People-scoped search surface.
     await page.waitForURL((url) => {
-      return url.pathname === "/search" && url.searchParams.get("kinds") === "people";
+      return (
+        url.pathname === "/search" && url.searchParams.get("kinds") === "people"
+      );
     });
 
     // Everything recorded so far was the Launcher's OWN typeahead: `fill("Authors")`
@@ -200,7 +293,8 @@ test.describe("author journeys", () => {
     // Seed a visible existing contributor on a different media so the picker can
     // find it, then drive the editor on the target media through the real UI.
     const pickerMediaId = readMediaSeedId("non-pdf-media.json");
-    const targetMediaId = readMediaSeedId("pdf-media.json");
+    const targetMedia = readTitledMediaSeed("pdf-media.json");
+    const targetMediaId = targetMedia.media_id;
     await seedManualAuthor(page, pickerMediaId, existingName);
     // Start the target from a known automatic baseline.
     await resetAuthorsToAutomatic(page, targetMediaId);
@@ -211,14 +305,32 @@ test.describe("author journeys", () => {
       `/media/${targetMediaId}`,
     );
     const pane = activeWorkspacePane(page);
+    await expect(
+      pane.getByRole("heading", { level: 1, name: targetMedia.title }),
+    ).toBeVisible({ timeout: 20_000 });
+    const paneStrip = page.getByRole("toolbar", { name: "Workspace panes" });
+    await expect(
+      paneStrip.getByTitle(targetMedia.title, { exact: true }),
+    ).toHaveCount(1);
 
-    // The byline exposes the edit affordance (creator capability → canEditAuthors).
-    const openEditor = pane.getByRole("button", { name: /^(Edit authors|Add author)$/ });
-    await expect(openEditor).toBeVisible({ timeout: 20_000 });
+    // Author administration lives only in pane Options. The menu handoff keeps
+    // the exact trigger as the editor's explicit return-focus target.
+    const optionsTrigger = pane.getByRole("button", { name: "Options" });
+    await expect(optionsTrigger).toBeVisible({ timeout: 20_000 });
+    await optionsTrigger.click();
+    const openEditor = page.getByRole("menuitem", {
+      name: /^(Edit authors|Add author)/,
+    });
+    await expect(openEditor).toBeVisible();
     await openEditor.click();
 
     const editor = page.getByRole("dialog", { name: "Edit authors" });
     await expect(editor).toBeVisible();
+    expect(
+      await editor.evaluate((dialog) =>
+        dialog.contains(document.activeElement),
+      ),
+    ).toBe(true);
 
     // Add an existing author via the search combobox.
     await editor.getByRole("button", { name: "Add author" }).click();
@@ -232,23 +344,55 @@ test.describe("author journeys", () => {
 
     // Create a brand-new author from a name with no match.
     await editor.getByRole("button", { name: "Add author" }).click();
-    const createSearch = editor.getByRole("combobox", { name: "Search authors" });
+    const createSearch = editor.getByRole("combobox", {
+      name: "Search authors",
+    });
     await createSearch.fill(newName);
-    const createOption = editor.getByRole("option", { name: /as a new author/ });
+    const createOption = editor.getByRole("option", {
+      name: /as a new author/,
+    });
     await expect(createOption).toBeVisible({ timeout: 15_000 });
     await createOption.click();
 
-    // Save the manual byline.
+    // Save the manual author slice.
     await editor.getByRole("button", { name: "Save" }).click();
     await expect(editor).toBeHidden();
+    await expect(optionsTrigger).toBeFocused();
+    await expect(
+      paneStrip.getByTitle(targetMedia.title, { exact: true }),
+    ).toHaveCount(1);
+    await expect(paneStrip.getByText(existingName, { exact: true })).toHaveCount(0);
+    await expect(paneStrip.getByText(newName, { exact: true })).toHaveCount(0);
 
-    // Byline reflects the saved manual authors + the manual-mode marker.
-    await expect(pane.getByText("Authors edited manually")).toBeVisible();
-    await expect(pane.getByText(existingName)).toBeVisible();
-    await expect(pane.getByText(newName)).toBeVisible();
+    // Persistent chrome stays compact and non-focusable; complete linked credits
+    // remain inspectable through the dedicated Credits overlay.
+    await expect(pane.getByText("Authors edited manually")).toHaveCount(0);
+    const compactCredits = pane.locator('[data-resource-credits="true"]');
+    await expect(
+      compactCredits.getByText(existingName, { exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      compactCredits.getByText(newName, { exact: true }),
+    ).toHaveCount(1);
+    await expect(compactCredits.locator("a, button")).toHaveCount(0);
+    await optionsTrigger.click();
+    await page.getByRole("menuitem", { name: "Credits…" }).click();
+    const credits = page.getByRole("dialog", { name: "Credits" });
+    await expect(credits).toBeVisible();
+    expect(
+      await credits.evaluate((dialog) =>
+        dialog.contains(document.activeElement),
+      ),
+    ).toBe(true);
+    await expect(credits.getByText(existingName)).toBeVisible();
+    await expect(credits.getByText(newName)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(credits).toBeHidden();
+    await expect(optionsTrigger).toBeFocused();
 
     // Reopen and reset to automatic; assert the confirmation toast copy.
-    await pane.getByRole("button", { name: "Edit authors" }).click();
+    await optionsTrigger.click();
+    await page.getByRole("menuitem", { name: /^Edit authors/ }).click();
     const reopened = page.getByRole("dialog", { name: "Edit authors" });
     await expect(reopened).toBeVisible();
     await reopened
@@ -256,12 +400,169 @@ test.describe("author journeys", () => {
       .click();
     await expect(reopened).toBeHidden();
     await expect(
-      page.getByText("Automatic author updates will resume on the next refresh."),
+      page.getByText(
+        "Automatic author updates will resume on the next refresh.",
+      ),
     ).toBeVisible();
+    await expect(optionsTrigger).toBeFocused();
 
     // Leave shared seed media as we found them.
     await resetAuthorsToAutomatic(page, pickerMediaId);
     await resetAuthorsToAutomatic(page, targetMediaId);
+  });
+
+  test("media author editor returns focus to the mobile Options trigger", async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 667 });
+    const mediaId = readMediaSeedId("pdf-media.json");
+    const retentionMediaId = readMediaSeedId("reader-document-map-media.json");
+    const token = `${testInfo.workerIndex}-${Date.now()}`;
+    const displayNames = Array.from(
+      { length: 20 },
+      (_, index) =>
+        `Mobile Credit ${String(index + 1).padStart(2, "0")} ${token} — Extended Attribution`,
+    );
+    const originalAuthors = await readMediaAuthorSnapshot(page, mediaId);
+    const retentionSnapshot = await readMediaAuthorSnapshot(
+      page,
+      retentionMediaId,
+    );
+    const retainedAuthors = [...retentionSnapshot.authors];
+    const retainedHandles = new Set(
+      retainedAuthors.flatMap((author) =>
+        author.contributorHandle ? [author.contributorHandle] : [],
+      ),
+    );
+    let requiresRetentionPublication = false;
+    for (const author of originalAuthors.authors) {
+      if (
+        author.contributorHandle &&
+        !retainedHandles.has(author.contributorHandle)
+      ) {
+        retainedAuthors.push(author);
+        retainedHandles.add(author.contributorHandle);
+        requiresRetentionPublication = true;
+      }
+    }
+    expect(
+      retainedAuthors.length,
+      "temporary author-retention slice must fit the PUT contract",
+    ).toBeLessThanOrEqual(20);
+    let retentionPrepared = false;
+
+    try {
+      if (requiresRetentionPublication) {
+        // Existing bindings are selectable only while the contributor remains
+        // visible. Replacing this media's sole credit can make its prior handle
+        // invisible (or prune it), so retain those canonical identities on a
+        // second owned seed until the target snapshot has been restored.
+        await restoreMediaAuthorSnapshot(page, retentionMediaId, {
+          authorMode: "manual",
+          authors: retainedAuthors,
+        });
+        retentionPrepared = true;
+      }
+      await seedManualAuthors(page, mediaId, displayNames);
+
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-author-editor-mobile-focus"),
+        `/media/${mediaId}`,
+      );
+
+      const pane = activeWorkspacePane(page);
+      const paneId = await pane.getAttribute("data-pane-id");
+      expect(paneId).toBeTruthy();
+      const mobileChrome = page.locator(`[data-pane-chrome-for="${paneId}"]`);
+      await expect(mobileChrome).toHaveCount(1);
+      const optionsTrigger = mobileChrome.getByRole("button", {
+        name: "Pane options",
+        exact: true,
+      });
+      await expect(optionsTrigger).toHaveCount(1, { timeout: 20_000 });
+      const compactCredits = mobileChrome.locator(
+        '[data-resource-credits="true"]',
+      );
+      for (const displayName of displayNames) {
+        await expect(
+          compactCredits.getByText(displayName, { exact: true }),
+        ).toHaveCount(1);
+      }
+      await expect(compactCredits.locator("a, button")).toHaveCount(0);
+      await optionsTrigger.click();
+      const editAuthors = page.getByRole("menuitem", {
+        name: /^Edit authors/,
+      });
+      await expect(editAuthors).toHaveCount(1);
+      await editAuthors.click();
+
+      const editor = page.getByRole("dialog", { name: "Edit authors" });
+      await expect(editor).toBeVisible();
+      expect(
+        await editor.evaluate((dialog) =>
+          dialog.contains(document.activeElement),
+        ),
+      ).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(editor).toBeHidden();
+      await expect(optionsTrigger).toBeFocused();
+
+      await optionsTrigger.click();
+      const creditsItem = page.getByRole("menuitem", {
+        name: "Credits…",
+        exact: true,
+      });
+      await expect(creditsItem).toHaveCount(1);
+      await creditsItem.click();
+      const credits = page.getByRole("dialog", {
+        name: "Credits",
+        exact: true,
+      });
+      await expect(credits).toBeVisible();
+      const lastCredit = credits.getByText(displayNames.at(-1)!, {
+        exact: true,
+      });
+      await expect(lastCredit).toHaveCount(1);
+      expect(
+        await credits.evaluate((dialog) =>
+          dialog.contains(document.activeElement),
+        ),
+      ).toBe(true);
+
+      const creditsScrollOwner = credits.locator(
+        '[data-resource-credits-complete="true"]',
+      );
+      await expect(creditsScrollOwner).toHaveCount(1);
+      const scrollGeometry = await creditsScrollOwner.evaluate((owner) => {
+        const overflowY = getComputedStyle(owner).overflowY;
+        const geometry = {
+          clientHeight: owner.clientHeight,
+          overflowY,
+          scrollHeight: owner.scrollHeight,
+        };
+        owner.scrollTop = owner.scrollHeight;
+        return geometry;
+      });
+      expect(scrollGeometry.overflowY).toBe("auto");
+      expect(scrollGeometry.scrollHeight).toBeGreaterThan(
+        scrollGeometry.clientHeight,
+      );
+      await expect(lastCredit).toBeInViewport();
+
+      await page.keyboard.press("Escape");
+      await expect(credits).toBeHidden();
+      await expect(optionsTrigger).toBeFocused();
+    } finally {
+      await restoreMediaAuthorSnapshot(page, mediaId, originalAuthors);
+      if (retentionPrepared) {
+        await restoreMediaAuthorSnapshot(
+          page,
+          retentionMediaId,
+          retentionSnapshot,
+        );
+      }
+    }
   });
 
   test("removed contributor routes 404 through the BFF", async ({ page }) => {

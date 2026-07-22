@@ -302,7 +302,9 @@ None. No schema change, no migration file.
 ## 10. Sibling cutovers and sequencing
 
 - **Must land after:** Universal Launcher cutover (P-1). Already built; this extends it.
-- **Informs #2 (running-journal):** The running-journal spec's `ROUTE_SECTION` exhaustive map must NOT include a `browse` key. That spec already anticipates this (§13 negative gate: no dead `BROWSE` standing head). When this spec lands first, the `browse` key disappears from `PaneRouteId` and the exhaustive map excludes it automatically; the running-journal's gate passes.
+- **Pane-header composition:** deleting the Browse `PaneRouteId` also deletes its
+  exhaustive `PANE_ROUTE_MODELS` definition and typed section-header contract;
+  there is no independent standing-head map.
 - **No dependency on #3, #4, #5, #7-#10.** Those are orthogonal surfaces.
 
 ---
@@ -422,4 +424,6 @@ if grep -n "x_api_bearer_token" python/nexus/config.py | grep -i "browse"; then
 - **R2. Launcher `set-lane` close→open flash if the target somehow reaches dispatch.** Mitigation: the controller intercepts `set-lane` before `setOpen(false)` is called — the Launcher never closes. The dispatch no-op case is defense-in-depth only.
 - **R3. The browse `__screenshots__` directory is left behind.** Resolved: `apps/web/src/app/(authenticated)/browse/__screenshots__/` is listed in §9 and §15 for deletion alongside the other browse files.
 - **R4. Auth e2e tests that navigate to `/browse`.** Two distinct cases. Unauthenticated-access test (lines 84-100): auth guard fires before Next.js routing; the `?next=/browse` capture is still valid; no change needed. GitHub OAuth round-trip test (lines 115-117): Playwright follows the 308, URL assertion must be updated — see §7.4 and D-5.
-- **R5. Running-journal spec's exhaustive `ROUTE_SECTION` map becomes a compile error if built before this cutover.** Mitigation: the running-journal spec is self-described as transitional on `browse` (it will keep the key until #6 lands). If #6 (this spec) lands first, the map excludes `browse` from `PaneRouteId` and compiles cleanly. If running-journal lands first, it keeps `browse` in the map until this cutover removes the key from `PaneRouteId`. Either order is safe.
+- **R5. Route/header removal can drift if split.** Mitigation: remove Browse from
+  `PaneRouteId`, `PANE_ROUTE_MODELS`, and the render/icon registries in the same
+  change; the typed route/header model has no second map to sequence.

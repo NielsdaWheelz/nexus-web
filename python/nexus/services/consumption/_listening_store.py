@@ -1,6 +1,6 @@
 """Sole DML owner of ``podcast_listening_states`` (position/duration/speed,
-completion flag, and the heartbeat fencing tokens ``write_revision`` /
-``reset_epoch``).
+completion flag, heartbeat-only ``last_engaged_at``, and the fencing tokens
+``write_revision`` / ``reset_epoch``).
 
 Every mutation composes inside the caller's already-open command transaction.
 The heartbeat CAS returns ``None`` on a fencing mismatch so the facade can roll
@@ -78,17 +78,18 @@ def load_states(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[
 
 
 def load_recency(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict[UUID, datetime]:
-    """Per-media listening-row ``updated_at`` (engagement recency). One row per
-    (viewer, media), so this is the row's own timestamp. Media without a listening
-    row are simply absent from the map."""
+    """Per-media listening ``last_engaged_at``. Manual state-only mutations do
+    not create engagement, so rows whose engagement clock is NULL are absent."""
     if not media_ids:
         return {}
     rows = db.execute(
         text(
             """
-            SELECT media_id, updated_at
+            SELECT media_id, last_engaged_at
             FROM podcast_listening_states
-            WHERE user_id = :viewer_id AND media_id = ANY(:media_ids)
+            WHERE user_id = :viewer_id
+              AND media_id = ANY(:media_ids)
+              AND last_engaged_at IS NOT NULL
             """
         ),
         {"viewer_id": viewer_id, "media_ids": media_ids},
@@ -120,11 +121,11 @@ def record_heartbeat_in_txn(
                 """
                 INSERT INTO podcast_listening_states (
                     user_id, media_id, position_ms, duration_ms, playback_speed,
-                    is_completed, write_revision, reset_epoch, updated_at
+                    is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
                 )
                 VALUES (
                     :viewer_id, :media_id, :position_ms, :duration_ms, :playback_speed,
-                    false, 1, 0, now()
+                    false, 1, 0, now(), now()
                 )
                 """
             ),
@@ -160,7 +161,8 @@ def record_heartbeat_in_txn(
                 duration_ms = :duration_ms,
                 playback_speed = :playback_speed,
                 write_revision = :next_revision,
-                updated_at = now()
+                updated_at = now(),
+                last_engaged_at = now()
             WHERE user_id = :viewer_id AND media_id = :media_id
             """
         ),
@@ -190,9 +192,9 @@ def mark_completed_in_txn(db: Session, *, viewer_id: UUID, media_id: UUID) -> No
             """
             INSERT INTO podcast_listening_states (
                 user_id, media_id, position_ms, duration_ms, playback_speed,
-                is_completed, write_revision, reset_epoch, updated_at
+                is_completed, write_revision, reset_epoch, updated_at, last_engaged_at
             )
-            VALUES (:viewer_id, :media_id, 0, NULL, 1.0, true, 0, 0, now())
+            VALUES (:viewer_id, :media_id, 0, NULL, 1.0, true, 0, 0, now(), NULL)
             ON CONFLICT (user_id, media_id)
             DO UPDATE SET is_completed = true, updated_at = now()
             """

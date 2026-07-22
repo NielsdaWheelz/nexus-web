@@ -5,12 +5,12 @@
  */
 
 import type { LucideIcon } from "lucide-react";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import type { PillTone } from "@/components/ui/Pill";
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import type { EdgeKind } from "@/lib/resourceGraph/connections";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export type CollectionItemKind =
   | "media"
@@ -67,11 +67,11 @@ export interface CollectionRowView {
   connections?: { total: number; dominantKind?: EdgeKind; topPeers: ConnectionEndpointOut[] };
   /** Similarity + shared-author peers (S5). */
   related?: ConnectionEndpointOut[];
-  /** Optional media id for media-backed rows whose stable row id is not the media id. */
-  relatedMediaId?: string;
+  /** Media id for related-item lookup. Omit for the media-row default; null opts out. */
+  relatedMediaId?: string | null;
   contributors?: { credits: ContributorCredit[]; maxVisible: number; showRole?: boolean };
-  recency?: { at: string; reason: "added" | "connected" | "read" | "published" };
-  actions?: ActionMenuOption[];
+  recency?: { at: string };
+  actions?: ActionDescriptor[];
   swipeActions?: SwipeAction[];
   selected?: boolean;
 }

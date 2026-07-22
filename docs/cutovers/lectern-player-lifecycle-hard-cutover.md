@@ -332,6 +332,7 @@ ChapterOut { title: string[1..300], startMs: int, endMs: Presence<int> }
 LecternItemOut {
   itemId: LecternItemId
   mediaId: MediaId
+  kind: web_article | epub | pdf | video | podcast_episode
   title: string
   subtitle: Presence<string>
   href: AppHref
@@ -747,7 +748,7 @@ interface GlobalPlayerCapability {
 - `python/nexus/schemas/{consumption,presence}.py` and
   `python/nexus/api/routes/lectern.py`
 - `apps/web/src/lib/api/{presence,presence.test}.ts`
-- `apps/web/src/lib/lectern/client.ts`,
+- `apps/web/src/lib/lectern/{contract,client}.ts`,
   `apps/web/src/lib/lectern/LecternProvider.tsx`, and
   `apps/web/src/lib/player/playerSession.ts`
 - `apps/web/src/app/api/lectern/route.ts`,

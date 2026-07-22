@@ -184,7 +184,7 @@ export interface SearchResultRowViewModel {
   resourceRef: string;
   activation: ResourceActivation;
   citationTarget: string | null;
-  paneTitleHint: string;
+  paneLabelHint: string;
   type: SearchType;
   mediaId: string | null;
   contextRef: {

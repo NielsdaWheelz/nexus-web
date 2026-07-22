@@ -67,12 +67,11 @@ describe("LibrariesPaneBody (system library protection)", () => {
 
     // The system library carries no menu actions, so it renders no Actions
     // trigger; only the owner-admin sibling does.
-    const actionButtons = screen.getAllByRole("button", { name: "Actions" });
-    expect(actionButtons).toHaveLength(1);
+    const actionButton = screen.getByRole("button", { name: "Actions for Reading Room" });
 
     // A normal owner-admin library still exposes the full mutation set, proving
     // the suppression is keyed on the capability flags, not the surface.
-    await userEvent.click(actionButtons[0]);
+    await userEvent.click(actionButton);
     const userMenu = await screen.findByRole("menu");
     expect(
       within(userMenu).getByRole("menuitem", { name: "Edit library" }),

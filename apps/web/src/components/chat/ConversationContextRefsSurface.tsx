@@ -41,12 +41,14 @@ export default function ConversationContextRefsSurface({
               <ActionMenu
                 options={[
                   {
+                    kind: "command",
                     id: "open",
                     label: "Open",
                     disabled: !onOpenResource || contextRef.missing,
                     onSelect: () => onOpenResource?.(contextRef),
                   },
                   {
+                    kind: "command",
                     id: "remove",
                     label: "Remove",
                     tone: "danger",

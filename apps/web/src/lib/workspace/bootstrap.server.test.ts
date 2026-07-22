@@ -168,22 +168,18 @@ describe("loadWorkspaceBootstrap", () => {
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
   });
 
-  it("falls back to the default href and runs that route's loader when no request-path header is present", async () => {
-    // No REQUEST_PATH_HEADER set — bootstrap must use the default fallback href,
-    // which resolves to the libraries pane (a prefetched route).
-    const librariesEnvelope = {
-      data: [{ id: "lib-1" }],
-      page: { has_more: false, next_cursor: null },
-    };
+  it("falls back to the Lectern home when no request-path header is present", async () => {
+    const recentEnvelope = { data: { items: [] } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/libraries": librariesEnvelope,
+      "/lectern/recent?limit=50": recentEnvelope,
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
     expect(result.initialHref).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
-    expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+    expect(result.initialHref).toBe("/lectern");
+    expect(result.resources["lectern:recent:50:0"]).toEqual({ items: [] });
   });
 
   it("loads fragments for a readable media kind and composes the media pane resource", async () => {
@@ -262,7 +258,25 @@ describe("loadWorkspaceBootstrap", () => {
   it("composes the library detail resource from library and entries paths", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
     const library = { id: "lib-1", name: "Seeded Library" };
-    const entry = { id: "entry-1", media: { id: "media-1" } };
+    const entry = {
+      id: "entry-1",
+      kind: "media",
+      media: {
+        id: "media-1",
+        kind: "web_article",
+        processing_status: "ready_for_reading",
+        read_state: "unread",
+        progress_fraction: null,
+        capabilities: { can_quote: true },
+      },
+      readingTimeEstimate: {
+        kind: "Present",
+        value: {
+          totalMinutes: 15,
+          remainingMinutes: { kind: "Absent" },
+        },
+      },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries/lib-1": { data: library },
@@ -472,8 +486,8 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("restores this device's own saved session into initialState and seeds every visible pane (AC-4)", async () => {
     // Device cookie present → the bootstrap fetches this device's saved session and
-    // restores its panes. A neutral deep-link (/libraries) lets the multi-pane layout
-    // pass through unchanged, so initialState reflects the restored panes and wave 2
+    // restores its panes. The explicit /libraries deep link reuses the matching
+    // restored pane, so initialState reflects the restored panes and wave 2
     // seeds BOTH visible panes' resources, not just the URL pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
@@ -504,6 +518,27 @@ describe("loadWorkspaceBootstrap", () => {
     // AC-4: both restored visible panes' resources are seeded under their cacheKeys.
     expect(result.resources["123"]).toEqual({ media, fragments: [] });
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+  });
+
+  it("honors Lectern home intent while preserving restored panes", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/lectern");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [primary("pane-media", "/media/123")],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/lectern/recent?limit=50": { data: { items: [] } },
+      "/media/123": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState)).toEqual(["/media/123", "/lectern"]);
+    expect(activeHref(result.initialState)).toBe("/lectern");
   });
 
   it("retries the URL pane in wave 2 when its wave-1 seed failed, so the active pane is still seeded (AC-4)", async () => {
@@ -556,7 +591,7 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("falls back to most_recent_elsewhere when own is trivial/absent (AC-7)", async () => {
     // own null, a non-trivial session from another device → that layout is restored.
-    // A neutral deep-link keeps the multi-pane elsewhere layout intact.
+    // The explicit /libraries deep link reuses its matching restored pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
     const elsewhere = workspace({
@@ -634,7 +669,7 @@ describe("loadWorkspaceBootstrap", () => {
   it("merges the deep-link pane into the restored layout", async () => {
     // Restored layout does NOT contain the deep-link resource → the deep-link pane is
     // appended and made active, alongside the restored pane. The restored session must
-    // be non-trivial to be selected (a lone /libraries pane is treated as trivial), so
+    // be non-trivial to be selected (only a lone /lectern pane is trivial), so
     // the saved layout is a single /conversations pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/media/xyz");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");

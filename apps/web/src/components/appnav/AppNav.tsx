@@ -3,25 +3,26 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
-import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
-import { parseWorkspaceHref } from "@/lib/workspace/workspaceHref";
-import { useResource } from "@/lib/api/useResource";
-import { pinnedObjectsPath, type PinnedResource } from "@/lib/pinnedObjects";
-import { dispatchOpenLauncher, OPEN_LAUNCHER_EVENT } from "@/lib/launcher/launcherEvents";
+import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
+import { hasSamePaneRoute } from "@/lib/panes/paneIdentity";
+import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
+import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { NAV_MODEL, type NavDestination, type NavGroup, type NavItem } from "./navModel";
-import { resolveActiveDestinationId } from "./navActive";
+import {
+  NAV_ACCOUNT,
+  NAV_HOME,
+  NAV_MODEL,
+  type NavDestination,
+  type NavItem,
+} from "./navModel";
+import { handleAppNavLinkActivation } from "./navActivation";
 import NavRail from "./NavRail";
 import NavSheet from "./NavSheet";
 import NavTopBar from "./NavTopBar";
 
-const COLLAPSE_KEY = "nexus.nav.collapsed.v1";
-
-interface PinnedObjectsResponse {
-  data: { pins: PinnedResource[] };
-}
+const COLLAPSE_KEY = "nexus.nav.collapsed";
 
 function toNavItem(destination: NavDestination): NavItem {
   return {
@@ -29,17 +30,17 @@ function toNavItem(destination: NavDestination): NavItem {
     label: destination.label,
     href: destination.href,
     icon: destination.icon ?? getPaneRouteIcon(destination.href),
-    signature: destination.signature,
+    presentation: destination.presentation,
   };
 }
 
+const NAV_ITEMS = NAV_MODEL.map(toNavItem);
+const NAV_HOME_ITEM = toNavItem(NAV_HOME);
+const NAV_ACCOUNT_ITEM = toNavItem(NAV_ACCOUNT);
+
 export default function AppNav() {
   const isMobile = useIsMobileViewport();
-  const { state, navigatePane } = useWorkspaceStore();
-  const pinsResource = useResource<PinnedObjectsResponse>({
-    cacheKey: "navbar",
-    path: pinnedObjectsPath,
-  });
+  const { state, openPane } = useWorkspaceStore();
 
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -57,66 +58,33 @@ export default function AppNav() {
       return next;
     });
   }, []);
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
 
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
   const activePane = useMemo(
     () => primaryPanes.find((p) => p.id === state.activePrimaryPaneId) ?? null,
     [primaryPanes, state.activePrimaryPaneId],
   );
-  const activePathname = activePane ? parseWorkspaceHref(activePane.href)?.pathname ?? "" : "";
-
-  const pins = useMemo<NavItem[]>(() => {
-    if (pinsResource.status !== "ready") return [];
-    return pinsResource.data.data.pins.flatMap((pin) => {
-      const route = pin.item.route;
-      if (!route) return [];
-      return [{ id: pin.id, label: pin.item.label, href: route, icon: getPaneRouteIcon(route) }];
-    });
-  }, [pinsResource]);
-
-  // The account/Settings destination renders outside the groups (in the account
-  // menu), but stays in NAV_MODEL as the single source of truth for its href/label/icon.
-  const account = useMemo(() => {
-    const destination = NAV_MODEL.find((d) => d.slot === "account");
-    if (!destination) throw new Error("NAV_MODEL must define an account destination");
-    return toNavItem(destination);
-  }, []);
-
-  const groups = useMemo<NavGroup[]>(
-    () => [
-      { id: "primary", label: "Library", items: NAV_MODEL.filter((d) => d.slot === "primary").map(toNavItem) },
-      { id: "pinned", label: "Pinned", items: pins },
-      { id: "tools", label: "Tools", items: NAV_MODEL.filter((d) => d.slot === "tools").map(toNavItem) },
-    ],
-    [pins],
-  );
-
-  // Exact pin matches outrank section prefixes, so list pins before the model.
-  const activeId = useMemo(
-    () => resolveActiveDestinationId(activePathname, [...pins, ...NAV_MODEL]),
-    [activePathname, pins],
-  );
-  const settingsActive = activeId === "settings";
-
-  // Close the sheet when the active route changes from outside the sheet (e.g. the launcher).
-  useEffect(() => setSheetOpen(false), [activePathname]);
-
-  // The launcher renders above the sheet; also close the sheet whenever the launcher opens
-  // (a hotkey can open it while the sheet is up) so they never stack.
-  useEffect(() => {
-    const handler = () => setSheetOpen(false);
-    window.addEventListener(OPEN_LAUNCHER_EVENT, handler);
-    return () => window.removeEventListener(OPEN_LAUNCHER_EVENT, handler);
-  }, []);
+  const activeDestinationId = activePane
+    ? sectionDestinationIdForHref(activePane.href)
+    : null;
+  const activeId = NAV_MODEL.some((destination) => destination.id === activeDestinationId)
+    ? activeDestinationId
+    : null;
+  const settingsActive = activeDestinationId === NAV_ACCOUNT.id;
 
   const onNavigate = useCallback(
     (event: MouseEvent<HTMLElement>, href: string) => {
-      if (resolvePaneRoute(href).id === "unsupported") return;
-      event.preventDefault();
-      if (activePane) navigatePane(activePane.id, href);
-      else window.location.assign(href);
+      return handleAppNavLinkActivation(event, href, (nextHref) => {
+        const result =
+          activePane && hasSamePaneRoute(activePane.href, nextHref)
+            ? "handled-source-focus"
+            : "handled-destination-focus";
+        openPane({ href: nextHref });
+        return result;
+      });
     },
-    [activePane, navigatePane],
+    [activePane, openPane],
   );
 
   const openCommand = useCallback(() => dispatchOpenLauncher(), []);
@@ -133,10 +101,12 @@ export default function AppNav() {
         />
         <NavSheet
           open={sheetOpen}
-          onClose={() => setSheetOpen(false)}
-          groups={groups}
+          onClose={closeSheet}
+          items={NAV_ITEMS}
+          home={NAV_HOME_ITEM}
           activeId={activeId}
-          account={account}
+          activeHref={activePane?.href ?? null}
+          account={NAV_ACCOUNT_ITEM}
           settingsActive={settingsActive}
           commandHint={commandHint}
           onOpenCommand={openCommand}
@@ -149,8 +119,9 @@ export default function AppNav() {
 
   return (
     <NavRail
-      groups={groups}
-      account={account}
+      items={NAV_ITEMS}
+      home={NAV_HOME_ITEM}
+      account={NAV_ACCOUNT_ITEM}
       settingsActive={settingsActive}
       activeId={activeId}
       collapsed={collapsed}

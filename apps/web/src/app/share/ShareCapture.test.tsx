@@ -155,7 +155,7 @@ describe("ShareCapture", () => {
 
     expect(screen.getByRole("link", { name: "Cancel" })).toHaveAttribute(
       "href",
-      "/libraries",
+      "/lectern",
     );
     expect(fromUrlBodies(fetchMock)).toEqual([]);
   });

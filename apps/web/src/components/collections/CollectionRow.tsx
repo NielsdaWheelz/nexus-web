@@ -44,7 +44,12 @@ export default function CollectionRow({
   const now = new Date(env.currentInstant);
   const connections = row.connections;
   const hasConnections = connections !== undefined && connections.total > 0;
-  const relatedMediaId = row.relatedMediaId ?? (row.kind === "media" ? row.id : null);
+  const relatedMediaId =
+    row.relatedMediaId === undefined
+      ? row.kind === "media"
+        ? row.id
+        : null
+      : row.relatedMediaId;
   const canShowRelated = relatedMediaId !== null;
   const related = useMediaRelated(canShowRelated && showPeers ? relatedMediaId : null);
   const relatedPeers =
@@ -93,10 +98,13 @@ export default function CollectionRow({
   ) : undefined;
 
   const showRead = row.consumption !== undefined;
+  const consumptionActivity = row.kind === "podcast_episode" ? "listening" : "reading";
   const badges =
     showRead || row.status ? (
       <>
-        {row.consumption ? <ReadStateBadge consumption={row.consumption} /> : null}
+        {row.consumption ? (
+          <ReadStateBadge consumption={row.consumption} activity={consumptionActivity} />
+        ) : null}
         {row.status ? <Pill tone={row.status.tone}>{row.status.label}</Pill> : null}
       </>
     ) : undefined;
@@ -106,6 +114,7 @@ export default function CollectionRow({
       <span
         className={styles.progress}
         role="progressbar"
+        aria-label={`${consumptionActivity === "listening" ? "Listening" : "Reading"} progress for ${row.headline.text}`}
         aria-valuenow={Math.round(row.consumption.fraction * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
@@ -143,6 +152,7 @@ export default function CollectionRow({
         {row.actions?.length ? (
           <ActionMenu
             options={row.actions}
+            label={`Actions for ${row.headline.text}`}
             triggerAttributes={{ tabIndex: -1, "data-row-action-trigger": "true" }}
           />
         ) : null}
@@ -186,10 +196,16 @@ export default function CollectionRow({
       selected={row.selected}
       rootProps={rootProps}
       leading={
-        <ResourceThumb spec={row.lead} alt={row.headline.text} size={density === "compact" ? "sm" : "md"} />
+        <ResourceThumb spec={row.lead} alt="" size={density === "compact" ? "sm" : "md"} />
       }
       title={<>{headline}</>}
-      eyebrow={eyebrow ? <span className={styles.recency}>{eyebrow}</span> : undefined}
+      eyebrow={
+        eyebrow ? (
+          <time className={styles.recency} dateTime={row.recency?.at}>
+            {eyebrow}
+          </time>
+        ) : undefined
+      }
       badges={badges}
       meta={meta}
       contributors={

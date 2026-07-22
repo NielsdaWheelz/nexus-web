@@ -5,6 +5,7 @@ import {
   PANE_ROUTE_MODELS,
   resolvePaneRouteModel,
   resolvePaneRouteWidthContract,
+  sectionDestinationIdForHref,
 } from "@/lib/panes/paneRouteModel";
 
 const LIBRARY_ID = "11111111-1111-4111-8111-111111111111";
@@ -92,6 +93,17 @@ describe("pane route model", () => {
     // /oracle/atlas is no longer a pane route (oracleAtlas is dead); its App
     // Router page redirects legacy links to /atlas?layer=readings.
     expect(resolvePaneRouteModel("/atlas")).toMatchObject({ id: "atlas" });
+  });
+
+  it("projects detail routes to their owning navigation section", () => {
+    expect(sectionDestinationIdForHref(`/media/${MEDIA_ID}`)).toBe("libraries");
+    expect(sectionDestinationIdForHref(`/libraries/${LIBRARY_ID}`)).toBe("libraries");
+    expect(sectionDestinationIdForHref(`/podcasts/${PODCAST_ID}`)).toBe("podcasts");
+    expect(sectionDestinationIdForHref(`/conversations/${CONVERSATION_ID}`)).toBe(
+      "chats",
+    );
+    expect(sectionDestinationIdForHref("/settings/appearance")).toBe("settings");
+    expect(sectionDestinationIdForHref("/not-a-pane")).toBeNull();
   });
 
   it("declares unique model ids", () => {

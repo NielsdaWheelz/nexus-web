@@ -51,7 +51,6 @@ from nexus.db.models import (
     ContributorCredit,
     ContributorExternalId,
     Media,
-    PinnedResource,
     ResourceEdge,
     ResourceMutation,
     ResourceVersion,
@@ -1034,18 +1033,6 @@ def _contributor_is_orphaned(db: Session, contributor: Contributor) -> bool:
                     (ResourceEdge.target_scheme == "contributor")
                     & (ResourceEdge.target_id == contributor_id),
                 )
-            )
-            .limit(1)
-        )
-        is not None
-    ):
-        return False
-    if (
-        db.scalar(
-            select(PinnedResource.id)
-            .where(
-                PinnedResource.object_type == "contributor",
-                PinnedResource.object_id == contributor_id,
             )
             .limit(1)
         )

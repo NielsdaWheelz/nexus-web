@@ -83,7 +83,7 @@ Net: the Today surface is a 119-line file doing a lookup then delegating. The lo
 // lib/notes/openToday.ts
 export async function openTodayPage(): Promise<void> {
   const page = await fetchDailyNotePage(todayLocalDate());
-  requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
+  requestOpenInAppPane(`/pages/${page.id}`, { labelHint: page.title });
 }
 ```
 
@@ -155,7 +155,7 @@ import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 
 export async function openTodayPage(): Promise<void> {
   const page = await fetchDailyNotePage(todayLocalDate());
-  requestOpenInAppPane(`/pages/${page.id}`, { titleHint: page.title });
+  requestOpenInAppPane(`/pages/${page.id}`, { labelHint: page.title });
 }
 ```
 
@@ -203,7 +203,7 @@ Add a "Today" button alongside the "Create page" form in the toolbar. On click, 
 ### 7.10 `app/(authenticated)/pages/[pageId]/PagePaneBody.tsx`
 
 After the page loads, read `page.dailyNote?.localDate`. If set:
-- Publish chrome options `"Open yesterday"` (navigate to yesterday's page via `fetchDailyNotePage(shiftLocalDate(localDate, -1))`) and `"Open tomorrow"` (same for +1) via `usePaneChromeOverride`.
+- Publish `ActionDescriptor` options `"Open yesterday"` (navigate to yesterday's page via `fetchDailyNotePage(shiftLocalDate(localDate, -1))`) and `"Open tomorrow"` (same for +1) via `usePanePrimaryChrome`.
 - The dawn-write block (from sibling #4) renders above the editor whenever `page.dailyNote` is set; the `PagePaneBody` hosts it.
 
 ### 7.11 `components/launcher/CreatePanel.tsx`
@@ -297,7 +297,7 @@ Remove `/daily` from the `hrefs` array in the AC-8 test (line 101). Add a gate a
 - `paneResourceLocator.test.ts:57–63` — daily locator assertions
 - `launcherCutover.guards.test.ts:101` — `/daily` in hrefs gate
 - `paneWarm.test.tsx:46–58` — "warms only the chunk for an excluded pane" test; after removing `"daily"` from `PaneRouteId`, `resolvePaneRouteModel("/daily")` returns `{ id: "unsupported" }` and the hook never calls `preloadPane`, breaking the assertion. Replace the `/daily` exemplar with a route that stays in `PaneRouteId` but has no `paneResourceLoader` entry (e.g. `/browse`), or substitute any other non-prefetchable route, to preserve the AC-8 test intent.
-- `CreatePanel.test.tsx:139–144` and `163–168` — both assertions expect `{ kind: "href", href: "/daily", externalShell: false, titleHint: "Today" }`; update to `{ kind: "open-today" }` after §7.11 change.
+- `CreatePanel.test.tsx` — assertions for the old `/daily` href target update to `{ kind: "open-today" }` after §7.11.
 - `bootstrap.server.test.ts:412` — uses `"/daily"` as the "unprefetched route" fixture; after the cutover `/daily` is a redirect URL, not a pane route. Change the fixture to a non-redirecting non-prefetchable path (e.g. `"/chat/new"`) so the test intent remains legible.
 - `e2e/tests/share.spec.ts:23–26` — asserts `getByRole("link", { name: "Open" }).toHaveAttribute("href", "/daily")`. After §7.12 changes the captured path to `/notes`, update both assertions: `href` → `"/notes"`; the link name stays `"Open"` (because the label conditional is also updated in §7.12).
 
@@ -307,7 +307,7 @@ Remove `/daily` from the `hrefs` array in the AC-8 test (line 101). Add a gate a
 
 | # | Sibling | Dependency |
 |---|---|---|
-| #2 | running-journal | Must remove `daily: "notes"` and `dailyDate: "notes"` from `ROUTE_SECTION` in `standingHead.ts` after this lands — those route IDs are deleted from `PaneRouteId`, making them a compile error in the exhaustive map. |
+| Pane header identity | Remove the `daily` and `dailyDate` route definitions, including their typed section-header contracts; no independent standing-head map exists. |
 | #4 | dawn-write | Dawn write renders `DawnWriteBlock` above the editor in `DailyNotePaneBody`. After this cutover, the host is `PagePaneBody`. Dawn-write **must** land after this spec and update its render site to `PagePaneBody` (gated on `page.dailyNote`). The `DawnWriteBlock` component and API contract are host-agnostic. |
 | #6 | browse-surface-deletion | No dependency. Both delete nav destinations from `DESTINATIONS`. Order does not matter. |
 
@@ -324,7 +324,7 @@ Add `dailyNote: { localDate: string } | null` to the `NotePage` interface in `li
 Verification: unit test (`lib/notes/api.test.ts`) asserts `normalizePage` populates `dailyNote.localDate` when `daily_note` is present and that the `NotePageSummary` shape is not widened.
 
 **S2 — `PagePaneBody` date-nav chrome options**
-Read `page.dailyNote?.localDate` after page load. If set, use `usePaneChromeOverride` to publish `"Open yesterday"` and `"Open tomorrow"` options, each calling `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then `router.push('/pages/{id}')`.
+Read `page.dailyNote?.localDate` after page load. If set, use `usePanePrimaryChrome({ options })` to publish `"Open yesterday"` and `"Open tomorrow"` command descriptors, each calling `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then `router.push('/pages/{id}')`.
 Verification: browser test renders `PagePaneBody` with a page carrying `dailyNote: { localDate: "2026-07-07" }` and asserts the chrome options appear; renders without `dailyNote` and asserts they are absent.
 
 **S3 — `open-today` dispatch target + Notes pane button**
@@ -391,7 +391,7 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 1. **Unit (node):** `lib/notes/api.test.ts` — `normalizePage` handles `daily_note` field. `lib/launcher/dispatch.test.ts` (if exists) — `open-today` case navigates to `/pages/{id}`.
 2. **Browser (Chromium):** `NotesPaneBody` — Today button visible and triggers navigation. `PagePaneBody` — chrome options present/absent by `dailyNote`. `CreatePanel` — "Open today" dispatches `open-today`.
 3. **Guards (unit/node):** `dailyCutover.guards.test.ts` — G1–G7 assertions above.
-4. **Typecheck:** `bun typecheck` — `PaneRouteId` exhaustive maps in `paneRenderRegistry`, `paneRouteTable`, `standingHead.ts` (sibling #2) all compile clean after removing `daily`/`dailyDate`.
+4. **Typecheck:** `bun typecheck` — `PaneRouteId` exhaustive registries and the route/header model compile clean after removing `daily`/`dailyDate`.
 5. **Integration:** Manual verification: navigate to `/daily`, confirm redirect to `/notes`; click Today, confirm `/pages/{uuid}` opens with the correct date title; open yesterday, confirm previous day's page loads.
 6. **E2e (Playwright):** `e2e/tests/share.spec.ts:23–26` asserts `href="/daily"` on the "Open" link — this test must be updated as described in §7.12 and §9. Update the `href` assertion to `"/notes"`; the link name stays `"Open"` because the label conditional at `ShareCapture.tsx:201` is also updated to check for `"/notes"`.
 
@@ -442,7 +442,7 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 
 **R-2. Browser history entries pointing to `/daily/*` will land on the redirect.** Users with tabs pinned to `/daily` will be redirected to `/notes`. Acceptable: the Today button in Notes immediately recovers the expected destination.
 
-**R-3. Running-journal spec (#2) has `daily: "notes"` and `dailyDate: "notes"` in the exhaustive `ROUTE_SECTION` map.** These become compile errors when `PaneRouteId` loses `"daily"` and `"dailyDate"`. Sequencing: this spec must land before or simultaneously with #2, which must remove those two entries and the browse comment placeholder.
+**R-3. Route/header removal must be atomic.** Removing `daily` and `dailyDate` from `PaneRouteId` also removes their `PANE_ROUTE_MODELS` definitions and typed section-header contracts in the same change; there is no second standing-head map to sequence.
 
 **R-4. Dawn-write spec (#4) renders above `DailyNotePaneBody`.** If #4 is built concurrently against the old host, it will need a rebase onto this cutover's new host (`PagePaneBody`, gated on `page.dailyNote`). The coordination requirement is documented in §10 and in #4's own prerequisites.
 

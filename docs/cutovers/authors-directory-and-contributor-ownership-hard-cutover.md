@@ -372,8 +372,9 @@ _do_merge:
 ## 11. Frontend
 
 ### Routing & registration
-- `paneRouteModel.ts`: add `"authors"` to `PaneRouteId`; `route({ id:"authors", pattern:["authors"], staticTitle:"Authors", titleMode:"static", bodyMode:"standard", ...STANDARD_WIDTH_CONTRACT })` (segment-count disambiguates from `["authors", ":handle"]`).
-- `paneRouteTable.ts`: `authors: { icon: UsersRound, getChrome: () => ({ title:"Authors", subtitle:"Everyone credited across your library." }) }`.
+- `paneRouteModel.ts`: add `"authors"` to `PaneRouteId` with `defaultLabel: "Authors"`, `labelMode: "static"`, and a section-header contract owned by the Authors destination (segment-count disambiguates from `["authors", ":handle"]`).
+- `paneRouteTable.ts`: add the `UsersRound` icon metadata; the route model's
+  typed section-header contract supplies Authors identity.
 - `paneRenderRegistry.tsx`: `authors: () => import("@/app/(authenticated)/authors/AuthorsPaneBody")`.
 - **`app/(authenticated)/authors/page.tsx`** (new route marker — top-level entities require one; cf. `libraries/page.tsx`, `podcasts/page.tsx`). (Finding 11)
 - `navModel.ts`: insert after Libraries, `slot:"primary"`, `icon:UsersRound`, `match:{exact:["/authors"],prefix:["/authors/"]}`.

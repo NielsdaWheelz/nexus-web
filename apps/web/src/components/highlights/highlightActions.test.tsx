@@ -62,7 +62,7 @@ describe("buildHighlightActions — Link verb", () => {
         onDelete: vi.fn(),
       },
     }).find((option) => option.id === "link");
-    link?.onSelect?.();
+    link?.onSelect?.({ triggerEl: null });
     expect(onLink).toHaveBeenCalledOnce();
   });
 });

@@ -10,6 +10,7 @@ import {
   runBoundedSourceUrlCaptures,
 } from "@/lib/media/sourceUrlCapture";
 import { quickCaptureDailyNote } from "@/lib/notes/api";
+import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 import styles from "./share.module.css";
 
 // One captured item. A failed capture carries no destination; a successful one
@@ -80,8 +81,8 @@ export default function ShareCapture({
     })();
   }, [trimmed, urls.length, attempt]);
 
-  const doneHref = isShell ? "nexus-share://done" : "/libraries";
-  const cancelHref = isShell ? "nexus-share://dismiss" : "/libraries";
+  const doneHref = isShell ? "nexus-share://done" : APP_AUTHENTICATED_HOME_HREF;
+  const cancelHref = isShell ? "nexus-share://dismiss" : APP_AUTHENTICATED_HOME_HREF;
 
   async function saveUrls(targetUrls: string[]) {
     if (saving || pickerBusy) return;

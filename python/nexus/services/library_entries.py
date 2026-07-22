@@ -9,14 +9,16 @@ the table under an explicit allowlist (see the cutover spec).
 
 import base64
 import json
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
-from typing import Any, Literal, assert_never
+from typing import Any, Literal, assert_never, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, can_restore_media, visible_media_ids_cte_sql
@@ -30,21 +32,28 @@ from nexus.schemas.library import (
     LibraryPageInfo,
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
+    ReadingTimeEstimateOut,
 )
 from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_governance as governance
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     visible_credit_rows_sql,
 )
+from nexus.services.media_document_metrics import load_media_word_counts
 
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
 _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
 _ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
+
+_READING_WORDS_PER_MINUTE = 240
+_READING_MINUTES_FINE_LIMIT = 10
+_READING_MINUTES_COARSE_LIMIT = 60
 
 # The orderings GET /libraries/{id}/entries supports (spec S5). "position" is the
 # default and keeps EXACTLY `_ENTRY_ORDER`; "resonance" applies the deterministic
@@ -101,9 +110,7 @@ _LAST_ENGAGED_AT_SQL = f"""
             '-infinity'::timestamptz
         )
         WHEN le.podcast_id IS NOT NULL THEN {
-    consumption_service.listening_recency_max_subquery_sql(
-        user_param=":viewer_id", podcast_expr="le.podcast_id"
-    )
+    consumption_service.listening_recency_max_subquery_sql(podcast_expr="le.podcast_id")
 }
         ELSE NULL
     END
@@ -360,14 +367,25 @@ class PodcastLibraryRemovalResult:
 
 @dataclass(frozen=True)
 class LibraryFilingOutcome:
-    """The idempotent present/inserted outcome a filing command returns (spec
-    S4.3 rule 8). `inserted` is False when the physical entry already existed
-    (re-file/idempotent path) — `agent_tools.writes` reads it so Undo never
-    deletes a filing it did not itself create; REST callers project `entry`
-    unchanged into the existing response envelope."""
+    """The idempotent inserted-only outcome a filing command returns.
 
-    entry: LibraryEntryOut
+    `inserted` is False when the physical entry already existed
+    (re-file/idempotent path); `agent_tools.writes` reads it so Undo never
+    deletes a filing it did not itself create.
+    """
+
     inserted: bool
+
+
+def _display_reading_minutes(word_count: int, fraction: float) -> int:
+    raw_minutes = word_count * fraction / _READING_WORDS_PER_MINUTE
+    if raw_minutes < _READING_MINUTES_FINE_LIMIT:
+        quantum = 1
+    elif raw_minutes < _READING_MINUTES_COARSE_LIMIT:
+        quantum = 5
+    else:
+        quantum = 15
+    return max(1, quantum * math.floor(raw_minutes / quantum + 0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +699,44 @@ def _hydrate_entries(
             for media in media_service.list_media_for_viewer_by_ids(db, viewer_id, media_ids)
         }
 
+    for media in media_by_id.values():
+        if media.read_state is None:
+            # justify-service-invariant-check: shared MediaOut permits contexts
+            # without viewer state; Library hydration requires the correlated projection.
+            # justify-defect: the viewer-scoped media loader must hydrate every row.
+            raise AssertionError(f"missing Library read state for media {media.id}")
+
+    eligible_media_ids = [
+        media.id
+        for media in media_by_id.values()
+        if media.kind in ("web_article", "epub", "pdf") and media.capabilities.can_quote
+    ]
+    word_counts = load_media_word_counts(db, eligible_media_ids) if eligible_media_ids else {}
+    reading_time_by_media_id: dict[UUID, ReadingTimeEstimateOut] = {}
+    for media_id in eligible_media_ids:
+        word_count = word_counts[media_id]
+        if word_count == 0:
+            continue
+        media = media_by_id[media_id]
+        total_minutes = _display_reading_minutes(word_count, 1.0)
+        remaining_minutes: Presence[int] = absent()
+        if (
+            media.kind in ("web_article", "epub")
+            and media.read_state == "in_progress"
+            and media.progress_fraction is not None
+        ):
+            remaining = _display_reading_minutes(word_count, 1.0 - media.progress_fraction)
+            if remaining > total_minutes:
+                # justify-service-invariant-check: the relationship between two
+                # derived rounded values is not expressible in their integer types.
+                # justify-defect: bounded progression and monotonic rounding guarantee it.
+                raise AssertionError(f"remaining reading time exceeds total for media {media_id}")
+            remaining_minutes = present(remaining)
+        reading_time_by_media_id[media_id] = ReadingTimeEstimateOut(
+            total_minutes=total_minutes,
+            remaining_minutes=remaining_minutes,
+        )
+
     podcast_rows_by_id = {}
     if podcast_ids:
         podcast_rows = (
@@ -699,7 +755,11 @@ def _hydrate_entries(
                     )
                 } = 'unplayed'
                         ) AS unplayed_count,
-                        MAX(pls.updated_at) AS last_listened_at
+                        {
+                    consumption_service.listening_recency_max_subquery_sql(
+                        podcast_expr="pe.podcast_id"
+                    )
+                } AS last_listened_at
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
@@ -772,9 +832,12 @@ def _hydrate_entries(
                     media=media,
                     podcast=None,
                     subscription=None,
-                    read_state=media.read_state,
-                    progress_fraction=media.progress_fraction,
                     last_engaged_at=media.last_engaged_at,
+                    reading_time_estimate=(
+                        present(reading_time_by_media_id[media_id])
+                        if media_id in reading_time_by_media_id
+                        else absent()
+                    ),
                     surfaced_today=_surfaced_today(
                         created_at=row["created_at"],
                         last_engaged_at=media.last_engaged_at,
@@ -845,6 +908,7 @@ def _hydrate_entries(
                     unplayed_count=int(podcast_row["unplayed_count"] or 0),
                 ),
                 subscription=subscription,
+                reading_time_estimate=absent(),
             )
         )
 
@@ -952,19 +1016,7 @@ def add_media_to_library(
         # existed (spec S4.3 rule 6 / AC4).
         clear_user_media_deletion(db, viewer_id, media_id)
 
-        row = (
-            db.execute(
-                text(
-                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                    "WHERE library_id = :library_id AND media_id = :media_id"
-                ),
-                {"library_id": library_id, "media_id": media_id},
-            )
-            .mappings()
-            .fetchone()
-        )
-
-    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
+    return LibraryFilingOutcome(inserted=inserted)
 
 
 def add_podcast_to_library(
@@ -992,19 +1044,7 @@ def add_podcast_to_library(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
 
         inserted = ensure_entry(db, library_id, podcast_target(podcast_id))
-        row = (
-            db.execute(
-                text(
-                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                    "WHERE library_id = :library_id AND podcast_id = :podcast_id"
-                ),
-                {"library_id": library_id, "podcast_id": podcast_id},
-            )
-            .mappings()
-            .fetchone()
-        )
-
-    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
+    return LibraryFilingOutcome(inserted=inserted)
 
 
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
@@ -1495,7 +1535,7 @@ def list_library_entries(
 
 def reorder_entries(
     db: Session, viewer_id: UUID, library_id: UUID, body: LibraryEntryOrderRequest
-) -> list[LibraryEntryOut]:
+) -> None:
     """Replace the full entry order for an admin viewer. The requested set must equal the
     existing set; the new order is applied in one set-based statement (already dense, so
     no follow-up renormalize). Default has no physical order to reorder — it is
@@ -1523,28 +1563,29 @@ def reorder_entries(
                 "Library reorder requires an exact full set of entry IDs",
             )
 
-        db.execute(
-            text("""
-                WITH desired AS (
-                    SELECT id, ord - 1 AS new_position
-                    FROM unnest(cast(:entry_ids AS uuid[])) WITH ORDINALITY AS t(id, ord)
-                )
-                UPDATE library_entries le
-                SET position = desired.new_position
-                FROM desired
-                WHERE le.id = desired.id AND le.library_id = :library_id
-            """),
-            {"entry_ids": requested_ids, "library_id": library_id},
+        result = cast(
+            CursorResult[Any],
+            db.execute(
+                text("""
+                    WITH desired AS (
+                        SELECT id, ord - 1 AS new_position
+                        FROM unnest(cast(:entry_ids AS uuid[])) WITH ORDINALITY AS t(id, ord)
+                    )
+                    UPDATE library_entries le
+                    SET position = desired.new_position
+                    FROM desired
+                    WHERE le.id = desired.id AND le.library_id = :library_id
+                """),
+                {"entry_ids": requested_ids, "library_id": library_id},
+            ),
         )
-
-    entries, _page = list_library_entries(
-        db,
-        viewer_id,
-        library_id,
-        limit=min(max(len(requested_ids), 1), 200),
-        sort="position",
-    )
-    return entries
+        if result.rowcount != len(requested_ids):
+            # justify-service-invariant-check: exact-set validation and the library
+            # lock establish cardinality, but affected-row metadata is runtime-only.
+            # justify-defect: a mismatch means the locked order invariant was violated.
+            raise AssertionError(
+                f"Library reorder affected {result.rowcount} rows; expected {len(requested_ids)}"
+            )
 
 
 # ---------------------------------------------------------------------------

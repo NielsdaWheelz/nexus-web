@@ -24,7 +24,8 @@ export function useReaderKeyChord(args: {
     if (!args.enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== args.key) return;
-      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)
+        return;
       if (isEditableTarget(event.target)) return;
       event.preventDefault();
       onTriggerRef.current();
@@ -55,8 +56,11 @@ export function useStanceComposer({
   onChanged,
 }: {
   /** Resolve the focused/created source highlight + its media-grain target ref. */
-  resolveTarget: () => Promise<{ highlightId: string; targetRef: string } | null>;
-  /** Current user stances anchored in this reader (derived from connections). */
+  resolveTarget: () => Promise<{
+    highlightId: string;
+    targetRef: string;
+  } | null>;
+  /** Current user stance edges derived from canonical Evidence associations. */
   stanceEdges: StanceEdgeRef[];
   onChanged: () => void;
 }): { mintStance: (kind: StanceKind) => Promise<void> } {
@@ -74,6 +78,8 @@ export function useStanceComposer({
         onChanged();
         return;
       }
+      // The opposite stance is one transactional putStance, never a client
+      // delete-then-create: putStance replaces the single directed stance.
       await putStance({ sourceRef: `highlight:${highlightId}`, targetRef, kind });
       onChanged();
     },

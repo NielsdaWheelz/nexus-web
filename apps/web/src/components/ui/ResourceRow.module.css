@@ -106,7 +106,7 @@ button.primary:disabled {
 
 .meta {
   min-width: 0;
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;

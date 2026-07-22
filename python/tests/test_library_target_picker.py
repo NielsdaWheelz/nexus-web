@@ -65,7 +65,7 @@ class TestLibraryTargetPickerOptions:
             json={"media_id": str(media_id)},
             headers=auth_headers(viewer_id),
         )
-        assert attach_response.status_code == 201, (
+        assert attach_response.status_code == 204, (
             "media setup attach failed unexpectedly: "
             f"{attach_response.status_code} {attach_response.text}"
         )
@@ -214,7 +214,7 @@ class TestLibraryTargetPickerOptions:
             json={"podcast_id": str(podcast_id)},
             headers=auth_headers(viewer_id),
         )
-        assert add_response.status_code == 201, (
+        assert add_response.status_code == 204, (
             "podcast setup library attach failed unexpectedly: "
             f"{add_response.status_code} {add_response.text}"
         )

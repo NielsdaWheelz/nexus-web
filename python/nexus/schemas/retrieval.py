@@ -642,6 +642,17 @@ class ExternalUrlLocator(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+MediaRetrievalLocator = Annotated[
+    WebTextOffsetsLocator
+    | EpubFragmentOffsetsLocator
+    | PdfPageGeometryLocator
+    | TranscriptTimeRangeLocator
+    | AudioTimeRangeLocator
+    | VideoTimeRangeLocator,
+    Field(discriminator="type"),
+]
+
+
 RetrievalLocator = Annotated[
     WebTextOffsetsLocator
     | EpubFragmentOffsetsLocator

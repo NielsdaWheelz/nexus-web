@@ -9,6 +9,9 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
     title: "On Exactitude in Science",
     canonical_source_url: "https://example.test/borges.pdf",
     processing_status: "ready_for_reading",
+    read_state: "unread",
+    progress_fraction: null,
+    capabilities: { can_quote: true },
     publisher: "Universal Press",
     published_date: "1946",
     contributors: [],
@@ -19,6 +22,7 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
 function ctx(overrides: Partial<MediaPresenterContext> = {}): MediaPresenterContext {
   return {
     canManageLibraries: false,
+    readingTimeEstimate: { kind: "Absent" },
     ...overrides,
   };
 }
@@ -31,7 +35,7 @@ describe("presentMedia", () => {
     expect(view.primary).toEqual({
       kind: "link",
       href: "/media/media-1",
-      paneTitleHint: "On Exactitude in Science",
+      paneLabelHint: "On Exactitude in Science",
       viewTransition: "media-reader",
     });
     expect(view.headline.text).toBe("On Exactitude in Science");
@@ -45,9 +49,53 @@ describe("presentMedia", () => {
   it("surfaces publisher and published date as signals", () => {
     const view = presentMedia(item(), ctx());
 
-    const values = view.signals.map((s) => s.value);
-    expect(values).toContain("Universal Press");
-    expect(values).toContain("1946");
+    expect(view.signals.map((signal) => signal.value)).toEqual([
+      "Universal Press",
+      "1946",
+    ]);
+  });
+
+  it("puts the shared reading-time signal first and follows current read state", () => {
+    const readingTimeEstimate = {
+      kind: "Present" as const,
+      value: {
+        totalMinutes: 15,
+        remainingMinutes: { kind: "Present" as const, value: 5 },
+      },
+    };
+    const inProgress = presentMedia(
+      item({ read_state: "in_progress", progress_fraction: 0.5 }),
+      ctx({ readingTimeEstimate }),
+    );
+    expect(inProgress.signals.map((signal) => signal.value)).toEqual([
+      "≈ 5 min left",
+      "Universal Press",
+      "1946",
+    ]);
+
+    const finished = presentMedia(
+      item({ read_state: "finished", progress_fraction: 0.5 }),
+      ctx({ readingTimeEstimate }),
+    );
+    expect(finished.signals[0]?.value).toBe("≈ 15 min read");
+  });
+
+  it("suppresses stale reading time when current readiness cannot quote", () => {
+    const readingTimeEstimate = {
+      kind: "Present" as const,
+      value: { totalMinutes: 15, remainingMinutes: { kind: "Absent" as const } },
+    };
+    const view = presentMedia(
+      item({
+        processing_status: "extracting",
+        capabilities: { can_quote: false },
+      }),
+      ctx({ readingTimeEstimate }),
+    );
+    expect(view.signals.map((signal) => signal.value)).toEqual([
+      "Universal Press",
+      "1946",
+    ]);
   });
 
   it("omits absent publisher/date signals", () => {
@@ -87,7 +135,7 @@ describe("presentMedia", () => {
     const onDelete = vi.fn();
     const onManageLibraries = vi.fn();
     const view = presentMedia(
-      item({ capabilities: { can_delete: true } }),
+      item({ capabilities: { can_quote: true, can_delete: true } }),
       ctx({ canManageLibraries: true, onDelete, onManageLibraries }),
     );
 
@@ -100,7 +148,10 @@ describe("presentMedia", () => {
   it("makes mark-finished the primary swipe for unread/in-progress rows (delete is menu-only)", () => {
     const onMarkFinished = vi.fn();
     const view = presentMedia(
-      item({ read_state: "unread", capabilities: { can_delete: true } }),
+      item({
+        read_state: "unread",
+        capabilities: { can_quote: true, can_delete: true },
+      }),
       ctx({ onDelete: vi.fn(), onMarkFinished }),
     );
 

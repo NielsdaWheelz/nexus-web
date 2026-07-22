@@ -18,7 +18,8 @@ describe("buildForkNodeActions", () => {
       "Rename fork Branch title",
       "Delete fork Branch title",
     ]);
-    expect(actions[1]).toMatchObject({ disabled: true });
+    expect(actions.every((action) => action.kind === "command")).toBe(true);
+    expect(actions[1]).toMatchObject({ kind: "command", disabled: true });
     expect(actions[1]).not.toHaveProperty("href");
     expect(actions[1]).not.toHaveProperty("render");
     expect(actions[1]).not.toHaveProperty("restoreFocusOnClose");
@@ -44,6 +45,7 @@ describe("buildForkNodeActions", () => {
       "Save fork Branch title",
       "Cancel rename fork Branch title",
     ]);
+    expect(actions.every((action) => action.kind === "command")).toBe(true);
 
     actions[0].onSelect?.({ triggerEl: null });
     actions[1].onSelect?.({ triggerEl: null });

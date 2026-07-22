@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from decimal import Decimal
-from typing import Any, Literal
+from dataclasses import dataclass, replace
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -12,19 +11,19 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.reader import (
-    ReaderConnectionAnchorOut,
-    ReaderConnectionPageOut,
-    ReaderConnectionRowOut,
-)
-from nexus.schemas.resource_graph import connection_out
+from nexus.schemas.resource_graph import ConnectionOut, connection_out
 from nexus.services import passage_anchors, text_quote
+from nexus.services.reader_locations import (
+    highlight_locator,
+    locator_fragment,
+    locator_page,
+    order_key_from_locator,
+)
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import (
     Connection,
-    ConnectionEndpoint,
     ConnectionFilters,
     ConnectionQuery,
     EdgeOrigin,
@@ -38,7 +37,29 @@ READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
     "synapse",
     "system",
     "document_embed",
+    "assistant",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderConnectionAnchor:
+    locator: dict[str, object]
+    order_key: str | None
+    passage_anchor_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderConnectionRow:
+    connection: ConnectionOut
+    anchor: ReaderConnectionAnchor | None
+    title: str
+    excerpt: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderConnectionPage:
+    items: tuple[ReaderConnectionRow, ...]
+    next_cursor: str | None
 
 
 def list_reader_connections(
@@ -50,7 +71,7 @@ def list_reader_connections(
     source_schemes: tuple[ResourceScheme, ...] | None,
     limit: int,
     cursor: str | None,
-) -> ReaderConnectionPageOut:
+) -> ReaderConnectionPage:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
     page = query_connections(
@@ -66,115 +87,105 @@ def list_reader_connections(
         ),
     )
     # One request-scoped memo of normalized owner sources: a page whose passage
-    # anchors share the media being read then reloads+renormalizes it once, not
-    # once per anchor.
+    # anchors share the media being read reloads+renormalizes it once, not once
+    # per anchor. Passage-anchor locators are resolved LIVE (never persisted).
     sources_cache: text_quote.MediaSourceCache = {}
-    rows = [
-        row
-        for item in page.items
-        for row in _rows(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            connection=item,
-            sources_cache=sources_cache,
-        )
-    ]
-    anchored = sorted((row for row in rows if row.anchor is not None), key=_row_order_key)
-    unanchored = [row for row in rows if row.anchor is None]
-    return ReaderConnectionPageOut(
-        anchored=anchored,
-        unanchored=unanchored,
-        next_cursor=page.next_cursor,
-    )
+    anchors: dict[str, ReaderConnectionAnchor | None] = {}
+    rows: list[ReaderConnectionRow] = []
 
-
-def _rows(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    connection: Connection,
-    sources_cache: text_quote.MediaSourceCache,
-) -> list[ReaderConnectionRowOut]:
-    """One reader row per LOCAL endpoint of the edge.
-
-    An endpoint is local when it anchors into ``media_id``. A cross-document edge
-    has one local endpoint → one row; a same-media Link between two local
-    passages/highlights has two → two rows, each activating the opposite endpoint
-    with a distinct ``edge:{edge_id}:anchor:{local_ref}`` identity. Storage
-    direction is never read here — locality alone decides the split (Invariant 2).
-    When neither endpoint is local the edge still surfaces as one unanchored row.
-    """
-    source_anchor = _anchor_for_ref(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        ref=connection.source_ref,
-        sources_cache=sources_cache,
-    )
-    target_anchor = _anchor_for_ref(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        ref=connection.target_ref,
-        sources_cache=sources_cache,
-    )
-    rows: list[ReaderConnectionRowOut] = []
-    if source_anchor is not None:
-        rows.append(
-            _build_row(
-                connection,
-                anchor_ref=connection.source_ref,
-                anchor=source_anchor,
-                other=connection.target,
+    def anchor_for(connection: Connection, ref: ResourceRef) -> ReaderConnectionAnchor | None:
+        if ref.uri not in anchors:
+            anchors[ref.uri] = _anchor_for_connection(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+                ref=ref,
+                connection=connection,
+                sources_cache=sources_cache,
             )
-        )
-    if target_anchor is not None:
-        rows.append(
-            _build_row(
-                connection,
-                anchor_ref=connection.target_ref,
-                anchor=target_anchor,
-                other=connection.source,
+        return anchors[ref.uri]
+
+    for connection in page.items:
+        # A neutral Link is undirected, so BOTH endpoints may anchor in this
+        # media. When they do (a same-media Link between two local passages), the
+        # reader emits one row per local endpoint — each activating the opposite
+        # endpoint (§ Reader Projection). Every other edge keeps its single,
+        # locality-chosen anchor.
+        if connection.direction == "undirected":
+            source_anchor = anchor_for(connection, connection.source_ref)
+            target_anchor = anchor_for(connection, connection.target_ref)
+            if source_anchor is not None and target_anchor is not None:
+                rows.append(
+                    _row(connection=replace(connection, other=connection.target), anchor=source_anchor)
+                )
+                rows.append(
+                    _row(connection=replace(connection, other=connection.source), anchor=target_anchor)
+                )
+                continue
+            anchor_ref = _anchor_ref(connection)
+            rows.append(
+                _row(
+                    connection=connection,
+                    anchor=source_anchor
+                    if anchor_ref.uri == connection.source_ref.uri
+                    else target_anchor,
+                )
             )
-        )
-    if rows:
-        return rows
-    # Neither endpoint anchors locally: one unanchored row. ``connection.other``
-    # already names the far endpoint by locality (matched_incoming in the read
-    # model), never by canonical storage direction, so an undirected neutral Link
-    # surfaces its true peer rather than self-referencing the open document
-    # (Invariant 2, AC17).
-    other = connection.other
-    anchor_ref = (
-        connection.source_ref if other.ref == connection.target_ref else connection.target_ref
-    )
-    return [_build_row(connection, anchor_ref=anchor_ref, anchor=None, other=other)]
+            continue
+        anchor_ref = _anchor_ref(connection)
+        rows.append(_row(connection=connection, anchor=anchor_for(connection, anchor_ref)))
+    rows.sort(key=_row_order_key)
+    return ReaderConnectionPage(items=tuple(rows), next_cursor=page.next_cursor)
 
 
-def _build_row(
-    connection: Connection,
-    *,
-    anchor_ref: ResourceRef,
-    anchor: ReaderConnectionAnchorOut | None,
-    other: ConnectionEndpoint,
-) -> ReaderConnectionRowOut:
-    excerpt = other.description
+def _row(*, connection: Connection, anchor: ReaderConnectionAnchor | None) -> ReaderConnectionRow:
+    far = connection.other
+    excerpt = far.description
     if connection.snapshot is not None and connection.snapshot.excerpt:
         excerpt = connection.snapshot.excerpt
     if connection.citation is not None and connection.citation.snapshot.excerpt:
         excerpt = connection.citation.snapshot.excerpt
-    return ReaderConnectionRowOut(
-        id=f"edge:{connection.edge_id}:anchor:{anchor_ref.uri}",
-        connection=connection_out(replace(connection, other=other)),
+    return ReaderConnectionRow(
+        connection=connection_out(connection),
         anchor=anchor,
-        source_category=_source_category(connection),
-        title=other.label or other.ref.uri,
-        subtitle=f"{connection.origin} · {connection.kind}",
+        title=far.label or far.ref.uri,
         excerpt=excerpt,
-        activation=other.activation,
-        href=other.href,
+    )
+
+
+def _anchor_ref(connection: Connection) -> ResourceRef:
+    # The anchored endpoint is the LOCAL one — the endpoint that is not the far
+    # ``other``. ``other`` is chosen by locality (matched_incoming), so this holds
+    # for neutral undirected Links too, where storage direction carries no meaning.
+    return (
+        connection.source_ref
+        if connection.other.ref == connection.target_ref
+        else connection.target_ref
+    )
+
+
+def _anchor_for_connection(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    ref: ResourceRef,
+    connection: Connection,
+    sources_cache: text_quote.MediaSourceCache,
+) -> ReaderConnectionAnchor | None:
+    citation = connection.citation
+    if (
+        citation is not None
+        and connection.target_ref == ref
+        and citation.target_media_id == media_id
+        and citation.target_locator is not None
+    ):
+        return ReaderConnectionAnchor(
+            locator=citation.target_locator,
+            order_key=_locator_order_key(db, citation.target_locator),
+        )
+    return _anchor_for_ref(
+        db, viewer_id=viewer_id, media_id=media_id, ref=ref, sources_cache=sources_cache
     )
 
 
@@ -185,20 +196,15 @@ def _anchor_for_ref(
     media_id: UUID,
     ref: ResourceRef,
     sources_cache: text_quote.MediaSourceCache,
-) -> ReaderConnectionAnchorOut | None:
+) -> ReaderConnectionAnchor | None:
     if ref.scheme == "evidence_span":
         target_media_id, locator = reader_target_for_citation_target(
             db, viewer_id=viewer_id, target=ref
         )
         if target_media_id != media_id or locator is None:
             return None
-        return ReaderConnectionAnchorOut(
-            ref=ref.uri,
-            media_id=media_id,
+        return ReaderConnectionAnchor(
             locator=locator,
-            page_number=_locator_page(locator),
-            fragment_id=_locator_fragment(locator),
-            evidence_span_id=ref.id,
             order_key=_locator_order_key(db, locator),
         )
     if ref.scheme == "content_chunk":
@@ -218,16 +224,11 @@ def _anchor_for_ref(
             locator = row[2] if isinstance(row[2], dict) else None
             if not locator:
                 return None
-            fragment_id = _locator_fragment(locator)
-            if fragment_id is None and _locator_page(locator) is None:
+            fragment_id = locator_fragment(locator)
+            if fragment_id is None and locator_page(locator) is None:
                 return None
-            return ReaderConnectionAnchorOut(
-                ref=ref.uri,
-                media_id=media_id,
+            return ReaderConnectionAnchor(
                 locator=locator,
-                page_number=_locator_page(locator),
-                fragment_id=fragment_id,
-                evidence_span_id=None,
                 order_key=_locator_order_key(db, locator) or f"chunk:{int(row[1]):010d}",
             )
         span_ref = ResourceRef(scheme="evidence_span", id=row[0])
@@ -236,40 +237,68 @@ def _anchor_for_ref(
         )
         if target_media_id != media_id or locator is None:
             return None
-        return ReaderConnectionAnchorOut(
-            ref=ref.uri,
-            media_id=media_id,
+        return ReaderConnectionAnchor(
             locator=locator,
-            page_number=_locator_page(locator),
-            fragment_id=_locator_fragment(locator),
-            evidence_span_id=row[0],
             order_key=f"chunk:{int(row[1]):010d}",
         )
     if ref.scheme == "fragment":
         row = db.execute(
             text(
-                "SELECT idx, canonical_text FROM fragments WHERE id = :id AND media_id = :media_id"
+                """
+                SELECT f.idx,
+                       f.canonical_text,
+                       m.kind,
+                       (
+                           SELECT n.location_id
+                           FROM epub_nav_locations n
+                           WHERE n.media_id = f.media_id
+                             AND n.fragment_idx = f.idx
+                           ORDER BY n.ordinal ASC
+                           LIMIT 1
+                       ) AS epub_section_id
+                FROM fragments f
+                JOIN media m ON m.id = f.media_id
+                WHERE f.id = :id AND f.media_id = :media_id
+                """
             ),
             {"id": ref.id, "media_id": media_id},
         ).first()
         if row is None:
             return None
-        return ReaderConnectionAnchorOut(
-            ref=ref.uri,
-            media_id=media_id,
-            locator={
-                "type": "web_text_offsets",
-                "media_id": str(media_id),
-                "fragment_id": str(ref.id),
-                "start_offset": 0,
-                "end_offset": min(1, len(str(row[1] or ""))),
-            },
-            fragment_id=ref.id,
+        is_epub = str(row[2]) == "epub"
+        locator: dict[str, object] = {
+            "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(ref.id),
+            "start_offset": 0,
+            "end_offset": min(1, len(str(row[1] or ""))),
+            "media_kind": str(row[2]),
+        }
+        if is_epub and row[3] is not None:
+            locator["section_id"] = str(row[3])
+        return ReaderConnectionAnchor(
+            locator=locator,
             order_key=f"fragment:{int(row[0]):010d}",
         )
     if ref.scheme == "highlight":
-        return _highlight_anchor(
-            db, viewer_id=viewer_id, media_id=media_id, highlight_id=ref.id, ref=ref.uri
+        return _highlight_anchor(db, viewer_id=viewer_id, media_id=media_id, highlight_id=ref.id)
+    if ref.scheme == "reader_apparatus_item":
+        row = db.execute(
+            text(
+                """
+                SELECT locator, sort_key
+                FROM reader_apparatus_items
+                WHERE id = :id AND media_id = :media_id
+                """
+            ),
+            {"id": ref.id, "media_id": media_id},
+        ).first()
+        if row is None or not isinstance(row[0], dict):
+            return None
+        locator = row[0]
+        return ReaderConnectionAnchor(
+            locator=locator,
+            order_key=_locator_order_key(db, locator) or str(row[1]),
         )
     if ref.scheme == "passage_anchor":
         return _passage_anchor_anchor(
@@ -285,7 +314,7 @@ def _passage_anchor_anchor(
     media_id: UUID,
     ref: ResourceRef,
     sources_cache: text_quote.MediaSourceCache,
-) -> ReaderConnectionAnchorOut | None:
+) -> ReaderConnectionAnchor | None:
     """Anchor a passage_anchor endpoint at its LIVE current locator.
 
     Never persisted: ``passage_anchors.resolve_current_location`` re-resolves the
@@ -304,14 +333,10 @@ def _passage_anchor_anchor(
     reader_locator = _reader_locator_from_passage(media_id, location.locator)
     if reader_locator is None:
         return None
-    return ReaderConnectionAnchorOut(
-        ref=ref.uri,
-        media_id=media_id,
+    return ReaderConnectionAnchor(
         locator=reader_locator,
-        page_number=_locator_page(reader_locator),
-        fragment_id=_locator_fragment(reader_locator),
-        passage_anchor_id=ref.id,
         order_key=_locator_order_key(db, reader_locator),
+        passage_anchor_id=ref.id,
     )
 
 
@@ -350,8 +375,8 @@ def _reader_locator_from_passage(media_id: UUID, locator: dict[str, Any]) -> dic
 
 
 def _highlight_anchor(
-    db: Session, *, viewer_id: UUID, media_id: UUID, highlight_id: UUID, ref: str
-) -> ReaderConnectionAnchorOut | None:
+    db: Session, *, viewer_id: UUID, media_id: UUID, highlight_id: UUID
+) -> ReaderConnectionAnchor | None:
     if not can_read_highlight(db, viewer_id, highlight_id):
         return None
     row = db.execute(
@@ -363,9 +388,20 @@ def _highlight_anchor(
                    hfa.end_offset,
                    f.idx,
                    hpa.page_number,
-                   hpa.sort_top,
-                   hpa.sort_left
+                   m.kind,
+                   (
+                       SELECT n.location_id
+                       FROM epub_nav_locations n
+                       WHERE n.media_id = h.anchor_media_id
+                         AND n.fragment_idx = f.idx
+                       ORDER BY n.ordinal ASC
+                       LIMIT 1
+                   ) AS epub_section_id,
+                   h.exact,
+                   h.prefix,
+                   h.suffix
             FROM highlights h
+            JOIN media m ON m.id = h.anchor_media_id
             LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
             LEFT JOIN fragments f ON f.id = hfa.fragment_id
             LEFT JOIN highlight_pdf_anchors hpa ON hpa.highlight_id = h.id
@@ -377,6 +413,9 @@ def _highlight_anchor(
     ).first()
     if row is None:
         return None
+    exact = str(row[8] or "")
+    prefix = str(row[9] or "")
+    suffix = str(row[10] or "")
     if row[0] == "pdf_page_geometry" and row[5] is not None:
         quads = [
             {
@@ -403,115 +442,58 @@ def _highlight_anchor(
         ]
         if not quads:
             return None
-        return ReaderConnectionAnchorOut(
-            ref=ref,
-            media_id=media_id,
-            locator={
+        locator = highlight_locator(
+            {
                 "type": "pdf_page_geometry",
                 "media_id": str(media_id),
                 "page_number": int(row[5]),
                 "quads": quads,
             },
-            page_number=int(row[5]),
-            highlight_id=highlight_id,
-            order_key=f"pdf:{int(row[5]):08d}:{_decimal_key(row[6])}:{_decimal_key(row[7])}",
+            media_kind=str(row[6]),
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+        )
+        return ReaderConnectionAnchor(
+            locator=locator,
+            order_key=_locator_order_key(db, locator),
         )
     if row[0] == "fragment_offsets" and row[1] is not None:
         fragment_id = UUID(str(row[1]))
-        return ReaderConnectionAnchorOut(
-            ref=ref,
-            media_id=media_id,
-            locator={
-                "type": "web_text_offsets",
-                "media_id": str(media_id),
-                "fragment_id": str(fragment_id),
-                "start_offset": int(row[2]),
-                "end_offset": int(row[3]),
-            },
-            fragment_id=fragment_id,
-            highlight_id=highlight_id,
+        is_epub = str(row[6]) == "epub"
+        locator = {
+            "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(fragment_id),
+            "start_offset": int(row[2]),
+            "end_offset": int(row[3]),
+        }
+        if is_epub and row[7] is not None:
+            locator["section_id"] = str(row[7])
+        locator = highlight_locator(
+            locator,
+            media_kind=str(row[6]),
+            exact=exact,
+            prefix=prefix,
+            suffix=suffix,
+        )
+        return ReaderConnectionAnchor(
+            locator=locator,
             order_key=f"fragment:{int(row[4] or 0):010d}:{int(row[2]):010d}",
         )
     return None
 
 
-def _source_category(
-    connection: Connection,
-) -> Literal[
-    "chat",
-    "dossier",
-    "oracle",
-    "note",
-    "highlight_note",
-    "user_link",
-    "synapse",
-    "system",
-    "document_embed",
-    "other",
-]:
-    if connection.origin == "citation":
-        if connection.source_ref.scheme == "message":
-            return "chat"
-        if connection.source_ref.scheme == "artifact_revision":
-            return "dossier"
-        if connection.source_ref.scheme == "oracle_reading":
-            return "oracle"
-        return "other"
-    if connection.origin == "note_body":
-        return "note"
-    if connection.origin == "highlight_note":
-        return "highlight_note"
-    if connection.origin == "user":
-        return "user_link"
-    if connection.origin == "synapse":
-        return "synapse"
-    if connection.origin == "system":
-        return "system"
-    if connection.origin == "document_embed":
-        return "document_embed"
-    return "other"
-
-
-def _row_order_key(row: ReaderConnectionRowOut) -> str:
-    return (
-        row.anchor.order_key
-        if row.anchor and row.anchor.order_key
-        else row.connection.created_at.isoformat()
-    )
-
-
-def _locator_page(locator: dict[str, object]) -> int | None:
-    value = locator.get("page_number")
-    return value if isinstance(value, int) else None
-
-
-def _locator_fragment(locator: dict[str, object]) -> UUID | None:
-    value = locator.get("fragment_id")
-    if isinstance(value, UUID):
-        return value
-    if isinstance(value, str):
-        try:
-            return UUID(value)
-        except ValueError:
-            return None
-    return None
+def _row_order_key(row: ReaderConnectionRow) -> tuple[int, str]:
+    if row.anchor is not None and row.anchor.order_key is not None:
+        return (0, row.anchor.order_key)
+    return (1, row.connection.created_at.isoformat())
 
 
 def _locator_order_key(db: Session, locator: dict[str, object]) -> str | None:
-    page = _locator_page(locator)
-    if page is not None:
-        return f"pdf:{page:08d}"
-    fragment_id = _locator_fragment(locator)
+    fragment_id = locator_fragment(locator)
+    fragment_indexes: dict[str, int] = {}
     if fragment_id is not None:
         idx = db.scalar(text("SELECT idx FROM fragments WHERE id = :id"), {"id": fragment_id})
-        start = locator.get("start_offset")
-        return f"fragment:{int(idx or 0):010d}:{int(start) if isinstance(start, int) else 0:010d}"
-    start_ms = locator.get("t_start_ms")
-    if isinstance(start_ms, int):
-        return f"time:{start_ms:012d}"
-    return None
-
-
-def _decimal_key(value: object) -> str:
-    numeric = value if isinstance(value, Decimal) else Decimal(0)
-    return f"{numeric:012.4f}"
+        fragment_indexes[str(fragment_id)] = int(idx or 0)
+    return order_key_from_locator(locator, fragment_indexes)

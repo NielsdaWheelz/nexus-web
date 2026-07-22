@@ -90,6 +90,25 @@ describe("useDialogOverlay", () => {
     expect(opener()).toHaveFocus();
   });
 
+  it("prefers an explicit return-focus target over ambient focus", async () => {
+    const explicitTarget = document.createElement("button");
+    document.body.append(explicitTarget);
+    const { rerender, unmount } = render(
+      <Host active={false} onDismiss={vi.fn()} returnFocusTo={() => explicitTarget} />,
+    );
+    opener().focus();
+    rerender(<Host active onDismiss={vi.fn()} returnFocusTo={() => explicitTarget} />);
+    await waitFor(() => expect(first()).toHaveFocus());
+
+    rerender(
+      <Host active={false} onDismiss={vi.fn()} returnFocusTo={() => explicitTarget} />,
+    );
+    expect(explicitTarget).toHaveFocus();
+
+    unmount();
+    explicitTarget.remove();
+  });
+
   it("uses returnFocusFallback when the opener is disconnected at close time", async () => {
     const detachableOpener = document.createElement("button");
     document.body.append(detachableOpener);
@@ -115,6 +134,53 @@ describe("useDialogOverlay", () => {
 
     unmount();
     fallback.remove();
+  });
+
+  it("uses the fallback when an explicit target disconnects", async () => {
+    const explicitTarget = document.createElement("button");
+    const fallback = document.createElement("button");
+    document.body.append(explicitTarget, fallback);
+    const { rerender, unmount } = render(
+      <Host
+        active
+        onDismiss={vi.fn()}
+        returnFocusTo={() => explicitTarget}
+        returnFocusFallback={() => fallback}
+      />,
+    );
+    await waitFor(() => expect(first()).toHaveFocus());
+
+    explicitTarget.remove();
+    rerender(
+      <Host
+        active={false}
+        onDismiss={vi.fn()}
+        returnFocusTo={() => explicitTarget}
+        returnFocusFallback={() => fallback}
+      />,
+    );
+    expect(fallback).toHaveFocus();
+
+    unmount();
+    fallback.remove();
+  });
+
+  it("skips return focus when the destination already claimed it", async () => {
+    const destination = document.createElement("button");
+    document.body.append(destination);
+    const { rerender, unmount } = render(
+      <Host active={false} onDismiss={vi.fn()} skipReturnFocus={() => true} />,
+    );
+    opener().focus();
+    rerender(<Host active onDismiss={vi.fn()} skipReturnFocus={() => true} />);
+    await waitFor(() => expect(first()).toHaveFocus());
+    destination.focus();
+
+    rerender(<Host active={false} onDismiss={vi.fn()} skipReturnFocus={() => true} />);
+    expect(destination).toHaveFocus();
+
+    unmount();
+    destination.remove();
   });
 
   it("calls onDismiss and preventDefaults on Escape", async () => {
@@ -172,6 +238,33 @@ describe("useDialogOverlay", () => {
     expect(document.body.style.overflow).toBe("hidden");
 
     // Outer lock releases — the original value is restored.
+    rerender(
+      <>
+        <Host active={false} onDismiss={vi.fn()} />
+        <Host active={false} onDismiss={vi.fn()} />
+      </>,
+    );
+    expect(document.body.style.overflow).toBe("scroll");
+  });
+
+  it("keeps body locked when an underlying overlay releases first", async () => {
+    document.body.style.overflow = "scroll";
+    const { rerender } = render(
+      <>
+        <Host active onDismiss={vi.fn()} />
+        <Host active onDismiss={vi.fn()} />
+      </>,
+    );
+    await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
+
+    rerender(
+      <>
+        <Host active={false} onDismiss={vi.fn()} />
+        <Host active onDismiss={vi.fn()} />
+      </>,
+    );
+    expect(document.body.style.overflow).toBe("hidden");
+
     rerender(
       <>
         <Host active={false} onDismiss={vi.fn()} />

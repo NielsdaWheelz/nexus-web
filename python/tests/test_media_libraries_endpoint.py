@@ -44,8 +44,8 @@ def _attach_media_to_default_library(
     filing call can reach it. The actor-authorized filing command (spec S4.3
     rule 1) now requires the target to already be membership-reachable, so
     setup must establish that reachability directly (mirroring ingest) before
-    the REST call, which then exercises the documented idempotent
-    present/inserted outcome.
+    the REST call, which then exercises the documented idempotent inserted-only
+    outcome.
     """
     default_library_id = _bootstrap_user(auth_client, user_id)
     with direct_db.session() as session:
@@ -56,7 +56,7 @@ def _attach_media_to_default_library(
         json={"media_id": str(media_id)},
         headers=auth_headers(user_id),
     )
-    assert response.status_code == 201, (
+    assert response.status_code == 204, (
         f"default-library attach failed: {response.status_code} {response.text}"
     )
     return default_library_id
@@ -464,7 +464,7 @@ class TestSystemMediaDeletionGuards:
             json={"media_id": str(media_id)},
             headers=auth_headers(viewer_id),
         )
-        assert add_resp.status_code == 201, add_resp.text
+        assert add_resp.status_code == 204, add_resp.text
 
         detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id))
         assert detail_resp.status_code == 200, detail_resp.text

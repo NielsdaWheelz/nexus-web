@@ -21,7 +21,7 @@ def is_pdf_quote_text_ready(db: Session, media_id: UUID) -> bool:
     """Check if a single PDF media has full quote-text readiness.
 
     True iff:
-    1. media.plain_text is present and non-empty
+    1. media.plain_text has at least one canonical word
     2. media.page_count is present and >= 1
     3. pdf_page_text_spans row count == page_count (coverage check)
 
@@ -33,7 +33,7 @@ def is_pdf_quote_text_ready(db: Session, media_id: UUID) -> bool:
         text("""
             SELECT
                 m.page_count,
-                (m.plain_text IS NOT NULL AND length(m.plain_text) > 0) as has_text,
+                (m.plain_text_word_count > 0) as has_quote_text,
                 (SELECT count(*) FROM pdf_page_text_spans p WHERE p.media_id = m.id) as span_count
             FROM media m
             WHERE m.id = :media_id
@@ -44,9 +44,9 @@ def is_pdf_quote_text_ready(db: Session, media_id: UUID) -> bool:
     if row is None:
         return False
 
-    page_count, has_text, span_count = row
+    page_count, has_quote_text, span_count = row
 
-    if not has_text or page_count is None or page_count < 1:
+    if not has_quote_text or page_count is None or page_count < 1:
         return False
 
     if span_count != page_count:
@@ -78,7 +78,7 @@ def batch_pdf_quote_text_ready(
             SELECT
                 m.id,
                 m.page_count,
-                (m.plain_text IS NOT NULL AND length(m.plain_text) > 0) as has_text,
+                (m.plain_text_word_count > 0) as has_quote_text,
                 (SELECT count(*) FROM pdf_page_text_spans p WHERE p.media_id = m.id) as span_count
             FROM media m
             WHERE m.id = ANY(:media_ids)
@@ -89,8 +89,13 @@ def batch_pdf_quote_text_ready(
 
     readiness = {}
     for row in result.fetchall():
-        mid, page_count, has_text, span_count = row
-        if has_text and page_count is not None and page_count >= 1 and span_count == page_count:
+        mid, page_count, has_quote_text, span_count = row
+        if (
+            has_quote_text
+            and page_count is not None
+            and page_count >= 1
+            and span_count == page_count
+        ):
             readiness[mid] = True
         else:
             readiness[mid] = False

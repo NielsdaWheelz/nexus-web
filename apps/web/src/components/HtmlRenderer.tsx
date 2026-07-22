@@ -3,8 +3,9 @@
  *
  * This component renders sanitized HTML content from API-owned fields:
  * fragment/EPUB/transcript `html_sanitized` and podcast `description_html`.
- * Callers may apply local transforms that only annotate sanitized HTML, such
- * as highlight spans or podcast timestamp buttons.
+ * Callers may apply local transforms that annotate sanitized HTML, such as
+ * highlight spans or podcast timestamp buttons. This renderer may also apply
+ * an explicit heading-level projection beneath an owning route heading.
  *
  * Constraints:
  * - Do NOT perform additional client-side sanitization
@@ -14,7 +15,7 @@
  * ESLint exception: react/no-danger is disabled for this file only.
  */
 
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import {
@@ -41,9 +42,27 @@ interface HtmlRendererProps {
    * matching highlight element.
    */
   mediaId?: string;
+  /**
+   * Projects imported document headings beneath the route-level pane heading.
+   * IDs and all other attributes are preserved.
+   */
+  headingLevelOffset?: 1 | 2 | 3 | 4 | 5;
 }
 
 const PULSE_DURATION_MS = 1200;
+
+function projectHtmlHeadingLevels(
+  html: string,
+  offset: NonNullable<HtmlRendererProps["headingLevelOffset"]>,
+): string {
+  return html.replace(
+    /<(\/?)h([1-6])(?=[\s>])/gi,
+    (_match, closing: string, levelText: string) => {
+      const level = Number.parseInt(levelText, 10);
+      return `<${closing}h${Math.min(6, level + offset)}`;
+    },
+  );
+}
 
 /**
  * Renders sanitized HTML content.
@@ -51,7 +70,8 @@ const PULSE_DURATION_MS = 1200;
  * This is the ONLY component in the application that may use
  * dangerouslySetInnerHTML. All HTML rendered through this component
  * must come from an API-owned sanitized HTML field or be processed
- * by a local transform that only annotates already-sanitized HTML.
+ * by a local annotation transform. The optional heading projection changes
+ * semantics only; it preserves sanitized attributes and anchor IDs.
  *
  * @example
  * ```tsx
@@ -72,8 +92,16 @@ export default memo(function HtmlRenderer({
   htmlSanitized,
   className,
   mediaId,
+  headingLevelOffset,
 }: HtmlRendererProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const projectedHtml = useMemo(
+    () =>
+      headingLevelOffset
+        ? projectHtmlHeadingLevels(htmlSanitized, headingLevelOffset)
+        : htmlSanitized,
+    [headingLevelOffset, htmlSanitized],
+  );
 
   useReaderPulseHighlight(
     useCallback(
@@ -90,7 +118,9 @@ export default memo(function HtmlRenderer({
         for (const candidate of candidates) {
           const container = getPaneScrollContainer(candidate);
           if (container) {
-            scrollElementIntoPaneView(container, candidate, { block: "center" });
+            scrollElementIntoPaneView(container, candidate, {
+              block: "center",
+            });
           }
           candidate.classList.add(styles.pulsing);
           window.setTimeout(() => {
@@ -103,7 +133,7 @@ export default memo(function HtmlRenderer({
   );
 
   // Tag direct-child <p> elements so focus mode and reading metrics can target them.
-  // Runs after each render of htmlSanitized; safe and idempotent (same selector each time).
+  // Runs after each projected-HTML render; safe and idempotent (same selector each time).
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -112,7 +142,7 @@ export default memo(function HtmlRenderer({
         paragraph.setAttribute("data-paragraph", "true");
       }
     }
-  }, [htmlSanitized]);
+  }, [projectedHtml]);
 
   // Reflect non-collapsed selections inside this renderer so focus-mode dimming can suspend.
   useEffect(() => {
@@ -142,7 +172,7 @@ export default memo(function HtmlRenderer({
       ref={rootRef}
       className={`${styles.renderer} ${className || ""}`}
       data-testid="html-renderer"
-      dangerouslySetInnerHTML={{ __html: htmlSanitized }}
+      dangerouslySetInnerHTML={{ __html: projectedHtml }}
     />
   );
 });
@@ -161,7 +191,8 @@ function collectPulseCandidates(
   }
 
   const fragmentId =
-    locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets"
+    locator.type === "web_text_offsets" ||
+    locator.type === "epub_fragment_offsets"
       ? locator.fragment_id
       : null;
   if (fragmentId) {
@@ -171,12 +202,16 @@ function collectPulseCandidates(
     if (scoped.length > 0) return Array.from(scoped);
   }
   if (snippet) {
-    const all = root.querySelectorAll<HTMLElement>("[data-active-highlight-ids]");
+    const all = root.querySelectorAll<HTMLElement>(
+      "[data-active-highlight-ids]",
+    );
     const matches = Array.from(all).filter((element) =>
       element.textContent?.includes(snippet),
     );
     if (matches.length > 0) return matches;
   }
-  const fallback = root.querySelectorAll<HTMLElement>("[data-active-highlight-ids]");
+  const fallback = root.querySelectorAll<HTMLElement>(
+    "[data-active-highlight-ids]",
+  );
   return fallback.length > 0 ? [fallback[0]] : [];
 }

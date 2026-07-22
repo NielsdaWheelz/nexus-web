@@ -82,7 +82,7 @@ API_URL="${API_URL%/}"
 
 # A protected page that exists in apps/web/src/app/(authenticated).
 PROTECTED_PATH="/browse"
-DEFAULT_PROTECTED_PATH="/libraries"
+DEFAULT_PROTECTED_PATH="/lectern"
 # Routes that must stay reachable without an auth cookie.
 PUBLIC_PATHS="/login /terms /privacy /android"
 # A BFF route under /api/* that the middleware passes through to the proxy.

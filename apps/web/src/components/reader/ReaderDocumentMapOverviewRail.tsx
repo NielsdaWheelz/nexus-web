@@ -9,16 +9,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
-import { ListOrdered } from "lucide-react";
-import Button from "@/components/ui/Button";
 import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
 import { clamp } from "@/lib/clamp";
-import type {
-  ReaderDocumentMapLensId,
-  ReaderDocumentMapMarker,
-} from "@/lib/reader/documentMap";
+import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import { findScrollParent } from "./useAnchoredReaderProjection";
@@ -30,8 +25,7 @@ interface ReaderDocumentMapOverviewRailProps {
   markers: ReaderDocumentMapMarker[];
   contentRef: RefObject<HTMLElement | null>;
   documentSpan: { start: number; end: number };
-  onActivateMarker: (itemId: string, lensId: ReaderDocumentMapLensId) => void;
-  onOpenMap: () => void;
+  onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
 }
 
 interface Cluster {
@@ -44,7 +38,6 @@ export default function ReaderDocumentMapOverviewRail({
   contentRef,
   documentSpan,
   onActivateMarker,
-  onOpenMap,
 }: ReaderDocumentMapOverviewRailProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const hoverDelayRef = useRef<number | null>(null);
@@ -202,7 +195,7 @@ export default function ReaderDocumentMapOverviewRail({
     (index: number) => {
       const primary = clusters[index]?.members[0];
       if (primary) {
-        onActivateMarker(primary.item_id, primary.lens_id);
+        onActivateMarker(primary);
       }
     },
     [clusters, onActivateMarker],
@@ -247,17 +240,6 @@ export default function ReaderDocumentMapOverviewRail({
       role="region"
       aria-label="Document Map overview"
     >
-      <div className={styles.openSlot}>
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Open Document Map"
-          onClick={onOpenMap}
-        >
-          <ListOrdered size={14} aria-hidden="true" />
-        </Button>
-      </div>
       <div
         ref={trackRef}
         className={styles.track}
@@ -325,11 +307,11 @@ export default function ReaderDocumentMapOverviewRail({
 }
 
 function markerColor(marker: ReaderDocumentMapMarker): string {
-  if (marker.tone === "highlight") return "var(--highlight-yellow)";
-  if (marker.tone === "citation") return "var(--highlight-purple)";
-  if (marker.tone === "connection") return "var(--highlight-blue)";
-  if (marker.tone === "chat") return "var(--highlight-green)";
-  if (marker.tone === "warning") return "var(--highlight-pink)";
+  if (marker.tone === "Highlight") return "var(--highlight-yellow)";
+  if (marker.tone === "Citation") return "var(--highlight-purple)";
+  if (marker.tone === "Link") return "var(--highlight-blue)";
+  if (marker.tone === "Synapse") return "var(--highlight-green)";
+  if (marker.tone === "Warning") return "var(--highlight-pink)";
   return "var(--edge-strong)";
 }
 
@@ -344,7 +326,9 @@ function ClusterPreview({ members }: { members: ReaderDocumentMapMarker[] }) {
         {members.map((marker) => (
           <li key={marker.id}>
             <strong>{marker.label}</strong>
-            {marker.preview ? <span>{marker.preview}</span> : null}
+            {marker.preview.kind === "Present" ? (
+              <span>{marker.preview.value}</span>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -355,7 +339,9 @@ function ClusterPreview({ members }: { members: ReaderDocumentMapMarker[] }) {
   return (
     <div className={styles.previewRich}>
       <strong>{marker.label}</strong>
-      {marker.preview ? <p className={styles.previewNote}>{marker.preview}</p> : null}
+      {marker.preview.kind === "Present" ? (
+        <p className={styles.previewNote}>{marker.preview.value}</p>
+      ) : null}
     </div>
   );
 }

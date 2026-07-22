@@ -1,96 +1,220 @@
 "use client";
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
-import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
+import type {
+  ReaderEvidence,
+  ReaderEvidenceHighlight,
+  ReaderEvidenceLink,
+  ReaderEvidenceObject,
+} from "@/lib/reader/documentMap";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import EvidencePaneSurface from "./EvidencePaneSurface";
+import type { EvidenceHighlightActions } from "./EvidenceItemRow";
 
-vi.mock("@/components/notes/HighlightNoteEditor", () => ({
-  default: function MockHighlightNoteEditor() {
-    return <div data-testid="mock-note-editor" />;
+const absent = { kind: "Absent" } as const;
+const mediaObject: ReaderEvidenceObject = {
+  ref: "media:linked",
+  kind: "Media",
+  label: "Linked work",
+  excerpt: { kind: "Present", value: "A linked excerpt" },
+  activation: {
+    resourceRef: "media:linked",
+    kind: "route",
+    href: "/media/linked",
+    unresolvedReason: null,
   },
-}));
+};
 
-const fetchNoteBlockMock = vi.fn();
-vi.mock("@/lib/notes/api", () => ({
-  fetchNoteBlock: (blockId: string) => fetchNoteBlockMock(blockId),
-}));
+function highlight(id: string): ReaderEvidenceHighlight {
+  return {
+    id: `highlight:${id}`,
+    kind: "Highlight",
+    highlight_id: id,
+    label: `Highlight ${id}`,
+    excerpt: { kind: "Present", value: `Quote ${id}` },
+    associations: [],
+    quote: `Quote ${id}`,
+    prefix: "",
+    suffix: "",
+    color: "yellow",
+    created_at: "2026-07-20T00:00:00Z",
+    updated_at: "2026-07-20T00:00:00Z",
+    author_user_id: "user-1",
+    is_owner: true,
+  };
+}
 
-vi.stubGlobal(
-  "ResizeObserver",
-  class {
-    observe = vi.fn();
-    disconnect = vi.fn();
-  },
-);
+function evidence(): ReaderEvidence {
+  const first = highlight("h1");
+  first.associations = [
+    {
+      relationship: "DirectlyAttached",
+      object: mediaObject,
+      edge_id: "edge-associated",
+      role: "context",
+      origin: "user",
+      direction: "Outgoing",
+    },
+  ];
+  return {
+    counts: {
+      highlights: 2,
+      citations: 2,
+      links: 1,
+      synapses: 1,
+      passages: 5,
+      document: 1,
+    },
+    passage_groups: [
+      {
+        locus_ref: "highlight:h1",
+        resolution: {
+          kind: "Resolved",
+          anchor: {
+            locator: {
+              type: "web_text_offsets",
+              media_id: "media-1",
+              fragment_id: "fragment-1",
+              start_offset: 1,
+              end_offset: 8,
+            },
+            passage_anchor_id: null,
+          },
+          order_key: "document:0001",
+        },
+        target_excerpt: { kind: "Present", value: "Quote h1" },
+        items: [
+          first,
+          highlight("h2"),
+          {
+            id: "source-reference:ref-1",
+            kind: "SourceReference",
+            label: "Footnote one",
+            excerpt: absent,
+            associations: [],
+            stable_key: "ref-1",
+            apparatus_kind: "footnote_ref",
+            confidence: "exact",
+            targets: [],
+          },
+          {
+            id: "generated-citation:edge-c1",
+            kind: "GeneratedCitation",
+            label: "Generated citation",
+            excerpt: absent,
+            associations: [{ relationship: "AuthoredIn", object: mediaObject }],
+            edge_id: "edge-c1",
+            role: "context",
+          },
+        ],
+        also_references: [
+          { relationship: "AlsoReferences", object: mediaObject },
+        ],
+      },
+      {
+        locus_ref: "evidence_span:stale",
+        resolution: { kind: "Unavailable", reason: "Stale" },
+        target_excerpt: absent,
+        items: [
+          {
+            id: "synapse:edge-s1",
+            kind: "Synapse",
+            label: "Resonance",
+            excerpt: absent,
+            associations: [],
+            edge_id: "edge-s1",
+            role: "context",
+            rationale: "These passages resonate.",
+            object: mediaObject,
+          },
+        ],
+        also_references: [],
+      },
+    ],
+    document_items: [
+      {
+        id: "link:edge-l1",
+        kind: "Link",
+        label: "Document relation",
+        excerpt: absent,
+        associations: [],
+        edge_id: "edge-l1",
+        role: "context",
+        origin: "user",
+        object: mediaObject,
+      },
+    ],
+  };
+}
 
-function EvidencePaneSurfaceHarness({
-  highlights = [],
-  readerApparatusRows = [],
-  connectionRows = [],
-  readerApparatus = null,
-  isMobile = true,
+function actions(): EvidenceHighlightActions {
+  return {
+    canQuoteToChat: false,
+    focusedHighlightId: null,
+    isEditingBounds: false,
+    isReflowable: true,
+    onFocusHighlight: vi.fn(),
+    onQuoteToChat: vi.fn(),
+    onLink: vi.fn(),
+    onColorChange: vi.fn(async () => {}),
+    onDelete: vi.fn(async () => {}),
+    onStartEditBounds: vi.fn(),
+    onCancelEditBounds: vi.fn(),
+    onNoteSave: vi.fn(async (_highlightId, noteBlockId) => ({
+      note_block_id: noteBlockId ?? "note-1",
+      body_pm_json: {},
+      body_text: "",
+    })),
+    onNoteDelete: vi.fn(async () => {}),
+    onOpenNoteLink: vi.fn(),
+  };
+}
+
+function Harness({
+  source = evidence(),
+  activeItemId = null,
+  followGeneration = 0,
+  aggregateStatus = "ready",
+  activatePassage = vi.fn(() => true),
   onRemoveLink = vi.fn(),
   onSaveLinkNote = vi.fn().mockResolvedValue({ note_block_id: "nb-new" }),
   onDeleteLinkNote = vi.fn().mockResolvedValue(undefined),
-}: Partial<
-  Pick<
-    React.ComponentProps<typeof EvidencePaneSurface>,
-    | "highlights"
-    | "readerApparatusRows"
-    | "connectionRows"
-    | "readerApparatus"
-    | "isMobile"
-    | "onRemoveLink"
-    | "onSaveLinkNote"
-    | "onDeleteLinkNote"
-  >
->) {
-  const contentRef = useRef<HTMLDivElement>(null);
+}: {
+  source?: ReaderEvidence | null;
+  activeItemId?: string | null;
+  followGeneration?: number;
+  aggregateStatus?: "ready" | "empty" | "partial";
+  activatePassage?: (
+    group: ReaderEvidence["passage_groups"][number],
+  ) => boolean;
+  onRemoveLink?: (item: ReaderEvidenceLink) => void;
+  onSaveLinkNote?: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  onDeleteLinkNote?: (linkId: string) => Promise<void>;
+}) {
   const filters = useEvidenceFilters();
   return (
     <FeedbackProvider>
-      <div ref={contentRef} style={{ height: 700 }}>
-        <p>Reader content</p>
-      </div>
       <EvidencePaneSurface
-        contentRef={contentRef}
+        evidence={source}
         filters={filters}
-        onLink={vi.fn()}
-        highlights={highlights}
-        readerApparatusRows={readerApparatusRows}
-        connectionRows={connectionRows}
-        readerApparatus={readerApparatus}
-        focusedApparatusItemId={null}
-        focusedHighlightId={null}
-        isReflowable
-        isEditingBounds={false}
-        hoveredId={null}
-        canQuoteToChat={false}
+        activeItemId={activeItemId}
+        followGeneration={followGeneration}
+        hoveredItemId={null}
         loading={false}
         error={null}
-        measureKey="test"
-        layoutVersion={0}
-        isMobile={isMobile}
-        onHighlightClick={vi.fn()}
-        onFocusHighlight={vi.fn()}
-        onHoverHighlight={vi.fn()}
-        onQuoteToChat={vi.fn()}
-        onColorChange={vi.fn()}
-        onDelete={vi.fn()}
-        onStartEditBounds={vi.fn()}
-        onCancelEditBounds={vi.fn()}
-        onNoteSave={vi.fn()}
-        onNoteDelete={vi.fn()}
-        onOpenConversation={vi.fn()}
-        onOpenNoteLink={vi.fn()}
-        onApparatusRowActivate={vi.fn()}
-        onOpenConnectionSource={vi.fn()}
-        onActivateConnectionTarget={vi.fn()}
+        aggregateStatus={aggregateStatus}
+        highlightActions={actions()}
+        onActivatePassage={activatePassage}
+        onActivateObject={vi.fn()}
+        onActivateSourceTarget={vi.fn()}
+        onHoverItem={vi.fn()}
         onDismissSynapse={vi.fn()}
         onRemoveLink={onRemoveLink}
         onSaveLinkNote={onSaveLinkNote}
@@ -100,290 +224,240 @@ function EvidencePaneSurfaceHarness({
   );
 }
 
-// Use React here to avoid a lint error from JSX without the import
-import React from "react";
-import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-
-function pdfHighlightRow(id: string): AnchoredReaderRow {
-  return {
-    id,
-    exact: `highlight ${id}`,
-    color: "yellow",
-    page_number: 1,
-    quads: [{ x1: 0, y1: 0, x2: 1, y2: 0, x3: 1, y3: 1, x4: 0, y4: 1 }],
-    stable_order_key: `000001:${id}`,
-    is_owner: true,
-  };
-}
-
 describe("EvidencePaneSurface", () => {
-  describe("AC-15 empty state", () => {
-    it("shows the empty-state message when all source arrays are empty", () => {
-      render(<EvidencePaneSurfaceHarness />);
-      expect(
-        screen.getByText("No highlights, citations, or connections in this context."),
-      ).toBeInTheDocument();
-    });
+  it("uses one accessible scope tabset and keeps passage failures visible", async () => {
+    render(<Harness />);
+    expect(screen.getByRole("tab", { name: /Passages 5/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Footnote one")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Needs attention" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The source changed after this target was created."),
+    ).toBeInTheDocument();
 
-    it("renders the Evidence heading even when empty", () => {
-      render(<EvidencePaneSurfaceHarness />);
-      expect(screen.getByRole("heading", { name: "Evidence" })).toBeInTheDocument();
-    });
-
-    it("renders all three filter toggles in the initial state", () => {
-      render(<EvidencePaneSurfaceHarness />);
-      const nav = screen.getByRole("navigation", { name: "Evidence filter" });
-      const buttons = within(nav).getAllByRole("button");
-      expect(buttons.map((b) => b.textContent)).toEqual([
-        "Highlights",
-        "Citations",
-        "Connections",
-      ]);
-      for (const button of buttons) {
-        expect(button).toHaveAttribute("aria-pressed", "true");
-      }
-    });
+    await userEvent.click(
+      screen.getByRole("tab", { name: /Whole document 1/ }),
+    );
+    expect(screen.getByText("Document relation")).toBeInTheDocument();
+    expect(screen.queryByText("Footnote one")).not.toBeInTheDocument();
   });
 
-  describe("loading and error states", () => {
-    it("renders a loading notice when loading=true", () => {
-      const contentRef = { current: null };
-      render(
-        <FeedbackProvider>
-          <EvidencePaneSurface
-            contentRef={contentRef as React.RefObject<HTMLElement | null>}
-            filters={{
-              filter: { highlight: true, apparatus: true, connection: true },
-              toggleFilter: vi.fn(),
-            }}
-            onLink={vi.fn()}
-            highlights={[]}
-            readerApparatusRows={[]}
-            connectionRows={[]}
-            readerApparatus={null}
-            focusedApparatusItemId={null}
-            focusedHighlightId={null}
-            isReflowable
-            isEditingBounds={false}
-            hoveredId={null}
-            canQuoteToChat={false}
-            loading
-            error={null}
-            measureKey="test"
-            layoutVersion={0}
-            isMobile
-            onHighlightClick={vi.fn()}
-            onFocusHighlight={vi.fn()}
-            onHoverHighlight={vi.fn()}
-            onQuoteToChat={vi.fn()}
-            onColorChange={vi.fn()}
-            onDelete={vi.fn()}
-            onStartEditBounds={vi.fn()}
-            onCancelEditBounds={vi.fn()}
-            onNoteSave={vi.fn()}
-            onNoteDelete={vi.fn()}
-            onOpenConversation={vi.fn()}
-            onOpenNoteLink={vi.fn()}
-            onApparatusRowActivate={vi.fn()}
-            onOpenConnectionSource={vi.fn()}
-            onActivateConnectionTarget={vi.fn()}
-            onDismissSynapse={vi.fn()}
-            onRemoveLink={vi.fn()}
-            onSaveLinkNote={vi.fn()}
-            onDeleteLinkNote={vi.fn()}
-          />
-        </FeedbackProvider>,
+  it("supports independent semantic filters and an all-off recovery", async () => {
+    render(<Harness />);
+    const filterGroup = screen.getByRole("group", { name: "Evidence types" });
+    for (const label of ["Highlights", "Citations", "Links", "Synapses"]) {
+      await userEvent.click(
+        within(filterGroup).getByRole("button", { name: new RegExp(label) }),
       );
-      expect(screen.getByText("Loading evidence...")).toBeInTheDocument();
-    });
-  });
-
-  describe("filter toggles", () => {
-    it("deactivates a filter category when clicked and re-activates on second click", async () => {
-      render(<EvidencePaneSurfaceHarness />);
-      const user = userEvent.setup();
-      const highlightsToggle = screen.getByRole("button", { name: "Highlights" });
-      expect(highlightsToggle).toHaveAttribute("aria-pressed", "true");
-      await user.click(highlightsToggle);
-      expect(highlightsToggle).toHaveAttribute("aria-pressed", "false");
-      await user.click(highlightsToggle);
-      expect(highlightsToggle).toHaveAttribute("aria-pressed", "true");
-    });
-  });
-
-  describe("accessibility landmarks", () => {
-    it("renders a region landmark labelled Evidence", () => {
-      render(<EvidencePaneSurfaceHarness />);
-      expect(screen.getByRole("region", { name: "Evidence" })).toBeInTheDocument();
-    });
-  });
-
-  describe("highlight row dedup", () => {
-    it("renders one row per highlight id even if a highlight is supplied twice", () => {
-      render(
-        <EvidencePaneSurfaceHarness
-          highlights={[pdfHighlightRow("dup-1"), pdfHighlightRow("dup-1")]}
-        />,
-      );
-      expect(
-        screen.getAllByTestId("evidence-highlight-row-dup-1"),
-      ).toHaveLength(1);
-    });
-
-    it("renders a distinct row for each unique highlight id", () => {
-      render(
-        <EvidencePaneSurfaceHarness
-          highlights={[pdfHighlightRow("a"), pdfHighlightRow("b")]}
-        />,
-      );
-      expect(screen.getByTestId("evidence-highlight-row-a")).toBeInTheDocument();
-      expect(screen.getByTestId("evidence-highlight-row-b")).toBeInTheDocument();
-    });
-  });
-
-  describe("user_link connection rows", () => {
-    function userLinkRow(opts: {
-      edgeId: string;
-      kind: "context" | "supports" | "contradicts";
-      linkNote?: {
-        ref: string;
-        note_block_id: string;
-        preview: string | null;
-      } | null;
-    }): ReaderConnectionRow {
-      return {
-        id: `edge:${opts.edgeId}`,
-        connection: {
-          edge_id: opts.edgeId,
-          direction: "undirected",
-          kind: opts.kind,
-          origin: "user",
-          snapshot: null,
-          source_order_key: null,
-          target_order_key: null,
-          ordinal: null,
-          source_ref: "media:src",
-          target_ref: "media:dst",
-          source: {} as ReaderConnectionRow["connection"]["source"],
-          target: {} as ReaderConnectionRow["connection"]["target"],
-          other: { ref: "media:other" } as ReaderConnectionRow["connection"]["other"],
-          citation: null,
-          link_note: opts.linkNote ?? null,
-          created_at: "2026-07-20T00:00:00Z",
-        },
-        anchor: null,
-        source_category: "user_link",
-        title: "Other Work",
-        subtitle: null,
-        excerpt: null,
-        activation: {} as ReaderConnectionRow["activation"],
-        href: "/media/other#p",
-      };
     }
+    expect(
+      screen.getByText("No evidence matches these filters."),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(screen.getByText("Footnote one")).toBeInTheDocument();
+  });
 
-    it("shows Remove (not Note) on a stance row and calls onRemoveLink with the row", async () => {
+  it("keeps target-owned passage identity and activity stable across filters", async () => {
+    const source = evidence();
+    source.passage_groups[0]!.target_excerpt = {
+      kind: "Present",
+      value: "Canonical target text",
+    };
+    render(<Harness source={source} activeItemId="highlight:h1" />);
+    const jump = screen.getByRole("button", {
+      name: "Jump to Canonical target text",
+    });
+    expect(jump).toHaveAttribute("aria-current", "location");
+
+    await userEvent.click(screen.getByRole("button", { name: /Highlights 2/ }));
+
+    expect(screen.getByText("Canonical target text")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Jump to Canonical target text" }),
+    ).toHaveAttribute("aria-current", "location");
+  });
+
+  it("resumes passage follow only after a successful parent activation", async () => {
+    const failedActivation = vi.fn(() => false);
+    const { rerender } = render(
+      <Harness
+        activeItemId="highlight:h1"
+        followGeneration={1}
+        activatePassage={failedActivation}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("tab", { name: /Whole document 1/ }),
+    );
+    fireEvent.wheel(screen.getByText("Document relation"));
+    expect(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    );
+    expect(screen.getByRole("tab", { name: /Passages 5/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    const passageList = screen.getByLabelText("Passage evidence");
+    fireEvent.pointerDown(passageList);
+    expect(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    );
+    passageList.focus();
+    fireEvent.keyDown(passageList, { key: "PageDown" });
+    expect(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    );
+
+    fireEvent.wheel(screen.getAllByText("Quote h1")[0]!);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Jump to Quote h1" }),
+    );
+    expect(failedActivation).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "Return to current passage" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: /Whole document 1/ }),
+    );
+    fireEvent.wheel(screen.getByText("Document relation"));
+    rerender(
+      <Harness
+        activeItemId="highlight:h1"
+        followGeneration={2}
+        activatePassage={failedActivation}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /Passages 5/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Return to current passage" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a partial aggregate without hiding available evidence", () => {
+    render(<Harness aggregateStatus="partial" />);
+    expect(
+      screen.getByText("Some document evidence is unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Footnote one")).toBeInTheDocument();
+  });
+
+  it("opens associations lazily and mounts at most one highlight editor", async () => {
+    render(<Harness />);
+    expect(screen.queryByText("A linked excerpt")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "1 linked object" })[0]!,
+    );
+    expect(screen.getByText("A linked excerpt")).toBeInTheDocument();
+
+    const actionMenus = screen.getAllByRole("button", {
+      name: "Highlight actions",
+    });
+    await userEvent.click(actionMenus[0]!);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Add note" }));
+    expect(
+      screen.getAllByRole("textbox", { name: "Highlight note" }),
+    ).toHaveLength(1);
+    await userEvent.click(actionMenus[1]!);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Add note" }));
+    expect(
+      screen.getAllByRole("textbox", { name: "Highlight note" }),
+    ).toHaveLength(1);
+  });
+
+  it("distinguishes an empty corpus from a filtered empty view", () => {
+    render(
+      <Harness
+        source={{
+          counts: {
+            highlights: 0,
+            citations: 0,
+            links: 0,
+            synapses: 0,
+            passages: 0,
+            document: 0,
+          },
+          passage_groups: [],
+          document_items: [],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "No highlights, citations, links, or Synapses in this document.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("distinguishes an intrinsically empty scope from a filtered scope", async () => {
+    const onlyPassages = evidence();
+    onlyPassages.document_items = [];
+    onlyPassages.counts.document = 0;
+    onlyPassages.counts.links = 0;
+    render(<Harness source={onlyPassages} />);
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: /Whole document 0/ }),
+    );
+    expect(
+      screen.getByText("No whole-document evidence in this document."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show all" }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("stable user Link controls", () => {
+    it("removes a stable user Link via onRemoveLink with the Link fact", async () => {
       const onRemoveLink = vi.fn();
-      const row = userLinkRow({ edgeId: "e-stance", kind: "supports" });
-      render(
-        <EvidencePaneSurfaceHarness connectionRows={[row]} onRemoveLink={onRemoveLink} />,
+      render(<Harness onRemoveLink={onRemoveLink} />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
       );
-      const user = userEvent.setup();
-      expect(
-        screen.queryByRole("button", { name: /add note|edit note/i }),
-      ).not.toBeInTheDocument();
-      await user.click(
-        screen.getByRole("button", { name: "Remove connection to Other Work" }),
+      await userEvent.click(
+        screen.getByRole("button", { name: "Remove link Document relation" }),
       );
-      expect(onRemoveLink).toHaveBeenCalledWith(expect.objectContaining({ id: row.id }));
+      expect(onRemoveLink).toHaveBeenCalledWith(
+        expect.objectContaining({ edge_id: "edge-l1", kind: "Link" }),
+      );
     });
 
-    it("shows Remove and Add note on a neutral (context) Link row without a note", async () => {
-      const onRemoveLink = vi.fn();
-      const row = userLinkRow({ edgeId: "e-link", kind: "context", linkNote: null });
-      render(
-        <EvidencePaneSurfaceHarness connectionRows={[row]} onRemoveLink={onRemoveLink} />,
+    it("toggles a single link-note editor from the Link row", async () => {
+      render(<Harness />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
       );
-      const user = userEvent.setup();
+      const noteButton = screen.getByRole("button", {
+        name: "Note on link Document relation",
+      });
+      await userEvent.click(noteButton);
       expect(
-        screen.getByRole("button", { name: "Add note to link to Other Work" }),
+        screen.getByRole("button", { name: "Done editing note" }),
       ).toBeInTheDocument();
-      await user.click(
-        screen.getByRole("button", { name: "Remove connection to Other Work" }),
+      await userEvent.click(
+        screen.getByRole("button", { name: "Done editing note" }),
       );
-      expect(onRemoveLink).toHaveBeenCalledWith(expect.objectContaining({ id: row.id }));
-    });
-
-    it("adding a note renders the editor immediately with no fetch (nothing to lose)", async () => {
-      const row = userLinkRow({ edgeId: "e-link", kind: "context", linkNote: null });
-      render(<EvidencePaneSurfaceHarness connectionRows={[row]} />);
-      const user = userEvent.setup();
-      await user.click(
-        screen.getByRole("button", { name: "Add note to link to Other Work" }),
-      );
-      expect(screen.getByTestId("mock-note-editor")).toBeInTheDocument();
-      expect(fetchNoteBlockMock).not.toHaveBeenCalled();
-    });
-
-    it("editing an existing note fetches the full body before showing the editor", async () => {
-      let resolveFetch!: (block: unknown) => void;
-      fetchNoteBlockMock.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveFetch = resolve;
-        }),
-      );
-      const row = userLinkRow({
-        edgeId: "e-link",
-        kind: "context",
-        linkNote: { ref: "note_block:nb-1", note_block_id: "nb-1", preview: "full…" },
-      });
-      render(<EvidencePaneSurfaceHarness connectionRows={[row]} />);
-      const user = userEvent.setup();
-      await user.click(
-        screen.getByRole("button", { name: "Edit note on link to Other Work" }),
-      );
-      expect(screen.getByText("Loading note…")).toBeInTheDocument();
-      expect(fetchNoteBlockMock).toHaveBeenCalledWith("nb-1");
-      resolveFetch({
-        id: "nb-1",
-        parentBlockId: null,
-        orderKey: null,
-        bodyPmJson: { type: "doc" },
-        bodyText: "full body",
-        collapsed: false,
-        children: [],
-      });
-      expect(await screen.findByTestId("mock-note-editor")).toBeInTheDocument();
-      expect(screen.queryByText("Loading note…")).not.toBeInTheDocument();
-    });
-
-    it("Remove note calls onDeleteLinkNote with the link id", async () => {
-      fetchNoteBlockMock.mockResolvedValueOnce({
-        id: "nb-1",
-        parentBlockId: null,
-        orderKey: null,
-        bodyPmJson: { type: "doc" },
-        bodyText: "full body",
-        collapsed: false,
-        children: [],
-      });
-      const onDeleteLinkNote = vi.fn().mockResolvedValue(undefined);
-      const row = userLinkRow({
-        edgeId: "e-link",
-        kind: "context",
-        linkNote: { ref: "note_block:nb-1", note_block_id: "nb-1", preview: "full…" },
-      });
-      render(
-        <EvidencePaneSurfaceHarness
-          connectionRows={[row]}
-          onDeleteLinkNote={onDeleteLinkNote}
-        />,
-      );
-      const user = userEvent.setup();
-      await user.click(
-        screen.getByRole("button", { name: "Edit note on link to Other Work" }),
-      );
-      await user.click(await screen.findByRole("button", { name: "Remove note" }));
-      expect(onDeleteLinkNote).toHaveBeenCalledWith("e-link");
+      expect(
+        screen.queryByRole("button", { name: "Done editing note" }),
+      ).not.toBeInTheDocument();
     });
   });
 });

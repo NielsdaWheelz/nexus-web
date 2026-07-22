@@ -3,6 +3,10 @@
 import { useId, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import { useWalknoteSession } from "@/lib/walknotes/walknoteSession";
 import { formatTranscriptTimestampMs } from "@/lib/media/transcriptView";
 import styles from "./WalknoteReviewPanel.module.css";
@@ -27,7 +31,7 @@ export default function WalknoteReviewPanel({
   const [isMatching, setIsMatching] = useState(false);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
 
-  useDialogOverlay({
+  const overlay = useDialogOverlay({
     ref: panelRef,
     active: true,
     onDismiss: onClose,
@@ -78,12 +82,17 @@ export default function WalknoteReviewPanel({
   };
 
   return (
-    <div className={styles.overlay} role="presentation" onClick={onClose}>
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.overlay}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        role="presentation"
+        onClick={onClose}
+      >
       <section
         ref={panelRef}
         className={styles.panel}
         role="dialog"
-        aria-modal="true"
         aria-labelledby={titleId}
         onClick={(event) => event.stopPropagation()}
       >
@@ -168,7 +177,8 @@ export default function WalknoteReviewPanel({
             Discard all
           </Button>
         </footer>
-      </section>
-    </div>
+        </section>
+      </div>
+    </ModalLayerProvider>
   );
 }

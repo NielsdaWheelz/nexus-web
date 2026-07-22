@@ -286,7 +286,7 @@ async function putReaderState(
   const current = await fetchReaderState(page, mediaId);
   const baseRevision = current.state === "Empty" ? 0 : current.revision;
   const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: { cursor: { locator, base_revision: baseRevision } },
+    data: { locator, base_revision: baseRevision },
     headers: stateChangingApiHeaders(),
   });
   const body = await response.text();
@@ -372,9 +372,11 @@ async function readLinkedItemOrder(
     }
 
     const rowIds = Array.from(
-      linkedContainer.querySelectorAll<HTMLElement>("[data-highlight-id]")
+      linkedContainer.querySelectorAll<HTMLElement>(
+        '[data-evidence-item-id^="highlight:"]',
+      ),
     )
-      .map((row) => row.dataset.highlightId ?? null)
+      .map((row) => row.dataset.evidenceItemId?.replace(/^highlight:/, "") ?? null)
       .filter((id): id is string => id !== null);
 
     return {
@@ -430,11 +432,19 @@ async function expectHighlightRowVisible(
   await expect(
     page.getByRole("menuitem", { name: "Quote to existing chat" })
   ).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Edit bounds" })).toBeVisible();
+  const editBounds = page.getByRole("menuitemcheckbox", {
+    name: "Edit bounds",
+    exact: true,
+  });
+  await expect(editBounds).toBeVisible();
+  await expect(editBounds).toHaveAttribute("aria-checked", "false");
   await expect(page.getByRole("menuitem", { name: "Delete highlight" })).toBeVisible();
 }
 
-async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<number | null> {
+async function readAnchorCenteringError(
+  page: Page,
+  highlightId: string,
+): Promise<number | null> {
   return activeWorkspacePane(page).evaluate((pane, id) => {
     const contentRoot = pane.querySelector<HTMLElement>('div[class*="fragments"]');
     if (!contentRoot) {
@@ -463,8 +473,26 @@ async function readAnchorCenterOffset(page: Page, highlightId: string): Promise<
 
     const scrollerRect = scroller.getBoundingClientRect();
     const anchorRect = anchor.getBoundingClientRect();
-    const anchorCenter = anchorRect.top - scrollerRect.top + anchorRect.height / 2;
-    return Math.abs(anchorCenter - scroller.clientHeight / 2);
+    // A target near either document edge cannot physically reach the viewport
+    // center. Compare against the closest centered position the scroller can
+    // achieve instead of a viewport-height-dependent pixel threshold.
+    const anchorCenterInScrollContent =
+      anchorRect.top -
+      scrollerRect.top +
+      scroller.scrollTop +
+      anchorRect.height / 2;
+    const maxScrollTop = Math.max(
+      0,
+      scroller.scrollHeight - scroller.clientHeight,
+    );
+    const idealScrollTop = Math.min(
+      maxScrollTop,
+      Math.max(
+        0,
+        anchorCenterInScrollContent - scroller.clientHeight / 2,
+      ),
+    );
+    return Math.abs(scroller.scrollTop - idealScrollTop);
   }, highlightId);
 }
 
@@ -895,41 +923,141 @@ test.describe("epub", () => {
     page,
   }, testInfo) => {
     const seed = readSeededEpubMedia();
-    const firstSection = await findSectionByLabel(page, seed.media_id, seed.chapter_titles[0]);
+    const firstSection = await findSectionByLabel(
+      page,
+      seed.media_id,
+      seed.chapter_titles[0],
+    );
     await page.setViewportSize({ width: 390, height: 844 });
-    const activePane = await gotoEpubReader(page, testInfo, seed.media_id, firstSection.section_id);
+    const activePane = await gotoEpubReader(
+      page,
+      testInfo,
+      seed.media_id,
+      firstSection.section_id,
+    );
 
     await expect(
-      activePane.getByRole("heading", { name: seed.chapter_titles[0] })
+      activePane.getByRole("heading", { name: seed.chapter_titles[0] }),
     ).toBeVisible({ timeout: 15_000 });
 
-    let anchorLeaf = activePane.getByRole("button", { name: seed.toc_anchor_label });
-    if (
-      (await anchorLeaf.count()) === 0 ||
-      !(await anchorLeaf.first().isVisible().catch(() => false))
-    ) {
-      const contentsButton = activePane.getByRole("button", { name: "Document Map" });
-      await expect(contentsButton).toBeVisible();
-      await contentsButton.click();
-      const contentsDialog = page.getByRole("dialog", { name: "Contents" });
-      await expect(contentsDialog).toBeVisible();
-      anchorLeaf = contentsDialog.getByRole("button", { name: seed.toc_anchor_label });
-    }
+    const paneId = await activePane.getAttribute("data-pane-id");
+    expect(paneId).toBeTruthy();
+    const mobileChrome = page.locator(`[data-pane-chrome-for="${paneId}"]`);
+    await expect(mobileChrome).toHaveCount(1);
+    const paneOptions = mobileChrome.getByRole("button", {
+      name: "Pane options",
+      exact: true,
+    });
+    await expect(paneOptions).toHaveCount(1);
+    await expect(
+      activePane.getByRole("button", { name: "Document Map", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId("reader-document-map-overview-rail"),
+    ).toHaveCount(0);
+
+    await paneOptions.click();
+    const contentsButton = page.getByRole("menuitem", {
+      name: "Show Document Map",
+      exact: true,
+    });
+    await expect(contentsButton).toHaveCount(1);
+    await expect(contentsButton).not.toHaveAttribute("aria-expanded");
+    await expect(contentsButton).not.toHaveAttribute("aria-controls");
+    await contentsButton.click();
+    const contentsDialog = page.getByRole("dialog", {
+      name: "Contents",
+      exact: true,
+    });
+    await expect(contentsDialog).toHaveCount(1);
+    await expect(contentsDialog).toHaveAttribute(
+      "id",
+      `pane-${paneId}-secondary-reader-tools`,
+    );
+    const selectedContentsTab = contentsDialog.getByRole("tab", {
+      name: "Contents",
+      exact: true,
+    });
+    await expect(selectedContentsTab).toHaveAttribute("aria-selected", "true");
+    await expect(selectedContentsTab).toBeFocused();
+    const sheetOptions = contentsDialog.getByRole("button", {
+      name: "Pane options",
+      exact: true,
+    });
+    await expect(sheetOptions).toHaveCount(1);
+    await sheetOptions.click();
+    const hideDocumentMap = contentsDialog.getByRole("menuitem", {
+      name: "Hide Document Map",
+      exact: true,
+    });
+    await expect(hideDocumentMap).toHaveCount(1);
+    await expect(hideDocumentMap).not.toHaveAttribute("aria-expanded");
+    await expect(hideDocumentMap).not.toHaveAttribute("aria-controls");
+
+    const creditsItem = contentsDialog.getByRole("menuitem", {
+      name: "Credits…",
+      exact: true,
+    });
+    await expect(creditsItem).toHaveCount(1);
+    await creditsItem.click();
+    const creditsDialog = page.getByRole("dialog", {
+      name: "Credits",
+      exact: true,
+    });
+    await expect(creditsDialog).toBeVisible();
+    await expect(page.locator('[role="dialog"][aria-modal="true"]')).toHaveCount(1);
+    await expect(contentsDialog).toHaveAttribute("inert", "");
+    await expect(contentsDialog).not.toHaveAttribute("aria-modal");
+
+    await page.keyboard.press("g");
+    await page.waitForTimeout(550);
+    await expect(creditsDialog).toBeVisible();
+    await expect(contentsDialog).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(creditsDialog).toBeHidden();
+    await expect(sheetOptions).toBeFocused();
+    await expect(contentsDialog).toHaveAttribute("aria-modal", "true");
+    await expect(contentsDialog).not.toHaveAttribute("inert");
+
+    await sheetOptions.click();
+    await expect(hideDocumentMap).toBeVisible();
+    await hideDocumentMap.focus();
+    await page.keyboard.press("g");
+    await page.waitForTimeout(550);
+    await expect(hideDocumentMap).toBeVisible();
+    await expect(contentsDialog).toBeVisible();
+
+    await hideDocumentMap.click();
+    await expect(contentsDialog).toBeHidden();
+    await expect(paneOptions).toBeFocused();
+
+    await paneOptions.click();
+    await page
+      .getByRole("menuitem", { name: "Show Document Map", exact: true })
+      .click();
+    await expect(contentsDialog).toHaveCount(1);
+    await expect(selectedContentsTab).toBeFocused();
+    const anchorLeaf = contentsDialog.getByRole("button", {
+      name: seed.toc_anchor_label,
+    });
 
     await expect(anchorLeaf).toBeVisible();
     await anchorLeaf.click();
+    await expect(contentsDialog).toBeHidden();
+    await expect(
+      page.locator(`[id="pane-${paneId}-secondary-reader-tools"]`),
+    ).toHaveCount(0);
+    await expect(paneOptions).toBeFocused();
 
-    await expect(activePane.getByRole("heading", { name: seed.toc_anchor_heading })).toBeVisible({
+    await expect(
+      activePane.getByRole("heading", { name: seed.toc_anchor_heading }),
+    ).toBeVisible({
       timeout: 10_000,
     });
-    if (await anchorLeaf.isVisible().catch(() => false)) {
-      await expect(anchorLeaf).toHaveAttribute("class", /tocActive/);
-    } else {
-      await expect(activePane.getByRole("combobox", { name: "Select section" })).toHaveAttribute(
-        "title",
-        seed.toc_anchor_label,
-      );
-    }
+    await expect(
+      activePane.getByRole("combobox", { name: "Select section" }),
+    ).toHaveAttribute("title", seed.toc_anchor_label);
     await expect
       .poll(async () => {
         return page.evaluate((anchorId) => {
@@ -942,16 +1070,23 @@ test.describe("epub", () => {
         }, seed.toc_anchor_target_id);
       })
       .toBe(true);
-    const chrome = activePane.locator('[data-testid="pane-shell-chrome"]').first();
-    const target = activePane.locator(`#${seed.toc_anchor_target_id}`).first();
+    const chrome = activePane.locator('[data-testid="pane-shell-chrome"]');
+    const target = activePane.locator(`#${seed.toc_anchor_target_id}`);
+    await expect(chrome).toHaveCount(1);
+    await expect(target).toHaveCount(1);
     const targetBox = await target.boundingBox();
     expect(targetBox).not.toBeNull();
-    if (await chrome.isVisible().catch(() => false)) {
-      const chromeBox = await chrome.boundingBox();
-      expect(chromeBox).not.toBeNull();
-      if (chromeBox && targetBox) {
-        expect(targetBox.y).toBeGreaterThanOrEqual(chromeBox.y + chromeBox.height - 8);
-      }
+    const topBarBox = await mobileChrome.boundingBox();
+    const chromeBox = await chrome.boundingBox();
+    expect(topBarBox).not.toBeNull();
+    expect(chromeBox).not.toBeNull();
+    if (topBarBox && chromeBox && targetBox) {
+      expect(targetBox.y).toBeGreaterThanOrEqual(
+        Math.max(
+          topBarBox.y + topBarBox.height,
+          chromeBox.y + chromeBox.height,
+        ) - 8,
+      );
     }
   });
 
@@ -1007,10 +1142,10 @@ test.describe("epub", () => {
     };
 
     const highlightsPane = await openEvidencePane(page);
-    const linkedRow = highlightsPane
-      .locator("[data-highlight-id]")
-      .filter({ hasText: selectedText })
-      .first();
+    const linkedRow = highlightsPane.locator(
+      `[data-evidence-item-id="highlight:${createdHighlightPayload.data.id}"]`,
+    );
+    await expect(linkedRow).toHaveCount(1);
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
     await expect(linkedRow).toContainText(selectedText);
     await expect(highlightActions).toHaveCount(0);
@@ -1091,7 +1226,7 @@ test.describe("epub", () => {
     }
   });
 
-  test("section-scoped highlights expand inline while context and source focus stay in sync", async ({
+  test("document-wide highlights expand inline while context and source focus stay in sync", async ({
     page,
   }, testInfo) => {
     const seed = readSeededEpubMedia();
@@ -1169,12 +1304,16 @@ test.describe("epub", () => {
     ).toHaveCount(0);
 
     const chapter1PrimaryRow = highlightsPane
-      .locator(`[data-highlight-id="${chapter1PrimaryHighlight.id}"]`)
-      .first();
+      .locator(
+        `[data-evidence-item-id="highlight:${chapter1PrimaryHighlight.id}"]`,
+      );
     const chapter1SecondaryRow = highlightsPane
-      .locator(`[data-highlight-id="${chapter1SecondaryHighlight.id}"]`)
-      .first();
-    const chapter2Row = highlightsPane.locator(`[data-highlight-id="${chapter2Highlight.id}"]`);
+      .locator(
+        `[data-evidence-item-id="highlight:${chapter1SecondaryHighlight.id}"]`,
+      );
+    const chapter2Row = highlightsPane.locator(
+      `[data-evidence-item-id="highlight:${chapter2Highlight.id}"]`,
+    );
     const chapter1PrimaryAnchor = activePane
       .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)
       .first();
@@ -1185,18 +1324,25 @@ test.describe("epub", () => {
       .locator(`[data-active-highlight-ids~="${chapter2Highlight.id}"]`)
       .first();
 
-    await expect(chapter2Row).toHaveCount(0);
+    // Evidence is the complete media-wide passage inventory. Reader section
+    // changes update current-target emphasis; they do not replace its rows.
+    await expect(chapter1PrimaryRow).toHaveCount(1);
+    await expect(chapter1SecondaryRow).toHaveCount(1);
+    await expect(chapter2Row).toHaveCount(1);
+    await expect(chapter2Row).toContainText(
+      "EPUB chapter two inspector note.",
+    );
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
     await expect
       .poll(
         async () =>
-          (await readAnchorCenterOffset(page, chapter1PrimaryHighlight.id)) ??
+          (await readAnchorCenteringError(page, chapter1PrimaryHighlight.id)) ??
           Number.POSITIVE_INFINITY,
         { timeout: 15_000 }
       )
-      .toBeLessThan(170);
+      .toBeLessThan(2);
     await expect(chapter1PrimaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
       chapter1PrimaryRow,
@@ -1211,11 +1357,11 @@ test.describe("epub", () => {
     await expect
       .poll(
         async () =>
-          (await readAnchorCenterOffset(page, chapter1SecondaryHighlight.id)) ??
+          (await readAnchorCenteringError(page, chapter1SecondaryHighlight.id)) ??
           Number.POSITIVE_INFINITY,
         { timeout: 15_000 }
       )
-      .toBeLessThan(170);
+      .toBeLessThan(2);
     await expect(chapter1SecondaryRow).toBeVisible({ timeout: 15_000 });
     await expectHighlightRowVisible(
       chapter1SecondaryRow,
@@ -1224,10 +1370,11 @@ test.describe("epub", () => {
     await expect
       .poll(
         async () =>
-          (await readAnchorCenterOffset(page, chapter1SecondaryHighlight.id)) ?? Number.POSITIVE_INFINITY,
+          (await readAnchorCenteringError(page, chapter1SecondaryHighlight.id)) ??
+          Number.POSITIVE_INFINITY,
         { timeout: 15_000 }
       )
-      .toBeLessThan(170);
+      .toBeLessThan(2);
     await chapter1PrimaryAnchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
@@ -1241,12 +1388,13 @@ test.describe("epub", () => {
     await expect(
       activePane.getByRole("heading", { name: seed.chapter_titles[1] })
     ).toBeVisible({ timeout: 10_000 });
-    await expect(chapter1PrimaryRow).toHaveCount(0);
-    await expect(chapter1SecondaryRow).toHaveCount(0);
+    await expect(chapter1PrimaryRow).toHaveCount(1);
+    await expect(chapter1SecondaryRow).toHaveCount(1);
+    await expect(chapter2Row).toHaveCount(1);
     await chapter2Anchor.evaluate((element) => {
       (element as HTMLElement).scrollIntoView({ block: "center", inline: "nearest" });
     });
-    const chapter2RowInView = chapter2Row.first();
+    const chapter2RowInView = chapter2Row;
     await expect(chapter2RowInView).toBeVisible({ timeout: 15_000 });
     await chapter2RowInView.click();
     await expectHighlightRowVisible(chapter2RowInView, "EPUB chapter two inspector note.");

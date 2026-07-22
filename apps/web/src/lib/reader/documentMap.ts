@@ -1,239 +1,353 @@
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
-import type { MediaHighlight } from "@/lib/highlights/api";
+import type { Presence } from "@/lib/api/presence";
+import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
+import type { HighlightColor } from "@/lib/highlights/segmenter";
+import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
-import type { ConnectionOut } from "@/lib/resourceGraph/connections";
 import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import type { ReaderApparatusResponse } from "@/lib/reader/apparatus";
-import { assertReaderApparatusResponse } from "@/lib/reader/apparatus";
+import { decodeReaderDocumentMapContract } from "./documentMapContract";
 
-export type ReaderDocumentMapLensId =
-  | "contents"
-  | "embeds"
-  | "highlights"
-  | "citations"
-  | "connections"
-  | "chat";
+export type ReaderEvidenceFactKind =
+  "Highlight" | "SourceReference" | "GeneratedCitation" | "Link" | "Synapse";
 
-export interface ReaderDocumentMapLens {
-  id: ReaderDocumentMapLensId;
-  label: string;
-  status: "ready" | "empty" | "resolving" | "partial" | "unsupported" | "failed";
-  item_count: number;
-  anchored_count: number;
-  unanchored_count: number;
+export type ReaderEvidenceSemanticKind =
+  "highlight" | "citation" | "link" | "synapse";
+
+export type ReaderEvidenceSourceKind =
+  | "footnote_ref"
+  | "endnote_ref"
+  | "bibliography_ref"
+  | "sidenote_ref"
+  | "margin_note_ref"
+  | "footnote"
+  | "endnote"
+  | "bibliography_entry"
+  | "sidenote"
+  | "margin_note"
+  | "reference_section";
+
+export type ReaderEvidenceConfidence = "exact" | "strong" | "probable";
+
+export interface ReaderEvidenceAnchor {
+  locator: MediaRetrievalLocator;
+  // Present when the resolved locus is a durable passage anchor, so a mutation
+  // can key off the anchor rather than the edge. Null for every other locus.
+  passage_anchor_id: string | null;
 }
 
-export type ReaderDocumentMapTargetStatus =
-  | "exact"
-  | "container"
-  | "missing"
-  | "forbidden"
-  | "unanchorable"
-  | "stale"
-  | "unsupported"
-  | "partial";
+export type ReaderEvidenceResolution =
+  | {
+      kind: "Resolved";
+      anchor: ReaderEvidenceAnchor;
+      order_key: string;
+    }
+  | {
+      kind: "Unavailable";
+      reason: "Missing" | "Unanchorable" | "Stale";
+    };
+
+interface ReaderEvidenceObjectBase {
+  ref: string;
+  label: string;
+  excerpt: Presence<string>;
+  activation: ResourceActivation;
+}
+
+export interface ReaderEvidenceChatObject extends ReaderEvidenceObjectBase {
+  kind: "Chat";
+  conversation_id: string;
+  message_ref: Presence<string>;
+}
+
+export interface ReaderEvidenceNoteObject extends ReaderEvidenceObjectBase {
+  kind: "Note";
+  note_block_id: string;
+  body_pm_json: Record<string, unknown>;
+}
+
+export interface ReaderEvidenceDossierObject extends ReaderEvidenceObjectBase {
+  kind: "Dossier";
+}
+
+export interface ReaderEvidenceOracleObject extends ReaderEvidenceObjectBase {
+  kind: "Oracle";
+}
+
+export interface ReaderEvidenceMediaObject extends ReaderEvidenceObjectBase {
+  kind: "Media";
+}
+
+export interface ReaderEvidenceOtherObject extends ReaderEvidenceObjectBase {
+  kind: "Other";
+}
+
+export type ReaderEvidenceObject =
+  | ReaderEvidenceChatObject
+  | ReaderEvidenceNoteObject
+  | ReaderEvidenceDossierObject
+  | ReaderEvidenceOracleObject
+  | ReaderEvidenceMediaObject
+  | ReaderEvidenceOtherObject;
+
+export interface ReaderEvidenceAuthoredInAssociation {
+  relationship: "AuthoredIn";
+  object: ReaderEvidenceObject;
+}
+
+export interface ReaderEvidenceDirectlyAttachedAssociation {
+  relationship: "DirectlyAttached";
+  object: ReaderEvidenceObject;
+  edge_id: string;
+  role: EdgeKind;
+  origin: EdgeOrigin;
+  direction: "Outgoing" | "Incoming";
+}
+
+export type ReaderEvidenceHighlightNoteAssociation =
+  ReaderEvidenceDirectlyAttachedAssociation & {
+    origin: "highlight_note";
+    direction: "Outgoing";
+    object: ReaderEvidenceNoteObject;
+  };
+
+export type ReaderEvidenceUserStanceAssociation =
+  ReaderEvidenceDirectlyAttachedAssociation & {
+    origin: "user";
+    direction: "Outgoing";
+    role: "supports" | "contradicts";
+  };
+
+export type ReaderEvidenceAssociation =
+  | ReaderEvidenceAuthoredInAssociation
+  | ReaderEvidenceDirectlyAttachedAssociation;
+
+export interface ReaderEvidenceAlsoReference {
+  relationship: "AlsoReferences";
+  object: ReaderEvidenceObject;
+}
+
+interface ReaderEvidenceItemBase {
+  id: string;
+  label: string;
+  excerpt: Presence<string>;
+  associations: ReaderEvidenceAssociation[];
+}
+
+export interface ReaderEvidenceHighlight extends ReaderEvidenceItemBase {
+  kind: "Highlight";
+  highlight_id: string;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  color: HighlightColor;
+  created_at: string;
+  updated_at: string;
+  author_user_id: string;
+  is_owner: boolean;
+}
+
+export interface ReaderEvidenceSourceTarget {
+  ref: string;
+  stable_key: string;
+  apparatus_kind: ReaderEvidenceSourceKind;
+  label: Presence<string>;
+  body: Presence<string>;
+  activation: ResourceActivation;
+  resolution: ReaderEvidenceResolution;
+}
+
+export interface ReaderEvidenceSourceReference extends ReaderEvidenceItemBase {
+  kind: "SourceReference";
+  stable_key: string;
+  apparatus_kind: ReaderEvidenceSourceKind;
+  confidence: ReaderEvidenceConfidence;
+  targets: ReaderEvidenceSourceTarget[];
+}
+
+export interface ReaderEvidenceGeneratedCitation extends ReaderEvidenceItemBase {
+  kind: "GeneratedCitation";
+  edge_id: string;
+  role: EdgeKind;
+}
+
+export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
+  kind: "Link";
+  edge_id: string;
+  role: EdgeKind;
+  origin: EdgeOrigin;
+  object: ReaderEvidenceObject;
+}
+
+export interface ReaderEvidenceSynapse extends ReaderEvidenceItemBase {
+  kind: "Synapse";
+  edge_id: string;
+  role: EdgeKind;
+  rationale: string;
+  object: ReaderEvidenceObject;
+}
+
+export type ReaderEvidenceItem =
+  | ReaderEvidenceHighlight
+  | ReaderEvidenceSourceReference
+  | ReaderEvidenceGeneratedCitation
+  | ReaderEvidenceLink
+  | ReaderEvidenceSynapse;
+
+export interface ReaderEvidencePassageGroup {
+  locus_ref: string;
+  resolution: ReaderEvidenceResolution;
+  target_excerpt: Presence<string>;
+  items: ReaderEvidenceItem[];
+  also_references: ReaderEvidenceAlsoReference[];
+}
+
+export interface ReaderEvidenceCounts {
+  highlights: number;
+  citations: number;
+  links: number;
+  synapses: number;
+  passages: number;
+  document: number;
+}
+
+export interface ReaderEvidence {
+  counts: ReaderEvidenceCounts;
+  passage_groups: ReaderEvidencePassageGroup[];
+  document_items: ReaderEvidenceItem[];
+}
+
+export type ReaderDocumentMapMarkerKind =
+  "Contents" | "Embed" | ReaderEvidenceFactKind;
 
 export interface ReaderDocumentMapMarker {
   id: string;
+  kind: ReaderDocumentMapMarkerKind;
   item_id: string;
-  lens_id: ReaderDocumentMapLensId;
-  lane: ReaderDocumentMapLensId;
   position: number;
-  status: ReaderDocumentMapTargetStatus;
-  tone: "neutral" | "highlight" | "citation" | "connection" | "chat" | "warning";
+  tone: "Neutral" | "Highlight" | "Citation" | "Link" | "Synapse" | "Warning";
   label: string;
-  preview: string | null;
+  preview: Presence<string>;
 }
-
-export interface ReaderConnectionAnchor {
-  ref: string;
-  media_id: string;
-  locator: Record<string, unknown> | null;
-  page_number: number | null;
-  fragment_id: string | null;
-  highlight_id: string | null;
-  evidence_span_id: string | null;
-  passage_anchor_id: string | null;
-  order_key: string | null;
-  precision?: "exact" | "container";
-}
-
-export interface ReaderConnectionRow {
-  id: string;
-  connection: ConnectionOut;
-  anchor: ReaderConnectionAnchor | null;
-  source_category:
-    | "chat"
-    | "dossier"
-    | "oracle"
-    | "note"
-    | "highlight_note"
-    | "user_link"
-    | "synapse"
-    | "system"
-    | "document_embed"
-    | "other";
-  title: string;
-  subtitle: string | null;
-  excerpt: string | null;
-  activation: ResourceActivation;
-  href: string | null;
-}
-
-export interface ReaderConnectionPage {
-  anchored: ReaderConnectionRow[];
-  unanchored: ReaderConnectionRow[];
-  next_cursor: string | null;
-}
-
-interface ReaderDocumentMapItemBase {
-  id: string;
-  lens_ids: ReaderDocumentMapLensId[];
-  kind: string;
-  source_domain: string;
-  title: string;
-  subtitle: string | null;
-  excerpt: string | null;
-  activation: ResourceActivation | null;
-  href: string | null;
-  anchor: ReaderConnectionAnchor | null;
-  document_order_key: string | null;
-  document_fraction: number | null;
-  target_status: ReaderDocumentMapTargetStatus;
-  provenance: Record<string, unknown>;
-  actions: string[];
-}
-
-export interface ReaderDocumentMapSectionItem extends ReaderDocumentMapItemBase {
-  kind: "section";
-  source_domain: "navigation";
-  section_id: string | null;
-  level: number | null;
-  parent_id: string | null;
-}
-
-export interface ReaderDocumentMapHighlightItem extends ReaderDocumentMapItemBase {
-  kind: "highlight";
-  source_domain: "highlight";
-  highlight_id: string;
-  color: MediaHighlight["color"];
-  exact: string;
-  note_block_count: number;
-  linked_conversation_count: number;
-}
-
-export interface ReaderDocumentMapEmbedItem extends ReaderDocumentMapItemBase {
-  kind: "document_embed";
-  source_domain: "document_embeds";
-  document_embed_id: string;
-  occurrence_key: string;
-  provider: string;
-  embed_kind: string;
-  resolution_status: string;
-}
-
-export interface ReaderDocumentMapApparatusItem extends ReaderDocumentMapItemBase {
-  kind: "apparatus";
-  source_domain: "reader_apparatus";
-  resource_ref: string;
-  stable_key: string;
-  apparatus_kind: ReaderApparatusResponse["items"][number]["kind"];
-  confidence: ReaderApparatusResponse["items"][number]["confidence"];
-  locator_status: ReaderApparatusResponse["items"][number]["locator_status"];
-  target_stable_keys: string[];
-}
-
-export interface ReaderDocumentMapConnectionItem extends ReaderDocumentMapItemBase {
-  kind: "connection";
-  source_domain: "resource_graph" | "generated_citation";
-  edge_id: string;
-  direction: "incoming" | "outgoing";
-  origin: EdgeOrigin;
-  edge_kind: EdgeKind;
-  source_category: ReaderConnectionRow["source_category"];
-  other_ref: string;
-}
-
-export interface ReaderDocumentMapChatThreadItem extends ReaderDocumentMapItemBase {
-  kind: "chat_thread";
-  source_domain: "chat";
-  conversation_id: string;
-  latest_message_at: string | null;
-  attached_ref: string | null;
-}
-
-export type ReaderDocumentMapItem =
-  | ReaderDocumentMapSectionItem
-  | ReaderDocumentMapHighlightItem
-  | ReaderDocumentMapEmbedItem
-  | ReaderDocumentMapApparatusItem
-  | ReaderDocumentMapConnectionItem
-  | ReaderDocumentMapChatThreadItem;
 
 export interface ReaderDocumentMap {
   media_id: string;
   media_kind: string;
   title: string;
-  status: "ready" | "empty" | "partial" | "unsupported" | "failed";
-  source_version: Record<string, unknown>;
-  lenses: ReaderDocumentMapLens[];
-  items: ReaderDocumentMapItem[];
+  status: "ready" | "empty" | "partial";
+  source_version: {
+    media_updated_at: Presence<string>;
+    apparatus_source_fingerprint: Presence<string>;
+    graph_max_updated_at: Presence<string>;
+    highlights_max_updated_at: Presence<string>;
+  };
+  navigation: Presence<MediaNavigationResponse["data"]>;
+  embeds: DocumentEmbed[];
+  evidence: ReaderEvidence;
   markers: ReaderDocumentMapMarker[];
-  navigation: MediaNavigationResponse["data"] | null;
-  highlights: MediaHighlight[];
-  apparatus: ReaderApparatusResponse;
-  connections: ReaderConnectionPage;
-  chat_threads: Array<{
-    id: string;
-    title: string;
-    message_count: number;
-    updated_at: string;
-  }>;
-  diagnostics: Record<string, unknown>;
+  diagnostics: {
+    omitted_item_counts: Record<string, number>;
+  };
 }
 
 interface ReaderDocumentMapResponse {
-  data: ReaderDocumentMap;
+  data: unknown;
 }
 
-export function readerSurfaceForLens(
-  lensId: ReaderDocumentMapLensId,
+export type ReaderEvidenceItemLocation =
+  | {
+      scope: "passage";
+      item: ReaderEvidenceItem;
+      group: ReaderEvidencePassageGroup;
+    }
+  | {
+      scope: "document";
+      item: ReaderEvidenceItem;
+    };
+
+export function semanticKindForEvidenceItem(
+  item: ReaderEvidenceItem,
+): ReaderEvidenceSemanticKind {
+  switch (item.kind) {
+    case "Highlight":
+      return "highlight";
+    case "SourceReference":
+    case "GeneratedCitation":
+      return "citation";
+    case "Link":
+      return "link";
+    case "Synapse":
+      return "synapse";
+  }
+}
+
+export function highlightNoteAssociations(
+  item: ReaderEvidenceHighlight,
+): ReaderEvidenceHighlightNoteAssociation[] {
+  return item.associations.filter(
+    (association): association is ReaderEvidenceHighlightNoteAssociation =>
+      association.relationship === "DirectlyAttached" &&
+      association.origin === "highlight_note" &&
+      association.direction === "Outgoing" &&
+      association.object.kind === "Note",
+  );
+}
+
+export function userStanceAssociations(
+  item: ReaderEvidenceHighlight,
+): ReaderEvidenceUserStanceAssociation[] {
+  return item.associations.filter(
+    (association): association is ReaderEvidenceUserStanceAssociation =>
+      association.relationship === "DirectlyAttached" &&
+      association.origin === "user" &&
+      association.direction === "Outgoing" &&
+      (association.role === "supports" || association.role === "contradicts"),
+  );
+}
+
+export function findEvidenceItem(
+  evidence: ReaderEvidence,
+  itemId: string,
+): ReaderEvidenceItemLocation | null {
+  for (const group of evidence.passage_groups) {
+    const item = group.items.find((candidate) => candidate.id === itemId);
+    if (item) return { scope: "passage", item, group };
+  }
+  const item = evidence.document_items.find(
+    (candidate) => candidate.id === itemId,
+  );
+  return item ? { scope: "document", item } : null;
+}
+
+export function readerSurfaceForMarkerKind(
+  kind: ReaderDocumentMapMarkerKind,
 ): "reader-contents" | "reader-evidence" | null {
-  switch (lensId) {
-    case "contents":
+  switch (kind) {
+    case "Contents":
       return "reader-contents";
-    case "highlights":
-    case "citations":
-    case "connections":
-      return "reader-evidence";
-    case "embeds":
-    case "chat":
+    case "Embed":
       return null;
+    case "Highlight":
+    case "SourceReference":
+    case "GeneratedCitation":
+    case "Link":
+    case "Synapse":
+      return "reader-evidence";
   }
 }
 
 export async function getReaderDocumentMap(
   mediaId: string,
-  options: {
-    limit?: number;
-    signal?: AbortSignal;
-  } = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<ReaderDocumentMap> {
-  const params = new URLSearchParams();
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await apiFetch<ReaderDocumentMapResponse>(
-    `/api/media/${mediaId}/document-map${suffix}` as ApiPath,
+    `/api/media/${mediaId}/document-map` as ApiPath,
     { signal: options.signal },
   );
-  if (!response.data || !Array.isArray(response.data.lenses)) {
-    throw new TypeError("Invalid reader document map response");
-  }
-  response.data.apparatus = assertReaderApparatusResponse(response.data.apparatus);
-  if (!Array.isArray(response.data.items) || !Array.isArray(response.data.markers)) {
-    throw new TypeError("Invalid reader document map response");
-  }
-  return response.data;
+  return decodeReaderDocumentMap(response.data);
+}
+
+export function decodeReaderDocumentMap(raw: unknown): ReaderDocumentMap {
+  return decodeReaderDocumentMapContract(raw);
 }

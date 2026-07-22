@@ -45,7 +45,7 @@ function makePane(partial: Partial<LauncherPane> & { id: string }): LauncherPane
   return {
     href: "/libraries",
     visibility: "visible",
-    title: "Libraries",
+    label: "Libraries",
     ...partial,
   };
 }
@@ -89,7 +89,7 @@ function makeSearchResult(
     contextRef: null,
     typeLabel: "Article",
     primaryText: "Search Hit",
-    paneTitleHint: "Search Hit",
+    paneLabelHint: "Search Hit",
     snippetSegments: [],
     sourceMeta: null,
     contributorCredits: [],
@@ -126,7 +126,7 @@ function makeWebResult(partial?: Partial<LauncherWebResult>): LauncherWebResult 
 
 describe("buildLauncherItems — context item", () => {
   it("emits a context item for the active pane with sectionId=context, target pane-open", () => {
-    const pane = makePane({ id: "p1", title: "Daily", href: "/daily", visibility: "visible" });
+    const pane = makePane({ id: "p1", label: "Daily", href: "/daily", visibility: "visible" });
     const items = buildLauncherItems(ctx({ panes: [pane], activePaneId: "p1" }));
     const contextItem = items.find((i) => i.sectionId === "context");
 
@@ -151,8 +151,8 @@ describe("buildLauncherItems — context item", () => {
 describe("buildLauncherItems — open-tab items", () => {
   it("emits one open-tabs item per pane with target pane-open + a pane-close trailing action", () => {
     const panes = [
-      makePane({ id: "p1", title: "Libraries", href: "/libraries", visibility: "visible" }),
-      makePane({ id: "p2", title: "Podcasts", href: "/podcasts", visibility: "minimized" }),
+      makePane({ id: "p1", label: "Libraries", href: "/libraries", visibility: "visible" }),
+      makePane({ id: "p2", label: "Podcasts", href: "/podcasts", visibility: "minimized" }),
     ];
     const items = buildLauncherItems(ctx({ panes }));
     const paneItems = items.filter((i) => i.id.startsWith("pane-open-"));
@@ -352,7 +352,7 @@ describe("buildLauncherItems — search results", () => {
           unresolvedReason: null,
         },
         primaryText: "Article about love",
-        paneTitleHint: "Article about love",
+        paneLabelHint: "Article about love",
       }),
       makeSearchResult({
         key: "s2",
@@ -375,7 +375,7 @@ describe("buildLauncherItems — search results", () => {
     expect(s1.target).toMatchObject({
       kind: "resource",
       activation: { resourceRef: results[0]!.resourceRef, href: "/media/abc" },
-      titleHint: "Article about love",
+      labelHint: "Article about love",
     });
     expect(s1.rank.searchScore).toBe(1);
   });
@@ -587,8 +587,8 @@ describe("buildLauncherItems — android shell filter", () => {
 
   it("excludes a pane pointing at /settings/local-vault when androidShell=true", () => {
     const panes = [
-      makePane({ id: "vault", href: "/settings/local-vault", title: "Local Vault" }),
-      makePane({ id: "billing", href: "/settings/billing", title: "Billing" }),
+      makePane({ id: "vault", href: "/settings/local-vault", label: "Local Vault" }),
+      makePane({ id: "billing", href: "/settings/billing", label: "Billing" }),
     ];
     const items = buildLauncherItems(ctx({ panes, androidShell: true }));
     const paneItems = items.filter((i) => i.id.startsWith("pane-open-"));

@@ -19,7 +19,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from nexus.services import library_entries, library_governance
-from tests.factories import add_media_to_library, create_test_library, create_test_media
+from tests.factories import (
+    add_media_to_library,
+    create_test_fragment,
+    create_test_library,
+    create_test_media,
+)
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
@@ -773,11 +778,10 @@ class TestAddMediaToLibrary:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
-        data = response.json()["data"]
-        assert data["library_id"] == library_id
-        assert data["kind"] == "media"
-        assert data["media"]["id"] == str(media_id)
+        assert response.status_code == 204
+        assert response.content == b""
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        assert _library_entry_media_ids(entries) == [str(media_id)]
 
     def test_add_media_library_not_found(self, auth_client, direct_db: DirectSessionManager):
         """Add media to non-existent library returns 404."""
@@ -824,7 +828,8 @@ class TestAddMediaToLibrary:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert resp1.status_code == 201
+        assert resp1.status_code == 204
+        assert resp1.content == b""
 
         # Add second time
         resp2 = auth_client.post(
@@ -832,9 +837,10 @@ class TestAddMediaToLibrary:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert resp2.status_code == 201
-        assert resp2.json()["data"]["kind"] == "media"
-        assert resp2.json()["data"]["media"]["id"] == str(media_id)
+        assert resp2.status_code == 204
+        assert resp2.content == b""
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        assert _library_entry_media_ids(entries) == [str(media_id)]
 
     def test_add_media_cross_user_own_default_only_returns_not_found(
         self, auth_client, direct_db: DirectSessionManager
@@ -861,7 +867,7 @@ class TestAddMediaToLibrary:
             json={"media_id": str(media_id)},
             headers=auth_headers(owner_id),
         )
-        assert file_resp.status_code == 201, file_resp.text
+        assert file_resp.status_code == 204, file_resp.text
 
         response = auth_client.post(
             f"/libraries/{other_default_id}/media",
@@ -898,7 +904,7 @@ class TestAddMediaToLibrary:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert add_resp.status_code == 201, add_resp.text
+        assert add_resp.status_code == 204, add_resp.text
 
         with direct_db.session() as session:
             session.execute(
@@ -917,7 +923,8 @@ class TestAddMediaToLibrary:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 201
+        assert response.status_code == 204
+        assert response.content == b""
 
         with direct_db.session() as session:
             tombstone = session.execute(
@@ -1224,10 +1231,172 @@ class TestPodcastLibraryEntries:
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 201
-        data = response.json()["data"]
-        assert data["kind"] == "podcast"
+        assert response.status_code == 204
+        assert response.content == b""
+        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        data = next(row for row in entries if row["kind"] == "podcast")
         assert data["podcast"]["id"] == str(podcast_id)
+        assert data["readingTimeEstimate"] == {"kind": "Absent"}
+
+    def test_podcast_recency_uses_only_visible_heartbeat_engagement(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        from datetime import UTC, datetime
+
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        podcast_id = uuid4()
+        visible_episode_id = uuid4()
+        hidden_episode_id = uuid4()
+        visible_engaged_at = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
+        hidden_engaged_at = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
+
+        with direct_db.session() as session:
+            library_id = create_test_library(session, user_id, "Truthful Podcast Recency")
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (
+                        :podcast_id, 'podcast_index', :provider_podcast_id,
+                        'Truthful Recency', 'https://example.com/truthful-recency.xml'
+                    )
+                    """
+                ),
+                {
+                    "podcast_id": podcast_id,
+                    "provider_podcast_id": f"truthful-recency-{podcast_id}",
+                },
+            )
+            for title, media_id in (
+                ("Visible episode", visible_episode_id),
+                ("Hidden episode", hidden_episode_id),
+            ):
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO media (
+                            id, kind, title, processing_status, external_playback_url
+                        ) VALUES (
+                            :media_id, 'podcast_episode', :title,
+                            'ready_for_reading', :playback_url
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "title": title,
+                        "playback_url": f"https://cdn.example.com/{media_id}.mp3",
+                    },
+                )
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO podcast_episodes (
+                            media_id, podcast_id, provider_episode_id, guid,
+                            fallback_identity, duration_seconds
+                        ) VALUES (
+                            :media_id, :podcast_id, :provider_episode_id, :guid,
+                            :fallback_identity, 300
+                        )
+                        """
+                    ),
+                    {
+                        "media_id": media_id,
+                        "podcast_id": podcast_id,
+                        "provider_episode_id": f"episode-{media_id}",
+                        "guid": f"guid-{media_id}",
+                        "fallback_identity": f"fallback-{media_id}",
+                    },
+                )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO library_entries (
+                        library_id, podcast_id, media_id, position
+                    ) VALUES
+                        (:library_id, :podcast_id, NULL, 0),
+                        (:library_id, NULL, :visible_episode_id, 1),
+                        (:library_id, NULL, :hidden_episode_id, 2)
+                    """
+                ),
+                {
+                    "library_id": library_id,
+                    "podcast_id": podcast_id,
+                    "visible_episode_id": visible_episode_id,
+                    "hidden_episode_id": hidden_episode_id,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcast_listening_states (
+                        user_id, media_id, position_ms, is_completed,
+                        updated_at, last_engaged_at
+                    ) VALUES
+                        (:user_id, :visible_episode_id, 0, true, now(), NULL),
+                        (:user_id, :hidden_episode_id, 1000, false, now(), :hidden_engaged_at)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "visible_episode_id": visible_episode_id,
+                    "hidden_episode_id": hidden_episode_id,
+                    "hidden_engaged_at": hidden_engaged_at,
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO user_media_deletions (user_id, media_id)
+                    VALUES (:user_id, :media_id)
+                    """
+                ),
+                {"user_id": user_id, "media_id": hidden_episode_id},
+            )
+            session.commit()
+
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("podcasts", "id", podcast_id)
+        for media_id in (visible_episode_id, hidden_episode_id):
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+            direct_db.register_cleanup("podcast_listening_states", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("user_media_deletions", "media_id", hidden_episode_id)
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+
+        response = _list_library_entries(auth_client, user_id, str(library_id))
+        assert response.status_code == 200, response.text
+        podcast_entry = next(row for row in response.json()["data"] if row["kind"] == "podcast")
+        assert podcast_entry["last_engaged_at"] is None, (
+            "manual completion and hidden episode engagement are not podcast recency"
+        )
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_listening_states
+                    SET last_engaged_at = :last_engaged_at
+                    WHERE user_id = :user_id AND media_id = :media_id
+                    """
+                ),
+                {
+                    "last_engaged_at": visible_engaged_at,
+                    "user_id": user_id,
+                    "media_id": visible_episode_id,
+                },
+            )
+            session.commit()
+
+        refreshed = _list_library_entries(auth_client, user_id, str(library_id))
+        assert refreshed.status_code == 200, refreshed.text
+        refreshed_podcast = next(
+            row for row in refreshed.json()["data"] if row["kind"] == "podcast"
+        )
+        assert datetime.fromisoformat(refreshed_podcast["last_engaged_at"]) == visible_engaged_at
 
     def test_add_podcast_default_library_forbidden(
         self, auth_client, direct_db: DirectSessionManager
@@ -1308,7 +1477,7 @@ class TestPodcastLibraryEntries:
             json={"podcast_id": str(podcast_id)},
             headers=auth_headers(user_id),
         )
-        assert add_resp.status_code == 201
+        assert add_resp.status_code == 204
 
         remove_resp = auth_client.delete(
             f"/libraries/{library_id}/podcasts/{podcast_id}",
@@ -1361,7 +1530,197 @@ class TestListLibraryMedia:
         assert data[0]["media"]["id"] == str(media_id)
         assert data[0]["media"]["kind"] == "web_article"
         assert data[0]["media"]["read_state"] == "unread"
-        assert data[0]["read_state"] == "unread"
+        assert "read_state" not in data[0]
+        assert "progress_fraction" not in data[0]
+        assert data[0]["readingTimeEstimate"] == {"kind": "Absent"}
+        assert "reading_time_estimate" not in data[0]
+
+    def test_list_media_projects_document_reading_time_policy(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+        # 3,000 words at 40% progression proves remaining is calculated from
+        # raw words: total rounds to 15, while the raw 7.5 minutes rounds to 8.
+        # Deriving from the rounded total would incorrectly produce 9.
+        document_text = " ".join(["word"] * 3000)
+
+        with direct_db.session() as session:
+            unread_id = create_test_media(session, title="Unread estimate")
+            in_progress_id = create_test_media(session, title="Remaining estimate")
+            finished_id = create_test_media(session, title="Finished estimate")
+            reset_unread_id = create_test_media(session, title="Reset unread estimate")
+            epub_id = create_test_media(session, title="EPUB estimate")
+            pending_id = create_test_media(session, title="Pending estimate", status="extracting")
+            zero_id = create_test_media(session, title="Zero estimate")
+            session.execute(
+                text("UPDATE media SET kind = 'epub' WHERE id = :media_id"),
+                {"media_id": epub_id},
+            )
+            for media_id in (
+                unread_id,
+                in_progress_id,
+                finished_id,
+                reset_unread_id,
+                epub_id,
+                pending_id,
+                zero_id,
+            ):
+                add_media_to_library(session, UUID(library_id), media_id)
+            session.commit()
+
+        for media_id in (
+            unread_id,
+            in_progress_id,
+            finished_id,
+            reset_unread_id,
+            epub_id,
+            pending_id,
+            zero_id,
+        ):
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("fragments", "media_id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+        for media_id in (in_progress_id, finished_id, reset_unread_id):
+            direct_db.register_cleanup("reader_engagement_states", "media_id", media_id)
+            direct_db.register_cleanup("reader_media_state", "media_id", media_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", finished_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", reset_unread_id)
+
+        fragment_ids: dict[UUID, UUID] = {}
+        for media_id in (
+            unread_id,
+            in_progress_id,
+            finished_id,
+            reset_unread_id,
+            epub_id,
+            pending_id,
+        ):
+            with direct_db.session() as session:
+                fragment_ids[media_id] = create_test_fragment(session, media_id, document_text)
+
+        for media_id in (in_progress_id, finished_id, reset_unread_id):
+            reader_state = auth_client.put(
+                f"/media/{media_id}/reader-state",
+                headers=auth_headers(user_id),
+                json={
+                    "locator": {
+                        "kind": "web",
+                        "target": {"fragment_id": str(fragment_ids[media_id])},
+                        "locations": {
+                            "text_offset": 0,
+                            "progression": 0.4,
+                            "total_progression": 0.4,
+                            "position": 1,
+                        },
+                        "text": {
+                            "quote": None,
+                            "quote_prefix": None,
+                            "quote_suffix": None,
+                        },
+                    },
+                    "base_revision": 0,
+                },
+            )
+            assert reader_state.status_code == 200, reader_state.text
+
+        for kind, media_id in (
+            ("EnsureMediaFinished", finished_id),
+            ("SetUnread", reset_unread_id),
+        ):
+            command = auth_client.post(
+                "/consumption/commands",
+                headers=auth_headers(user_id),
+                json={
+                    "kind": kind,
+                    "clientMutationId": str(uuid4()),
+                    "mediaId": str(media_id),
+                },
+            )
+            assert command.status_code == 200, command.text
+
+        response = _list_library_entries(auth_client, user_id, library_id)
+        assert response.status_code == 200, response.text
+        by_id = {row["media"]["id"]: row for row in response.json()["data"]}
+
+        assert by_id[str(unread_id)]["readingTimeEstimate"] == {
+            "kind": "Present",
+            "value": {
+                "totalMinutes": 15,
+                "remainingMinutes": {"kind": "Absent"},
+            },
+        }
+        assert by_id[str(in_progress_id)]["readingTimeEstimate"] == {
+            "kind": "Present",
+            "value": {
+                "totalMinutes": 15,
+                "remainingMinutes": {"kind": "Present", "value": 8},
+            },
+        }
+        assert by_id[str(finished_id)]["readingTimeEstimate"]["value"] == {
+            "totalMinutes": 15,
+            "remainingMinutes": {"kind": "Absent"},
+        }
+        assert by_id[str(finished_id)]["media"]["progress_fraction"] == pytest.approx(0.4)
+        assert by_id[str(finished_id)]["media"]["read_state"] == "finished"
+        assert by_id[str(reset_unread_id)]["readingTimeEstimate"]["value"] == {
+            "totalMinutes": 15,
+            "remainingMinutes": {"kind": "Absent"},
+        }
+        assert by_id[str(reset_unread_id)]["media"]["progress_fraction"] == pytest.approx(0.4)
+        assert by_id[str(reset_unread_id)]["media"]["read_state"] == "unread"
+        assert by_id[str(epub_id)]["readingTimeEstimate"]["value"] == {
+            "totalMinutes": 15,
+            "remainingMinutes": {"kind": "Absent"},
+        }
+        assert by_id[str(pending_id)]["readingTimeEstimate"] == {"kind": "Absent"}
+        assert by_id[str(zero_id)]["readingTimeEstimate"] == {"kind": "Absent"}
+
+    def test_list_media_reading_time_rounds_half_up_in_coarse_buckets(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+        cases = [
+            (1, 1),
+            (359, 1),
+            (360, 2),
+            (2279, 9),
+            (2280, 10),
+            (2399, 10),
+            (2400, 10),
+            (2999, 10),
+            (3000, 15),
+            (13799, 55),
+            (13800, 60),
+            (14399, 60),
+            (14400, 60),
+            (16199, 60),
+            (16200, 75),
+        ]
+        expected_by_id: dict[str, int] = {}
+        for word_count, expected_minutes in cases:
+            with direct_db.session() as session:
+                media_id = create_test_media(session, title=f"Rounding {word_count}")
+                create_test_fragment(session, media_id, " ".join(["word"] * word_count))
+                add_media_to_library(session, UUID(library_id), media_id)
+                session.commit()
+            expected_by_id[str(media_id)] = expected_minutes
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("fragments", "media_id", media_id)
+            direct_db.register_cleanup("media", "id", media_id)
+
+        response = _list_library_entries(auth_client, user_id, library_id)
+        assert response.status_code == 200, response.text
+        actual_by_id = {
+            row["media"]["id"]: row["readingTimeEstimate"]["value"]["totalMinutes"]
+            for row in response.json()["data"]
+        }
+        assert actual_by_id == expected_by_id
 
     def test_list_media_rejects_invalid_viewer_timezone(self, auth_client):
         user_id = create_test_user_id()
@@ -1609,14 +1968,16 @@ class TestListLibraryMedia:
                         position_ms,
                         duration_ms,
                         playback_speed,
-                        is_completed
+                        is_completed,
+                        last_engaged_at
                     ) VALUES (
                         :user_id,
                         :media_id,
                         12000,
                         180000,
                         1.25,
-                        false
+                        false,
+                        now()
                     )
                 """),
                 {"user_id": user_id, "media_id": media_id},
@@ -1659,8 +2020,27 @@ class TestListLibraryMedia:
         }
         assert media["read_state"] == "in_progress"
         assert media["progress_fraction"] == pytest.approx(12000 / 180000)
-        assert data[0]["read_state"] == "in_progress"
-        assert data[0]["progress_fraction"] == pytest.approx(12000 / 180000)
+        assert "read_state" not in data[0]
+        assert "progress_fraction" not in data[0]
+        assert data[0]["readingTimeEstimate"] == {"kind": "Absent"}
+        assert "player_descriptor" not in media
+        descriptor = media["playerDescriptor"]
+        assert descriptor["kind"] == "Present"
+        assert descriptor["value"]["mediaId"] == str(media_id)
+        assert descriptor["value"]["activation"]["streamUrl"] == (
+            "https://cdn.example.com/library-hydration-episode.mp3"
+        )
+
+        def assert_camel_tree(value: object) -> None:
+            if isinstance(value, dict):
+                assert all("_" not in key for key in value), value
+                for child in value.values():
+                    assert_camel_tree(child)
+            elif isinstance(value, list):
+                for child in value:
+                    assert_camel_tree(child)
+
+        assert_camel_tree(descriptor)
         assert media["chapters"] == [
             {
                 "chapter_idx": 0,
@@ -2270,7 +2650,7 @@ class TestDefaultLibraryVirtualView:
             json={"media_id": str(media_id)},
             headers=auth_headers(owner_id),
         )
-        assert add_resp.status_code == 201
+        assert add_resp.status_code == 204
 
         viewer_default_id = auth_client.get("/me", headers=auth_headers(viewer_id)).json()["data"][
             "default_library_id"
@@ -2286,7 +2666,7 @@ class TestDefaultLibraryVirtualView:
             json={"media_id": str(media_id)},
             headers=auth_headers(viewer_id),
         )
-        assert direct_resp.status_code == 201
+        assert direct_resp.status_code == 204
 
         response = _list_library_entries(auth_client, viewer_id, viewer_default_id)
         assert response.status_code == 200
@@ -2312,7 +2692,7 @@ class TestDefaultLibraryVirtualView:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert add_resp.status_code == 201
+        assert add_resp.status_code == 204
         assert str(media_id) in _library_entry_media_ids(
             _list_library_entries(auth_client, user_id, library_id).json()["data"]
         )
@@ -2381,7 +2761,7 @@ class TestDefaultLibraryVirtualView:
             json={"media_id": str(media_id)},
             headers=auth_headers(user_id),
         )
-        assert file_resp.status_code == 201
+        assert file_resp.status_code == 204
 
         after = _list_library_entries(auth_client, user_id, library_id)
         assert after.status_code == 200
@@ -2547,15 +2927,27 @@ class TestReorderLibraryMedia:
             json={"entry_ids": reordered_entry_ids},
             headers=auth_headers(user_id),
         )
-        assert reorder_resp.status_code == 200, (
-            f"Expected 200 reorder response, got {reorder_resp.status_code}: {reorder_resp.text}"
+        assert reorder_resp.status_code == 204, (
+            f"Expected 204 reorder response, got {reorder_resp.status_code}: {reorder_resp.text}"
         )
+        assert reorder_resp.content == b""
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
         assert _library_entry_media_ids(list_resp.json()["data"]) == [
             str(media_id) for media_id in reordered_media_ids
         ]
+
+        idempotent_resp = auth_client.patch(
+            f"/libraries/{library_id}/entries/reorder",
+            json={"entry_ids": reordered_entry_ids},
+            headers=auth_headers(user_id),
+        )
+        assert idempotent_resp.status_code == 204
+        assert idempotent_resp.content == b""
+        assert _library_entry_media_ids(
+            _list_library_entries(auth_client, user_id, library_id).json()["data"]
+        ) == [str(media_id) for media_id in reordered_media_ids]
 
     def test_reorder_library_entries_requires_exact_media_set(
         self, auth_client, direct_db: DirectSessionManager
@@ -2718,7 +3110,7 @@ class TestReorderLibraryMedia:
                 json={"podcast_id": str(podcast_id)},
                 headers=auth_headers(user_id),
             ).status_code
-            == 201
+            == 204
         )
 
         entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
@@ -2730,7 +3122,8 @@ class TestReorderLibraryMedia:
             json={"entry_ids": [podcast_entry_id, media_entry_id]},
             headers=auth_headers(user_id),
         )
-        assert reorder_resp.status_code == 200, reorder_resp.text
+        assert reorder_resp.status_code == 204, reorder_resp.text
+        assert reorder_resp.content == b""
 
         after = _list_library_entries(auth_client, user_id, library_id).json()["data"]
         assert [row["id"] for row in after] == [podcast_entry_id, media_entry_id]
@@ -4888,34 +5281,52 @@ class TestLibraryListPdfCapabilities:
                 plain_text=None,
                 page_count=1,
             )
+            mid_whitespace = _create_pdf_media_for_library(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=" \t\n",
+                page_count=1,
+                with_page_spans=True,
+            )
             add_media_to_library(session, UUID(library_id), mid_ready)
             add_media_to_library(session, UUID(library_id), mid_not_ready)
+            add_media_to_library(session, UUID(library_id), mid_whitespace)
             session.commit()
 
-        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_ready)
-        direct_db.register_cleanup("media_file", "media_id", mid_ready)
-        direct_db.register_cleanup("library_entries", "media_id", mid_ready)
-        direct_db.register_cleanup("media", "id", mid_ready)
-        direct_db.register_cleanup("pdf_page_text_spans", "media_id", mid_not_ready)
-        direct_db.register_cleanup("media_file", "media_id", mid_not_ready)
-        direct_db.register_cleanup("library_entries", "media_id", mid_not_ready)
-        direct_db.register_cleanup("media", "id", mid_not_ready)
+        for media_id in (mid_ready, mid_not_ready, mid_whitespace):
+            direct_db.register_cleanup("media", "id", media_id)
+            direct_db.register_cleanup("library_entries", "media_id", media_id)
+            direct_db.register_cleanup("media_file", "media_id", media_id)
+            direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
 
         list_resp = _list_library_entries(auth_client, user_id, library_id)
         assert list_resp.status_code == 200
-        items = {
-            row["media"]["id"]: row["media"]
+        entries = {
+            row["media"]["id"]: row
             for row in list_resp.json()["data"]
             if row["kind"] == "media" and row["media"] is not None
         }
 
-        ready_caps = items[str(mid_ready)]["capabilities"]
+        ready_caps = entries[str(mid_ready)]["media"]["capabilities"]
         assert ready_caps["can_quote"] is True
         assert ready_caps["can_search"] is False
+        assert entries[str(mid_ready)]["readingTimeEstimate"] == {
+            "kind": "Present",
+            "value": {
+                "totalMinutes": 1,
+                "remainingMinutes": {"kind": "Absent"},
+            },
+        }
 
-        not_ready_caps = items[str(mid_not_ready)]["capabilities"]
+        not_ready_caps = entries[str(mid_not_ready)]["media"]["capabilities"]
         assert not_ready_caps["can_quote"] is False
         assert not_ready_caps["can_search"] is False
+        assert entries[str(mid_not_ready)]["readingTimeEstimate"] == {"kind": "Absent"}
+
+        whitespace_caps = entries[str(mid_whitespace)]["media"]["capabilities"]
+        assert whitespace_caps["can_quote"] is False
+        assert whitespace_caps["can_search"] is False
+        assert entries[str(mid_whitespace)]["readingTimeEstimate"] == {"kind": "Absent"}
 
     def test_library_list_pdf_capabilities_match_detail_readiness_split(
         self, auth_client, direct_db: DirectSessionManager
@@ -5273,10 +5684,10 @@ class TestLibraryEntryResonanceOrdering:
                     """
                     INSERT INTO podcast_listening_states (
                         user_id, media_id, position_ms, duration_ms,
-                        playback_speed, is_completed, updated_at
+                        playback_speed, is_completed, updated_at, last_engaged_at
                     ) VALUES (
                         :user_id, :media_id, 120000, 300000,
-                        1.0, false, now()
+                        1.0, false, now(), now()
                     )
                     """
                 ),

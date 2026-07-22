@@ -538,10 +538,6 @@ class DirectSessionManager:
                         params={"value": value},
                     )
                     session.execute(
-                        text("DELETE FROM user_pinned_objects WHERE user_id = :value"),
-                        {"value": value},
-                    )
-                    session.execute(
                         text("DELETE FROM daily_note_pages WHERE user_id = :value"),
                         {"value": value},
                     )
@@ -1112,15 +1108,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM user_pinned_objects
-                            WHERE object_type = 'page' AND object_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM resource_view_states
                             WHERE (surface_scheme = 'page' AND surface_id = :value)
                                OR (target_scheme = 'page' AND target_id = :value)
@@ -1164,16 +1151,6 @@ class DirectSessionManager:
                             DELETE FROM resource_versions
                             WHERE user_id = :value
                               AND resource_scheme IN ('page', 'note_block')
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE user_id = :value
-                              AND object_type IN ('page', 'note_block')
                             """
                         ),
                         {"value": value},
@@ -1272,16 +1249,6 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE object_type = 'note_block'
-                              AND object_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
 
                 if table == "note_blocks" and column == "user_id":
                     _delete_note_owned_content(
@@ -1335,16 +1302,6 @@ class DirectSessionManager:
                                   source_scheme = 'note_block'
                                OR target_scheme = 'note_block'
                               )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE user_id = :value
-                              AND object_type = 'note_block'
                             """
                         ),
                         {"value": value},

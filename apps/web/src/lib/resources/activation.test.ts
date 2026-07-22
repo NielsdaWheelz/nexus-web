@@ -21,6 +21,23 @@ describe("activateResource", () => {
     expect(navigate).toHaveBeenCalledWith(route.href);
   });
 
+  it("forwards the pane label hint through route activation", () => {
+    const openInNewPane = vi.fn();
+
+    expect(
+      activateResource(route, {
+        labelHint: "The Left Hand of Darkness",
+        openInNewPane,
+        newPane: true,
+      }),
+    ).toBe(true);
+
+    expect(openInNewPane).toHaveBeenCalledWith(
+      route.href,
+      "The Left Hand of Darkness",
+    );
+  });
+
   it("owns external browser activation", () => {
     const assign = vi.fn();
     const open = vi.fn();

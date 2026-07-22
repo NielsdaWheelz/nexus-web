@@ -59,14 +59,14 @@ export function presentPodcast(
   return {
     id: item.id,
     kind: "podcast",
-    primary: { kind: "link", href: `/podcasts/${item.id}`, paneTitleHint: item.title },
+    primary: { kind: "link", href: `/podcasts/${item.id}`, paneLabelHint: item.title },
     lead: { icon: resourceIconForScheme("podcast"), remoteUrl: item.image_url ?? undefined },
     headline: { text: item.title },
     signals,
     status: status ?? undefined,
     connections: connectionsFromSummary(connectionSummary),
     recency: item.latest_episode_published_at
-      ? { at: item.latest_episode_published_at, reason: "published" }
+      ? { at: item.latest_episode_published_at }
       : undefined,
     contributors:
       item.contributors && item.contributors.length > 0

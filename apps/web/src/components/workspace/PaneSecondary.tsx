@@ -1,11 +1,7 @@
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-} from "react";
+import { createContext, useContext } from "react";
+import { usePanePublication } from "@/components/workspace/usePanePublication";
 import {
   arePaneSecondaryPublicationsEqual,
   type PaneSecondaryPublication,
@@ -17,32 +13,9 @@ export const PaneSecondaryContext = createContext<
 
 export function usePaneSecondary(publication: PaneSecondaryPublication | null): void {
   const setPublication = useContext(PaneSecondaryContext);
-  const lastPublishedRef = useRef<{
-    setPublication: (publication: PaneSecondaryPublication | null) => void;
-    publication: PaneSecondaryPublication | null;
-  } | null>(null);
-  useEffect(() => {
-    if (!setPublication) {
-      return;
-    }
-    const lastPublished = lastPublishedRef.current;
-    if (
-      lastPublished?.setPublication === setPublication &&
-      arePaneSecondaryPublicationsEqual(lastPublished.publication, publication)
-    ) {
-      return;
-    }
-    lastPublishedRef.current = { setPublication, publication };
-    setPublication(publication);
-  }, [publication, setPublication]);
-
-  useEffect(() => {
-    if (!setPublication) {
-      return;
-    }
-    return () => {
-      lastPublishedRef.current = null;
-      setPublication(null);
-    };
-  }, [setPublication]);
+  usePanePublication({
+    publish: setPublication,
+    publication,
+    equals: arePaneSecondaryPublicationsEqual,
+  });
 }

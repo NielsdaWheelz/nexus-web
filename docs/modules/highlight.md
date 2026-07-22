@@ -93,8 +93,8 @@ There are two read scopes:
 
 - Per-fragment and per-page highlight reads feed inline highlight rendering and
   visible-row projection for the active reader location.
-- Media-wide reads feed cross-fragment experiences such as Document Map
-  Highlights, linked note/chat counts, markers, and quote-to-chat lookup.
+- Media-wide reads feed cross-fragment experiences such as Evidence highlight
+  facts, linked note/chat summaries, markers, and quote-to-chat lookup.
 
 The browser reader consumes media-wide highlight data through
 `GET /media/{id}/document-map`, whose aggregate response is owned by the reader
@@ -136,15 +136,19 @@ through the canonical highlight and note paths.
 Inline highlight rendering remains separate from the Document Map. Inline
 rendering follows the current reader location and active fragment/page data.
 
-Document Map Highlights is the cross-document reader lens for highlights. It
-renders the stored `exact` quote when available, shows an explicit placeholder
-for geometry-only PDF highlights, exposes note/color/delete actions according
-to caller capability, and shows linked note/chat summaries from the aggregate
-read model.
+Evidence is the cross-document reader surface for highlights. It renders the
+stored `exact` quote when available, shows an explicit placeholder for
+geometry-only PDF highlights, exposes note/color/delete actions according to
+caller capability, and shows linked note/chat summaries from the aggregate read
+model.
 
-`AnchoredSidecarSurface` is an internal layout primitive for desktop anchored
-rows. Current product and docs terminology should describe the shipped surface
-as Document Map Highlights, not a separate highlights sidecar.
+The wide reader may also project highlight-linked marginalia through
+`MarginRail`. Neither Evidence nor the margin owns highlight persistence or
+mutation behavior.
+
+The canonical passage/document scope and typed highlight association contract
+is
+[`reader-evidence-scope-associations-hard-cutover.md`](../cutovers/reader-evidence-scope-associations-hard-cutover.md).
 
 ## Quote-To-Chat
 
@@ -182,14 +186,14 @@ resolved through the `highlight:<id>` resource and graph citation path.
 
 ## Composition Rules
 
-- Do not duplicate highlight mutation logic in Document Map or chat code.
+- Do not duplicate highlight mutation logic in Evidence or chat code.
 - Do not persist rendered DOM geometry as highlight truth.
 - Do not infer citations from `reader_selection`; cite the durable
   `highlight:<id>` resource or resolved evidence.
 - Do not introduce another highlight-note store. Use note blocks plus
   `resource_edges`.
-- Do not make Document Map the owner of highlight CRUD. It is an aggregate read
-  and presentation surface.
+- Do not make Evidence the owner of highlight CRUD. It is an aggregate read and
+  presentation surface.
 - Do not delete a Highlight or its anchors from reindex/refresh code, and do
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.
@@ -210,7 +214,8 @@ Keep these tests aligned with this module contract:
 - `apps/web/src/lib/highlights/*.test.ts`
 - `apps/web/src/lib/conversations/chatRunBody.test.ts`
 - `apps/web/src/components/highlights/*.test.tsx`
-- `apps/web/src/components/reader/document-map/ReaderDocumentMapHighlightsLens.test.tsx`
+- `apps/web/src/components/reader/document-map/EvidencePaneSurface.test.tsx`
+- `apps/web/src/components/reader/MarginRail.test.tsx`
 - `apps/web/src/__tests__/components/SelectionPopover.test.tsx`
 - `apps/web/src/__tests__/components/ResourceChatDetail.test.tsx`
 - `e2e/tests/quote-attach-references.spec.ts`

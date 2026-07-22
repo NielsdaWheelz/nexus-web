@@ -22,6 +22,21 @@ const PANE_SECONDARY_GROUP_BASE = {
 
 export type WorkspaceSecondaryGroupId = keyof typeof PANE_SECONDARY_GROUP_BASE;
 
+export function paneSecondaryRegionId(
+  primaryPaneId: string,
+  groupId: WorkspaceSecondaryGroupId,
+): string {
+  return `pane-${primaryPaneId}-secondary-${groupId}`;
+}
+
+export function isPaneSecondaryRegionId(
+  primaryPaneId: string,
+  candidateId: string,
+): boolean {
+  return (Object.keys(PANE_SECONDARY_GROUP_BASE) as WorkspaceSecondaryGroupId[])
+    .some((groupId) => paneSecondaryRegionId(primaryPaneId, groupId) === candidateId);
+}
+
 export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
     id: "reader-contents",

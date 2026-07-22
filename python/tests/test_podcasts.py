@@ -5550,13 +5550,13 @@ class TestPodcastSubscriptionLifecycleClosure:
             headers=auth_headers(user_id),
             json={"media_id": str(media_id)},
         )
-        assert add_owned_media.status_code == 201
+        assert add_owned_media.status_code == 204
         add_shared_admin_media = auth_client.post(
             f"/libraries/{shared_admin_library_id}/media",
             headers=auth_headers(user_id),
             json={"media_id": str(media_id)},
         )
-        assert add_shared_admin_media.status_code == 201
+        assert add_shared_admin_media.status_code == 204
 
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{podcast_id}",
@@ -7234,7 +7234,7 @@ upgrade now
             headers=auth_headers(user_id),
             json={"podcast_id": str(alpha_podcast_id)},
         )
-        assert add_alpha_to_library.status_code == 201, (
+        assert add_alpha_to_library.status_code == 204, (
             "adding alpha podcast to a non-default library should succeed before scope assertions, "
             f"got {add_alpha_to_library.status_code}: {add_alpha_to_library.text}"
         )
@@ -7243,7 +7243,7 @@ upgrade now
             headers=auth_headers(user_id),
             json={"podcast_id": str(bravo_podcast_id)},
         )
-        assert add_bravo_to_library.status_code == 201, (
+        assert add_bravo_to_library.status_code == 204, (
             "adding bravo podcast to a non-default library should succeed before scope assertions, "
             f"got {add_bravo_to_library.status_code}: {add_bravo_to_library.text}"
         )

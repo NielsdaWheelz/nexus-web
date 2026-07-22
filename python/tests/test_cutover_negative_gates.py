@@ -1538,7 +1538,7 @@ def test_incoming_connections_old_routes_and_note_component_absent():
     assert not present, f"old object/backlink routes or components exist: {present}"
 
 
-def test_reader_sidecar_alignment_owned_by_shared_surface():
+def test_reader_sidecar_alignment_surface_absent_after_evidence_cutover():
     roots = [
         _WEB_ROOT
         / "components"
@@ -1555,10 +1555,8 @@ def test_reader_sidecar_alignment_owned_by_shared_surface():
     hits = _filtered(r"\b(setAlignedRows|rowHeights|overflowCount)\b", *roots)
     assert not hits, f"reader surfaces own duplicate sidecar alignment state:\n{_fmt(hits)}"
 
-    shared = (_WEB_ROOT / "components" / "reader" / "AnchoredSidecarSurface.tsx").read_text(
-        encoding="utf-8"
-    )
-    assert "setAlignedRows" in shared
+    retired = _WEB_ROOT / "components" / "reader" / "AnchoredSidecarSurface.tsx"
+    assert not retired.exists()
 
 
 # =============================================================================
@@ -1586,6 +1584,12 @@ def test_reader_document_map_old_product_files_absent():
         "apps/web/src/components/reader/ReaderConnectionsSurface.tsx",
         "apps/web/src/components/reader/ReaderConnectionsSurface.module.css",
         "apps/web/src/lib/media/readerConnections.ts",
+        "apps/web/src/lib/reader/apparatus.ts",
+        "apps/web/src/lib/reader/apparatus.test.ts",
+        "apps/web/src/lib/reader/apparatus.fixture.test.ts",
+        "apps/web/src/lib/reader/__fixtures__/reader-apparatus",
+        "python/scripts/generate_reader_apparatus_frontend_payloads.py",
+        "python/tests/reader_apparatus_frontend_payloads.py",
         "python/tests/test_reader_connections_routes.py",
     ]
     present = [path for path in rel_paths if (_REPO_ROOT / path).exists()]

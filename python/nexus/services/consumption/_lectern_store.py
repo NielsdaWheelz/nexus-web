@@ -10,7 +10,7 @@ inside the caller's already-open, viewer-locked command transaction.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 from uuid import UUID
 
 from sqlalchemy import text
@@ -18,7 +18,13 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
-from nexus.schemas.consumption import AfterPlacement, FirstPlacement, LastPlacement, Placement
+from nexus.schemas.consumption import (
+    AfterPlacement,
+    ConsumptionMediaKind,
+    FirstPlacement,
+    LastPlacement,
+    Placement,
+)
 
 # Aggregate row cap enforced on every add/ensure (spec §5.1). Module-level so a
 # test may monkeypatch a small ceiling instead of inserting 2,000 rows.
@@ -32,7 +38,9 @@ _SOURCE_TO_STORED: dict[LecternSource, str] = {
     "AutoSubscription": "auto_subscription",
 }
 
-SUPPORTED_MEDIA_KINDS = frozenset({"podcast_episode", "video", "web_article", "epub", "pdf"})
+# Runtime validation is derived from the wire/domain Literal so the backend has
+# one owner for the exact five-kind contract.
+SUPPORTED_MEDIA_KINDS: frozenset[str] = frozenset(get_args(ConsumptionMediaKind))
 
 
 @dataclass(frozen=True)

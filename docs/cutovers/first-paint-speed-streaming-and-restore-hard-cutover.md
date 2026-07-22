@@ -4,6 +4,13 @@
 **Type:** Hard cutover — no legacy code, no fallbacks, no backward-compat shims, no dual identity sources, no client-side restore round-trip.
 **Migration:** None. (`workspace_sessions` table + `WorkspaceState` schema are unchanged; only *where* the device key lives and *when* the session is read change.)
 
+> **Restore-semantics supersession (2026-07-20):** the neutral bare
+> `/libraries` landing described below is historical. `/lectern` is now the
+> canonical authenticated home and an explicit route intent: server restore
+> preserves saved panes, then restores or appends and activates Lectern. See
+> [`docs/modules/app-navigation.md`](../modules/app-navigation.md). The
+> streaming, first-paint, and shared-resolver contracts remain unchanged.
+
 ## One-line
 
 Make the authenticated app reach a **correct first paint as fast as possible** by (1) **streaming** the shell chrome immediately behind a Suspense boundary instead of blocking the first byte on best-effort data, (2) **parallelizing** the server bootstrap fetches, and (3) **restoring the user's workspace on the server** — moving the device key from `localStorage` to a server-owned httpOnly cookie, folding the `workspace-session` read into the server data root, and **seeding the store** so the first hydration already shows the right panes — which **deletes the post-mount restore round-trip and its flash**. Shipped with a **closed measurement loop** (RUM sink + CI bundle budget) so the win is evidence-backed and regression-proof.

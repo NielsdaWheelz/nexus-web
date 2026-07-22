@@ -1,5 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -13,50 +14,69 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import {
   getPublishedSecondarySurface,
+  type PanePrimaryChromePublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
-import {
-  readerApparatusOmittedSurfacePayloadFixtures,
-  readerApparatusRowPayloadFixtures,
-  type ReaderApparatusFixtureEntry,
-} from "@/lib/reader/__fixtures__/reader-apparatus";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
-import {
-  NOTE_PULSE_HIGHLIGHT,
-  READER_PULSE_HIGHLIGHT,
-} from "@/lib/reader/pulseEvent";
+import type { ContributorCredit } from "@/lib/contributors/types";
 import type {
-  ReaderApparatusItem,
-  ReaderApparatusResponse,
-} from "@/lib/reader/apparatus";
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
+import { READER_PULSE_HIGHLIGHT } from "@/lib/reader/pulseEvent";
+import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
+import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
+import { useEscapeKey } from "@/lib/ui/useEscapeKey";
+import { useModalLayer } from "@/lib/ui/useModalLayer";
 import type {
-  ReaderConnectionPage,
-  ReaderDocumentMapEmbedItem,
+  ReaderEvidenceConfidence,
+  ReaderEvidenceSourceKind,
 } from "@/lib/reader/documentMap";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
   apiFetch: vi.fn(),
-  mediaKind: "pdf" as "pdf" | "web_article" | "epub" | "video",
+  mediaKind: "pdf" as
+    | "pdf"
+    | "web_article"
+    | "epub"
+    | "podcast_episode"
+    | "video"
+    | "audio"
+    | "future_kind",
+  canRead: true,
+  canPlay: false,
+  processingStatus: "ready_for_reading" as
+    | "pending"
+    | "extracting"
+    | "ready_for_reading"
+    | "failed",
+  contributors: [] as ContributorCredit[],
+  canEditAuthors: false,
+  initialMediaFailureStatus: null as number | null,
+  canonicalMediaRefetchFailure: null as {
+    status: number;
+    code: string;
+  } | null,
+  fragmentFailure: null as { status: number; code: string } | null,
+  mediaDetailCallCount: 0,
+  onMetadataRetryEnqueued: null as (() => void) | null,
   includeToc: false,
+  includeSecondEpubSection: false,
   isMobileViewport: false,
   fragmentHtml: "<p>Readable text.</p>",
   fragmentCanonicalText: "",
   renderHtmlInMock: false,
-  apparatusResponse: null as ReaderApparatusResponse | null,
-  documentMapConnections: null as ReaderConnectionPage | null,
-  documentMapEmbeds: null as ReaderDocumentMapEmbedItem[] | null,
+  documentMapDocumentItems: null as unknown[] | null,
+  documentMapPassageGroups: null as unknown[] | null,
+  documentMapEmbeds: null as DocumentEmbed[] | null,
   readerFocusMode: "off" as
-    | "off"
-    | "distraction_free"
-    | "paragraph"
-    | "sentence",
+    "off" | "distraction_free" | "paragraph" | "sentence",
   readerPersistence: { state: "Clean" } as
     | { state: "Clean" }
     | { state: "Pending" }
@@ -73,8 +93,8 @@ const testState = vi.hoisted(() => ({
   },
 }));
 
-const paneShellMocks = vi.hoisted(() => ({
-  usePaneChromeOverride: vi.fn(),
+const paneChromeMocks = vi.hoisted(() => ({
+  usePanePrimaryChrome: vi.fn(),
   usePaneMobileChromeController: vi.fn(() => null),
 }));
 
@@ -95,12 +115,12 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => testState.isMobileViewport,
 }));
 
-vi.mock("@/components/workspace/PaneShell", () => ({
-  usePaneChromeOverride: paneShellMocks.usePaneChromeOverride,
+vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
+  usePanePrimaryChrome: paneChromeMocks.usePanePrimaryChrome,
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
-  usePaneMobileChromeController: paneShellMocks.usePaneMobileChromeController,
+  usePaneMobileChromeController: paneChromeMocks.usePaneMobileChromeController,
 }));
 
 vi.mock("@/lib/reader/ReaderContext", () => ({
@@ -132,15 +152,27 @@ vi.mock("@/lib/media/useLibraryMembership", () => ({
 }));
 
 vi.mock("@/lib/media/useDocumentActions", () => ({
-  useDocumentActions: () => ({
-    deleteBusy: false,
-    retryBusy: false,
-    refreshBusy: false,
-    retryMetadataBusy: false,
-    handleDelete: vi.fn(),
-    handleRetry: vi.fn(),
-    handleRefresh: vi.fn(),
-    handleRetryMetadata: vi.fn(),
+  useDocumentActions: (options: {
+    onMetadataRetryEnqueued: () => void;
+  }) => {
+    testState.onMetadataRetryEnqueued = options.onMetadataRetryEnqueued;
+    return {
+      deleteBusy: false,
+      retryBusy: false,
+      refreshBusy: false,
+      retryMetadataBusy: false,
+      handleDelete: vi.fn(),
+      handleRetry: vi.fn(),
+      handleRefresh: vi.fn(),
+      handleRetryMetadata: vi.fn(),
+    };
+  },
+}));
+
+vi.mock("@/lib/media/useMediaProcessingStatus", () => ({
+  useMediaProcessingStatus: () => ({
+    snapshot: null,
+    connectionState: "open",
   }),
 }));
 
@@ -149,17 +181,32 @@ const PDF_INTRINSIC_WIDTH_PX = 812;
 vi.mock("@/components/PdfReader", () => ({
   default: ({
     onIntrinsicWidthChange,
+    onHighlightHover,
   }: {
     onIntrinsicWidthChange?: (state: {
       maxRenderedPageWidthPx: number | null;
     }) => void;
+    onHighlightHover?: (highlightId: string | null) => void;
   }) => {
     window.setTimeout(() => {
       onIntrinsicWidthChange?.({
         maxRenderedPageWidthPx: 812,
       });
     }, 0);
-    return <div data-testid="pdf-reader" />;
+    return (
+      <div
+        data-testid="pdf-reader"
+        tabIndex={0}
+        onPointerEnter={() =>
+          onHighlightHover?.("33333333-3333-4333-8333-333333333333")
+        }
+        onPointerLeave={() => onHighlightHover?.(null)}
+        onFocus={() =>
+          onHighlightHover?.("33333333-3333-4333-8333-333333333333")
+        }
+        onBlur={() => onHighlightHover?.(null)}
+      />
+    );
   },
 }));
 
@@ -206,41 +253,15 @@ vi.mock("@/components/HtmlRenderer", () => ({
 }));
 
 vi.mock("@/components/reader/ReaderDocumentMapOverviewRail", () => ({
-  default: ({ onOpenMap }: { onOpenMap: () => void }) => (
-    <button type="button" onClick={onOpenMap}>
-      Open Document Map
-    </button>
-  ),
+  default: () => <div data-testid="document-map-overview-rail" />,
+}));
+
+vi.mock("@/components/reader/MarginRail", () => ({
+  default: () => <div data-testid="margin-rail" />,
 }));
 
 const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 28;
-const READER_SHELL_REPRESENTATIVE_ROW_FIXTURE_IDS = [
-  "html-distill-gp-full",
-  "html-numinous-ttft-full",
-  "epub-standardebooks-james-pragmatism",
-  "pdf-attention-native-link-graph",
-  "pdf-law-review-footnotes",
-  "tei-philpapers-lop-aiz-grobid-0-8-2",
-  "arxiv-2606-source-package",
-  "html-tufte-css-full",
-  "html-gwern-sidenote-full",
-] as const;
-
-const readerShellRepresentativeRowFixtures =
-  READER_SHELL_REPRESENTATIVE_ROW_FIXTURE_IDS.map((fixtureId) => {
-    const entry = readerApparatusRowPayloadFixtures.find(
-      (candidate) => candidate.fixtureId === fixtureId,
-    );
-    if (!entry) {
-      throw new Error(`Missing reader apparatus row fixture ${fixtureId}`);
-    }
-    return entry;
-  });
-
-type PaneChromeOverrides = {
-  toolbar?: ReactNode;
-  options?: ActionMenuOption[];
-};
+const PDF_HIGHLIGHT_ID = "33333333-3333-4333-8333-333333333333";
 
 function jsonResponse(data: unknown) {
   return { data };
@@ -251,15 +272,208 @@ function pathOf(input: unknown): string {
 }
 
 function apiCallsForPath(path: string): unknown[][] {
-  return testState.apiFetch.mock.calls.filter(([input]) => pathOf(input) === path);
+  return testState.apiFetch.mock.calls.filter(
+    ([input]) => pathOf(input) === path,
+  );
 }
 
-function mediaKindForPayload(entry: ReaderApparatusFixtureEntry) {
-  const kind = entry.payload.apparatus.media_kind;
-  if (kind !== "pdf" && kind !== "web_article" && kind !== "epub") {
-    throw new Error(`Unsupported MediaPaneBody apparatus fixture kind: ${kind}`);
-  }
-  return kind;
+interface DocumentMapPassageGroupFixture {
+  locus_ref: string;
+  resolution: { kind: "Resolved" | "Unavailable" };
+  target_excerpt: { kind: "Absent" } | { kind: "Present"; value: string };
+  items: Array<{
+    id: string;
+    kind: string;
+    label: string;
+    excerpt: { kind: "Absent" } | { kind: "Present"; value: string };
+  }>;
+  also_references: unknown[];
+}
+
+interface SourceTargetFixture {
+  stableKey: string;
+  resourceId?: string;
+  kind: ReaderEvidenceSourceKind;
+  label: string;
+  body: string | null;
+  locator: MediaRetrievalLocator;
+  orderKey: string;
+}
+
+function sourceReferencePassage({
+  stableKey,
+  kind,
+  label,
+  body = null,
+  locator,
+  orderKey,
+  confidence = "exact",
+  targets = [],
+  resourceId = "11111111-1111-4111-8111-111111111111",
+}: {
+  stableKey: string;
+  kind: ReaderEvidenceSourceKind;
+  label: string;
+  body?: string | null;
+  locator: MediaRetrievalLocator;
+  orderKey: string;
+  confidence?: ReaderEvidenceConfidence;
+  targets?: SourceTargetFixture[];
+  resourceId?: string;
+}) {
+  const resourceRef = `reader_apparatus_item:${resourceId}`;
+  const quotedTarget =
+    "text_quote_selector" in locator &&
+    locator.text_quote_selector?.exact?.trim()
+      ? locator.text_quote_selector.exact
+      : "exact" in locator &&
+          typeof locator.exact === "string" &&
+          locator.exact.trim()
+        ? locator.exact
+        : kind.endsWith("_ref")
+          ? label
+          : body;
+  return {
+    locus_ref: resourceRef,
+    resolution: {
+      kind: "Resolved",
+      anchor: {
+        locator,
+        passage_anchor_id: null,
+      },
+      order_key: orderKey,
+    },
+    items: [
+      {
+        id: `source-reference:${stableKey}`,
+        kind: "SourceReference",
+        label,
+        excerpt: body ? { kind: "Present", value: body } : { kind: "Absent" },
+        associations: [],
+        stable_key: stableKey,
+        apparatus_kind: kind,
+        confidence,
+        targets: targets.map((target) => {
+          const targetResourceId =
+            target.resourceId ?? "22222222-2222-4222-8222-222222222222";
+          const targetRef = `reader_apparatus_item:${targetResourceId}`;
+          return {
+            ref: targetRef,
+            stable_key: target.stableKey,
+            apparatus_kind: target.kind,
+            label: { kind: "Present", value: target.label },
+            body: target.body
+              ? { kind: "Present", value: target.body }
+              : { kind: "Absent" },
+            activation: {
+              resource_ref: targetRef,
+              kind: "route",
+              href: `/media/media-1?apparatus=${target.stableKey}`,
+              unresolved_reason: null,
+            },
+            resolution: {
+              kind: "Resolved",
+              anchor: {
+                locator: target.locator,
+                passage_anchor_id: null,
+              },
+              order_key: target.orderKey,
+            },
+          };
+        }),
+      },
+    ],
+    target_excerpt: quotedTarget
+      ? { kind: "Present", value: quotedTarget }
+      : { kind: "Absent" },
+    also_references: [],
+  };
+}
+
+function pdfHighlightPassage() {
+  const itemId = `highlight:${PDF_HIGHLIGHT_ID}`;
+  return {
+    locus_ref: itemId,
+    resolution: {
+      kind: "Resolved",
+      anchor: {
+        locator: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads: [
+            {
+              x1: 70,
+              y1: 60,
+              x2: 230,
+              y2: 60,
+              x3: 230,
+              y3: 80,
+              x4: 70,
+              y4: 80,
+            },
+          ],
+          exact: "PDF hover target",
+        },
+        passage_anchor_id: null,
+      },
+      order_key: "0001.0001",
+    },
+    target_excerpt: { kind: "Present", value: "PDF hover target" },
+    items: [
+      {
+        id: itemId,
+        kind: "Highlight",
+        label: "PDF hover target",
+        excerpt: { kind: "Present", value: "PDF hover target" },
+        associations: [],
+        highlight_id: PDF_HIGHLIGHT_ID,
+        quote: "PDF hover target",
+        prefix: "",
+        suffix: "",
+        color: "yellow",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    ],
+    also_references: [],
+  };
+}
+
+function crossSectionSourceReferencePassage() {
+  return sourceReferencePassage({
+    stableKey: "owner",
+    kind: "footnote_ref",
+    label: "Owner marker",
+    locator: {
+      type: "epub_fragment_offsets",
+      media_id: "media-1",
+      section_id: "section-1",
+      fragment_id: "fragment-1",
+      start_offset: 0,
+      end_offset: 2,
+    },
+    orderKey: "section:0000:0000000000",
+    targets: [
+      {
+        stableKey: "target",
+        kind: "footnote",
+        label: "Target note",
+        body: "Cross-section evidence.",
+        locator: {
+          type: "epub_fragment_offsets",
+          media_id: "media-1",
+          section_id: "section-2",
+          fragment_id: "fragment-2",
+          start_offset: 0,
+          end_offset: 22,
+        },
+        orderKey: "section:0001:0000000000",
+      },
+    ],
+  });
 }
 
 function mediaResponse() {
@@ -268,155 +482,100 @@ function mediaResponse() {
     kind: testState.mediaKind,
     title: "Reader fixture",
     canonical_source_url: null,
-    processing_status: "ready_for_reading",
+    processing_status: testState.processingStatus,
     retrieval_status: "ready",
-    contributors: [],
+    contributors: testState.contributors,
+    author_mode: "automatic" as const,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     capabilities: {
-      can_read: true,
+      can_read: testState.canRead,
       can_highlight: true,
       can_quote: true,
       can_search: true,
-      can_play: false,
+      can_play: testState.canPlay,
       can_download_file: false,
       can_read_embeds: testState.mediaKind === "web_article",
+      can_edit_authors: testState.canEditAuthors,
     },
   };
 }
 
-function apparatusResponse(): ReaderApparatusResponse {
-  return (
-    testState.apparatusResponse ?? {
-      media_id: "media-1",
-      media_kind: testState.mediaKind,
-      status: "empty",
-      extractor_version: "reader_apparatus_v1",
-      source_fingerprint: "sha256:test",
-      capabilities: {
-        has_inline_markers: false,
-        has_sidecar_items: false,
-        supports_hover_preview: false,
-        supports_jump_to_marker: false,
-        supports_jump_to_target: false,
-        has_probable_items: false,
-      },
-      items: [],
-      edges: [],
-      diagnostics: {},
-    }
-  );
-}
-
-function apparatusItem(
-  id: string,
-  item: Omit<ReaderApparatusItem, "id" | "resource_ref">,
-): ReaderApparatusItem {
-  return {
-    id,
-    resource_ref: `reader_apparatus_item:${id}`,
-    ...item,
-  };
-}
-
 function readerDocumentMapResponse() {
-  const apparatus = apparatusResponse();
-  const citationCount =
-    apparatus.status === "ready" || apparatus.status === "partial"
-      ? apparatus.items.length
-      : 0;
-  const connections = testState.documentMapConnections ?? {
-    anchored: [],
-    unanchored: [],
-    next_cursor: null,
-  };
-  const connectionCount = connections.anchored.length + connections.unanchored.length;
   const embeds = testState.documentMapEmbeds ?? [];
+  const passageGroups = (testState.documentMapPassageGroups ??
+    []) as DocumentMapPassageGroupFixture[];
+  const documentItems = testState.documentMapDocumentItems ?? [];
+  const passageItems = passageGroups.flatMap((group) => group.items);
   return {
     media_id: "media-1",
     media_kind: testState.mediaKind,
     title: "Reader fixture",
     status: "ready",
     source_version: {
-      media_updated_at: "2026-01-01T00:00:00Z",
-      content_fingerprint: null,
-      apparatus_source_fingerprint: apparatus.source_fingerprint,
-      graph_max_updated_at: null,
-      highlights_max_updated_at: null,
+      media_updated_at: {
+        kind: "Present",
+        value: "2026-01-01T00:00:00Z",
+      },
+      apparatus_source_fingerprint: { kind: "Absent" },
+      graph_max_updated_at: { kind: "Absent" },
+      highlights_max_updated_at: { kind: "Absent" },
     },
-    lenses: [
-      {
-        id: "contents",
-        label: "Contents",
-        status: "ready",
-        item_count: 1,
-        anchored_count: 1,
-        unanchored_count: 0,
+    navigation: { kind: "Absent" },
+    embeds,
+    evidence: {
+      counts: {
+        highlights: passageItems.filter((item) => item.kind === "Highlight")
+          .length,
+        citations: passageItems.filter(
+          (item) =>
+            item.kind === "SourceReference" ||
+            item.kind === "GeneratedCitation",
+        ).length,
+        links: documentItems.filter(
+          (item) =>
+            typeof item === "object" &&
+            item !== null &&
+            (item as { kind?: unknown }).kind === "Link",
+        ).length,
+        synapses: 0,
+        passages: passageItems.length,
+        document: documentItems.length,
       },
-      {
-        id: "highlights",
-        label: "Highlights",
-        status: "empty",
-        item_count: 0,
-        anchored_count: 0,
-        unanchored_count: 0,
-      },
-      {
-        id: "embeds",
-        label: "Embeds",
-        status: embeds.length > 0 ? "ready" : "empty",
-        item_count: embeds.length,
-        anchored_count: embeds.filter((item) => item.anchor).length,
-        unanchored_count: embeds.filter((item) => !item.anchor).length,
-      },
-      {
-        id: "citations",
-        label: "Citations",
-        status: citationCount > 0 ? apparatus.status : "empty",
-        item_count: citationCount,
-        anchored_count: citationCount,
-        unanchored_count: 0,
-      },
-      {
-        id: "connections",
-        label: "Connections",
-        status: connectionCount > 0 ? "ready" : "empty",
-        item_count: connectionCount,
-        anchored_count: connections.anchored.length,
-        unanchored_count: connections.unanchored.length,
-      },
-      {
-        id: "chat",
-        label: "Chat",
-        status: "empty",
-        item_count: 0,
-        anchored_count: 0,
-        unanchored_count: 0,
-      },
-    ],
-    items: embeds,
+      passage_groups: passageGroups,
+      document_items: documentItems,
+    },
     markers: [
       {
-        id: "marker:contents:section-1",
-        item_id: "section:section-1",
-        lens_id: "contents",
-        lane: "contents",
+        id: "contents:section-1",
+        item_id: "contents:section-1",
+        kind: "Contents",
         position: 0.5,
-        status: "container",
-        tone: "neutral",
+        tone: "Neutral",
         label: "Section 1",
-        preview: null,
+        preview: { kind: "Absent" },
       },
+      ...passageGroups.map((group, index) => ({
+        id: group.items[0]!.id,
+        item_id: group.items[0]!.id,
+        kind: "SourceReference",
+        position: (index + 1) / (passageGroups.length + 1),
+        tone: group.resolution.kind === "Resolved" ? "Citation" : "Warning",
+        label: group.items[0]!.label,
+        preview: group.items[0]!.excerpt,
+      })),
+      ...embeds.map((embed, index) => ({
+        id: `embed:${embed.id}`,
+        item_id: `embed:${embed.id}`,
+        kind: "Embed",
+        position: (index + 1) / (embeds.length + 1),
+        tone: "Neutral",
+        label: embed.display.label,
+        preview: { kind: "Present", value: embed.display.description },
+      })),
     ],
-    navigation: null,
-    highlights: [],
-    apparatus,
-    connections,
-    chat_threads: [],
     diagnostics: {
       omitted_item_counts: {},
-      partial_lenses: [],
-      owner_warnings: [],
     },
   };
 }
@@ -465,15 +624,22 @@ function readerContentsSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
   };
 }
 
-function latestChromeOverrides(): PaneChromeOverrides | null {
-  const call = paneShellMocks.usePaneChromeOverride.mock.calls.at(-1);
-  return (call?.[0] as PaneChromeOverrides | undefined) ?? null;
+function readerEvidenceSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
+  return {
+    ...readerContentsSecondaryPane(),
+    activeSurfaceId: "reader-evidence",
+  };
+}
+
+function latestPrimaryChrome(): PanePrimaryChromePublication | null {
+  const call = paneChromeMocks.usePanePrimaryChrome.mock.calls.at(-1);
+  return (call?.[0] as PanePrimaryChromePublication | undefined) ?? null;
 }
 
 async function renderLatestToolbar() {
   let toolbar: ReactNode = null;
   await waitFor(() => {
-    toolbar = latestChromeOverrides()?.toolbar ?? null;
+    toolbar = latestPrimaryChrome()?.toolbar ?? null;
     expect(toolbar).not.toBeNull();
   });
   render(<>{toolbar}</>);
@@ -497,142 +663,69 @@ async function getContentsSurfaceBody(
   await waitFor(() => {
     const publication = latestSecondaryPublication(onSetPaneSecondary);
     body =
-      getPublishedSecondarySurface(publication, "reader-contents")?.body ?? null;
+      getPublishedSecondarySurface(publication, "reader-contents")?.body ??
+      null;
     expect(body).not.toBeNull();
   });
   return body;
 }
 
-async function getChromeOption(id: string): Promise<ActionMenuOption> {
-  let option: ActionMenuOption | undefined;
+async function getPrimaryOption(id: string): Promise<ActionDescriptor> {
+  let option: ActionDescriptor | undefined;
   await waitFor(() => {
-    option = latestChromeOverrides()?.options?.find((item) => item.id === id);
+    option = latestPrimaryChrome()?.options?.find((item) => item.id === id);
     expect(option).toBeDefined();
   });
-  return option as ActionMenuOption;
+  return option as ActionDescriptor;
 }
 
-async function getApparatusSurfaceBody(
-  onSetPaneSecondary: ReturnType<typeof vi.fn>,
-): Promise<ReactNode> {
-  // Wait for document-map fetch so apparatus rows are populated in the publication.
+async function getHeaderAction(id: string): Promise<PaneHeaderAction> {
+  let action: PaneHeaderAction | undefined;
   await waitFor(() => {
-    expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
+    action = latestPrimaryChrome()?.actions?.find((item) => item.id === id);
+    expect(action).toBeDefined();
   });
-  let body: ReactNode = null;
+  return action as PaneHeaderAction;
+}
+
+async function getReadyPrimaryChrome(): Promise<PanePrimaryChromePublication> {
   await waitFor(() => {
-    const publication = latestSecondaryPublication(onSetPaneSecondary);
-    body =
-      getPublishedSecondarySurface(publication, "reader-evidence")?.body ?? null;
-    expect(body).not.toBeNull();
+    const publication = latestPrimaryChrome();
+    expect(publication?.header).toMatchObject({
+      kind: "resource",
+      resource: { status: "ready", title: "Reader fixture" },
+    });
   });
-  return body;
+  const publication = latestPrimaryChrome();
+  if (!publication) throw new Error("Expected ready primary chrome publication");
+  return publication;
 }
 
-function activation(resourceRef: string, href: string | null) {
-  return {
-    resourceRef,
-    kind: href ? "route" : "none",
-    href,
-    unresolvedReason: href ? null : "missing",
-  } as const;
-}
-
-function noteTargetConnectionPage(): ReaderConnectionPage {
+function noteTargetDocumentItem() {
   const noteBlockId = "33333333-3333-4333-8333-333333333333";
   return {
-    anchored: [
-      {
-        id: "edge:edge-note:anchor:highlight",
-        connection: {
-          edge_id: "edge-note",
-          direction: "outgoing",
-          kind: "context",
-          origin: "highlight_note",
-          snapshot: null,
-          source_order_key: null,
-          target_order_key: null,
-          ordinal: null,
-          source_ref: "highlight:22222222-2222-4222-8222-222222222222",
-          target_ref: `note_block:${noteBlockId}`,
-          source: {
-            ref: "highlight:22222222-2222-4222-8222-222222222222",
-            scheme: "highlight",
-            id: "22222222-2222-4222-8222-222222222222",
-            label: "Current highlight",
-            description: null,
-            activation: activation(
-              "highlight:22222222-2222-4222-8222-222222222222",
-              "/media/media-1#highlight-22222222-2222-4222-8222-222222222222",
-            ),
-            href: "/media/media-1#highlight-22222222-2222-4222-8222-222222222222",
-            missing: false,
-          },
-          target: {
-            ref: `note_block:${noteBlockId}`,
-            scheme: "note_block",
-            id: noteBlockId,
-            label: "Research note",
-            description: null,
-            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
-            href: `/notes/${noteBlockId}`,
-            missing: false,
-          },
-          other: {
-            ref: `note_block:${noteBlockId}`,
-            scheme: "note_block",
-            id: noteBlockId,
-            label: "Research note",
-            description: null,
-            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
-            href: `/notes/${noteBlockId}`,
-            missing: false,
-          },
-          citation: {
-            ordinal: 1,
-            role: "context",
-            snapshot: { excerpt: "Target note excerpt." },
-            activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
-            target_reader: {
-              media_id: null,
-              locator: {
-                type: "note_block_offsets",
-                block_id: noteBlockId,
-                start_offset: 2,
-                end_offset: 18,
-              },
-            },
-            target_status: "current",
-          },
-          created_at: "2026-01-01T00:00:00Z",
-        },
-        anchor: {
-          ref: "highlight:22222222-2222-4222-8222-222222222222",
-          media_id: "media-1",
-          locator: {
-            type: "web_text_offsets",
-            media_id: "media-1",
-            fragment_id: "fragment-1",
-            start_offset: 0,
-            end_offset: 8,
-          },
-          page_number: null,
-          fragment_id: "fragment-1",
-          highlight_id: "22222222-2222-4222-8222-222222222222",
-          evidence_span_id: null,
-          passage_anchor_id: null,
-          order_key: "fragment:0000000000:0000000000",
-        },
-        source_category: "highlight_note",
-        title: "Research note",
-        subtitle: "highlight_note · context",
-        excerpt: "Target note excerpt.",
-        activation: activation(`note_block:${noteBlockId}`, `/notes/${noteBlockId}`),
+    id: "link:edge-note",
+    kind: "Link",
+    label: "Research note",
+    excerpt: { kind: "Present", value: "Target note excerpt." },
+    associations: [],
+    edge_id: "edge-note",
+    role: "context",
+    origin: "highlight_note",
+    object: {
+      ref: `note_block:${noteBlockId}`,
+      kind: "Note",
+      label: "Research note",
+      excerpt: { kind: "Present", value: "Target note excerpt." },
+      activation: {
+        resource_ref: `note_block:${noteBlockId}`,
+        kind: "route",
         href: `/notes/${noteBlockId}`,
+        unresolved_reason: null,
       },
-    ],
-    unanchored: [],
-    next_cursor: null,
+      note_block_id: noteBlockId,
+      body_pm_json: {},
+    },
   };
 }
 
@@ -665,63 +758,93 @@ function PaneSecondaryTestHost({
   );
 }
 
+function ReaderInteractionStack({
+  blocker = "none",
+}: {
+  blocker?: "none" | "modal" | "transient";
+}) {
+  const readerModal = useModalLayer(true);
+  const nestedModal = useModalLayer(blocker === "modal");
+  useEscapeKey(true, () => undefined, {
+    layer: "modal",
+    modalToken: readerModal.token,
+    scope: "pane-pane-1-secondary-reader-tools",
+  });
+  useEscapeKey(blocker === "modal", () => undefined, {
+    layer: "modal",
+    modalToken: nestedModal.token,
+  });
+  useEscapeKey(blocker === "transient", () => undefined, {
+    layer: "transient",
+    modalToken: readerModal.token,
+  });
+  return null;
+}
+
 function renderMediaPane(
   options: {
+    href?: string;
+    isActive?: boolean;
     secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
     renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
 ) {
-  const href = "/media/media-1";
+  const href = options.href ?? "/media/media-1";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
+  const onSetPaneLabel = vi.fn();
   const onNavigatePane = vi.fn();
   const onRequestSecondarySurface = vi.fn();
   const onCloseSecondaryPane = vi.fn();
+  const onOpenInNewPane = vi.fn();
   const onSetFixedChrome = vi.fn();
   const onSetPaneSecondary = vi.fn();
 
   render(
     <FeedbackProvider>
       <LecternProvider>
-      <GlobalPlayerProvider>
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        isActive={true}
-        href={href}
-        routeId={identity.routeId}
-        routeKey={identity.routeKey}
-        secondaryPane={options.secondaryPane ?? null}
-        canGoBack={false}
-        canGoForward={false}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-        pathParams={{ id: "media-1" }}
-        onNavigatePane={onNavigatePane}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneLayout={onSetPaneLayout}
-        onRequestSecondarySurface={onRequestSecondarySurface}
-        onCloseSecondaryPane={onCloseSecondaryPane}
-      >
-        <PaneSecondaryTestHost
-          onSetPaneSecondary={onSetPaneSecondary}
-          renderSurfaceId={options.renderSecondarySurfaceId}
-        >
-          <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
-            <MediaPaneBody />
-          </PaneFixedChromeContext.Provider>
-        </PaneSecondaryTestHost>
-      </PaneRuntimeProvider>
-      </GlobalPlayerProvider>
+        <GlobalPlayerProvider>
+          <PaneRuntimeProvider
+            paneId="pane-1"
+            isActive={options.isActive ?? true}
+            href={href}
+            routeId={identity.routeId}
+            routeKey={identity.routeKey}
+            secondaryPane={options.secondaryPane ?? null}
+            canGoBack={false}
+            canGoForward={false}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+            pathParams={{ id: "media-1" }}
+            onNavigatePane={onNavigatePane}
+            onReplacePane={vi.fn()}
+            onOpenInNewPane={onOpenInNewPane}
+            onSetPaneLabel={onSetPaneLabel}
+            onSetPaneLayout={onSetPaneLayout}
+            onRequestSecondarySurface={onRequestSecondarySurface}
+            onCloseSecondaryPane={onCloseSecondaryPane}
+          >
+            <PaneSecondaryTestHost
+              onSetPaneSecondary={onSetPaneSecondary}
+              renderSurfaceId={options.renderSecondarySurfaceId}
+            >
+              <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
+                <MediaPaneBody />
+              </PaneFixedChromeContext.Provider>
+            </PaneSecondaryTestHost>
+          </PaneRuntimeProvider>
+        </GlobalPlayerProvider>
       </LecternProvider>
     </FeedbackProvider>,
   );
 
   return {
     onSetPaneLayout,
+    onSetPaneLabel,
     onNavigatePane,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
+    onOpenInNewPane,
     onSetPaneSecondary,
     onSetFixedChrome,
     routeKey: identity.routeKey,
@@ -732,17 +855,28 @@ describe("MediaPaneBody pane sizing", () => {
   beforeEach(() => {
     testState.apiFetch.mockReset();
     testState.includeToc = false;
+    testState.includeSecondEpubSection = false;
     testState.isMobileViewport = false;
     testState.fragmentHtml = "<p>Readable text.</p>";
     testState.fragmentCanonicalText = "";
     testState.renderHtmlInMock = false;
-    testState.apparatusResponse = null;
-    testState.documentMapConnections = null;
+    testState.documentMapDocumentItems = null;
+    testState.documentMapPassageGroups = null;
     testState.documentMapEmbeds = null;
+    testState.canRead = true;
+    testState.canPlay = false;
+    testState.processingStatus = "ready_for_reading";
+    testState.contributors = [];
+    testState.canEditAuthors = false;
+    testState.initialMediaFailureStatus = null;
+    testState.canonicalMediaRefetchFailure = null;
+    testState.fragmentFailure = null;
+    testState.mediaDetailCallCount = 0;
+    testState.onMetadataRetryEnqueued = null;
     testState.readerFocusMode = "off";
     testState.readerPersistence = { state: "Clean" };
-    paneShellMocks.usePaneChromeOverride.mockReset();
-    paneShellMocks.usePaneMobileChromeController.mockClear();
+    paneChromeMocks.usePanePrimaryChrome.mockReset();
+    paneChromeMocks.usePaneMobileChromeController.mockClear();
     for (const fn of Object.values(testState.readerContextFns)) {
       fn.mockReset();
     }
@@ -754,6 +888,23 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({ items: [] });
         }
         if (path === "/api/media/media-1") {
+          testState.mediaDetailCallCount += 1;
+          if (testState.initialMediaFailureStatus !== null) {
+            throw {
+              status: testState.initialMediaFailureStatus,
+              code: "E_TEST_MEDIA_LOAD",
+              message: "Media load failed",
+            };
+          }
+          if (
+            testState.mediaDetailCallCount > 1 &&
+            testState.canonicalMediaRefetchFailure
+          ) {
+            throw {
+              ...testState.canonicalMediaRefetchFailure,
+              message: "Canonical refetch failed",
+            };
+          }
           return jsonResponse(mediaResponse());
         }
         if (path === "/api/media/media-1/reader-state") {
@@ -768,6 +919,12 @@ describe("MediaPaneBody pane sizing", () => {
           return jsonResponse({ state: "Empty", revision: 0 });
         }
         if (path === "/api/media/media-1/fragments") {
+          if (testState.fragmentFailure) {
+            throw {
+              ...testState.fragmentFailure,
+              message: "Fragments failed",
+            };
+          }
           return jsonResponse(fragmentResponse());
         }
         if (path === "/api/media/media-1/navigation") {
@@ -790,6 +947,25 @@ describe("MediaPaneBody pane sizing", () => {
                 anchor_id: null,
                 char_count: 0,
               },
+              ...(testState.includeSecondEpubSection
+                ? [
+                    {
+                      section_id: "section-2",
+                      label: "Section 2",
+                      ordinal: 1,
+                      fragment_id: "fragment-2",
+                      fragment_idx: 1,
+                      level: 1,
+                      depth: 0,
+                      start_offset: 0,
+                      end_offset: 23,
+                      href_path: "chapter-2.xhtml",
+                      href_fragment: null,
+                      anchor_id: null,
+                      char_count: 23,
+                    },
+                  ]
+                : []),
             ],
             toc_nodes: navigationTocNodes(),
             landmarks: [],
@@ -819,10 +995,33 @@ describe("MediaPaneBody pane sizing", () => {
             created_at: "2026-01-01T00:00:00Z",
           });
         }
+        if (path === "/api/media/media-1/sections/section-2") {
+          return jsonResponse({
+            section_id: "section-2",
+            label: "Section 2",
+            fragment_id: "fragment-2",
+            fragment_idx: 1,
+            href_path: "chapter-2.xhtml",
+            anchor_id: null,
+            source_node_id: null,
+            source: "spine",
+            ordinal: 1,
+            prev_section_id: "section-1",
+            next_section_id: null,
+            html_sanitized: "<p>Cross-section evidence.</p>",
+            canonical_text: "",
+            char_count: 0,
+            word_count: 2,
+            created_at: "2026-01-01T00:00:00Z",
+          });
+        }
         if (path === "/api/media/media-1/highlights") {
           return jsonResponse({ highlights: [] });
         }
         if (path === "/api/fragments/fragment-1/highlights") {
+          return jsonResponse({ highlights: [] });
+        }
+        if (path === "/api/fragments/fragment-2/highlights") {
           return jsonResponse({ highlights: [] });
         }
         throw new Error(`Unexpected API call: ${path}`);
@@ -841,8 +1040,7 @@ describe("MediaPaneBody pane sizing", () => {
     "publishes workspace primary layout and fixed chrome for %s",
     async (kind) => {
       testState.mediaKind = kind;
-      const { onSetPaneLayout, onSetFixedChrome, routeKey } =
-        renderMediaPane();
+      const { onSetPaneLayout, onSetFixedChrome, routeKey } = renderMediaPane();
 
       await waitFor(() => {
         expect(onSetPaneLayout).toHaveBeenCalledWith({
@@ -866,8 +1064,7 @@ describe("MediaPaneBody pane sizing", () => {
 
   it("publishes intrinsic PDF primary layout and fixed chrome", async () => {
     testState.mediaKind = "pdf";
-    const { onSetPaneLayout, onSetFixedChrome, routeKey } =
-      renderMediaPane();
+    const { onSetPaneLayout, onSetFixedChrome, routeKey } = renderMediaPane();
 
     await waitFor(() => {
       expect(onSetPaneLayout).toHaveBeenCalledWith({
@@ -888,6 +1085,105 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
+  it("publishes unavailable resource identity after an initial 404", async () => {
+    testState.initialMediaFailureStatus = 404;
+    renderMediaPane();
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "unavailable", title: "Media unavailable" },
+      });
+    });
+  });
+
+  it("publishes failed resource identity after a non-404 initial error", async () => {
+    testState.initialMediaFailureStatus = 503;
+    renderMediaPane();
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "failed", title: "Media failed to load" },
+      });
+    });
+  });
+
+  it("keeps a returned still-processing DTO as ready resource identity", async () => {
+    testState.mediaKind = "epub";
+    testState.canRead = false;
+    testState.processingStatus = "extracting";
+    const { onSetPaneLabel, routeKey } = renderMediaPane();
+
+    const publication = await getReadyPrimaryChrome();
+    expect(publication.actions).toEqual([]);
+    expect(onSetPaneLabel).toHaveBeenCalledWith({
+      paneId: "pane-1",
+      routeKey,
+      label: "Reader fixture",
+    });
+  });
+
+  it("moves ready identity to unavailable after a canonical media-not-found refetch", async () => {
+    renderMediaPane();
+    await getReadyPrimaryChrome();
+    testState.canonicalMediaRefetchFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_FOUND",
+    };
+
+    await act(async () => {
+      testState.onMetadataRetryEnqueued?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(latestPrimaryChrome()?.header).toEqual({
+        kind: "resource",
+        resource: { status: "unavailable", title: "Media unavailable" },
+      });
+    });
+    expect(screen.queryByText("Reader fixture")).not.toBeInTheDocument();
+  });
+
+  it("retains ready identity after a canonical media-not-ready refetch", async () => {
+    renderMediaPane();
+    const ready = await getReadyPrimaryChrome();
+    testState.canonicalMediaRefetchFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_READY",
+    };
+
+    await act(async () => {
+      testState.onMetadataRetryEnqueued?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(testState.mediaDetailCallCount).toBe(2));
+
+    expect(latestPrimaryChrome()?.header).toEqual(ready.header);
+  });
+
+  it("keeps ready identity when a subordinate fragment request returns 404", async () => {
+    testState.mediaKind = "video";
+    testState.fragmentFailure = {
+      status: 404,
+      code: "E_MEDIA_NOT_READY",
+    };
+    renderMediaPane();
+
+    const publication = await getReadyPrimaryChrome();
+    expect(publication.header).toEqual({
+      kind: "resource",
+      resource: expect.objectContaining({
+        status: "ready",
+        title: "Reader fixture",
+      }),
+    });
+    expect(
+      screen.getByText("Transcript content is still being processed."),
+    ).toBeVisible();
+  });
+
   it.each(["epub", "web_article"] as const)(
     "renders readable %s text content",
     async (kind) => {
@@ -898,13 +1194,156 @@ describe("MediaPaneBody pane sizing", () => {
     },
   );
 
-  it("renders the media authors byline with an empty-author state", async () => {
-    testState.mediaKind = "web_article";
-    renderMediaPane();
+  it("activates a SourceReference target across EPUB sections using the target locator", async () => {
+    testState.mediaKind = "epub";
+    testState.includeSecondEpubSection = true;
+    testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
+    const pulseHandler = vi.fn();
+    window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    try {
+      renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
+      await userEvent.click(
+        await screen.findByRole("button", { name: "1 linked object" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Target note" }),
+      );
 
-    expect(await screen.findByTestId("html-renderer")).toBeInTheDocument();
-    expect(screen.getByText("Authors")).toBeInTheDocument();
-    expect(screen.getByText("No authors")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(
+          apiCallsForPath("/api/media/media-1/sections/section-2"),
+        ).toHaveLength(1);
+        expect(pulseHandler).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        (pulseHandler.mock.calls[0]?.[0] as CustomEvent).detail,
+      ).toMatchObject({
+        mediaId: "media-1",
+        locator: {
+          type: "epub_fragment_offsets",
+          section_id: "section-2",
+          fragment_id: "fragment-2",
+        },
+      });
+    } finally {
+      window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    }
+  });
+
+  it("opens a Shift-clicked SourceReference target in a new pane", async () => {
+    testState.mediaKind = "epub";
+    testState.includeSecondEpubSection = true;
+    testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
+    const { onOpenInNewPane } = renderMediaPane({
+      renderSecondarySurfaceId: "reader-evidence",
+    });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "1 linked object" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Target note" }), {
+      shiftKey: true,
+    });
+
+    expect(onOpenInNewPane).toHaveBeenCalledWith(
+      "/media/media-1?apparatus=target",
+      "Target note",
+      undefined,
+    );
+    expect(
+      apiCallsForPath("/api/media/media-1/sections/section-2"),
+    ).toHaveLength(0);
+  });
+
+  it("honors an apparatus target URL with the target locator, not its owner locator", async () => {
+    testState.mediaKind = "epub";
+    testState.includeSecondEpubSection = true;
+    testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
+    const pulseHandler = vi.fn();
+    window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    try {
+      renderMediaPane({
+        href: "/media/media-1?apparatus=target",
+        renderSecondarySurfaceId: "reader-evidence",
+      });
+
+      await waitFor(() => {
+        expect(
+          apiCallsForPath("/api/media/media-1/sections/section-2"),
+        ).toHaveLength(1);
+        expect(pulseHandler).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        (pulseHandler.mock.calls[0]?.[0] as CustomEvent).detail,
+      ).toMatchObject({
+        locator: {
+          type: "epub_fragment_offsets",
+          section_id: "section-2",
+          fragment_id: "fragment-2",
+        },
+      });
+    } finally {
+      window.removeEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
+    }
+  });
+
+  it.each([
+    {
+      name: "full-title inspection without credits or author permission",
+      contributors: [] as ContributorCredit[],
+      canEditAuthors: false,
+      expected: ["Credits…"],
+    },
+    {
+      name: "read-only credits",
+      contributors: [
+        {
+          credited_name: "Ada Lovelace",
+          role: "editor",
+        },
+      ] satisfies ContributorCredit[],
+      canEditAuthors: false,
+      expected: ["Credits…"],
+    },
+    {
+      name: "authorized empty author set",
+      contributors: [] as ContributorCredit[],
+      canEditAuthors: true,
+      expected: ["Credits…", "Add author…"],
+    },
+    {
+      name: "authorized authored resource",
+      contributors: [
+        {
+          contributor_handle: "octavia-e-butler",
+          contributor_display_name: "Octavia E. Butler",
+          credited_name: "Octavia E. Butler",
+          role: "author",
+          href: "/authors/octavia-e-butler",
+        },
+      ] satisfies ContributorCredit[],
+      canEditAuthors: true,
+      expected: ["Credits…", "Edit authors…"],
+    },
+  ])("gates credit and author Options for $name", async (testCase) => {
+    testState.mediaKind = "web_article";
+    testState.contributors = testCase.contributors;
+    testState.canEditAuthors = testCase.canEditAuthors;
+    const { onSetPaneLabel, routeKey } = renderMediaPane();
+
+    const publication = await getReadyPrimaryChrome();
+    const creditOptionLabels =
+      publication.options
+        ?.filter((option) =>
+          option.id === "view-credits" || option.id === "edit-authors",
+        )
+        .map((option) => option.label) ?? [];
+    expect(creditOptionLabels).toEqual(testCase.expected);
+    expect(onSetPaneLabel).toHaveBeenCalledWith({
+      paneId: "pane-1",
+      routeKey,
+      label: "Reader fixture",
+    });
   });
 
   it("loads web article fragments once", async () => {
@@ -946,43 +1385,36 @@ describe("MediaPaneBody pane sizing", () => {
     testState.fragmentCanonicalText = "Before.\nEmbedded video: Launch video";
     testState.documentMapEmbeds = [
       {
-        id: "embed:embed-1",
-        lens_ids: ["embeds"],
-        kind: "document_embed",
-        source_domain: "document_embeds",
-        title: "Embedded video: Launch video",
-        subtitle: "youtube",
-        excerpt: "Launch video",
-        activation: null,
-        href: "/media/child-1",
-        anchor: {
-          ref: "media:media-1",
-          media_id: "media-1",
-          locator: {
-            type: "web_text_offsets",
-            media_id: "media-1",
-            fragment_id: "fragment-1",
-            start_offset: 8,
-            end_offset: 36,
-          },
-          page_number: null,
-          fragment_id: "fragment-1",
-          highlight_id: null,
-          evidence_span_id: null,
-          passage_anchor_id: null,
-          order_key: "fragment:0000000000:0000000008",
-          precision: "exact",
-        },
-        document_order_key: "fragment:0000000000:0000000008",
-        document_fraction: 0.5,
-        target_status: "exact",
-        provenance: { owner: "document_embeds" },
-        actions: ["activate"],
-        document_embed_id: "embed-1",
+        id: "embed-1",
+        media_id: "media-1",
+        fragment_id: "fragment-1",
+        ordinal: 0,
         occurrence_key: "embed:000000:youtube:dQw4w9WgXcQ",
         provider: "youtube",
-        embed_kind: "video",
-        resolution_status: "resolved",
+        kind: "video",
+        source_url: {
+          status: "present",
+          value: "https://youtu.be/dQw4w9WgXcQ",
+        },
+        canonical_url: {
+          status: "present",
+          value: "https://youtu.be/dQw4w9WgXcQ",
+        },
+        locator: { canonical_start_offset: 8, canonical_end_offset: 36 },
+        display: {
+          mode: "resolved",
+          label: "Embedded video: Launch video",
+          description: "Launch video",
+          actions: [],
+        },
+        target: {
+          status: "exact",
+          media_id: "child-1",
+          kind: "video",
+          title: "Launch video",
+          thumbnail_url: null,
+          playback: null,
+        },
       },
     ];
     const { onSetPaneSecondary } = renderMediaPane();
@@ -1005,7 +1437,9 @@ describe("MediaPaneBody pane sizing", () => {
       expect(publication).not.toBeNull();
     });
     const publication = latestSecondaryPublication(onSetPaneSecondary);
-    expect(publication?.surfaces.map((s) => s.id)).not.toContain("reader-resource-chat");
+    expect(publication?.surfaces.map((s) => s.id)).not.toContain(
+      "reader-resource-chat",
+    );
   });
 
   it("publishes Citations and previews a source-authored marker", async () => {
@@ -1015,78 +1449,37 @@ describe("MediaPaneBody pane sizing", () => {
       '<p>Claim<a href="#fn1" data-reader-apparatus-item-id="marker-1">1</a></p>' +
       '<aside id="fn1" data-reader-apparatus-item-id="target-1">Document footnote text.</aside>';
     testState.fragmentCanonicalText = "Claim1\nDocument footnote text.";
-    testState.apparatusResponse = {
-      media_id: "media-1",
-      media_kind: "web_article",
-      status: "ready",
-      extractor_version: "reader_apparatus_v1",
-      source_fingerprint: "sha256:test",
-      capabilities: {
-        has_inline_markers: true,
-        has_sidecar_items: true,
-        supports_hover_preview: true,
-        supports_jump_to_marker: true,
-        supports_jump_to_target: true,
-        has_probable_items: false,
-      },
-      items: [
-        apparatusItem("11111111-1111-4111-8111-111111111111", {
-          stable_key: "target-1",
-          kind: "footnote",
-          label: "1",
-          body_text: "Preview note body.",
-          body_html_sanitized: null,
-          locator: {
-            type: "web_text_offsets",
-            media_id: "media-1",
-            fragment_id: "fragment-1",
-            start_offset: 7,
-            end_offset: 30,
-            media_kind: "web_article",
-            text_quote_selector: { exact: "Document footnote text." },
-          },
-          locator_status: "exact",
-          confidence: "exact",
-          extraction_method: "html_semantic",
-          source_ref: { format: "html", target_id: "fn1" },
-          sort_key: "000000.target",
-        }),
-        apparatusItem("22222222-2222-4222-8222-222222222222", {
-          stable_key: "marker-1",
-          kind: "footnote_ref",
-          label: "1",
-          body_text: null,
-          body_html_sanitized: null,
-          locator: {
-            type: "web_text_offsets",
-            media_id: "media-1",
-            fragment_id: "fragment-1",
-            start_offset: 5,
-            end_offset: 6,
-            media_kind: "web_article",
-            text_quote_selector: { exact: "1" },
-          },
-          locator_status: "exact",
-          confidence: "exact",
-          extraction_method: "html_semantic",
-          source_ref: { format: "html", target_id: "fn1" },
-          sort_key: "000000.marker",
-        }),
-      ],
-      edges: [
-        {
-          stable_key: "marker-1->target-1",
-          from_stable_key: "marker-1",
-          to_stable_key: "target-1",
-          relation: "points_to_note",
-          confidence: "exact",
-          extraction_method: "html_semantic",
-          source_ref: { format: "html", target_id: "fn1" },
-          sort_key: "000000.edge",
+    testState.documentMapPassageGroups = [
+      sourceReferencePassage({
+        stableKey: "marker-1",
+        kind: "footnote_ref",
+        label: "1",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 5,
+          end_offset: 6,
         },
-      ],
-      diagnostics: {},
-    };
+        orderKey: "fragment:0000000000:0000000005",
+        targets: [
+          {
+            stableKey: "target-1",
+            kind: "footnote",
+            label: "1",
+            body: "Preview note body.",
+            locator: {
+              type: "web_text_offsets",
+              media_id: "media-1",
+              fragment_id: "fragment-1",
+              start_offset: 7,
+              end_offset: 30,
+            },
+            orderKey: "fragment:0000000000:0000000007",
+          },
+        ],
+      }),
+    ];
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
 
     await waitFor(() => {
@@ -1108,114 +1501,9 @@ describe("MediaPaneBody pane sizing", () => {
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-evidence",
+      undefined,
     );
   });
-
-  it("keeps the generated Citations shell matrix representative and explicit", () => {
-    expect(readerShellRepresentativeRowFixtures.map((entry) => entry.fixtureId)).toEqual(
-      [...READER_SHELL_REPRESENTATIVE_ROW_FIXTURE_IDS],
-    );
-    for (const entry of readerShellRepresentativeRowFixtures) {
-      expect(entry.expectedReaderToolsSurface).toBe("citations_tab_rows");
-      expect(entry.expectedRowCount).toBeGreaterThan(0);
-      expect(entry.payload.apparatus.capabilities.has_sidecar_items).toBe(true);
-    }
-  });
-
-  it.each(readerApparatusOmittedSurfacePayloadFixtures)(
-    "omits the Citations tab for empty apparatus payload $fixtureId",
-    async (entry) => {
-      testState.mediaKind = entry.payload.apparatus.media_kind as
-        | "pdf"
-        | "web_article"
-        | "epub";
-      testState.apparatusResponse = entry.payload.apparatus;
-
-      const { onSetPaneSecondary } = renderMediaPane();
-
-      await waitFor(() => {
-        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
-      });
-      await waitFor(() => {
-        const publication = latestSecondaryPublication(onSetPaneSecondary);
-        expect(publication).not.toBeNull();
-        expect(publication?.defaultSurfaceId).not.toBe("reader-apparatus");
-        expect(publication?.surfaces.map((surface) => surface.id)).not.toContain(
-          "reader-apparatus",
-        );
-        expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-          "reader-evidence",
-        );
-      });
-    },
-  );
-
-  it.each(readerShellRepresentativeRowFixtures)(
-    "publishes and renders Citations shell rows for generated payload $fixtureId",
-    async (entry) => {
-      testState.mediaKind = mediaKindForPayload(entry);
-      testState.apparatusResponse = entry.payload.apparatus;
-      testState.isMobileViewport = true;
-
-      const { onSetPaneSecondary } = renderMediaPane();
-
-      await waitFor(() => {
-        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(1);
-      });
-      await waitFor(() => {
-        const publication = latestSecondaryPublication(onSetPaneSecondary);
-        expect(publication).not.toBeNull();
-        expect(publication?.groupId).toBe("reader-tools");
-        expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-          "reader-evidence",
-        );
-      });
-
-      const body = await getApparatusSurfaceBody(onSetPaneSecondary);
-      // EvidencePaneSurface reads useFeedback (Link-note toasts); production
-      // supplies the provider from app/layout.tsx, so the harness mirrors it.
-      const view = render(<FeedbackProvider>{body}</FeedbackProvider>);
-      const surface = within(view.container);
-
-      expect(surface.getByRole("heading", { name: "Evidence" })).toBeVisible();
-      const rowButtons = surface.getAllByTestId("evidence-apparatus-row");
-      expect(rowButtons).toHaveLength(entry.expectedRowCount);
-      for (const needle of entry.bodyNeedles) {
-        expect(
-          surface.getAllByText((content) => content.includes(needle)).length,
-          `${entry.fixtureId} body needle ${needle}`,
-        ).toBeGreaterThan(0);
-      }
-      if (entry.fixtureId === "tei-philpapers-lop-aiz-grobid-0-8-2") {
-        expect(entry.expectedStatus).toBe("partial");
-        expect(entry.payload.apparatus.capabilities.has_probable_items).toBe(true);
-      }
-      if (entry.fixtureId === "arxiv-2606-source-package") {
-        expect(entry.payload.apparatus.capabilities.supports_jump_to_marker).toBe(
-          false,
-        );
-        expect(entry.payload.apparatus.capabilities.supports_jump_to_target).toBe(
-          false,
-        );
-        expect(rowButtons.every((button) => button.hasAttribute("disabled"))).toBe(
-          true,
-        );
-      }
-      if (entry.fixtureId === "html-numinous-ttft-full") {
-        expect(entry.expectedEdgeCount).toBe(0);
-        expect(entry.payload.apparatus.capabilities.supports_hover_preview).toBe(
-          false,
-        );
-      }
-      if (entry.fixtureId === "html-tufte-css-full") {
-        expect(surface.getAllByText("Sidenote")).toHaveLength(3);
-        expect(surface.getAllByText("Margin note")).toHaveLength(4);
-      }
-      if (entry.fixtureId === "html-gwern-sidenote-full") {
-        expect(surface.getAllByText("Endnote")).toHaveLength(6);
-      }
-    },
-  );
 
   it("publishes Citations for target-only margin notes without hover previews", async () => {
     testState.mediaKind = "web_article";
@@ -1224,51 +1512,30 @@ describe("MediaPaneBody pane sizing", () => {
     testState.fragmentHtml =
       '<p>Claim<span data-reader-apparatus-item-id="margin-1">Standalone margin note body.</span></p>';
     testState.fragmentCanonicalText = "ClaimStandalone margin note body.";
-    testState.apparatusResponse = {
-      media_id: "media-1",
-      media_kind: "web_article",
-      status: "ready",
-      extractor_version: "reader_apparatus_v1",
-      source_fingerprint: "sha256:test-margin-note",
-      capabilities: {
-        has_inline_markers: false,
-        has_sidecar_items: true,
-        supports_hover_preview: false,
-        supports_jump_to_marker: false,
-        supports_jump_to_target: true,
-        has_probable_items: false,
-      },
-      items: [
-        apparatusItem("33333333-3333-4333-8333-333333333333", {
-          stable_key: "margin-1",
-          kind: "margin_note",
-          label: "Margin note 1",
-          body_text: "Standalone margin note body.",
-          body_html_sanitized: null,
-          locator: {
-            type: "web_text_offsets",
-            media_id: "media-1",
-            fragment_id: "fragment-1",
-            start_offset: 5,
-            end_offset: 33,
-            media_kind: "web_article",
-            text_quote_selector: { exact: "Standalone margin note body." },
-          },
-          locator_status: "exact",
-          confidence: "strong",
-          extraction_method: "html_margin_note",
-          source_ref: { format: "html", element: "span.marginnote" },
-          sort_key: "000000.target",
-        }),
-      ],
-      edges: [],
-      diagnostics: {},
-    };
+    testState.documentMapPassageGroups = [
+      sourceReferencePassage({
+        stableKey: "margin-1",
+        kind: "margin_note",
+        label: "Margin note 1",
+        body: "Standalone margin note body.",
+        confidence: "strong",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 5,
+          end_offset: 33,
+        },
+        orderKey: "fragment:0000000000:0000000005",
+      }),
+    ];
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane({
       renderSecondarySurfaceId: "reader-evidence",
     });
 
-    const marginNoteButton = await screen.findByRole("button", { name: /Margin note/ });
+    const marginNoteButton = await screen.findByRole("button", {
+      name: "Jump to Standalone margin note body.",
+    });
     expect(marginNoteButton).toBeVisible();
     expect(
       screen.getAllByText("Standalone margin note body.").length,
@@ -1281,10 +1548,6 @@ describe("MediaPaneBody pane sizing", () => {
 
     const publicationCountBeforeClick = onSetPaneSecondary.mock.calls.length;
     fireEvent.click(marginNoteButton);
-    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-      "pane-1",
-      "reader-evidence",
-    );
     await waitFor(() => {
       expect(onSetPaneSecondary.mock.calls.length).toBeGreaterThan(
         publicationCountBeforeClick,
@@ -1297,7 +1560,7 @@ describe("MediaPaneBody pane sizing", () => {
     expect(activeInlineMarginNote).toBeInstanceOf(HTMLElement);
 
     fireEvent.click(activeInlineMarginNote);
-    expect(onRequestSecondarySurface).toHaveBeenCalledTimes(2);
+    expect(onRequestSecondarySurface).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(activeInlineMarginNote).toHaveClass("reader-apparatus-focused");
     });
@@ -1311,128 +1574,108 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
+  it("mirrors transient PDF highlight hover and focus into Evidence without activating the row", async () => {
+    testState.mediaKind = "pdf";
+    testState.documentMapPassageGroups = [pdfHighlightPassage()];
+    renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
+
+    expect(await screen.findAllByText("PDF hover target")).not.toHaveLength(0);
+    const evidenceRow = screen.getByRole("article");
+    expect(evidenceRow).not.toHaveAttribute("data-active");
+
+    const pdfReader = screen.getByTestId("pdf-reader");
+    fireEvent.pointerEnter(pdfReader);
+    await waitFor(() =>
+      expect(evidenceRow).toHaveAttribute("data-hovered", "true"),
+    );
+    expect(evidenceRow).not.toHaveAttribute("data-active");
+
+    fireEvent.pointerLeave(pdfReader);
+    await waitFor(() =>
+      expect(evidenceRow).not.toHaveAttribute("data-hovered"),
+    );
+
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(evidenceRow).toHaveAttribute("data-hovered", "true"),
+    );
+    expect(pdfReader).toHaveFocus();
+    expect(evidenceRow).not.toHaveAttribute("data-active");
+
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(evidenceRow).not.toHaveAttribute("data-hovered"),
+    );
+  });
+
   it("dispatches a PDF reader pulse when a native-link reference row is activated", async () => {
     testState.isMobileViewport = true;
     testState.mediaKind = "pdf";
-    testState.apparatusResponse = {
-      media_id: "media-1",
-      media_kind: "pdf",
-      status: "ready",
-      extractor_version: "reader_apparatus_v1",
-      source_fingerprint: "sha256:test-pdf",
-      capabilities: {
-        has_inline_markers: true,
-        has_sidecar_items: true,
-        supports_hover_preview: true,
-        supports_jump_to_marker: true,
-        supports_jump_to_target: true,
-        has_probable_items: false,
-      },
-      items: [
-        apparatusItem("44444444-4444-4444-8444-444444444444", {
-          stable_key: "pdf-marker-13",
-          kind: "bibliography_ref",
-          label: "[13]",
-          body_text: null,
-          body_html_sanitized: null,
-          locator: {
-            type: "pdf_page_geometry",
-            media_id: "media-1",
-            page_number: 2,
-            quads: [
-              {
-                x1: 10,
-                y1: 20,
-                x2: 20,
-                y2: 20,
-                x3: 20,
-                y3: 30,
-                x4: 10,
-                y4: 30,
-              },
-            ],
-            exact: "[13]",
-            text_quote_selector: { exact: "[13]" },
-          },
-          locator_status: "exact",
-          confidence: "exact",
-          extraction_method: "pdf_native_link",
-          source_ref: { format: "pdf", named_destination: "cite.memory" },
-          sort_key: "0002.0001.marker",
-        }),
-        apparatusItem("55555555-5555-4555-8555-555555555555", {
-          stable_key: "pdf-target-13",
-          kind: "bibliography_entry",
-          label: "[13]",
-          body_text: "[13] Long short-term memory. Neural computation.",
-          body_html_sanitized: null,
-          locator: {
-            type: "pdf_page_geometry",
-            media_id: "media-1",
-            page_number: 11,
-            quads: [
-              {
-                x1: 100,
-                y1: 200,
-                x2: 500,
-                y2: 200,
-                x3: 500,
-                y3: 235,
-                x4: 100,
-                y4: 235,
-              },
-            ],
-            exact: "[13] Long short-term memory. Neural computation.",
-            text_quote_selector: {
+    testState.documentMapPassageGroups = [
+      sourceReferencePassage({
+        stableKey: "pdf-marker-13",
+        kind: "bibliography_ref",
+        label: "[13]",
+        locator: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 2,
+          quads: [
+            { x1: 10, y1: 20, x2: 20, y2: 20, x3: 20, y3: 30, x4: 10, y4: 30 },
+          ],
+          exact: "[13]",
+          text_quote_selector: { exact: "[13]" },
+        },
+        orderKey: "0002.0001.marker",
+        targets: [
+          {
+            stableKey: "pdf-target-13",
+            kind: "bibliography_entry",
+            label: "[13]",
+            body: "[13] Long short-term memory. Neural computation.",
+            locator: {
+              type: "pdf_page_geometry",
+              media_id: "media-1",
+              page_number: 11,
+              quads: [
+                {
+                  x1: 100,
+                  y1: 200,
+                  x2: 500,
+                  y2: 200,
+                  x3: 500,
+                  y3: 235,
+                  x4: 100,
+                  y4: 235,
+                },
+              ],
               exact: "[13] Long short-term memory. Neural computation.",
+              text_quote_selector: {
+                exact: "[13] Long short-term memory. Neural computation.",
+              },
             },
+            orderKey: "0011.000200.000.0013.target",
           },
-          locator_status: "exact",
-          confidence: "exact",
-          extraction_method: "pdf_native_link_target",
-          source_ref: { format: "pdf", target_label: "[13]" },
-          sort_key: "0011.000200.000.0013.target",
-        }),
-      ],
-      edges: [
-        {
-          stable_key: "pdf-marker-13->pdf-target-13",
-          from_stable_key: "pdf-marker-13",
-          to_stable_key: "pdf-target-13",
-          relation: "cites_bibliography_entry",
-          confidence: "exact",
-          extraction_method: "pdf_native_link_target",
-          source_ref: { format: "pdf", named_destination: "cite.memory" },
-          sort_key: "0002.0001.edge",
-        },
-      ],
-      diagnostics: {
-        pdf_native_link: {
-          status: "targets_materialized",
-          marker_count: 1,
-          target_count: 1,
-          edge_count: 1,
-          unresolved_marker_count: 0,
-        },
-      },
-    };
+        ],
+      }),
+    ];
     const pulseHandler = vi.fn();
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     try {
-      const { onRequestSecondarySurface } = renderMediaPane({
+      const { onCloseSecondaryPane } = renderMediaPane({
+        secondaryPane: readerEvidenceSecondaryPane(),
         renderSecondarySurfaceId: "reader-evidence",
       });
 
-      const refButton = await screen.findByRole("button", { name: /Reference/ });
+      const refButton = await screen.findByRole("button", {
+        name: "Jump to [13]",
+      });
       fireEvent.click(refButton);
 
-      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-        "pane-1",
-        "reader-evidence",
-      );
       await waitFor(() => {
         expect(pulseHandler).toHaveBeenCalledTimes(1);
       });
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
       const event = pulseHandler.mock.calls[0]?.[0] as CustomEvent;
       expect(event.detail).toMatchObject({
         mediaId: "media-1",
@@ -1444,6 +1687,25 @@ describe("MediaPaneBody pane sizing", () => {
           media_id: "media-1",
           page_number: 2,
           exact: "[13]",
+        },
+      });
+      pulseHandler.mockClear();
+      onCloseSecondaryPane.mockClear();
+      await userEvent.click(
+        screen.getByRole("button", { name: "1 linked object" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "[13]" }));
+      await waitFor(() => expect(pulseHandler).toHaveBeenCalledTimes(1));
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+      expect(
+        (pulseHandler.mock.calls[0]?.[0] as CustomEvent).detail,
+      ).toMatchObject({
+        snippet: "[13] Long short-term memory. Neural computation.",
+        locator: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 11,
+          exact: "[13] Long short-term memory. Neural computation.",
         },
       });
       expect(
@@ -1458,146 +1720,366 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("activates a document-map connection note target through the note pulse path", async () => {
+  it("keeps the mobile Evidence sheet open when a passage cannot activate", async () => {
+    testState.isMobileViewport = true;
     testState.mediaKind = "web_article";
-    testState.includeToc = true;
-    testState.documentMapConnections = noteTargetConnectionPage();
-    const notePulseHandler = vi.fn();
-    window.addEventListener(NOTE_PULSE_HIGHLIGHT, notePulseHandler);
-    try {
-      renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
+    testState.documentMapPassageGroups = [
+      sourceReferencePassage({
+        stableKey: "missing-fragment-reference",
+        kind: "footnote_ref",
+        label: "Missing passage",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "missing-fragment",
+          start_offset: 0,
+          end_offset: 7,
+        },
+        orderKey: "fragment:9999999999:0000000000",
+      }),
+    ];
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerEvidenceSecondaryPane(),
+      renderSecondarySurfaceId: "reader-evidence",
+    });
 
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: "Open target in reader for Research note",
-        }),
-      );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Jump to Missing passage" }),
+    );
 
-      await waitFor(() => {
-        expect(notePulseHandler).toHaveBeenCalledTimes(1);
-      });
-      const event = notePulseHandler.mock.calls[0]?.[0] as CustomEvent;
-      expect(event.detail).toEqual({
-        blockId: "33333333-3333-4333-8333-333333333333",
-        startOffset: 2,
-        endOffset: 18,
-        snippet: "Target note excerpt.",
-        highlightBehavior: "pulse",
-        focusBehavior: "scroll_into_view",
-      });
-    } finally {
-      window.removeEventListener(NOTE_PULSE_HIGHLIGHT, notePulseHandler);
-    }
+    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
   });
 
-  it.each(["epub", "web_article"] as const)(
-    "requests the Document Map secondary from %s mobile reader menu",
-    async (kind) => {
-      testState.mediaKind = kind;
-      testState.includeToc = true;
-      testState.isMobileViewport = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
-      await getContentsSurfaceBody(onSetPaneSecondary);
+  it("does not route around a failed same-pane source-target activation", async () => {
+    testState.isMobileViewport = true;
+    testState.mediaKind = "web_article";
+    testState.documentMapPassageGroups = [
+      sourceReferencePassage({
+        stableKey: "current-reference",
+        kind: "footnote_ref",
+        label: "1",
+        locator: {
+          type: "web_text_offsets",
+          media_id: "media-1",
+          fragment_id: "fragment-1",
+          start_offset: 0,
+          end_offset: 1,
+        },
+        orderKey: "fragment:0000000000:0000000000",
+        targets: [
+          {
+            stableKey: "stale-target",
+            kind: "footnote",
+            label: "Stale target",
+            body: "Old note body.",
+            locator: {
+              type: "web_text_offsets",
+              media_id: "media-1",
+              fragment_id: "missing-fragment",
+              start_offset: 0,
+              end_offset: 8,
+            },
+            orderKey: "fragment:9999999999:0000000000",
+          },
+        ],
+      }),
+    ];
+    const { onCloseSecondaryPane, onNavigatePane } = renderMediaPane({
+      secondaryPane: readerEvidenceSecondaryPane(),
+      renderSecondarySurfaceId: "reader-evidence",
+    });
 
-      const contentsOption = await getChromeOption("document-map");
-      expect(contentsOption.label).toBe("Document Map");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "1 linked object" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Stale target" }));
 
-      contentsOption.onSelect?.({ triggerEl: null });
+    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    expect(onNavigatePane).not.toHaveBeenCalled();
+  });
 
-      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-        "pane-1",
-        "reader-contents",
-      );
-    },
-  );
-
-  it("keeps mobile Contents available when focus mode hides highlights", async () => {
+  it("activates a whole-document note link through its canonical route", async () => {
     testState.mediaKind = "web_article";
     testState.includeToc = true;
-    testState.isMobileViewport = true;
-    testState.readerFocusMode = "paragraph";
-    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
-    await getContentsSurfaceBody(onSetPaneSecondary);
+    testState.documentMapDocumentItems = [noteTargetDocumentItem()];
+    const { onNavigatePane } = renderMediaPane({
+      renderSecondarySurfaceId: "reader-evidence",
+    });
 
-    const contentsOption = await getChromeOption("document-map");
-    const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);
+    await userEvent.click(
+      await screen.findByRole("tab", { name: /Whole document 1/ }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Research note" }),
+    );
 
-    expect(optionIds).toContain("document-map");
-    expect(optionIds).not.toContain("show-contents");
-    expect(optionIds).not.toContain("show-highlights");
-
-    contentsOption.onSelect?.({ triggerEl: null });
-
-    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+    expect(onNavigatePane).toHaveBeenCalledWith(
       "pane-1",
-      "reader-contents",
+      "/notes/33333333-3333-4333-8333-333333333333",
+      undefined,
     );
   });
 
-  it("requests the Document Map secondary from desktop transcript options", async () => {
-    testState.mediaKind = "video";
-    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+  it.each([
+    { kind: "pdf" as const, canRead: true, canPlay: false, available: true },
+    { kind: "epub" as const, canRead: true, canPlay: false, available: true },
+    {
+      kind: "web_article" as const,
+      canRead: true,
+      canPlay: false,
+      available: true,
+    },
+    {
+      kind: "podcast_episode" as const,
+      canRead: true,
+      canPlay: true,
+      available: true,
+    },
+    { kind: "video" as const, canRead: true, canPlay: true, available: true },
+    {
+      kind: "podcast_episode" as const,
+      canRead: false,
+      canPlay: true,
+      available: false,
+    },
+    { kind: "video" as const, canRead: false, canPlay: true, available: false },
+    { kind: "pdf" as const, canRead: false, canPlay: false, available: false },
+    { kind: "audio" as const, canRead: true, canPlay: true, available: false },
+    {
+      kind: "future_kind" as const,
+      canRead: true,
+      canPlay: false,
+      available: false,
+    },
+  ])(
+    "projects Document Map availability for $kind (readable=$canRead, playable=$canPlay)",
+    async ({ kind, canRead, canPlay, available }) => {
+      testState.mediaKind = kind;
+      testState.canRead = canRead;
+      testState.canPlay = canPlay;
+      const { onSetPaneSecondary, onSetFixedChrome } = renderMediaPane();
 
-    await waitFor(() => {
-      const publication = latestSecondaryPublication(onSetPaneSecondary);
-      expect(publication?.surfaces.some((surface) => surface.id === "reader-evidence")).toBe(
-        true,
+      const publication = await getReadyPrimaryChrome();
+      expect(
+        publication.actions?.filter((action) => action.id === "document-map"),
+      ).toHaveLength(available ? 1 : 0);
+      expect(
+        publication.options?.filter((option) => option.id === "document-map"),
+      ).toHaveLength(0);
+      expect(Boolean(latestSecondaryPublication(onSetPaneSecondary))).toBe(
+        available,
       );
+      if (kind === "future_kind") {
+        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(0);
+        expect(
+          onSetFixedChrome.mock.calls.some(([publication]) => publication !== null),
+        ).toBe(false);
+        expect(screen.queryByTestId("margin-rail")).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it.each([
+    { isActive: true, expectedRequests: 1 },
+    { isActive: false, expectedRequests: 0 },
+  ])(
+    "routes the Document Map keyboard chord only from an active media pane (active=$isActive)",
+    async ({ isActive, expectedRequests }) => {
+      testState.mediaKind = "epub";
+      const { onRequestSecondarySurface } = renderMediaPane({ isActive });
+      await getReadyPrimaryChrome();
+
+      fireEvent.keyDown(document, { key: "g" });
+      fireEvent.keyDown(document, { key: "e" });
+
+      expect(onRequestSecondarySurface).toHaveBeenCalledTimes(expectedRequests);
+      if (expectedRequests > 0) {
+        expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+          "pane-1",
+          "reader-evidence",
+          undefined,
+        );
+      }
+    },
+  );
+
+  it("lets bare G close a topmost mobile Document Map", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
     });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack />);
 
-    const documentMapOption = await getChromeOption("document-map");
-    expect(documentMapOption.label).toBe("Document Map");
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    documentMapOption.onSelect?.({ triggerEl: null });
+  it("does not let bare G mutate Document Map beneath a nested modal", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack blocker="modal" />);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let bare G mutate Document Map beneath its Options menu", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
+    await getReadyPrimaryChrome();
+    render(<ReaderInteractionStack blocker="transient" />);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(document, { key: "g" });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes one collapsed Document Map command with no toolbar or Options duplicate", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    testState.readerFocusMode = "paragraph";
+    const triggerEl = document.createElement("button");
+    const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
+    await getContentsSurfaceBody(onSetPaneSecondary);
+
+    const action = await getHeaderAction("document-map");
+    expect(action).toMatchObject({
+      kind: "command",
+      label: "Document Map",
+      restoreFocusOnClose: false,
+      state: {
+        kind: "disclosure",
+        expanded: false,
+        menuLabels: {
+          collapsed: "Show Document Map",
+          expanded: "Hide Document Map",
+        },
+      },
+    });
+    expect(action.state?.kind === "disclosure" && action.state.controls).toBe(
+      undefined,
+    );
+    expect(
+      latestPrimaryChrome()?.actions?.filter(
+        (candidate) => candidate.id === "document-map",
+      ),
+    ).toHaveLength(1);
+    expect(
+      latestPrimaryChrome()?.options?.some(
+        (option) => option.id === "document-map",
+      ),
+    ).toBe(false);
+
+    await renderLatestToolbar();
+    expect(
+      screen.queryByRole("button", { name: "Document Map" }),
+    ).not.toBeInTheDocument();
+
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl });
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "reader-contents",
+      triggerEl,
+    );
+  });
+
+  it("opens readable transcript Document Map on Evidence", async () => {
+    testState.mediaKind = "video";
+    const { onRequestSecondarySurface } = renderMediaPane();
+
+    const action = await getHeaderAction("document-map");
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
 
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "reader-evidence",
+      null,
     );
   });
 
-  it.each(["epub", "web_article"] as const)(
-    "requests the Document Map secondary from %s toolbar controls",
-    async (kind) => {
-      testState.mediaKind = kind;
-      testState.includeToc = true;
-      const { onRequestSecondarySurface, onSetPaneSecondary } =
-        renderMediaPane();
-      await getContentsSurfaceBody(onSetPaneSecondary);
+  it("publishes expanded Document Map state and closes the visible secondary", async () => {
+    testState.mediaKind = "epub";
+    testState.includeToc = true;
+    const { onCloseSecondaryPane } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
 
-      await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", { name: "Document Map" });
-      expect(contentsButton).toHaveAttribute("aria-pressed", "false");
-
-      fireEvent.click(contentsButton);
-
-      expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-        "pane-1",
-        "reader-contents",
+    let action: PaneHeaderAction | undefined;
+    await waitFor(() => {
+      action = latestPrimaryChrome()?.actions?.find(
+        (item) => item.id === "document-map",
       );
-    },
-  );
-
-  it.each(["epub", "web_article"] as const)(
-    "closes the active Document Map secondary from %s toolbar controls",
-    async (kind) => {
-      testState.mediaKind = kind;
-      testState.includeToc = true;
-      const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
-        secondaryPane: readerContentsSecondaryPane(),
+      expect(action?.state).toEqual({
+        kind: "disclosure",
+        expanded: true,
+        controls: "pane-pane-1-secondary-reader-tools",
+        menuLabels: {
+          collapsed: "Show Document Map",
+          expanded: "Hide Document Map",
+        },
       });
-      await getContentsSurfaceBody(onSetPaneSecondary);
+    });
+    if (!action) throw new Error("Expected Document Map action");
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
 
-      await renderLatestToolbar();
-      const contentsButton = screen.getByRole("button", { name: "Document Map" });
-      expect(contentsButton).toHaveAttribute("aria-pressed", "true");
+    expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+  });
 
-      fireEvent.click(contentsButton);
+  it("omits a broken Document Map IDREF while a retained active surface is unpublished", async () => {
+    testState.mediaKind = "video";
+    testState.canRead = true;
+    const { onCloseSecondaryPane, onRequestSecondarySurface } = renderMediaPane({
+      secondaryPane: readerContentsSecondaryPane(),
+    });
 
-      expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
-    },
-  );
+    const action = await getHeaderAction("document-map");
+    expect(action.state).toEqual({
+      kind: "disclosure",
+      expanded: false,
+      menuLabels: {
+        collapsed: "Show Document Map",
+        expanded: "Hide Document Map",
+      },
+    });
+    if (action.kind !== "command") throw new Error("Expected command action");
+    action.onSelect({ triggerEl: null });
+
+    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
+    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
+      "pane-1",
+      "reader-evidence",
+      null,
+    );
+  });
 
   it("keeps the desktop secondary pane open after Contents selection", async () => {
     testState.mediaKind = "web_article";
@@ -1632,14 +2114,14 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "web_article";
     renderMediaPane();
 
-    const light = await getChromeOption("reader-theme-light");
-    const dark = await getChromeOption("reader-theme-dark");
+    const light = await getPrimaryOption("reader-theme-light");
+    const dark = await getPrimaryOption("reader-theme-dark");
     // The current theme is light: its own option is inert, the other active.
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(false);
-    expect(latestChromeOverrides()?.options?.map((option) => option.id)).not.toContain(
-      "reader-pdf-source-colors",
-    );
+    expect(
+      latestPrimaryChrome()?.options?.map((option) => option.id),
+    ).not.toContain("reader-pdf-source-colors");
 
     dark.onSelect?.({ triggerEl: null });
     expect(testState.readerContextFns.setTheme).toHaveBeenCalledWith("dark");
@@ -1650,8 +2132,8 @@ describe("MediaPaneBody pane sizing", () => {
     testState.readerPersistence = { state: "Forbidden", failure: {} };
     renderMediaPane();
 
-    const light = await getChromeOption("reader-theme-light");
-    const dark = await getChromeOption("reader-theme-dark");
+    const light = await getPrimaryOption("reader-theme-light");
+    const dark = await getPrimaryOption("reader-theme-dark");
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(true);
   });
@@ -1660,16 +2142,28 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "pdf";
     renderMediaPane();
 
-    const statusRow = await getChromeOption("reader-pdf-source-colors");
+    const statusRow = await getPrimaryOption("reader-pdf-source-colors");
     expect(statusRow.label).toBe("PDF pages keep their source colors");
     // A render-seam status row: perceivable static content, not a disabled
     // menuitem that keyboard traversal would skip.
     expect(statusRow.render).toBeDefined();
     expect(statusRow.onSelect).toBeUndefined();
-    render(<>{statusRow.render?.({ closeMenu: () => {}, triggerEl: null })}</>);
-    expect(screen.getByText("PDF pages keep their source colors")).toBeInTheDocument();
+    render(
+      <>
+        {statusRow.render?.({
+          closeMenu: () => {},
+          closeMenuWithoutFocus: () => {},
+          triggerEl: null,
+        })}
+      </>,
+    );
+    expect(
+      screen.getByText("PDF pages keep their source colors"),
+    ).toBeInTheDocument();
 
-    const optionIds = latestChromeOverrides()?.options?.map((option) => option.id);
+    const optionIds = latestPrimaryChrome()?.options?.map(
+      (option) => option.id,
+    );
     expect(optionIds).not.toContain("reader-theme-light");
     expect(optionIds).not.toContain("reader-theme-dark");
   });

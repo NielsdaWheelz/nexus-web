@@ -15,7 +15,7 @@ import PaneToolbar from "@/components/ui/PaneToolbar";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
@@ -436,9 +436,12 @@ export default function PodcastsPaneBody() {
   );
 
   const activeCount = rows.length;
-  usePaneChromeOverride({
-    folio: { kind: "count", value: activeCount, unit: "show" },
-    folioPending: loading,
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: activeCount, unit: "show" },
+      pending: loading,
+    },
   });
   const settingsRow =
     settingsModal.podcastId !== null
@@ -620,6 +623,7 @@ export default function PodcastsPaneBody() {
                   label="Podcast page actions"
                   options={[
                     {
+                      kind: "link",
                       id: "export-opml",
                       label: "Export OPML",
                       href: "/api/podcasts/export/opml",

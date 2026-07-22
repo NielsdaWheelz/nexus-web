@@ -218,7 +218,7 @@ export function parseLauncherInput(raw: string): LauncherInput;
 // lib/launcher/model.ts
 export type LauncherTarget =
   | { kind: "href"; href: string; externalShell: boolean }
-  | { kind: "resource"; activation: ResourceActivation; titleHint?: string }
+  | { kind: "resource"; activation: ResourceActivation; labelHint?: string }
   | { kind: "command"; commandId: LauncherCommandId }          // was "action"
   | { kind: "ask"; text: string; scopeHref?: string }
   | { kind: "add-url"; url: string }                           // quick add (hard-signal row)

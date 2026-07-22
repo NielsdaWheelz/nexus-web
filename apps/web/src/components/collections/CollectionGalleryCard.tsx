@@ -23,7 +23,7 @@ export default function CollectionGalleryCard({
     <>
       <ResourceThumb
         spec={row.lead}
-        alt={row.headline.text}
+        alt=""
         size="fill"
         className={styles.cover}
       />

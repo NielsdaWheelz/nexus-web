@@ -1,7 +1,7 @@
 "use client";
 
 import { isRecord } from "@/lib/validation";
-import { normalizePaneTitle } from "@/lib/workspace/schema";
+import { normalizePaneLabel } from "@/lib/workspace/schema";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 export const NEXUS_OPEN_PANE_EVENT = "nexus:open-pane";
@@ -18,13 +18,13 @@ declare global {
 
 export interface OpenInAppPaneDetail {
   href: string;
-  titleHint?: string;
+  labelHint?: string;
 }
 
 interface OpenInAppPaneMessage {
   type: typeof NEXUS_OPEN_PANE_MESSAGE_TYPE;
   href: string;
-  titleHint?: string;
+  labelHint?: string;
 }
 
 function paneWindow(): Window | null {
@@ -51,9 +51,9 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
   }
   return {
     href,
-    titleHint:
-      typeof detail.titleHint === "string"
-        ? normalizePaneTitle(detail.titleHint) ?? undefined
+    labelHint:
+      typeof detail.labelHint === "string"
+        ? normalizePaneLabel(detail.labelHint) ?? undefined
         : undefined,
   };
 }
@@ -106,13 +106,13 @@ export function parseOpenInAppPaneEvent(event: Event): OpenInAppPaneDetail | nul
   return sanitizeOpenPaneDetail(event.detail);
 }
 
-export function requestOpenInAppPane(href: string, options?: { titleHint?: string }): boolean {
+export function requestOpenInAppPane(href: string, options?: { labelHint?: string }): boolean {
   if (typeof window === "undefined") {
     return false;
   }
   const detail = sanitizeOpenPaneDetail({
     href,
-    titleHint: options?.titleHint,
+    labelHint: options?.labelHint,
   });
   if (!detail) {
     return false;
@@ -123,7 +123,7 @@ export function requestOpenInAppPane(href: string, options?: { titleHint?: strin
       {
         type: NEXUS_OPEN_PANE_MESSAGE_TYPE,
         href: detail.href,
-        titleHint: detail.titleHint,
+        labelHint: detail.labelHint,
       } satisfies OpenInAppPaneMessage,
       window.location.origin
     );

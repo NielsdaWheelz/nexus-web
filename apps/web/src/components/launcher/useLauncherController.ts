@@ -44,7 +44,7 @@ import { searchHref } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
-import { resolveWorkspacePaneTitle, useWorkspaceStore } from "@/lib/workspace/store";
+import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
 import type { BrowseResponse, BrowseResult } from "@/lib/browse/types";
 
 interface LauncherHistoryResponse {
@@ -128,7 +128,7 @@ export function useLauncherController(): LauncherController {
   // the surface's useReturnFocus doesn't yank focus back from the destination.
   const suppressReturnFocusRef = useRef(false);
 
-  const { state, runtimeTitleByPaneId, activatePane, closePane, restorePane } = useWorkspaceStore();
+  const { state, runtimeLabelByPaneId, activatePane, closePane, restorePane } = useWorkspaceStore();
 
   useEffect(() => {
     if (open) suppressReturnFocusRef.current = false;
@@ -227,9 +227,9 @@ export function useLauncherController(): LauncherController {
         id: pane.id,
         href: pane.href,
         visibility: pane.visibility,
-        title: resolveWorkspacePaneTitle(pane, runtimeTitleByPaneId, androidShell).title,
+        label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
       })),
-    [androidShell, state, runtimeTitleByPaneId],
+    [state, runtimeLabelByPaneId],
   );
   const currentHref = panes.find((pane) => pane.id === state.activePrimaryPaneId)?.href ?? null;
 
@@ -557,7 +557,7 @@ export function useLauncherController(): LauncherController {
         if (!destination) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
         event.preventDefault();
         void dispatchTarget(
-          { kind: "href", href: destination.href, externalShell: destination.externalShell ?? false },
+          { kind: "href", href: destination.href, externalShell: false },
           dispatchCtx,
         ).catch(fail);
         return;

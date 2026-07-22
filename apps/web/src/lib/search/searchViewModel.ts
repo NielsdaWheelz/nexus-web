@@ -182,7 +182,7 @@ export function adaptSearchResultRow(
     resourceRef: result.resource_ref,
     activation: result.activation,
     citationTarget: result.citation_target,
-    paneTitleHint: primaryText,
+    paneLabelHint: primaryText,
     type: result.type,
     mediaId: result.media_id,
     contextRef: {

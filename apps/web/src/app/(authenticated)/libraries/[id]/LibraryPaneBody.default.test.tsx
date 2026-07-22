@@ -49,7 +49,16 @@ function seededMediaEntry(id: string, mediaId: string, title: string) {
       publisher: null,
       canonical_source_url: null,
       processing_status: "ready_for_reading",
-      capabilities: {},
+      read_state: "unread",
+      progress_fraction: null,
+      capabilities: { can_quote: true },
+    },
+    readingTimeEstimate: {
+      kind: "Present",
+      value: {
+        totalMinutes: 15,
+        remainingMinutes: { kind: "Absent" },
+      },
     },
   };
 }

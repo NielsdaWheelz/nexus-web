@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
+import { hasActiveInteractionOwner } from "@/lib/ui/useEscapeKey";
 import { docentReducer, DOCENT_IDLE, type DocentWalkState } from "./docentWalk";
 
 export function useDocentWalk({
@@ -11,7 +12,7 @@ export function useDocentWalk({
   isMobile,
 }: {
   /** Narrows paneRuntime.tsx openInNewPane (omits unused secondarySurfaceId). */
-  openInNewPane: ((href: string, titleHint?: string) => void) | undefined;
+  openInNewPane: ((href: string, labelHint?: string) => void) | undefined;
   router: PaneScopedRouter;
   isMobile: boolean;
 }): {
@@ -93,6 +94,7 @@ export function useDocentWalk({
     if (walk.status !== "active") return;
 
     const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || hasActiveInteractionOwner()) return;
       const target = event.target as HTMLElement;
       if (
         target.tagName === "INPUT" ||

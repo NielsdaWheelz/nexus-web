@@ -16,7 +16,7 @@ describe("ResourceRow", () => {
           primary={{
             kind: "link",
             href: "/media/media-1",
-            paneTitleHint: "Media title",
+            paneLabelHint: "Media title",
           }}
           title="Media title"
           actions={<a href="https://example.test/authors/author-1">Author Name</a>}
@@ -28,7 +28,7 @@ describe("ResourceRow", () => {
     const actionLink = screen.getByRole("link", { name: "Author Name" });
 
     expect(rowLink).toHaveAttribute("href", "/media/media-1");
-    expect(rowLink).toHaveAttribute("data-pane-title-hint", "Media title");
+    expect(rowLink).toHaveAttribute("data-pane-label-hint", "Media title");
     expect(actionLink).toHaveAttribute(
       "href",
       "https://example.test/authors/author-1",

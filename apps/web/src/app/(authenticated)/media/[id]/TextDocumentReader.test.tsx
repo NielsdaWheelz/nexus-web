@@ -51,6 +51,25 @@ function renderReader(
 }
 
 describe("TextDocumentReader", () => {
+  it("renders reader banners inside the offset scroll owner and demotes imported h1", () => {
+    renderReader({
+      beforeContent: <div>Reader readiness</div>,
+      contentState: {
+        status: "ready",
+        renderedHtml: '<h1 id="chapter-one">Chapter one</h1>',
+      },
+    });
+
+    const viewport = screen.getByTestId("document-viewport");
+    expect(viewport).toContainElement(screen.getByText("Reader readiness"));
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Chapter one" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Chapter one" }),
+    ).toHaveAttribute("id", "chapter-one");
+  });
+
   it("routes resolved internal links without invoking the highlight click path", () => {
     const onInternalLinkClick = vi.fn(() => true);
     const { onContentClick } = renderReader({

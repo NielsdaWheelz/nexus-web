@@ -1571,6 +1571,7 @@ def _apparatus_locator_texts_in_order(html_sanitized: str | None) -> list[tuple[
 
 def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderApparatusResponse:
     media = _visible_media(db, viewer_id, media_id)
+    guard_media_apparatus_generation(db, media_id)
     kind = str(media["kind"])
     status = str(media["processing_status"])
 
@@ -1710,6 +1711,20 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
     )
 
 
+def guard_media_apparatus_generation(db: Session, media_id: UUID) -> None:
+    """Use a stable snapshot or hold the parent against apparatus replacement."""
+
+    isolation = str(db.scalar(text("SHOW transaction_isolation")))
+    if isolation in {"repeatable read", "serializable"}:
+        return
+    if str(db.scalar(text("SHOW transaction_read_only"))) == "on":
+        raise RuntimeError("apparatus reads require a stable snapshot or a writable lock session")
+    db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR SHARE"),
+        {"media_id": media_id},
+    ).scalar_one()
+
+
 def replace_media_apparatus(
     db: Session,
     *,
@@ -1726,34 +1741,73 @@ def replace_media_apparatus(
     if status is None:
         status = "ready" if items else "empty"
     _validate_replacement(status=status, items=items, edges=edges)
+    stable_keys = [str(item["stable_key"]) for item in items]
+    edge_stable_keys = [str(edge["stable_key"]) for edge in edges]
+    if len(stable_keys) != len(set(stable_keys)):
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus item keys must be unique")
+    if len(edge_stable_keys) != len(set(edge_stable_keys)):
+        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus edge keys must be unique")
 
-    delete_media_apparatus(db, media_id)
-    state_id = db.execute(
+    media_exists = db.scalar(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    )
+    if media_exists is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
+
+    state_id = db.scalar(
         text(
             """
-            INSERT INTO reader_apparatus_states (
-                media_id, media_kind, source_fingerprint, extractor_version,
-                status, item_count, edge_count, diagnostics
-            )
-            VALUES (
-                :media_id, :media_kind, :source_fingerprint, :extractor_version,
-                :status, :item_count, :edge_count, :diagnostics
-            )
-            RETURNING id
+            SELECT id
+            FROM reader_apparatus_states
+            WHERE media_id = :media_id
+            FOR UPDATE
             """
-        ).bindparams(bindparam("diagnostics", type_=JSONB)),
-        {
-            "media_id": media_id,
-            "media_kind": media_kind,
-            "source_fingerprint": source_fingerprint_value,
-            "extractor_version": EXTRACTOR_VERSION,
-            "status": status,
-            "item_count": len(items),
-            "edge_count": len(edges),
-            "diagnostics": diagnostics or {},
-        },
-    ).scalar_one()
+        ),
+        {"media_id": media_id},
+    )
+    if state_id is None:
+        state_id = db.execute(
+            text(
+                """
+                INSERT INTO reader_apparatus_states (
+                    media_id, media_kind, source_fingerprint, extractor_version,
+                    status, item_count, edge_count, diagnostics
+                )
+                VALUES (
+                    :media_id, :media_kind, :source_fingerprint, :extractor_version,
+                    :status, :item_count, :edge_count, :diagnostics
+                )
+                RETURNING id
+                """
+            ).bindparams(bindparam("diagnostics", type_=JSONB)),
+            {
+                "media_id": media_id,
+                "media_kind": media_kind,
+                "source_fingerprint": source_fingerprint_value,
+                "extractor_version": EXTRACTOR_VERSION,
+                "status": status,
+                "item_count": len(items),
+                "edge_count": len(edges),
+                "diagnostics": diagnostics or {},
+            },
+        ).scalar_one()
 
+    existing_items = {
+        str(row["stable_key"]): UUID(str(row["id"]))
+        for row in db.execute(
+            text(
+                """
+                SELECT id, stable_key
+                FROM reader_apparatus_items
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .all()
+    }
     ids_by_key: dict[str, UUID] = {}
     item_insert = text(
         """
@@ -1773,28 +1827,86 @@ def replace_media_apparatus(
         bindparam("locator", type_=JSONB(none_as_null=True)),
         bindparam("source_ref", type_=JSONB),
     )
+    item_update = text(
+        """
+        UPDATE reader_apparatus_items
+        SET kind = :kind,
+            label = :label,
+            body_text = :body_text,
+            body_html_sanitized = :body_html_sanitized,
+            locator = :locator,
+            locator_status = :locator_status,
+            confidence = :confidence,
+            extraction_method = :extraction_method,
+            source_ref = :source_ref,
+            sort_key = :sort_key
+        WHERE id = :id AND media_id = :media_id AND state_id = :state_id
+        """
+    ).bindparams(
+        bindparam("locator", type_=JSONB(none_as_null=True)),
+        bindparam("source_ref", type_=JSONB),
+    )
     for item in items:
         locator = retrieval_locator_json(item.get("locator")) if item.get("locator") else None
         stable_key = str(item["stable_key"])
-        item_id = db.execute(
-            item_insert,
-            {
-                "media_id": media_id,
-                "state_id": state_id,
-                "stable_key": stable_key,
-                "kind": item["kind"],
-                "label": item.get("label"),
-                "body_text": item.get("body_text"),
-                "body_html_sanitized": item.get("body_html_sanitized"),
-                "locator": locator,
-                "locator_status": item.get("locator_status", "exact" if locator else "missing"),
-                "confidence": item["confidence"],
-                "extraction_method": item["extraction_method"],
-                "source_ref": item.get("source_ref") or {},
-                "sort_key": item["sort_key"],
-            },
-        ).scalar_one()
+        values = {
+            "media_id": media_id,
+            "state_id": state_id,
+            "stable_key": stable_key,
+            "kind": item["kind"],
+            "label": item.get("label"),
+            "body_text": item.get("body_text"),
+            "body_html_sanitized": item.get("body_html_sanitized"),
+            "locator": locator,
+            "locator_status": item.get("locator_status", "exact" if locator else "missing"),
+            "confidence": item["confidence"],
+            "extraction_method": item["extraction_method"],
+            "source_ref": item.get("source_ref") or {},
+            "sort_key": item["sort_key"],
+        }
+        item_id = existing_items.get(stable_key)
+        if item_id is None:
+            item_id = db.execute(item_insert, values).scalar_one()
+        else:
+            _assert_one_mutated_row(
+                db.execute(item_update, {**values, "id": item_id}),
+                "reader apparatus item update",
+            )
         ids_by_key[stable_key] = item_id
+
+    removed_item_ids = [
+        item_id for stable_key, item_id in existing_items.items() if stable_key not in ids_by_key
+    ]
+
+    existing_edges = {
+        str(row["stable_key"]): UUID(str(row["id"]))
+        for row in db.execute(
+            text(
+                """
+                SELECT id, stable_key
+                FROM reader_apparatus_edges
+                WHERE media_id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .all()
+    }
+    removed_edge_ids = [
+        edge_id
+        for stable_key, edge_id in existing_edges.items()
+        if stable_key not in set(edge_stable_keys)
+    ]
+    if removed_edge_ids:
+        _assert_mutated_rows(
+            db.execute(
+                text("DELETE FROM reader_apparatus_edges WHERE id = ANY(:ids)"),
+                {"ids": removed_edge_ids},
+            ),
+            expected=len(removed_edge_ids),
+            operation="reader apparatus edge deletion",
+        )
 
     edge_insert = text(
         """
@@ -1808,83 +1920,154 @@ def replace_media_apparatus(
         )
         """
     ).bindparams(bindparam("source_ref", type_=JSONB))
+    edge_update = text(
+        """
+        UPDATE reader_apparatus_edges
+        SET from_item_id = :from_item_id,
+            to_item_id = :to_item_id,
+            relation = :relation,
+            confidence = :confidence,
+            extraction_method = :extraction_method,
+            source_ref = :source_ref,
+            sort_key = :sort_key
+        WHERE id = :id AND media_id = :media_id AND state_id = :state_id
+        """
+    ).bindparams(bindparam("source_ref", type_=JSONB))
     for edge in edges:
         from_key = str(edge["from_stable_key"])
         to_key = str(edge["to_stable_key"])
         if from_key not in ids_by_key or to_key not in ids_by_key:
             raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus edge points to missing item")
-        db.execute(
-            edge_insert,
-            {
-                "media_id": media_id,
-                "state_id": state_id,
-                "stable_key": edge["stable_key"],
-                "from_item_id": ids_by_key[from_key],
-                "to_item_id": ids_by_key[to_key],
-                "relation": edge["relation"],
-                "confidence": edge["confidence"],
-                "extraction_method": edge["extraction_method"],
-                "source_ref": edge.get("source_ref") or {},
-                "sort_key": edge["sort_key"],
-            },
+        stable_key = str(edge["stable_key"])
+        values = {
+            "media_id": media_id,
+            "state_id": state_id,
+            "stable_key": stable_key,
+            "from_item_id": ids_by_key[from_key],
+            "to_item_id": ids_by_key[to_key],
+            "relation": edge["relation"],
+            "confidence": edge["confidence"],
+            "extraction_method": edge["extraction_method"],
+            "source_ref": edge.get("source_ref") or {},
+            "sort_key": edge["sort_key"],
+        }
+        edge_id = existing_edges.get(stable_key)
+        if edge_id is None:
+            _assert_one_mutated_row(
+                db.execute(edge_insert, values),
+                "reader apparatus edge insert",
+            )
+        else:
+            _assert_one_mutated_row(
+                db.execute(edge_update, {**values, "id": edge_id}),
+                "reader apparatus edge update",
+            )
+
+    if removed_item_ids:
+        _delete_apparatus_item_dependents(db, removed_item_ids)
+        _assert_mutated_rows(
+            db.execute(
+                text("DELETE FROM reader_apparatus_items WHERE id = ANY(:ids)"),
+                {"ids": removed_item_ids},
+            ),
+            expected=len(removed_item_ids),
+            operation="reader apparatus item deletion",
         )
+
+    _assert_one_mutated_row(
+        db.execute(
+            text(
+                """
+                UPDATE reader_apparatus_states
+                SET media_kind = :media_kind,
+                    source_fingerprint = :source_fingerprint,
+                    extractor_version = :extractor_version,
+                    status = :status,
+                    item_count = :item_count,
+                    edge_count = :edge_count,
+                    diagnostics = :diagnostics
+                WHERE id = :state_id AND media_id = :media_id
+                """
+            ).bindparams(bindparam("diagnostics", type_=JSONB)),
+            {
+                "state_id": state_id,
+                "media_id": media_id,
+                "media_kind": media_kind,
+                "source_fingerprint": source_fingerprint_value,
+                "extractor_version": EXTRACTOR_VERSION,
+                "status": status,
+                "item_count": len(items),
+                "edge_count": len(edges),
+                "diagnostics": diagnostics or {},
+            },
+        ),
+        "reader apparatus state update",
+    )
     db.flush()
 
 
+def _assert_one_mutated_row(result: object, operation: str) -> None:
+    _assert_mutated_rows(result, expected=1, operation=operation)
+
+
+def _assert_mutated_rows(result: object, *, expected: int, operation: str) -> None:
+    if getattr(result, "rowcount", None) != expected:
+        # justify-service-invariant-check: replace_media_apparatus holds the
+        # parent-media and state locks, so a missing owned row is a defect.
+        raise AssertionError(f"{operation} did not affect exactly {expected} rows")
+
+
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
-    item_ids = db.execute(
-        text("SELECT id FROM reader_apparatus_items WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    ).scalars()
+    item_ids = list(
+        db.execute(
+            text("SELECT id FROM reader_apparatus_items WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        ).scalars()
+    )
+    _delete_apparatus_item_dependents(db, [UUID(str(item_id)) for item_id in item_ids])
+    _delete_media_apparatus_rows(db, media_id)
+
+
+def _delete_apparatus_item_dependents(db: Session, item_ids: list[UUID]) -> None:
+    if not item_ids:
+        return
     delete_edges_for_deleted_resources(
         db,
-        refs=[
-            ResourceRef(scheme="reader_apparatus_item", id=UUID(str(item_id)))
-            for item_id in item_ids
-        ],
+        refs=[ResourceRef(scheme="reader_apparatus_item", id=item_id) for item_id in item_ids],
     )
     db.execute(
         text(
             """
             DELETE FROM message_retrievals
             WHERE result_type = 'reader_apparatus_item'
-              AND source_id IN (
-                  SELECT id::text
-                  FROM reader_apparatus_items
-                  WHERE media_id = :media_id
-              )
+              AND source_id = ANY(:source_ids)
             """
         ),
-        {"media_id": media_id},
+        {"source_ids": [str(item_id) for item_id in item_ids]},
     )
     db.execute(
         text(
             """
             DELETE FROM resource_versions
             WHERE resource_scheme = 'reader_apparatus_item'
-              AND resource_id IN (
-                  SELECT id
-                  FROM reader_apparatus_items
-                  WHERE media_id = :media_id
-              )
+              AND resource_id = ANY(:ids)
             """
         ),
-        {"media_id": media_id},
+        {"ids": item_ids},
     )
     db.execute(
         text(
             """
             DELETE FROM resource_view_states
             WHERE target_scheme = 'reader_apparatus_item'
-              AND target_id IN (
-                  SELECT id
-                  FROM reader_apparatus_items
-                  WHERE media_id = :media_id
-            )
+              AND target_id = ANY(:ids)
             """
         ),
-        {"media_id": media_id},
+        {"ids": item_ids},
     )
+
+
+def _delete_media_apparatus_rows(db: Session, media_id: UUID) -> None:
     db.execute(
         text("DELETE FROM reader_apparatus_edges WHERE media_id = :media_id"),
         {"media_id": media_id},

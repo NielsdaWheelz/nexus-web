@@ -46,40 +46,11 @@ class ObjectRef(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class CreatePinnedObjectRefRequest(ObjectRef):
-    surface_key: str = Field(
-        "navbar",
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("surface_key", "surfaceKey"),
-        serialization_alias="surfaceKey",
-    )
-    order_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("order_key", "orderKey"),
-        serialization_alias="orderKey",
-    )
-
-
-class UpdatePinnedObjectRefRequest(BaseModel):
-    surface_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("surface_key", "surfaceKey"),
-        serialization_alias="surfaceKey",
-    )
-    order_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("order_key", "orderKey"),
-        serialization_alias="orderKey",
-    )
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+class HydratedObjectRef(ObjectRef):
+    label: str
+    route: str | None = None
+    snippet: str | None = None
+    icon: str | None = None
 
 
 def validate_note_body_pm_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -312,17 +283,6 @@ class ResourceItemOut(BaseModel):
         validation_alias=AliasChoices("version_by_lane", "versionByLane"),
         serialization_alias="versionByLane",
     )
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class PinnedResourceOut(BaseModel):
-    id: UUID
-    item: ResourceItemOut
-    surface_key: str = Field(serialization_alias="surfaceKey")
-    order_key: str = Field(serialization_alias="orderKey")
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
 
     model_config = ConfigDict(populate_by_name=True)
 

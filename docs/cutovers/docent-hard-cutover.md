@@ -12,7 +12,7 @@ One keystroke enters a guided walk that steps through an assistant answer's sour
 ## 0. Prerequisites (hard, no fallback)
 
 - **P-1.** `CitationOut` (frontend: `apps/web/src/lib/conversations/citationOut.ts:41`) carries `deep_link: string | null` built backend-side in `python/nexus/services/resource_items/routing.py:108-113`. For evidence-span targets the href is `/media/{media_id}#evidence-{span_id}`; for fragments, `/media/{media_id}#fragment-{id}`; for note-block targets, `/notes/{block_id}`. Verified live values in `AssistantMessage.test.tsx:169` (`deep_link: "/reader/source"` on a `CitationOut`-shaped object). `deep_link === null` only when the target is genuinely unrouteable (deleted media, unresolved oracle anchor).
-- **P-2.** `openInNewPane` (pane runtime signature `apps/web/src/lib/panes/paneRuntime.tsx:75-79`): `(href: string, titleHint?: string, secondarySurfaceId?: WorkspaceSecondarySurfaceId) => void`. The workspace `open_pane` reducer (`store.tsx:122-191`) deduplicates by `hasSamePaneRoute` (`paneIdentity.ts:35-39`), which uses `normalizePaneRouteKeyHref` (`:18-21`) stripping the `#` fragment. Consequence: successive walk steps targeting different evidence spans in the **same media file** navigate an existing reader pane to each new span rather than opening additional panes. Steps targeting different media open additional panes. `MAX_PANES = 12` (`schema.ts:22`) bounds pane-spam. All verified in `store.tsx:134-165` and `paneIdentity.ts:18-21`.
+- **P-2.** `openInNewPane` (pane runtime signature in `apps/web/src/lib/panes/paneRuntime.tsx`): `(href: string, labelHint?: string, secondarySurfaceId?: WorkspaceSecondarySurfaceId) => void`. The workspace `open_pane` reducer deduplicates by `hasSamePaneRoute`, which uses `normalizePaneRouteKeyHref` to strip the `#` fragment. Consequence: successive walk steps targeting different evidence spans in the **same media file** navigate an existing reader pane to each new span rather than opening additional panes. Steps targeting different media open additional panes. `MAX_PANES = 12` bounds pane-spam.
 - **P-3.** `ConversationMessage.citations` (`types.ts:282`): `CitationOut[]` delivered from the server via `citation_index` SSE event and the message GET; already available on the React rendering path at `AssistantEvidenceDisclosure.tsx:28`. The message text is `conversationMessageText(message)` (`types.ts:290-296`): concatenation of `message_document.blocks[*].text`. Both are available client-side in `AssistantMessage.tsx` without any new API.
 - **P-4.** `FloatingActionSurface` (`apps/web/src/components/ui/FloatingActionSurface.tsx`) exists and is used by the highlight quick-note composer. **Verified not the right primitive for the docent HUD** — it portals to `document.body` and is designed for transient popovers anchored to selection rects or DOM elements. The docent HUD is a persistent layout slot. DocentOverlay instead renders inline in the `ChatSurface` compositor slot (see §7.1).
 - **P-5.** `MachineText` (`machine-hand-hard-cutover.md`, SPEC, P-1 of that spec). The citing-sentence caption in the HUD is rendered in MachineText inline variant (`variant="inline"`, `origin={{ label: "Assistant" }}`). See P-9; machine-hand-hard-cutover.md is a hard prerequisite — no fallback `<span>` shim ships.
@@ -147,7 +147,7 @@ export function useDocentWalk({
   router,
   isMobile,
 }: {
-  openInNewPane: ((href: string, titleHint?: string) => void) | undefined; // narrows paneRuntime.tsx:75 (omits unused secondarySurfaceId)
+  openInNewPane: ((href: string, labelHint?: string) => void) | undefined; // omits unused secondarySurfaceId
   router: PaneScopedRouter;
   isMobile: boolean;
 }): {
@@ -283,7 +283,10 @@ No existing files are deleted. No symbols are removed. No CSS blocks are cut.
 
 **walknotes-hard-cutover.md (SPEC):** Unrelated — owns `GlobalPlayerFooter`. No shared files.
 
-**running-journal-hard-cutover.md (SPEC):** Owns `SurfaceHeader` / `MobilePaneChrome` — no shared files with docent.
+**pane-header-identity-hard-cutover.md (BUILT):** Owns pane header projection
+and the global interaction-owner contract. Docent participates only through
+`useDocentWalk` suppressing shortcuts while a modal or transient interaction
+owns the command layer.
 
 **Shared vocabulary verified against sibling specs:**
 - `CitationOut.deep_link` format (evidence span href) — consistent with oracle-shell-dissolution and correspondence.

@@ -3,6 +3,11 @@
 **Status:** IMPLEMENTED · `92d6f122` · 2026-07-08 (rev 1 spec, 2026-07-07)
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior. The margin becomes a real writing surface; the wide-viewport "evidence lives only in a drawer" assumption is deleted, not toggled.
 
+## Current state and supersession
+
+`MarginRail`, shared Evidence filter state, passage-grain Synapse targets, Cite,
+and stance authoring were built.
+
 **Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):** the
 **Cite** verb (§2 "Cite (cross-document footnote)", G-2, `CitePicker.tsx`,
 `useCiteComposer.ts`) is deleted and replaced by the universal **Link**
@@ -16,6 +21,15 @@ terminology (superscript "footnote" copy for a user Link) is retired; genuine
 source-authored footnote/citation terminology is unaffected. Span-grain
 Synapse resonance (G-1, G-6), the two stance chords (G-3, unchanged UX), and
 MarginRail rendering (G-4) remain authoritative and are not superseded.
+
+Also superseded by the approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md):
+this document's storage-shaped Evidence inputs and
+`highlight | apparatus | connection` filter mapping. It keeps MarginRail as the
+wide spatial presenter and does not redesign Cite, stance, or Synapse dismissal
+beyond what the universal-link-authoring supersession above records.
+Prerequisite and creation-language below records the historical implementation
+plan rather than pending work.
 
 ## One-line
 

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
-import { assumeMediaId } from "@/lib/lectern/client";
+import { assumeMediaId } from "@/lib/lectern/contract";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,

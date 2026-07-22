@@ -88,6 +88,50 @@ describe("HtmlRenderer", () => {
     expect(screen.getByText("Item 2")).toBeInTheDocument();
   });
 
+  it("offsets the imported heading hierarchy while preserving anchor ids", () => {
+    render(
+      <HtmlRenderer
+        htmlSanitized={
+          '<h1 id="chapter-one">Chapter one</h1><h2 id="section">Section</h2><h6>Deep</h6>'
+        }
+        headingLevelOffset={1}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Chapter one" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Chapter one" }),
+    ).toHaveAttribute("id", "chapter-one");
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Section" }),
+    ).toHaveAttribute("id", "section");
+    expect(
+      screen.getByRole("heading", { level: 6, name: "Deep" }),
+    ).toBeVisible();
+  });
+
+  it("retags paragraphs when only the heading projection changes", () => {
+    const html = "<h1>Chapter</h1><p>Paragraph</p>";
+    const view = render(<HtmlRenderer htmlSanitized={html} />);
+    expect(screen.getByText("Paragraph")).toHaveAttribute(
+      "data-paragraph",
+      "true",
+    );
+
+    view.rerender(
+      <HtmlRenderer htmlSanitized={html} headingLevelOffset={1} />,
+    );
+    expect(screen.getByText("Paragraph")).toHaveAttribute(
+      "data-paragraph",
+      "true",
+    );
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Chapter" }),
+    ).toBeVisible();
+  });
+
   it("renders blockquotes", () => {
     const html = "<blockquote>A wise quote</blockquote>";
     render(<HtmlRenderer htmlSanitized={html} />);

@@ -1,23 +1,26 @@
 """Consumption read model: explicit override + listening state + reader
 engagement -> per-item consumption state, progress, and capability activation.
 
-This is the sole projection owner (spec §8 AC-15); adopters read Lectern items
-only through the ``service`` boundary that delegates here.
+This is the sole projection owner (spec §8 AC-15); adopters read Lectern items,
+recent consumption, and collection state only through the ``service`` boundary
+that delegates here.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.db.models import MediaKind
 from nexus.schemas.consumption import (
     ChapterOut,
+    ConsumptionMediaKind,
     ConsumptionOut,
     ConsumptionStateValue,
     FooterAudioActivation,
@@ -28,6 +31,8 @@ from nexus.schemas.consumption import (
     OpenPaneActivation,
     PlayerDescriptor,
     ReadableActivation,
+    RecentConsumptionItemOut,
+    RecentConsumptionSnapshot,
 )
 from nexus.schemas.media import MediaReadState
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
@@ -107,6 +112,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
             LecternItemOut(
                 item_id=row.item_id,
                 media_id=row.media_id,
+                kind=cast(ConsumptionMediaKind, row.kind),
                 title=row.title[:_MAX_TITLE_CHARS],
                 subtitle=subtitle,
                 href=f"/media/{row.media_id}",
@@ -258,6 +264,9 @@ _STATE_TO_READ_STATE: dict[ConsumptionStateValue, MediaReadState] = {
     "InProgress": "in_progress",
     "Finished": "finished",
 }
+_READ_STATE_TO_STATE: dict[MediaReadState, ConsumptionStateValue] = {
+    value: key for key, value in _STATE_TO_READ_STATE.items()
+}
 
 
 @dataclass(frozen=True)
@@ -317,6 +326,104 @@ def reader_engagement_recency(
 ) -> dict[UUID, datetime]:
     """Per-media reader-engagement recency (owner-scoped read for MediaOut)."""
     return _reader_engagement_store.load_recency(db, viewer_id=viewer_id, media_ids=media_ids)
+
+
+@dataclass(frozen=True)
+class _RecentConsumptionRow:
+    media_id: UUID
+    kind: ConsumptionMediaKind
+    title: str
+    last_engaged_at: datetime
+
+
+def recent_consumption(db: Session, *, viewer_id: UUID, limit: int) -> RecentConsumptionSnapshot:
+    """Return the viewer's most recently read/listened visible media.
+
+    Each indexed source joins canonical visibility before taking its bounded
+    top-N. The final merge therefore considers at most ``2 * limit`` rows while
+    hidden/tombstoned/tearing-down items can never crowd visible items out.
+    """
+    rows = _load_recent_consumption_rows(db, viewer_id=viewer_id, limit=limit)
+    if not rows:
+        return RecentConsumptionSnapshot(items=[])
+
+    media_ids = [row.media_id for row in rows]
+    states = media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    descriptors = player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
+    items: list[RecentConsumptionItemOut] = []
+    for row in rows:
+        state = states[row.media_id]
+        descriptor = descriptors.get(row.media_id)
+        items.append(
+            RecentConsumptionItemOut(
+                media_id=row.media_id,
+                kind=row.kind,
+                title=row.title[:_MAX_TITLE_CHARS],
+                href=f"/media/{row.media_id}",
+                consumption=ConsumptionOut(
+                    state=_READ_STATE_TO_STATE[state.state],
+                    progress=present(state.progress_fraction)
+                    if state.progress_fraction is not None
+                    else absent(),
+                ),
+                last_engaged_at=row.last_engaged_at,
+                player_descriptor=present(descriptor) if descriptor is not None else absent(),
+            )
+        )
+    return RecentConsumptionSnapshot(items=items)
+
+
+def _load_recent_consumption_rows(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> list[_RecentConsumptionRow]:
+    rows = db.execute(
+        text(
+            f"""
+            WITH reader_recent AS (
+                SELECT engagement.media_id, engagement.last_engaged_at
+                FROM reader_engagement_states engagement
+                WHERE engagement.user_id = :viewer_id
+                  AND engagement.media_id IN ({visible_media_ids_cte_sql()})
+                ORDER BY engagement.last_engaged_at DESC, engagement.media_id DESC
+                LIMIT :limit
+            ),
+            listening_recent AS (
+                SELECT listening.media_id, listening.last_engaged_at
+                FROM podcast_listening_states listening
+                WHERE listening.user_id = :viewer_id
+                  AND listening.last_engaged_at IS NOT NULL
+                  AND listening.media_id IN ({visible_media_ids_cte_sql()})
+                ORDER BY listening.last_engaged_at DESC, listening.media_id DESC
+                LIMIT :limit
+            ),
+            combined AS (
+                SELECT media_id, last_engaged_at FROM reader_recent
+                UNION ALL
+                SELECT media_id, last_engaged_at FROM listening_recent
+            ),
+            deduplicated AS (
+                SELECT media_id, MAX(last_engaged_at) AS last_engaged_at
+                FROM combined
+                GROUP BY media_id
+            )
+            SELECT recent.media_id, media.kind, media.title, recent.last_engaged_at
+            FROM deduplicated recent
+            JOIN media ON media.id = recent.media_id
+            ORDER BY recent.last_engaged_at DESC, recent.media_id DESC
+            LIMIT :limit
+            """
+        ),
+        {"viewer_id": viewer_id, "limit": limit},
+    ).mappings()
+    return [
+        _RecentConsumptionRow(
+            media_id=UUID(str(row["media_id"])),
+            kind=cast(ConsumptionMediaKind, str(row["kind"])),
+            title=str(row["title"]),
+            last_engaged_at=row["last_engaged_at"],
+        )
+        for row in rows
+    ]
 
 
 @dataclass(frozen=True)
@@ -506,9 +613,9 @@ def episode_state_joins_sql(
 
 
 def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> the viewer's listening-row ``updated_at`` for one media."""
+    """Scalar subquery -> truthful listening engagement recency for one media."""
     return f"""(
-        SELECT ls_recency.updated_at
+        SELECT ls_recency.last_engaged_at
         FROM podcast_listening_states ls_recency
         WHERE ls_recency.user_id = {user_param}
           AND ls_recency.media_id = {media_expr}
@@ -523,15 +630,18 @@ def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) 
     )
 
 
-def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
-    """Scalar subquery -> MAX listening ``updated_at`` across a podcast's episodes."""
+def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
+    """Scalar subquery -> MAX listening engagement across the viewer's visible
+    episodes of one podcast. Binds the canonical ``:viewer_id`` visibility
+    parameter; hidden/tombstoned/tearing-down episodes cannot surface a podcast."""
     return f"""(
-        SELECT MAX(ls_pod.updated_at)
+        SELECT MAX(ls_pod.last_engaged_at)
         FROM podcast_episodes pe_ls
         JOIN podcast_listening_states ls_pod
-          ON ls_pod.user_id = {user_param}
+          ON ls_pod.user_id = :viewer_id
          AND ls_pod.media_id = pe_ls.media_id
         WHERE pe_ls.podcast_id = {podcast_expr}
+          AND pe_ls.media_id IN ({visible_media_ids_cte_sql()})
     )"""
 
 

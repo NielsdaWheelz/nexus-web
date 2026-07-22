@@ -6,7 +6,7 @@ import type {
   ListeningStateOut,
   MediaId,
   PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 
 type AudioMetrics = {
   duration: number;

@@ -217,7 +217,7 @@ export default function ConnectionsSurface({
   const openConnection = useCallback(
     (connection: Connection, openInNewPane: boolean) => {
       activateResource(connection.activation, {
-        label: connection.label,
+        labelHint: connection.label,
         openInNewPane: (href) => onOpenRoute?.(href, true),
         navigate: (href) => onOpenRoute?.(href, false),
         newPane: openInNewPane,

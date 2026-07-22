@@ -478,6 +478,320 @@ class TestMigrationUpgradeDowngrade:
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
 
+    def test_0185_drops_user_pinned_objects(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0184")
+        assert result.returncode == 0, f"upgrade 0184 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                user_id = uuid4()
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO user_pinned_objects (
+                            user_id, object_type, object_id, surface_key, order_key
+                        )
+                        VALUES (:user_id, 'page', :object_id, 'navbar', '0000000001')
+                        """
+                    ),
+                    {"user_id": user_id, "object_id": uuid4()},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0185")
+            assert result.returncode == 0, f"upgrade 0185 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert (
+                    session.scalar(text("SELECT to_regclass('public.user_pinned_objects')")) is None
+                )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_0186_backfills_only_proven_listening_and_adds_top_n_indexes(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0185")
+        assert result.returncode == 0, f"upgrade 0185 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        manual_finished_media_id = uuid4()
+        legacy_progress_media_id = uuid4()
+        positive_heartbeat_media_id = uuid4()
+        zero_heartbeat_media_id = uuid4()
+        manual_unread_media_id = uuid4()
+        completed_media_id = uuid4()
+        engagement_id = uuid4()
+        prior_update = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
+        try:
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for title, media_id in (
+                    ("Manual Finished only", manual_finished_media_id),
+                    ("Pre-fencing progress", legacy_progress_media_id),
+                    ("Positive heartbeat", positive_heartbeat_media_id),
+                    ("Zero-position heartbeat", zero_heartbeat_media_id),
+                    ("Manual Unread after heartbeat", manual_unread_media_id),
+                    ("Completed after heartbeat", completed_media_id),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title)"
+                            " VALUES (:id, 'podcast_episode', :title)"
+                        ),
+                        {"id": media_id, "title": title},
+                    )
+                session.execute(
+                    text(
+                        "INSERT INTO podcast_listening_states"
+                        " (user_id, media_id, position_ms, is_completed,"
+                        " write_revision, reset_epoch, updated_at)"
+                        " VALUES"
+                        " (:user_id, :manual_finished_media_id, 0, true, 0, 0, :updated_at),"
+                        " (:user_id, :legacy_progress_media_id, 1000, false, 0, 0, :updated_at),"
+                        " (:user_id, :positive_heartbeat_media_id, 1000, false, 2, 1, :updated_at),"
+                        " (:user_id, :zero_heartbeat_media_id, 0, false, 2, 0, :updated_at),"
+                        " (:user_id, :manual_unread_media_id, 0, false, 2, 1, :updated_at),"
+                        " (:user_id, :completed_media_id, 1000, true, 2, 0, :updated_at)"
+                    ),
+                    {
+                        "user_id": user_id,
+                        "manual_finished_media_id": manual_finished_media_id,
+                        "legacy_progress_media_id": legacy_progress_media_id,
+                        "positive_heartbeat_media_id": positive_heartbeat_media_id,
+                        "zero_heartbeat_media_id": zero_heartbeat_media_id,
+                        "manual_unread_media_id": manual_unread_media_id,
+                        "completed_media_id": completed_media_id,
+                        "updated_at": prior_update,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO reader_engagement_states"
+                        " (id, user_id, media_id, last_engaged_at)"
+                        " VALUES (:id, :user_id, :media_id, :last_engaged_at)"
+                    ),
+                    {
+                        "id": engagement_id,
+                        "user_id": user_id,
+                        "media_id": legacy_progress_media_id,
+                        "last_engaged_at": prior_update,
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0186")
+            assert result.returncode == 0, f"upgrade 0186 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                listening_engagement = dict(
+                    session.execute(
+                        text(
+                            "SELECT media_id, last_engaged_at FROM podcast_listening_states"
+                            " WHERE user_id = :user_id"
+                        ),
+                        {"user_id": user_id},
+                    ).all()
+                )
+                index_rows = session.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes"
+                        " WHERE schemaname = 'public'"
+                        " AND indexname IN ("
+                        " 'ix_podcast_listening_states_user_last_engaged',"
+                        " 'ix_reader_engagement_states_user_last_engaged'"
+                        " )"
+                    )
+                ).all()
+
+            assert listening_engagement == {
+                manual_finished_media_id: None,
+                legacy_progress_media_id: None,
+                positive_heartbeat_media_id: prior_update,
+                zero_heartbeat_media_id: prior_update,
+                manual_unread_media_id: None,
+                completed_media_id: None,
+            }
+            index_defs = {name: definition for name, definition in index_rows}
+            assert set(index_defs) == {
+                "ix_podcast_listening_states_user_last_engaged",
+                "ix_reader_engagement_states_user_last_engaged",
+            }
+            for definition in index_defs.values():
+                assert "user_id, last_engaged_at DESC, media_id DESC" in definition
+            assert (
+                "WHERE (last_engaged_at IS NOT NULL)"
+                in index_defs["ix_podcast_listening_states_user_last_engaged"]
+            )
+
+            result = run_alembic_command("downgrade 0185")
+            assert result.returncode == 0, f"downgrade 0185 failed: {result.stderr}"
+            with Session(engine) as session:
+                column = session.scalar(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND table_name = 'podcast_listening_states'"
+                        " AND column_name = 'last_engaged_at'"
+                    )
+                )
+            assert column is None
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_0187_stores_and_recomputes_source_word_counts(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0186")
+        assert result.returncode == 0, f"upgrade 0186 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        article_id = uuid4()
+        pdf_ids = [uuid4() for _ in range(5)]
+        fragment_rows = [
+            (uuid4(), 0, ""),
+            (uuid4(), 1, " "),
+            (uuid4(), 2, "\t"),
+            (uuid4(), 3, "\n"),
+            (uuid4(), 4, "..."),
+            (uuid4(), 5, "one,two\tthree\nfour!"),
+        ]
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title)"
+                        " VALUES (:id, 'web_article', 'Existing article')"
+                    ),
+                    {"id": article_id},
+                )
+                for title, media_id, plain_text in (
+                    ("Null PDF", pdf_ids[0], None),
+                    ("Empty PDF", pdf_ids[1], ""),
+                    ("Whitespace PDF", pdf_ids[2], " \t\n"),
+                    ("Punctuation PDF", pdf_ids[3], "..."),
+                    ("Mixed PDF", pdf_ids[4], "one,two\tthree\nfour!"),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, plain_text)"
+                            " VALUES (:id, 'pdf', :title, :plain_text)"
+                        ),
+                        {"id": media_id, "title": title, "plain_text": plain_text},
+                    )
+                for fragment_id, idx, canonical_text in fragment_rows:
+                    session.execute(
+                        text(
+                            "INSERT INTO fragments"
+                            " (id, media_id, idx, canonical_text, html_sanitized)"
+                            " VALUES (:id, :media_id, :idx, :canonical_text, '')"
+                        ),
+                        {
+                            "id": fragment_id,
+                            "media_id": article_id,
+                            "idx": idx,
+                            "canonical_text": canonical_text,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade 0187 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                generated_columns = dict(
+                    session.execute(
+                        text(
+                            "SELECT table_name, is_generated"
+                            " FROM information_schema.columns"
+                            " WHERE table_schema = 'public'"
+                            " AND (table_name, column_name) IN ("
+                            " ('fragments', 'canonical_text_word_count'),"
+                            " ('media', 'plain_text_word_count')"
+                            " )"
+                        )
+                    ).all()
+                )
+                fragment_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT idx, canonical_text_word_count"
+                            " FROM fragments WHERE media_id = :media_id"
+                            " ORDER BY idx"
+                        ),
+                        {"media_id": article_id},
+                    ).all()
+                )
+                pdf_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT id, plain_text_word_count FROM media WHERE id = ANY(:media_ids)"
+                        ),
+                        {"media_ids": pdf_ids},
+                    ).all()
+                )
+
+                assert generated_columns == {"fragments": "ALWAYS", "media": "ALWAYS"}
+                assert fragment_counts == {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 3}
+                assert pdf_counts == {
+                    pdf_ids[0]: None,
+                    pdf_ids[1]: 0,
+                    pdf_ids[2]: 0,
+                    pdf_ids[3]: 1,
+                    pdf_ids[4]: 3,
+                }
+
+                session.execute(
+                    text(
+                        "UPDATE fragments SET canonical_text = 'now four words here' WHERE id = :id"
+                    ),
+                    {"id": fragment_rows[0][0]},
+                )
+                session.execute(
+                    text("UPDATE media SET plain_text = 'two words' WHERE id = :id"),
+                    {"id": pdf_ids[0]},
+                )
+                session.commit()
+
+                assert (
+                    session.scalar(
+                        text("SELECT canonical_text_word_count FROM fragments WHERE id = :id"),
+                        {"id": fragment_rows[0][0]},
+                    )
+                    == 4
+                )
+                assert (
+                    session.scalar(
+                        text("SELECT plain_text_word_count FROM media WHERE id = :id"),
+                        {"id": pdf_ids[0]},
+                    )
+                    == 2
+                )
+
+            result = run_alembic_command("downgrade 0186")
+            assert result.returncode == 0, f"downgrade 0186 failed: {result.stderr}"
+            with Session(engine) as session:
+                remaining_columns = session.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND column_name IN ("
+                        " 'canonical_text_word_count', 'plain_text_word_count'"
+                        " )"
+                    )
+                )
+                assert remaining_columns == 0
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
     def test_0137_rewrites_legacy_processing_statuses_and_replaces_enum(self):
         reset_test_schema()
         assert run_alembic_command("upgrade 0136").returncode == 0
@@ -7355,7 +7669,7 @@ class TestLibraryEntriesCutoverMigration:
             )
         assert len(delete_actions) == 3, delete_actions
 
-    def test_head_contains_request_storm_hot_path_indexes(self, migrated_engine):
+    def test_head_contains_surviving_request_storm_hot_path_indexes(self, migrated_engine):
         with Session(migrated_engine) as session:
             indexes = session.execute(
                 text("""
@@ -7364,8 +7678,7 @@ class TestLibraryEntriesCutoverMigration:
                     WHERE schemaname = 'public'
                       AND indexname IN (
                         'ix_library_entries_library_order',
-                        'ix_workspace_sessions_user_updated',
-                        'ix_user_pinned_objects_active_order'
+                        'ix_workspace_sessions_user_updated'
                       )
                 """)
             ).fetchall()
@@ -7374,7 +7687,6 @@ class TestLibraryEntriesCutoverMigration:
         assert set(index_defs) == {
             "ix_library_entries_library_order",
             "ix_workspace_sessions_user_updated",
-            "ix_user_pinned_objects_active_order",
         }
         assert (
             'library_id, "position", created_at DESC, id DESC'
@@ -7383,7 +7695,12 @@ class TestLibraryEntriesCutoverMigration:
         assert (
             "user_id, updated_at DESC, id DESC" in index_defs["ix_workspace_sessions_user_updated"]
         )
-        assert "WHERE (deleted_at IS NULL)" in index_defs["ix_user_pinned_objects_active_order"]
+
+    def test_head_does_not_contain_user_pinned_objects(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            table = session.scalar(text("SELECT to_regclass('public.user_pinned_objects')"))
+
+        assert table is None
 
     def test_upgrade_0046_to_0047_backfills_media_and_podcast_entries(self):
         reset_test_schema()

@@ -6,6 +6,7 @@ import {
   encodeSupabaseCookieValue,
   supabaseAuthCookieBaseName,
 } from "./supabase-auth-cookie";
+import { AUTHENTICATED_HOME_PATH, isAuthenticatedHome } from "./app-routes";
 
 const { requireSupabaseAdminEnv } = supabaseEnv;
 const E2E_USER_EMAIL = process.env.E2E_USER_EMAIL ?? "e2e-test@nexus.local";
@@ -149,17 +150,20 @@ async function completeMagicLinkInBrowser(
   verificationUrl.searchParams.set("redirect_to", redirectTarget.toString());
 
   await page.goto(verificationUrl.toString());
-  await page.waitForURL(/\/login|\/libraries/, { timeout: 60_000 });
+  await page.waitForURL(
+    (url) => url.pathname === "/login" || isAuthenticatedHome(url),
+    { timeout: 60_000 },
+  );
 
-  const currentUrl = page.url();
-  if (currentUrl.includes("/libraries")) {
+  const currentUrl = new URL(page.url());
+  if (isAuthenticatedHome(currentUrl)) {
     return;
   }
 
-  const hashSessionTokens = readHashSessionTokens(currentUrl);
+  const hashSessionTokens = readHashSessionTokens(currentUrl.toString());
   if (!hashSessionTokens) {
     throw new Error(
-      `Magic-link verification did not yield session hash tokens. Final URL: ${currentUrl}`,
+      `Magic-link verification did not yield session hash tokens. Final URL: ${currentUrl.toString()}`,
     );
   }
 
@@ -182,7 +186,7 @@ async function createMagicLink(
         type: "magiclink",
         email: E2E_USER_EMAIL,
         options: {
-          redirectTo: `${env.appBaseUrl}/libraries`,
+          redirectTo: `${env.appBaseUrl}${AUTHENTICATED_HOME_PATH}`,
         },
       },
     },
@@ -201,6 +205,6 @@ export async function bootstrapMagicLinkSession(
   const actionLink = await createMagicLink(request, env);
 
   await completeMagicLinkInBrowser(page, request, env, actionLink);
-  await page.goto("/libraries");
-  await expect(page).toHaveURL(/\/libraries/);
+  await page.goto(AUTHENTICATED_HOME_PATH);
+  await expect(page).toHaveURL(isAuthenticatedHome);
 }

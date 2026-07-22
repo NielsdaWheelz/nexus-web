@@ -11,7 +11,7 @@ import {
   type LecternSnapshot,
   type MediaId,
   type PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 import {
   applySnapshotInstall,
   descriptorFromLecternItem,
@@ -68,6 +68,7 @@ function audioItem(itemKey: string, mediaKey: string, positionMs = 0): LecternIt
   return {
     itemId: itemId(itemKey),
     mediaId: mediaId(mediaKey),
+    kind: "podcast_episode",
     title: `Title ${mediaKey}`,
     subtitle: absent(),
     href: assumeAppHref(`/media/${mediaKey}`),

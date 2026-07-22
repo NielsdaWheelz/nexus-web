@@ -1,5 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import ContributorRoleGroups from "./ContributorRoleGroups";
 import type { ContributorCredit } from "@/lib/contributors/types";
 
@@ -88,68 +88,6 @@ describe("ContributorRoleGroups", () => {
       />,
     );
     expect(screen.getByText("Contributor")).toBeInTheDocument();
-  });
-
-  describe("media byline", () => {
-    it("shows No authors for an empty media author slice, for non-editors", () => {
-      render(
-        <ContributorRoleGroups
-          credits={[]}
-          media={{ canEditAuthors: false, authorMode: "automatic" }}
-        />,
-      );
-      expect(screen.getByText("Authors")).toBeInTheDocument();
-      expect(screen.getByText("No authors")).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: /author/i }),
-      ).not.toBeInTheDocument();
-    });
-
-    it("offers Add author when the editable author slice is empty", () => {
-      const onEditAuthors = vi.fn();
-      render(
-        <ContributorRoleGroups
-          credits={[]}
-          media={{ canEditAuthors: true, authorMode: "automatic", onEditAuthors }}
-        />,
-      );
-      const button = screen.getByRole("button", { name: "Add author" });
-      button.click();
-      expect(onEditAuthors).toHaveBeenCalledOnce();
-    });
-
-    it("offers Edit authors when the editable author slice is non-empty", () => {
-      render(
-        <ContributorRoleGroups
-          credits={[
-            credit({ credited_name: "Kurt Vonnegut", contributor_handle: "kurt-vonnegut" }),
-          ]}
-          media={{ canEditAuthors: true, authorMode: "automatic", onEditAuthors: () => {} }}
-        />,
-      );
-      expect(screen.getByRole("button", { name: "Edit authors" })).toBeInTheDocument();
-      expect(screen.queryByText("Add author")).not.toBeInTheDocument();
-    });
-
-    it("shows the pinned marker only when manual and editable", () => {
-      render(
-        <ContributorRoleGroups
-          credits={[credit({ credited_name: "Kurt Vonnegut", contributor_handle: "kv" })]}
-          media={{ canEditAuthors: true, authorMode: "manual", onEditAuthors: () => {} }}
-        />,
-      );
-      expect(screen.getByText("Authors edited manually")).toBeInTheDocument();
-    });
-
-    it("hides the pinned marker from non-editors even when manual", () => {
-      render(
-        <ContributorRoleGroups
-          credits={[credit({ credited_name: "Kurt Vonnegut", contributor_handle: "kv" })]}
-          media={{ canEditAuthors: false, authorMode: "manual" }}
-        />,
-      );
-      expect(screen.queryByText("Authors edited manually")).not.toBeInTheDocument();
-    });
   });
 
   describe("podcast byline (read-only)", () => {

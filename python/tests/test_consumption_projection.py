@@ -26,6 +26,7 @@ from nexus.db.models import (
     PodcastEpisodeChapter,
     ProcessingStatus,
     ReaderEngagementState,
+    UserMediaDeletion,
 )
 from nexus.ids import new_uuid7
 from nexus.schemas.reader import (
@@ -206,6 +207,7 @@ def _seed_reader_engagement(
     user_id: UUID,
     media_id: UUID,
     max_total_progression: float | None = None,
+    last_engaged_at: datetime | None = None,
 ) -> None:
     with direct_db.session() as session:
         session.add(
@@ -213,7 +215,7 @@ def _seed_reader_engagement(
                 id=new_uuid7(),
                 user_id=user_id,
                 media_id=media_id,
-                last_engaged_at=datetime.now(UTC),
+                last_engaged_at=last_engaged_at or datetime.now(UTC),
                 max_total_progression=max_total_progression,
             )
         )
@@ -241,6 +243,146 @@ def _override_row_exists(direct_db: DirectSessionManager, *, user_id: UUID, medi
                 {"u": user_id, "m": media_id},
             ).fetchone()
             is not None
+        )
+
+
+def _listening_last_engaged_at(
+    direct_db: DirectSessionManager, *, user_id: UUID, media_id: UUID
+) -> datetime | None:
+    with direct_db.session() as session:
+        return session.scalar(
+            text(
+                "SELECT last_engaged_at FROM podcast_listening_states"
+                " WHERE user_id = :u AND media_id = :m"
+            ),
+            {"u": user_id, "m": media_id},
+        )
+
+
+class TestRecentConsumption:
+    @pytest.mark.parametrize("limit", [0, 51])
+    def test_rejects_out_of_contract_limit(self, auth_client, limit: int):
+        response = auth_client.get(
+            f"/lectern/recent?limit={limit}",
+            headers=auth_headers(create_test_user_id()),
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_orders_visible_engaged_media_and_projects_exact_player_contract(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        article = _create_web_article(direct_db, title="Recently read")
+        same_age_article = _create_web_article(direct_db, title="Equally recent read")
+        tombstoned = _create_web_article(direct_db, title="Hidden read")
+        inaccessible = _create_web_article(direct_db, title="Unfiled read")
+        never_engaged = _create_web_article(direct_db, title="Never opened")
+        _, episode = _create_podcast_episode(direct_db, title="Recently heard")
+        for media_id in (article, same_age_article, tombstoned, never_engaged, episode):
+            _add_to_library(direct_db, library_id, media_id)
+
+        older = datetime(2026, 7, 18, 12, 0, 0, tzinfo=UTC)
+        newer = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
+        _seed_reader_engagement(direct_db, user_id=user_id, media_id=article, last_engaged_at=older)
+        _seed_reader_engagement(
+            direct_db,
+            user_id=user_id,
+            media_id=same_age_article,
+            last_engaged_at=older,
+        )
+        _seed_reader_engagement(
+            direct_db, user_id=user_id, media_id=tombstoned, last_engaged_at=newer
+        )
+        _seed_reader_engagement(
+            direct_db, user_id=user_id, media_id=inaccessible, last_engaged_at=newer
+        )
+        with direct_db.session() as session:
+            session.add(UserMediaDeletion(user_id=user_id, media_id=tombstoned))
+            session.commit()
+
+        _heartbeat(auth_client, user_id, episode, position_ms=30_000)
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "UPDATE podcast_listening_states SET last_engaged_at = :at"
+                    " WHERE user_id = :u AND media_id = :m"
+                ),
+                {"at": newer, "u": user_id, "m": episode},
+            )
+            session.commit()
+
+        response = auth_client.get("/lectern/recent?limit=12", headers=auth_headers(user_id))
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["items"]
+        equal_timestamp_ids = sorted([str(article), str(same_age_article)], reverse=True)
+        assert [item["mediaId"] for item in items] == [str(episode), *equal_timestamp_ids]
+        assert set(items[0]) == {
+            "mediaId",
+            "kind",
+            "title",
+            "href",
+            "consumption",
+            "lastEngagedAt",
+            "playerDescriptor",
+        }
+        assert items[0]["kind"] == "podcast_episode"
+        assert items[0]["consumption"]["state"] == "InProgress"
+        assert items[0]["playerDescriptor"]["kind"] == "Present"
+        assert items[0]["playerDescriptor"]["value"]["activation"]["kind"] == "FooterAudio"
+        assert items[1]["playerDescriptor"] == {"kind": "Absent"}
+
+        limited = auth_client.get("/lectern/recent?limit=1", headers=auth_headers(user_id))
+        assert limited.status_code == 200, limited.text
+        assert [item["mediaId"] for item in limited.json()["data"]["items"]] == [str(episode)]
+
+    def test_manual_finish_and_unread_do_not_fabricate_or_move_engagement(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        user_id = create_test_user_id()
+        library_id = _bootstrap(auth_client, user_id)
+        _, episode = _create_podcast_episode(direct_db, title="State-only episode")
+        _add_to_library(direct_db, library_id, episode)
+
+        _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert _listening_last_engaged_at(direct_db, user_id=user_id, media_id=episode) is None
+        recent = auth_client.get("/lectern/recent", headers=auth_headers(user_id))
+        assert recent.status_code == 200, recent.text
+        assert recent.json()["data"]["items"] == []
+
+        _heartbeat(auth_client, user_id, episode, position_ms=30_000)
+        engaged_at = _listening_last_engaged_at(direct_db, user_id=user_id, media_id=episode)
+        assert engaged_at is not None
+
+        _consumption(
+            auth_client,
+            user_id,
+            {
+                "kind": "EnsureMediaFinished",
+                "clientMutationId": str(uuid4()),
+                "mediaId": str(episode),
+            },
+        )
+        assert (
+            _listening_last_engaged_at(direct_db, user_id=user_id, media_id=episode) == engaged_at
+        )
+
+        _consumption(
+            auth_client,
+            user_id,
+            {"kind": "SetUnread", "clientMutationId": str(uuid4()), "mediaId": str(episode)},
+        )
+        assert (
+            _listening_last_engaged_at(direct_db, user_id=user_id, media_id=episode) == engaged_at
         )
 
 

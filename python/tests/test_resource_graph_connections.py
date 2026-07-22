@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
+from nexus.services.resource_graph import citations
 from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import create_edge
@@ -19,6 +20,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeCreate,
 )
 from tests.factories import (
+    create_test_conversation_with_message,
     create_test_fragment,
     create_test_highlight,
     create_test_library,
@@ -384,3 +386,56 @@ def test_li_artifact_owner_rollup_includes_revision_citation_edges(
     assert item.source_ref == revision
     assert item.target_ref == target
     assert item.other.ref == target
+
+
+def test_connection_page_resolves_repeated_citation_target_once(
+    db_session: Session,
+    bootstrapped_user: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    media = _media(db_session, bootstrapped_user, "Repeated citation target")
+    fragment = ResourceRef(
+        scheme="fragment",
+        id=create_test_fragment(db_session, media.id, "Repeated evidence"),
+    )
+    for _index in range(2):
+        _conversation_id, message_id = create_test_conversation_with_message(
+            db_session,
+            bootstrapped_user,
+        )
+        create_edge(
+            db_session,
+            viewer_id=bootstrapped_user,
+            input=EdgeCreate(
+                source=ResourceRef(scheme="message", id=message_id),
+                target=fragment,
+                kind="context",
+                origin="citation",
+                ordinal=1,
+                snapshot=CitationSnapshot(title="Repeated evidence", excerpt="Evidence"),
+            ),
+        )
+
+    call_count = 0
+    original = citations.reader_target_for_citation_target
+
+    def counted_reader_target(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(citations, "reader_target_for_citation_target", counted_reader_target)
+    page = query_connections(
+        db_session,
+        viewer_id=bootstrapped_user,
+        query=ConnectionQuery(
+            refs=(media,),
+            direction="incoming",
+            rollup="owner",
+            filters=ConnectionFilters(origins=("citation",)),
+            limit=100,
+        ),
+    )
+
+    assert len(page.items) == 2
+    assert call_count == 1

@@ -7,9 +7,10 @@ Provides:
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Request
+from fastapi import Depends, Request
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.engine import get_engine
@@ -67,6 +68,20 @@ def get_db(request: Request) -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_repeatable_read_db(
+    db: Annotated[Session, Depends(get_db)],
+) -> Session:
+    """Start one strict read-only snapshot on a fresh request session."""
+
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if db.in_transaction() or in_outer_transaction:
+        raise RuntimeError("repeatable-read dependency requires a fresh session")
+    db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    db.execute(text("SET TRANSACTION READ ONLY"))
+    return db
 
 
 def track_request_db_session(request: Request, db: Session) -> None:

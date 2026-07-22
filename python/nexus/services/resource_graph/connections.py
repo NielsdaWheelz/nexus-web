@@ -12,10 +12,11 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, ResourceEdge
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.services.resource_graph.citations import citation_reader_target_for_edge
+from nexus.services.resource_graph.citations import citation_reader_targets_for_edges
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
+    CitationTargetProjection,
     Connection,
     ConnectionCitation,
     ConnectionEndpoint,
@@ -28,7 +29,7 @@ from nexus.services.resource_graph.schemas import (
     snapshot_from_jsonb,
 )
 from nexus.services.resource_items.capabilities import expand_owned_child_refs
-from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.resource_items.routing import resource_activations_for_refs
 
 
 def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -> ConnectionPage:
@@ -48,15 +49,27 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
     expanded_keys: set[tuple[ResourceScheme, UUID]] = {
         (ref.scheme, ref.id) for ref in expanded_refs
     }
+    citation_projections = citation_reader_targets_for_edges(
+        db,
+        viewer_id=viewer_id,
+        edges=page_rows,
+        target_missing_ref_uris={
+            endpoint.ref.uri for endpoint in endpoints.values() if endpoint.missing
+        },
+        target_routeable_ref_uris={
+            endpoint.ref.uri
+            for endpoint in endpoints.values()
+            if endpoint.activation.href is not None
+        },
+    )
     return ConnectionPage(
         items=tuple(
             _connection_for_row(
-                db,
-                viewer_id=viewer_id,
                 row=row,
                 query_direction=query.direction,
                 endpoints=endpoints,
                 expanded_keys=expanded_keys,
+                citation_projection=citation_projections.get(row.id),
                 link_note=link_notes.get(row.id),
             )
             for row in page_rows
@@ -134,14 +147,17 @@ def _hydrate_endpoints(
             ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id),
         )
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=list(refs.values()))
+    activations = resource_activations_for_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=list(refs.values()),
+        missing_ref_uris={
+            ref.uri for ref, item in zip(refs.values(), resolved, strict=True) if item.missing
+        },
+    )
     endpoints: dict[str, ConnectionEndpoint] = {}
     for ref, item in zip(refs.values(), resolved, strict=True):
-        activation = resource_activation_for_ref(
-            db,
-            viewer_id=viewer_id,
-            ref=ref,
-            missing=item.missing,
-        )
+        activation = activations[ref.uri]
         endpoints[ref.uri] = ConnectionEndpoint(
             ref=ref,
             label=item.label,
@@ -154,13 +170,12 @@ def _hydrate_endpoints(
 
 
 def _connection_for_row(
-    db: Session,
     *,
-    viewer_id: UUID,
     row: ResourceEdge,
     query_direction: str,
     endpoints: dict[str, ConnectionEndpoint],
     expanded_keys: set[tuple[ResourceScheme, UUID]],
+    citation_projection: CitationTargetProjection | None,
     link_note: ConnectionLinkNote | None,
 ) -> Connection:
     source_ref = ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id)
@@ -178,22 +193,17 @@ def _connection_for_row(
         if _is_neutral_link_row(row)
         else ("incoming" if matched_incoming else "outgoing")
     )
-    projection = (
-        citation_reader_target_for_edge(db, viewer_id=viewer_id, edge=row)
-        if row.origin == "citation" and row.ordinal is not None
-        else None
-    )
     citation = (
         ConnectionCitation(
-            ordinal=projection.ordinal,
-            role=projection.role,
-            snapshot=projection.snapshot,
+            ordinal=citation_projection.ordinal,
+            role=citation_projection.role,
+            snapshot=citation_projection.snapshot,
             activation=endpoints[target_ref.uri].activation,
-            target_media_id=projection.media_id,
-            target_locator=projection.locator,
-            target_status=projection.target_status,
+            target_media_id=citation_projection.media_id,
+            target_locator=citation_projection.locator,
+            target_status=citation_projection.target_status,
         )
-        if projection is not None
+        if citation_projection is not None
         else None
     )
     source = endpoints[source_ref.uri]

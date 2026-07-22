@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, assert_never
+from collections import defaultdict
+from collections.abc import Sequence
+from typing import Any, assert_never, cast
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
@@ -10,12 +12,39 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
     reader_target_for_citation_target,
 )
+
+_BATCHED_ROUTE_SCHEMES = frozenset({"highlight", "message", "fragment", "reader_apparatus_item"})
+
+
+def route_for_visible_apparatus_item(
+    *,
+    media_id: UUID,
+    item_id: UUID,
+    stable_key: str,
+    locator_present: bool,
+    locator_status: ReaderApparatusLocatorStatus,
+    locator_current: bool,
+) -> str | None:
+    """Build the canonical route for an apparatus item already proven visible."""
+
+    if not locator_present or not locator_current:
+        return None
+    match locator_status:
+        case "exact" | "container":
+            pass
+        case "missing":
+            return None
+        case _ as unreachable:
+            assert_never(unreachable)
+    params = urlencode({"apparatus": stable_key, "apparatus_id": str(item_id)})
+    return f"/media/{media_id}?{params}"
 
 
 def _artifact_subject_route(row: Any, *, revision_id: UUID | None) -> str | None:
@@ -73,36 +102,177 @@ def resource_activation_for_ref(
     )
 
 
+def resource_activations_for_refs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+    missing_ref_uris: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, ResourceActivationOut]:
+    """Batch deterministic high-volume graph routes and delegate the rest.
+
+    Visibility comes from canonical resource hydration via missing_ref_uris.
+    Locator-sensitive schemes stay on resource_activation_for_ref so this
+    optimization cannot fork their current/stale routing semantics.
+    """
+
+    unique = {ref.uri: ref for ref in refs}
+    visible = [ref for ref in unique.values() if ref.uri not in missing_ref_uris]
+
+    routes = {ref.uri: route for ref in visible if (route := _static_route(ref)) is not None}
+    routes.update(_routes_for_refs(db, viewer_id=viewer_id, refs=visible))
+    activations: dict[str, ResourceActivationOut] = {}
+    for ref in unique.values():
+        if ref.uri in missing_ref_uris:
+            activations[ref.uri] = ResourceActivationOut(
+                resource_ref=ref.uri,
+                kind="none",
+                href=None,
+                unresolved_reason="missing",
+            )
+            continue
+        href = routes.get(ref.uri)
+        if href is not None:
+            activations[ref.uri] = ResourceActivationOut(
+                resource_ref=ref.uri,
+                kind="route",
+                href=href,
+                unresolved_reason=None,
+            )
+        elif ref.scheme in _BATCHED_ROUTE_SCHEMES or _static_route(ref) is not None:
+            activations[ref.uri] = ResourceActivationOut(
+                resource_ref=ref.uri,
+                kind="none",
+                href=None,
+                unresolved_reason="not_routeable",
+            )
+        else:
+            activations[ref.uri] = resource_activation_for_ref(
+                db,
+                viewer_id=viewer_id,
+                ref=ref,
+            )
+    return activations
+
+
+def _static_route(ref: ResourceRef) -> str | None:
+    prefixes = {
+        "page": "/pages",
+        "note_block": "/notes",
+        "media": "/media",
+        "conversation": "/conversations",
+        "library": "/libraries",
+        "oracle_reading": "/oracle",
+        "podcast": "/podcasts",
+    }
+    prefix = prefixes.get(ref.scheme)
+    return f"{prefix}/{ref.id}" if prefix is not None else None
+
+
+def _routes_for_refs(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    refs: Sequence[ResourceRef],
+) -> dict[str, str]:
+    by_scheme: dict[str, list[ResourceRef]] = defaultdict(list)
+    for ref in refs:
+        if ref.scheme in _BATCHED_ROUTE_SCHEMES:
+            by_scheme[ref.scheme].append(ref)
+
+    routes: dict[str, str] = {}
+    highlight_refs = by_scheme["highlight"]
+    if highlight_refs:
+        rows = db.execute(
+            text("SELECT id, anchor_media_id FROM highlights WHERE id = ANY(:ids)"),
+            {"ids": [ref.id for ref in highlight_refs]},
+        ).all()
+        routes.update(
+            {f"highlight:{row[0]}": f"/media/{row[1]}#highlight-{row[0]}" for row in rows}
+        )
+
+    message_refs = by_scheme["message"]
+    if message_refs:
+        rows = db.execute(
+            text("SELECT id, conversation_id FROM messages WHERE id = ANY(:ids)"),
+            {"ids": [ref.id for ref in message_refs]},
+        ).all()
+        routes.update(
+            {f"message:{row[0]}": f"/conversations/{row[1]}?message={row[0]}" for row in rows}
+        )
+
+    fragment_refs = by_scheme["fragment"]
+    if fragment_refs:
+        rows = db.execute(
+            text("SELECT id, media_id FROM fragments WHERE id = ANY(:ids)"),
+            {"ids": [ref.id for ref in fragment_refs]},
+        ).all()
+        routes.update({f"fragment:{row[0]}": f"/media/{row[1]}#fragment-{row[0]}" for row in rows})
+
+    apparatus_refs = by_scheme["reader_apparatus_item"]
+    if apparatus_refs:
+        rows = db.execute(
+            text(
+                f"""
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT rai.id,
+                       rai.media_id,
+                       rai.stable_key,
+                       rai.locator IS NOT NULL AS locator_present,
+                       rai.locator_status,
+                       CASE
+                         WHEN rai.locator IS NULL THEN FALSE
+                         WHEN rai.locator->>'media_id' IS DISTINCT FROM rai.media_id::text
+                           THEN FALSE
+                         WHEN rai.locator->>'type' IN (
+                           'web_text_offsets', 'epub_fragment_offsets'
+                         ) THEN EXISTS (
+                           SELECT 1
+                           FROM fragments f
+                           WHERE f.media_id = rai.media_id
+                             AND f.id::text = rai.locator->>'fragment_id'
+                         )
+                         WHEN rai.locator->>'type' = 'pdf_page_geometry' THEN (
+                           m.page_count IS NOT NULL
+                           AND rai.locator->>'page_number' ~ '^[0-9]+$'
+                           AND (rai.locator->>'page_number')::integer
+                               BETWEEN 1 AND m.page_count
+                         )
+                         ELSE TRUE
+                       END AS locator_current
+                FROM reader_apparatus_items rai
+                JOIN reader_apparatus_states ras ON ras.id = rai.state_id
+                JOIN media m ON m.id = rai.media_id
+                JOIN visible_media vm ON vm.media_id = rai.media_id
+                WHERE rai.id = ANY(:ids)
+                  AND ras.status IN ('ready', 'partial')
+                """
+            ),
+            {
+                "ids": [ref.id for ref in apparatus_refs],
+                "viewer_id": viewer_id,
+            },
+        ).all()
+        for row in rows:
+            route = route_for_visible_apparatus_item(
+                media_id=UUID(str(row[1])),
+                item_id=UUID(str(row[0])),
+                stable_key=str(row[2]),
+                locator_present=bool(row[3]),
+                locator_status=cast(ReaderApparatusLocatorStatus, str(row[4])),
+                locator_current=bool(row[5]),
+            )
+            if route is not None:
+                routes[f"reader_apparatus_item:{row[0]}"] = route
+    return routes
+
+
 def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
-    if ref.scheme == "page":
-        return f"/pages/{ref.id}"
-    if ref.scheme == "note_block":
-        return f"/notes/{ref.id}"
-    if ref.scheme == "media":
-        return f"/media/{ref.id}"
-    if ref.scheme == "conversation":
-        return f"/conversations/{ref.id}"
-    if ref.scheme == "library":
-        return f"/libraries/{ref.id}"
-    if ref.scheme == "oracle_reading":
-        return f"/oracle/{ref.id}"
-    if ref.scheme == "podcast":
-        return f"/podcasts/{ref.id}"
-    if ref.scheme == "highlight":
-        media_id = db.scalar(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/media/{media_id}#highlight-{ref.id}" if media_id is not None else None
-    if ref.scheme == "message":
-        conversation_id = db.scalar(
-            text("SELECT conversation_id FROM messages WHERE id = :id"),
-            {"id": ref.id},
-        )
-        return f"/conversations/{conversation_id}" if conversation_id is not None else None
-    if ref.scheme == "fragment":
-        media_id = db.scalar(text("SELECT media_id FROM fragments WHERE id = :id"), {"id": ref.id})
-        return f"/media/{media_id}#fragment-{ref.id}" if media_id is not None else None
+    static_route = _static_route(ref)
+    if static_route is not None:
+        return static_route
+    if ref.scheme in _BATCHED_ROUTE_SCHEMES:
+        return _routes_for_refs(db, viewer_id=viewer_id, refs=[ref]).get(ref.uri)
     if ref.scheme == "content_chunk":
         span_id = db.scalar(
             text("SELECT primary_evidence_span_id FROM content_chunks WHERE id = :id"),
@@ -129,27 +299,6 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
         if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
             return f"/notes/{locator['block_id']}"
         return None
-    if ref.scheme == "reader_apparatus_item":
-        row = db.execute(
-            text(
-                f"""
-                WITH visible_media AS ({visible_media_ids_cte_sql()})
-                SELECT rai.media_id, rai.stable_key
-                FROM reader_apparatus_items rai
-                JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-                JOIN visible_media vm ON vm.media_id = rai.media_id
-                WHERE rai.id = :id
-                  AND ras.status IN ('ready', 'partial')
-                  AND rai.locator IS NOT NULL
-                  AND rai.locator_status != 'missing'
-                """
-            ),
-            {"id": ref.id, "viewer_id": viewer_id},
-        ).first()
-        if row is None:
-            return None
-        params = urlencode({"apparatus": str(row[1]), "apparatus_id": str(ref.id)})
-        return f"/media/{row[0]}?{params}"
     if ref.scheme == "artifact":
         row = db.execute(
             text("SELECT subject_scheme, subject_id FROM artifacts WHERE id = :id"),
