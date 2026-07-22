@@ -1,5 +1,11 @@
 # Collection Surface — Hard Cutover
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
+> the library `?sort=resonance` ordering this document describes, replacing it
+> with factual view lenses (Title/Creator/Published/Added) and a hide-finished
+> filter.
+
 > **Resonance supersession (2026-07-21):**
 > [`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
 > removes the Surfaced Today lane and its entry/timezone fields, moves Related

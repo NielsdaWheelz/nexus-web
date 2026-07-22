@@ -1,4 +1,8 @@
 import type { ApiPath } from "@/lib/api/client";
+import {
+  buildLibraryEntriesQuery,
+  type LibraryEntryView,
+} from "@/lib/libraries/libraryView";
 
 export interface ResourceDescriptor<TParams> {
   cacheKey: (params: TParams) => string;
@@ -22,7 +26,9 @@ interface IdResourceParams {
 }
 
 export interface LibraryEntriesResourceParams extends IdResourceParams {
-  sort?: "position" | "resonance";
+  // The current library view (order + completion). A canonical/all view emits no
+  // sort/direction/completion keys; a factual view emits exactly its three keys.
+  view?: LibraryEntryView;
   cursor?: string;
   limit?: number;
 }
@@ -69,8 +75,9 @@ function libraryListSuffix(params: LibraryListResourceParams): string {
 }
 
 function libraryEntriesSuffix(params: LibraryEntriesResourceParams): string {
-  const query = new URLSearchParams();
-  if (params.sort === "resonance") query.set("sort", "resonance");
+  const query = new URLSearchParams(
+    params.view ? buildLibraryEntriesQuery(params.view).replace(/^\?/, "") : "",
+  );
   if (params.cursor) query.set("cursor", params.cursor);
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   const suffix = query.toString();

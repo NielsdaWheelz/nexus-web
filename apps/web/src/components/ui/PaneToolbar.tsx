@@ -16,7 +16,7 @@ export default function PaneToolbar({
   className?: string;
 }) {
   return (
-    <div role="toolbar" className={cx(styles.toolbar, className)}>
+    <div className={cx(styles.toolbar, className)}>
       {search ? <div className={styles.search}>{search}</div> : null}
       {filters ? <div className={styles.filters}>{filters}</div> : null}
       {controls ? <div className={styles.controls}>{controls}</div> : null}

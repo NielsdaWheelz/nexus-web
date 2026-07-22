@@ -35,12 +35,17 @@ function seededDefaultLibrary() {
   };
 }
 
-function mediaEntryWire(id: string, mediaId: string, title: string) {
+function mediaEntryWire(
+  id: string,
+  mediaId: string,
+  title: string,
+  options: { createdAt?: string; mediaCreatedAt?: string } = {},
+) {
   return {
     id,
     kind: "media",
     position: 0,
-    created_at: "2026-01-01T00:00:00Z",
+    created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
       kind: "web_article",
@@ -49,6 +54,11 @@ function mediaEntryWire(id: string, mediaId: string, title: string) {
       published_date: null,
       publisher: null,
       canonical_source_url: null,
+      // Distinct from the entry-level created_at above: the default library's
+      // "Added" order keys the row line off *this* instant (see addedContext
+      // in LibraryPaneBody.tsx), not the physical entry's created_at.
+      created_at:
+        options.mediaCreatedAt ?? options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: "unread",
       progress_fraction: null,
@@ -64,8 +74,8 @@ function mediaEntryWire(id: string, mediaId: string, title: string) {
   };
 }
 
-function seededMediaEntry(id: string, mediaId: string, title: string) {
-  return decodeLibraryReadingTimeEntry(mediaEntryWire(id, mediaId, title));
+function seededMediaEntry(...args: Parameters<typeof mediaEntryWire>) {
+  return decodeLibraryReadingTimeEntry(mediaEntryWire(...args));
 }
 
 function fetchInputPathWithSearch(input: unknown): string {
@@ -98,7 +108,7 @@ afterEach(() => {
 });
 
 describe("LibraryPaneBody (Default library)", () => {
-  it("shows no drag handles and offers no Resonance sort option for the default library", async () => {
+  it("shows no drag handles and omits Custom order and the Added — newest duplicate", async () => {
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
@@ -127,32 +137,57 @@ describe("LibraryPaneBody (Default library)", () => {
     expect(await screen.findByText("Second Default Work")).toBeInTheDocument();
 
     // No reorder UX: canReorder = canEditEntries && !library.is_default is
-    // false, so no drag handle renders even though canEditEntries is true here.
+    // false, so no per-row Move up/down renders even though canEditEntries is
+    // true here.
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", {
+          name: "More actions for First Default Work",
+        }),
+      );
     expect(
-      screen.queryByRole("button", { name: /^Reorder / }),
+      screen.queryByRole("menuitem", { name: "Move up" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Move down" }),
     ).not.toBeInTheDocument();
 
-    // No Resonance sort UI: the sort control is either absent, or if present,
-    // never advertises the "Resonance" option.
-    const sortControl = screen.queryByRole("combobox", { name: "Sort" });
-    if (sortControl) {
-      expect(
-        screen.queryByRole("option", { name: "Resonance" }),
-      ).not.toBeInTheDocument();
-    }
+    // The Sort-by control offers Default's baseline ("Recently added"), never a
+    // "Custom order" (reorder is Default-forbidden) and never an "Added — newest"
+    // duplicate of that baseline. The dead "Resonance" option is gone entirely.
+    expect(
+      screen.getByRole("combobox", { name: "Sort by" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Recently added" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Added — oldest" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Custom order" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Added — newest" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Resonance" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("never fetches or renders resonance for the default library even with ?sort=resonance in the URL", async () => {
+  it("sorts the default library by a factual view via the entries endpoint", async () => {
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`
+        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
-        throw new Error(
-          `resonance entries fetched for default library: ${String(input)}`,
-        );
+        return Response.json({
+          data: [mediaEntryWire("entry-t1", "media-t1", "Titled Default Work")],
+          page: { has_more: false, next_cursor: null },
+        });
       }
       return new Response("{}", {
         status: 200,
@@ -161,26 +196,21 @@ describe("LibraryPaneBody (Default library)", () => {
     });
 
     renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
       resources: {
         [LIBRARY_ID]: {
           library: seededDefaultLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "First Default Work")],
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
       children: paneWithLectern,
     });
 
-    // sort is forced to "manual" for Default regardless of the URL param, so
-    // the manually-sorted entry renders and no resonance request ever fires.
-    expect(await screen.findByText("First Default Work")).toBeInTheDocument();
-
-    const resonanceCalls = fetchCallsForPath(
-      fetchMock,
-      `/api/libraries/${LIBRARY_ID}/entries`,
-    ).filter(([input]) => fetchInputPathWithSearch(input).includes("resonance"));
-    expect(resonanceCalls).toHaveLength(0);
+    expect(await screen.findByText("Titled Default Work")).toBeInTheDocument();
+    expect(
+      fetchCallsForPath(fetchMock, `/api/libraries/${LIBRARY_ID}/entries`),
+    ).toHaveLength(1);
   });
 
   it("dedupes an appended default-library page by media id, not entry id", async () => {
@@ -229,5 +259,88 @@ describe("LibraryPaneBody (Default library)", () => {
     // Exactly one row for media-1: the media-keyed dedupe collapsed
     // entry-1/entry-1b into a single row rather than rendering both.
     expect(screen.getAllByText("First Default Work")).toHaveLength(1);
+  });
+
+  // Regression: the default library's "Added" row line must be dated by
+  // media.created_at (the underlying media's Nexus-entry instant), not the
+  // physical library entry's created_at — the two can differ once the same
+  // media is deduped across representative entries. Previously untested.
+  it("shows Added to Nexus dated by media.created_at under Added — oldest, absent under Recently added", async () => {
+    const mediaCreatedIso = "2025-11-02T08:15:00Z";
+    const entryCreatedIso = "2026-04-10T00:00:00Z";
+    const expectedAddedToNexus = `Added to Nexus ${new Intl.DateTimeFormat(
+      undefined,
+      { year: "numeric", month: "short", day: "numeric" },
+    ).format(new Date(mediaCreatedIso))}`;
+
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=added&direction=asc`
+      ) {
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-a1", "media-a1", "Oldest Default Work", {
+              createdAt: entryCreatedIso,
+              mediaCreatedAt: mediaCreatedIso,
+            }),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const { unmount } = renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?sort=added&direction=asc`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededDefaultLibrary(),
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(
+      await screen.findByText("Oldest Default Work"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(expectedAddedToNexus)).toBeInTheDocument();
+    unmount();
+
+    // Canonical ("Recently added") view: no Added to Nexus line at all, even
+    // though the same media carries the same media.created_at.
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededDefaultLibrary(),
+          entries: [
+            seededMediaEntry("entry-1", "media-1", "Canonical Seed", {
+              mediaCreatedAt: mediaCreatedIso,
+            }),
+          ],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(screen.queryByText(/Added to Nexus/)).not.toBeInTheDocument();
   });
 });

@@ -6,19 +6,12 @@ calls, provider calls, or direct reads of sibling-owned storage.
 
 from __future__ import annotations
 
-import base64
-import json
-import math
-from datetime import datetime, timedelta
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
-from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.library import LibraryEntryOut, LibraryPageInfo
 from nexus.schemas.presence import absent, present
 from nexus.schemas.resonance import (
     AddedToNexusSlateReasonOut,
@@ -55,7 +48,6 @@ from nexus.services.resonance._evidence import (
 )
 from nexus.services.resonance._ranking import (
     RelatedHit,
-    rank_library_entries,
     rank_related,
     semantic_chunk_candidate_limit,
 )
@@ -71,8 +63,6 @@ from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import ConnectionEndpoint
 from nexus.services.resource_items.routing import resource_activations_for_refs
 from nexus.services.semantic_chunks import media_neighbor_rows_sql, transcript_embedding_dimensions
-
-_RESONANCE_CURSOR_KIND = "library_entries:resonance:v2"
 
 
 def related_media(
@@ -212,72 +202,6 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
     )
     selected = compose_library(rank_library_candidates(candidates, as_of=as_of))
     return _hydrate_slate(db, viewer_id=viewer_id, selected=selected)
-
-
-def rank_library_entry_page(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    limit: int = 100,
-    cursor: str | None = None,
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """Rank complete visible physical membership before strict v2 keyset paging."""
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 200)
-    context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-    library_governance.require_non_default(context.is_default)
-
-    after_score: float | None = None
-    after_entry_id: UUID | None = None
-    if cursor is None:
-        as_of = _evidence.capture_as_of(db)
-    else:
-        payload = _decode_resonance_cursor(cursor, viewer_id=viewer_id, library_id=library_id)
-        try:
-            as_of = datetime.fromisoformat(str(payload["as_of"]))
-            raw_score = payload["score"]
-            if isinstance(raw_score, bool) or not isinstance(raw_score, int | float):
-                raise ValueError
-            after_score = float(raw_score)
-            after_entry_id = UUID(str(payload["entry_id"]))
-            if not math.isfinite(after_score) or as_of.utcoffset() != timedelta(0):
-                raise ValueError
-        except ValueError:
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-    rows = rank_library_entries(
-        db,
-        viewer_id=viewer_id,
-        library_id=library_id,
-        as_of=as_of,
-        after_score=after_score,
-        after_entry_id=after_entry_id,
-        limit=limit + 1,
-    )
-    page_rows = rows[:limit]
-    has_more = len(rows) > limit
-    entries = library_entries.hydrate_entry_page(
-        db,
-        viewer_id=viewer_id,
-        facts=[row.hydration for row in page_rows],
-    )
-    next_cursor = None
-    if has_more and page_rows:
-        tail = page_rows[-1]
-        next_cursor = _encode_resonance_cursor(
-            {
-                "k": _RESONANCE_CURSOR_KIND,
-                "viewer_id": str(viewer_id),
-                "library_id": str(library_id),
-                "sort": "resonance",
-                "as_of": as_of.isoformat(),
-                "score": tail.score,
-                "entry_id": str(tail.hydration.id),
-            }
-        )
-    return entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
 
 
 def _lectern_eligible_media_relation() -> str:
@@ -496,45 +420,3 @@ def _reason_out(ranked: RankedCandidate) -> SlateReasonOut:
 
 def _anchor_out(anchor: _evidence.Anchor) -> SlateAnchorOut:
     return SlateAnchorOut(ref=anchor.ref.uri, label=anchor.label)
-
-
-def _encode_resonance_cursor(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    # justify-base64url-over-base64: this opaque value is transported in a URL
-    # query parameter and must not introduce reserved path/form characters.
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _decode_resonance_cursor(cursor: str, *, viewer_id: UUID, library_id: UUID) -> dict[str, Any]:
-    try:
-        if not cursor or len(cursor) > 2048 or "=" in cursor:
-            raise ValueError
-        padded = cursor + "=" * (-len(cursor) % 4)
-        # justify-base64url-over-base64: the canonical cursor alphabet is URL-safe
-        # because this opaque value is transported in a query parameter.
-        raw = base64.urlsafe_b64decode(padded)
-        if base64.urlsafe_b64encode(raw).decode().rstrip("=") != cursor:
-            raise ValueError
-        payload = json.loads(raw.decode())
-        if (
-            not isinstance(payload, dict)
-            or set(payload)
-            != {"k", "viewer_id", "library_id", "sort", "as_of", "score", "entry_id"}
-            or payload["k"] != _RESONANCE_CURSOR_KIND
-            or payload["sort"] != "resonance"
-            or not isinstance(payload["viewer_id"], str)
-            or not isinstance(payload["library_id"], str)
-            or not isinstance(payload["as_of"], str)
-            or not isinstance(payload["entry_id"], str)
-            or str(UUID(payload["viewer_id"])) != payload["viewer_id"]
-            or str(UUID(payload["library_id"])) != payload["library_id"]
-            or str(UUID(payload["entry_id"])) != payload["entry_id"]
-            or UUID(payload["viewer_id"]) != viewer_id
-            or UUID(payload["library_id"]) != library_id
-        ):
-            raise ValueError
-        return payload
-    except (ValueError, RecursionError):
-        # justify-ignore-error: malformed cursor input is expected; ValueError covers
-        # base64, UTF-8, JSON, UUID, and explicit shape validation failures.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None

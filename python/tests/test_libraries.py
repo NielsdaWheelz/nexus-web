@@ -1774,8 +1774,8 @@ class TestListLibraryMedia:
     def test_list_media_non_default_position_insert_above_cursor_keyset_invariant(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """AC6: non-default sort=position keyset survives inserts between page
-        fetches the same way Default's does — a row landing before the
+        """AC6: a non-default canonical (position-order) keyset survives inserts
+        between page fetches the same way Default's does — a row landing before the
         pagination boundary neither duplicates nor omits the pre-existing
         higher-position rows a stale cursor still points at."""
         user_id = create_test_user_id()
@@ -1801,7 +1801,7 @@ class TestListLibraryMedia:
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
 
-        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=2)
+        first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
         first_body = first.json()
         assert _library_entry_media_ids(first_body["data"]) == [
@@ -1830,24 +1830,20 @@ class TestListLibraryMedia:
         # The stale cursor's continuation is unaffected: the pre-existing
         # higher-position row appears exactly once, and the new row (above
         # the cursor) never leaks into it.
-        second = _list_library_entries(
-            auth_client, user_id, library_id, sort="position", limit=2, cursor=cursor
-        )
+        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
         assert second.status_code == 200, second.text
         assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[2])]
         assert second.json()["page"] == {"has_more": False, "next_cursor": None}
 
         # A fresh first page picks up the new row immediately, at the top.
-        refreshed = _list_library_entries(
-            auth_client, user_id, library_id, sort="position", limit=1
-        )
+        refreshed = _list_library_entries(auth_client, user_id, library_id, limit=1)
         assert refreshed.status_code == 200, refreshed.text
         assert _library_entry_media_ids(refreshed.json()["data"]) == [str(newest_media_id)]
 
     def test_list_media_non_default_position_excludes_tombstoned_media_at_page_boundary(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """F4: a non-default member library's ``sort=position`` page filters to
+        """F4: a non-default member library's canonical (position-order) page filters to
         visible media BEFORE computing ``has_more`` — a viewer-tombstoned entry
         landing inside the raw ``LIMIT + 1`` fetch window must not produce a
         short/empty page while ``has_more`` claims there is more (the
@@ -1885,7 +1881,7 @@ class TestListLibraryMedia:
             session.commit()
         direct_db.register_cleanup("user_media_deletions", "media_id", tombstoned_media_id)
 
-        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=2)
+        first = _list_library_entries(auth_client, user_id, library_id, limit=2)
         assert first.status_code == 200, first.text
         first_body = first.json()
         # A full page of 2 VISIBLE entries — the tombstoned one is skipped
@@ -1898,9 +1894,7 @@ class TestListLibraryMedia:
         cursor = first_body["page"]["next_cursor"]
         assert cursor is not None
 
-        second = _list_library_entries(
-            auth_client, user_id, library_id, sort="position", limit=2, cursor=cursor
-        )
+        second = _list_library_entries(auth_client, user_id, library_id, limit=2, cursor=cursor)
         assert second.status_code == 200, second.text
         assert _library_entry_media_ids(second.json()["data"]) == [str(media_ids[3])]
         assert second.json()["page"] == {"has_more": False, "next_cursor": None}
@@ -1935,6 +1929,8 @@ class TestListLibraryMedia:
     def test_list_media_rejects_cursor_from_another_sort(
         self, auth_client, direct_db: DirectSessionManager
     ):
+        """A canonical-view cursor is bound to the exact view; replaying it under
+        a factual sort (cross-sort reuse) fails E_INVALID_CURSOR."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         with direct_db.session() as session:
@@ -1959,7 +1955,7 @@ class TestListLibraryMedia:
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
 
-        first = _list_library_entries(auth_client, user_id, library_id, sort="position", limit=1)
+        first = _list_library_entries(auth_client, user_id, library_id, limit=1)
         assert first.status_code == 200, first.text
         cursor = first.json()["page"]["next_cursor"]
         assert cursor is not None
@@ -1968,174 +1964,13 @@ class TestListLibraryMedia:
             auth_client,
             user_id,
             library_id,
-            sort="resonance",
+            sort="title",
+            direction="asc",
             cursor=cursor,
         )
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
-
-    def _seed_resonance_library(
-        self, direct_db, user_id: UUID, name: str
-    ) -> tuple[UUID, list[UUID]]:
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, name)
-            media_ids = [create_test_media(session, title=f"{name} {idx}") for idx in range(3)]
-            for position, media_id in enumerate(media_ids):
-                session.execute(
-                    text("""
-                        INSERT INTO library_entries (
-                            library_id,
-                            media_id,
-                            position,
-                            created_at
-                        )
-                        VALUES (
-                            :library_id,
-                            :media_id,
-                            :position,
-                            now() - (:age_days * interval '1 day')
-                        )
-                    """),
-                    {
-                        "library_id": library_id,
-                        "media_id": media_id,
-                        "position": position,
-                        "age_days": position,
-                    },
-                )
-            session.commit()
-
-        for media_id in media_ids:
-            direct_db.register_cleanup("library_entries", "media_id", media_id)
-            direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("memberships", "library_id", library_id)
-        direct_db.register_cleanup("libraries", "id", library_id)
-        return library_id, media_ids
-
-    def test_resonance_cursor_stable_when_score_inputs_do_not_mutate(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """AC7: the resonance cursor carries the pinned `resonance_as_of` plus a
-        score/id key, and is stable when nothing underlying it changes — the
-        same cursor fetched twice returns identical pages, and the full
-        first+second page sequence matches a single unpaged fetch."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, _media_ids = self._seed_resonance_library(
-            direct_db, user_id, "Stable Resonance Cursor"
-        )
-
-        full = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=10)
-        assert full.status_code == 200, full.text
-        expected_media_ids = _library_entry_media_ids(full.json()["data"])
-        assert len(expected_media_ids) == 3
-
-        first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
-        assert first.status_code == 200, first.text
-        first_body = first.json()
-        first_media_ids = _library_entry_media_ids(first_body["data"])
-        assert first_media_ids == expected_media_ids[:1]
-        cursor = first_body["page"]["next_cursor"]
-        assert cursor is not None
-
-        second_a = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
-        )
-        second_b = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
-        )
-        assert second_a.status_code == 200, second_a.text
-        assert second_b.status_code == 200, second_b.text
-        assert second_a.json()["data"] == second_b.json()["data"], (
-            "the same cursor must return the identical page when nothing mutates"
-        )
-        assert (
-            first_media_ids + _library_entry_media_ids(second_a.json()["data"])
-            == expected_media_ids
-        )
-
-    def test_resonance_as_of_pinned_across_pages_via_cursor_payload(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """F9/AC7: `resonance_as_of` is generated once and carried unchanged
-        through every later page's cursor — decode the cursor payload
-        directly to prove pinning, rather than relying on score stability
-        (the existing stability tests above pass with or without pinning
-        because the recency half-life is day-scale, so they would not catch a
-        regression that regenerates `now()` on every page)."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, _media_ids = self._seed_resonance_library(
-            direct_db, user_id, "Pinned Resonance As Of"
-        )
-
-        first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
-        assert first.status_code == 200, first.text
-        first_cursor = first.json()["page"]["next_cursor"]
-        assert first_cursor is not None
-        first_resonance_as_of = _decode_cursor_payload(first_cursor)["as_of"]
-
-        second = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=1, cursor=first_cursor
-        )
-        assert second.status_code == 200, second.text
-        second_cursor = second.json()["page"]["next_cursor"]
-        assert second_cursor is not None
-        second_resonance_as_of = _decode_cursor_payload(second_cursor)["as_of"]
-
-        assert second_resonance_as_of == first_resonance_as_of
-
-    def test_resonance_cursor_reflects_live_mutation_between_pages(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Accepted 80/20 loss (spec S3): the resonance cursor pins
-        `resonance_as_of` (the recency-decay clock) but is NOT a historical
-        snapshot of the scored rows themselves — connection/engagement
-        mutations between page fetches stay live, so a promoted entry's score
-        is recomputed live on the next fetch (unlike the deleted TTL-snapshot
-        design, which would have kept serving the pre-mutation ranking)."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, media_ids = self._seed_resonance_library(
-            direct_db, user_id, "Live Resonance Cursor"
-        )
-
-        first = _list_library_entries(auth_client, user_id, library_id, sort="resonance", limit=1)
-        assert first.status_code == 200, first.text
-        first_body = first.json()
-        first_media_ids = _library_entry_media_ids(first_body["data"])
-        assert len(first_media_ids) == 1
-        cursor = first_body["page"]["next_cursor"]
-        assert cursor is not None
-
-        # Promote the oldest (lowest-scored, not-yet-fetched) entry to the
-        # freshest recency signal between page fetches.
-        oldest_media_id = media_ids[-1]
-        with direct_db.session() as session:
-            session.execute(
-                text("""
-                    UPDATE library_entries
-                    SET created_at = now()
-                    WHERE library_id = :library_id AND media_id = :media_id
-                """),
-                {"library_id": library_id, "media_id": oldest_media_id},
-            )
-            session.commit()
-
-        # The continuation still answers (no crash on a live-changed input);
-        # a fresh unpaged fetch immediately reflects the promotion at the top —
-        # confirming the mutation is live, not served from a frozen snapshot.
-        second = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=2, cursor=cursor
-        )
-        assert second.status_code == 200, second.text
-
-        refreshed = _list_library_entries(
-            auth_client, user_id, library_id, sort="resonance", limit=1
-        )
-        assert refreshed.status_code == 200, refreshed.text
-        assert _library_entry_media_ids(refreshed.json()["data"]) == [str(oldest_media_id)]
 
 
 class TestDefaultLibraryVirtualView:
@@ -2352,19 +2187,6 @@ class TestDefaultLibraryVirtualView:
         )
         assert legacy_response.status_code == 400
         assert legacy_response.json()["error"]["code"] == "E_INVALID_CURSOR"
-
-    def test_default_rejects_resonance_sort(self, auth_client):
-        """AC7: Default rejects sort=resonance outright — there is no reorder or
-        resonance surface for the virtual view."""
-        user_id = create_test_user_id()
-        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-            "default_library_id"
-        ]
-
-        response = _list_library_entries(auth_client, user_id, library_id, sort="resonance")
-
-        assert response.status_code == 403
-        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
 
 
 class TestReorderLibraryMedia:
@@ -4979,346 +4801,550 @@ class TestLibraryEntryPositionInvariant:
         assert positions == [0, 1]
 
 
-class TestLibraryEntryResonanceOrdering:
-    """GET /libraries/{id}/entries?sort=resonance (collection surface, spec S5).
+# =============================================================================
+# Library View Lenses (library-sorting hard cutover)
+# =============================================================================
 
-    Resonance is a deterministic recency + connection-count score; the default
-    (sort omitted / position) order is unchanged. These tests build a library
-    whose entries have a fixed position order, then add an engagement-recency
-    signal to one entry and a connection edge to another, and assert resonance
-    reorders deterministically while the default stays position-based.
-    """
 
-    def _entries(self, auth_client, user_id: UUID, library_id: UUID, **params):
-        return auth_client.get(
-            f"/libraries/{library_id}/entries",
-            headers=auth_headers(user_id),
-            params=params,
-        )
+def _view_ids(response) -> list[str]:
+    return _library_entry_media_ids(response.json()["data"])
 
-    def _seed_library_with_three_entries(
-        self, direct_db: DirectSessionManager, user_id: UUID
-    ) -> tuple[UUID, UUID, UUID, UUID]:
-        """A non-default library with media A, B, C at positions 0, 1, 2.
 
-        Each entry's created_at is pinned 30 days in the past so the baseline
-        recency-decay is low and equal; per-entry signals then drive resonance.
-        """
-        from datetime import UTC, datetime, timedelta
+def _add_creator(session, media_id: UUID, display_name: str, *, ordinal: int = 1) -> UUID:
+    """Attach one authored contributor credit to a media, minting a fresh
+    contributor (unique handle) so `primary_creator_rows_sql` reads back
+    ``display_name`` as the media's first creator."""
+    contributor_id = uuid4()
+    handle = f"{display_name.lower().replace(' ', '-')}-{contributor_id}"
+    session.execute(
+        text("INSERT INTO contributors (id, handle, display_name) VALUES (:id, :handle, :name)"),
+        {"id": contributor_id, "handle": handle, "name": display_name},
+    )
+    session.execute(
+        text(
+            """
+            INSERT INTO contributor_credits
+                (contributor_id, media_id, credited_name, normalized_credited_name,
+                 role, ordinal, source)
+            VALUES (:cid, :mid, :cn, :nn, 'author', :ord, 'test')
+            """
+        ),
+        {
+            "cid": contributor_id,
+            "mid": media_id,
+            "cn": display_name,
+            "nn": display_name.lower(),
+            "ord": ordinal,
+        },
+    )
+    return contributor_id
 
-        from tests.factories import create_test_library
 
-        old = datetime.now(UTC) - timedelta(days=30)
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Resonance Lib")
-            media_a = create_test_media(session, title="Entry A")
-            media_b = create_test_media(session, title="Entry B")
-            media_c = create_test_media(session, title="Entry C")
-            for position, media_id in enumerate((media_a, media_b, media_c)):
+def _seed_view_library(
+    direct_db: DirectSessionManager,
+    user_id: UUID,
+    name: str,
+    specs: list[dict],
+) -> tuple[UUID, list[UUID]]:
+    """A non-default library whose entries are inserted in `specs` order at
+    ascending positions and ascending entry ``created_at`` (index 0 oldest).
+    Each spec is ``{title, creator?: str, published?: str}``; missing creator or
+    published is left NULL. Returns (library_id, media_ids in insert order)."""
+    from datetime import UTC, datetime, timedelta
+
+    base = datetime(2020, 1, 1, tzinfo=UTC)
+    media_ids: list[UUID] = []
+    contributor_ids: list[UUID] = []
+    with direct_db.session() as session:
+        library_id = create_test_library(session, user_id, name)
+        for index, spec in enumerate(specs):
+            media_id = create_test_media(session, title=spec["title"])
+            if spec.get("published") is not None:
                 session.execute(
-                    text(
-                        """
-                        INSERT INTO library_entries (library_id, media_id, position, created_at)
-                        VALUES (:lib, :media_id, :position, :created_at)
-                        """
-                    ),
-                    {
-                        "lib": library_id,
-                        "media_id": media_id,
-                        "position": position,
-                        "created_at": old,
-                    },
+                    text("UPDATE media SET published_date = :pub WHERE id = :mid"),
+                    {"pub": spec["published"], "mid": media_id},
                 )
-            session.commit()
-        for media_id in (media_a, media_b, media_c):
-            direct_db.register_cleanup("library_entries", "media_id", media_id)
-            direct_db.register_cleanup("reader_media_state", "media_id", media_id)
-            direct_db.register_cleanup("resource_edges", "source_id", media_id)
-            direct_db.register_cleanup("contributor_credits", "media_id", media_id)
-            direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("memberships", "library_id", library_id)
-        direct_db.register_cleanup("libraries", "id", library_id)
-        return library_id, media_a, media_b, media_c
-
-    def test_default_order_is_position_and_resonance_reorders_deterministically(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        from datetime import UTC, datetime, timedelta
-
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, media_a, media_b, media_c = self._seed_library_with_three_entries(
-            direct_db, user_id
-        )
-
-        # C: fresh entry recency -> top.
-        # B: an old user connection edge to a media OUTSIDE the library -> a log1p
-        # count boost below the fresh recency boost. The edge's other endpoint is a bare outsider so
-        # only B's connection count increments (the count is either-endpoint, so an
-        # A<->B edge would boost both A and B equally and defeat the assertion).
-        old_connection = datetime.now(UTC) - timedelta(days=30)
-        with direct_db.session() as session:
-            outsider_id = create_test_media(session, title="Outsider")
-            session.execute(
-                text(
-                    """
-                    UPDATE library_entries
-                    SET created_at = :now
-                    WHERE library_id = :library_id AND media_id = :media_id
-                    """
-                ),
-                {
-                    "library_id": library_id,
-                    "media_id": media_c,
-                    "now": datetime.now(UTC),
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO resource_edges (
-                        user_id, kind, origin, source_scheme, source_id,
-                        target_scheme, target_id, created_at
-                    )
-                    VALUES (
-                        :user_id, 'context', 'user', 'media', :media_b,
-                        'media', :outsider_id, :created_at
-                    )
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "media_b": media_b,
-                    "outsider_id": outsider_id,
-                    "created_at": old_connection,
-                },
-            )
-            session.commit()
-        direct_db.register_cleanup("resource_edges", "source_id", media_b)
-        direct_db.register_cleanup("media", "id", outsider_id)
-
-        # Default (sort omitted) stays position order: A, B, C.
-        default = self._entries(auth_client, user_id, library_id)
-        assert default.status_code == 200, default.text
-        assert _library_entry_media_ids(default.json()["data"]) == [
-            str(media_a),
-            str(media_b),
-            str(media_c),
-        ]
-        # Explicit position is identical to omitted.
-        explicit_position = self._entries(auth_client, user_id, library_id, sort="position")
-        assert _library_entry_media_ids(explicit_position.json()["data"]) == [
-            str(media_a),
-            str(media_b),
-            str(media_c),
-        ]
-
-        # Resonance: C (recency) first, then B (connection boost), then A.
-        resonance = self._entries(auth_client, user_id, library_id, sort="resonance")
-        assert resonance.status_code == 200, resonance.text
-        assert _library_entry_media_ids(resonance.json()["data"]) == [
-            str(media_c),
-            str(media_b),
-            str(media_a),
-        ]
-
-    def test_resonance_uses_listening_recency_for_direct_podcast_episode_entries(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        from datetime import UTC, datetime, timedelta
-
-        from tests.factories import create_test_library
-
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        old = datetime.now(UTC) - timedelta(days=30)
-        podcast_id = uuid4()
-        episode_media_id = uuid4()
-
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Episode Resonance")
-            article_media_id = create_test_media(session, title="Old article")
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcasts (
-                        id, provider, provider_podcast_id, title, feed_url,
-                        website_url, image_url, description
-                    ) VALUES (
-                        :podcast_id, 'podcast_index', :provider_podcast_id,
-                        'Episode Resonance Podcast',
-                        'https://example.com/episode-resonance.xml',
-                        NULL, NULL, NULL
-                    )
-                    """
-                ),
-                {
-                    "podcast_id": podcast_id,
-                    "provider_podcast_id": f"episode-resonance-{podcast_id}",
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        external_playback_url, provider, provider_id
-                    ) VALUES (
-                        :media_id, 'podcast_episode', 'Recently listened episode',
-                        'https://example.com/recently-listened',
-                        'ready_for_reading',
-                        'https://cdn.example.com/recently-listened.mp3',
-                        'podcast_index', :provider_episode_id
-                    )
-                    """
-                ),
-                {
-                    "media_id": episode_media_id,
-                    "provider_episode_id": f"episode-{episode_media_id}",
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_episodes (
-                        media_id, podcast_id, provider_episode_id, guid,
-                        fallback_identity, published_at, duration_seconds
-                    ) VALUES (
-                        :media_id, :podcast_id, :provider_episode_id, :guid,
-                        :fallback_identity, :published_at, 300
-                    )
-                    """
-                ),
-                {
-                    "media_id": episode_media_id,
-                    "podcast_id": podcast_id,
-                    "provider_episode_id": f"episode-{episode_media_id}",
-                    "guid": f"guid-{episode_media_id}",
-                    "fallback_identity": f"fallback-{episode_media_id}",
-                    "published_at": old,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO podcast_listening_states (
-                        user_id, media_id, position_ms, duration_ms,
-                        playback_speed, is_completed, updated_at, last_engaged_at
-                    ) VALUES (
-                        :user_id, :media_id, 120000, 300000,
-                        1.0, false, now(), now()
-                    )
-                    """
-                ),
-                {"user_id": user_id, "media_id": episode_media_id},
-            )
             session.execute(
                 text(
                     """
                     INSERT INTO library_entries (library_id, media_id, position, created_at)
-                    VALUES
-                      (:library_id, :article_media_id, 0, :old),
-                      (:library_id, :episode_media_id, 1, :old)
+                    VALUES (:lib, :mid, :pos, :created_at)
                     """
                 ),
                 {
-                    "library_id": library_id,
-                    "article_media_id": article_media_id,
-                    "episode_media_id": episode_media_id,
-                    "old": old,
+                    "lib": library_id,
+                    "mid": media_id,
+                    "pos": index,
+                    "created_at": base + timedelta(days=index),
                 },
+            )
+            if spec.get("creator") is not None:
+                contributor_ids.append(_add_creator(session, media_id, spec["creator"]))
+            media_ids.append(media_id)
+        session.commit()
+
+    # Cleanup runs LIFO, so a parent row must be registered BEFORE the rows that
+    # FK it (media before its credits/overrides/entries; contributors before the
+    # credits that reference them).
+    for contributor_id in contributor_ids:
+        direct_db.register_cleanup("contributors", "id", contributor_id)
+    for media_id in media_ids:
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+        direct_db.register_cleanup("consumption_overrides", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("memberships", "library_id", library_id)
+    direct_db.register_cleanup("libraries", "id", library_id)
+    return library_id, media_ids
+
+
+class TestLibraryEntryViewParsing:
+    """Strict entry-view query parsing (spec API validation). Every malformed
+    request is 400 E_INVALID_REQUEST; the removed sorts/completion all fail."""
+
+    def _default_library(self, auth_client, user_id: UUID) -> str:
+        return auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+
+    @pytest.mark.parametrize("sort", ["position", "manual", "resonance", "reading_time", ""])
+    def test_removed_and_unknown_sorts_rejected(self, auth_client, sort):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(auth_client, user_id, library_id, sort=sort)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_factual_sort_requires_direction(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(auth_client, user_id, library_id, sort="title")
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_direction_requires_factual_sort(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(auth_client, user_id, library_id, direction="asc")
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_bad_direction_rejected(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(
+            auth_client, user_id, library_id, sort="title", direction="sideways"
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    @pytest.mark.parametrize("completion", ["all", "finished", "true", ""])
+    def test_bad_completion_rejected(self, auth_client, completion):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(auth_client, user_id, library_id, completion=completion)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    @pytest.mark.parametrize("limit", ["0", "-3", "abc"])
+    def test_bad_limit_rejected(self, auth_client, limit):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+        response = _list_library_entries(auth_client, user_id, library_id, limit=limit)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+    def test_unknown_and_duplicate_params_rejected(self, auth_client):
+        user_id = create_test_user_id()
+        library_id = self._default_library(auth_client, user_id)
+
+        unknown = _list_library_entries(auth_client, user_id, library_id, offset=1)
+        assert unknown.status_code == 400
+        assert unknown.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+        # multi_items() sees duplicates a params-dict would collapse.
+        duplicate = auth_client.get(
+            f"/libraries/{library_id}/entries?sort=title&direction=asc&sort=creator",
+            headers=auth_headers(user_id),
+        )
+        assert duplicate.status_code == 400, duplicate.text
+        assert duplicate.json()["error"]["code"] == "E_INVALID_REQUEST"
+
+
+class TestLibraryEntryViewLenses:
+    """Factual view lenses over a physical non-default library (spec ordering
+    rules + AC2/AC3/AC4/AC5/AC8). Every assertion is through the API response."""
+
+    def test_eight_factual_presets_order_complete_set(self, auth_client, direct_db):
+        """AC2: all eight factual direction presets order the complete set."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, (a, b, c) = _seed_view_library(
+            direct_db,
+            user_id,
+            "Eight Presets",
+            [
+                {"title": "Apple", "creator": "Charlie", "published": "2001"},
+                {"title": "Mango", "creator": "Alice", "published": "2010-05"},
+                {"title": "Cherry", "creator": "Bob", "published": "1999-12-31"},
+            ],
+        )
+        a, b, c = str(a), str(b), str(c)
+
+        def order(**params) -> list[str]:
+            resp = _list_library_entries(auth_client, user_id, library_id, **params)
+            assert resp.status_code == 200, resp.text
+            return _view_ids(resp)
+
+        assert order(sort="title", direction="asc") == [a, c, b]
+        assert order(sort="title", direction="desc") == [b, c, a]
+        assert order(sort="creator", direction="asc") == [b, c, a]
+        assert order(sort="creator", direction="desc") == [a, c, b]
+        assert order(sort="published", direction="asc") == [c, a, b]
+        assert order(sort="published", direction="desc") == [b, a, c]
+        assert order(sort="added", direction="asc") == [a, b, c]
+        assert order(sort="added", direction="desc") == [c, b, a]
+
+    def test_missing_creator_sorts_last_in_both_directions(self, auth_client, direct_db):
+        """AC4: media with no creator stays last for creator asc AND desc."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, (present, missing) = _seed_view_library(
+            direct_db,
+            user_id,
+            "Missing Creator",
+            [
+                {"title": "Beta", "creator": "Anna", "published": "2005"},
+                {"title": "Alpha"},
+            ],
+        )
+        present, missing = str(present), str(missing)
+
+        asc = _list_library_entries(
+            auth_client, user_id, library_id, sort="creator", direction="asc"
+        )
+        desc = _list_library_entries(
+            auth_client, user_id, library_id, sort="creator", direction="desc"
+        )
+        assert _view_ids(asc) == [present, missing]
+        assert _view_ids(desc) == [present, missing]
+
+    def test_missing_publication_sorts_last_in_both_directions(self, auth_client, direct_db):
+        """AC4: media with no published_date stays last for published asc AND desc."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, (present, missing) = _seed_view_library(
+            direct_db,
+            user_id,
+            "Missing Published",
+            [
+                {"title": "Beta", "published": "2005"},
+                {"title": "Alpha"},
+            ],
+        )
+        present, missing = str(present), str(missing)
+
+        asc = _list_library_entries(
+            auth_client, user_id, library_id, sort="published", direction="asc"
+        )
+        desc = _list_library_entries(
+            auth_client, user_id, library_id, sort="published", direction="desc"
+        )
+        assert _view_ids(asc) == [present, missing]
+        assert _view_ids(desc) == [present, missing]
+
+    def test_factual_cursor_paginates_deterministically(self, auth_client, direct_db):
+        """AC5: a factual-view cursor is exact and its pages reconstruct the
+        complete order with no duplicates or omissions."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, _media_ids = _seed_view_library(
+            direct_db,
+            user_id,
+            "Factual Cursor",
+            [
+                {"title": "Delta"},
+                {"title": "Alpha"},
+                {"title": "Charlie"},
+                {"title": "Bravo"},
+            ],
+        )
+        full = _list_library_entries(
+            auth_client, user_id, library_id, sort="title", direction="asc"
+        )
+        expected = _view_ids(full)
+        assert len(expected) == 4
+
+        collected: list[str] = []
+        cursor = None
+        for _ in range(4):
+            resp = _list_library_entries(
+                auth_client,
+                user_id,
+                library_id,
+                sort="title",
+                direction="asc",
+                limit=1,
+                **({"cursor": cursor} if cursor else {}),
+            )
+            assert resp.status_code == 200, resp.text
+            collected.extend(_view_ids(resp))
+            cursor = resp.json()["page"]["next_cursor"]
+            if cursor is None:
+                break
+        assert collected == expected
+
+    def test_cross_direction_and_cross_completion_cursor_reuse_rejected(
+        self, auth_client, direct_db
+    ):
+        """AC5: a cursor is bound to the exact view — replaying it under a
+        different direction or completion fails E_INVALID_CURSOR."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, _media_ids = _seed_view_library(
+            direct_db,
+            user_id,
+            "Cursor Binding",
+            [{"title": "Alpha"}, {"title": "Bravo"}, {"title": "Charlie"}],
+        )
+        first = _list_library_entries(
+            auth_client, user_id, library_id, sort="title", direction="asc", limit=1
+        )
+        cursor = first.json()["page"]["next_cursor"]
+        assert cursor is not None
+
+        cross_direction = _list_library_entries(
+            auth_client, user_id, library_id, sort="title", direction="desc", cursor=cursor
+        )
+        assert cross_direction.status_code == 400
+        assert cross_direction.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+        cross_completion = _list_library_entries(
+            auth_client,
+            user_id,
+            library_id,
+            sort="title",
+            direction="asc",
+            completion="unfinished",
+            cursor=cursor,
+        )
+        assert cross_completion.status_code == 400
+        assert cross_completion.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["library_entries:default:v1", "library_entries:position:v1", "resonance:library:v2"],
+    )
+    def test_legacy_cursor_kinds_rejected(self, auth_client, direct_db, kind):
+        """AC5: every pre-cutover cursor kind fails E_INVALID_CURSOR."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, _media_ids = _seed_view_library(
+            direct_db, user_id, "Legacy Cursor", [{"title": "Alpha"}, {"title": "Bravo"}]
+        )
+        payload = {
+            "k": kind,
+            "viewer_id": str(user_id),
+            "library_id": str(library_id),
+            "sort": "position",
+            "after_position": 0,
+        }
+        legacy = (
+            base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+        response = _list_library_entries(auth_client, user_id, library_id, cursor=legacy)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
+
+    def test_hide_finished_filters_before_pagination(self, auth_client, direct_db):
+        """AC3/AC8: completion=unfinished excludes canonically finished media
+        BEFORE pagination — no short page — and only finished media drop."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, (y, x, z) = _seed_view_library(
+            direct_db,
+            user_id,
+            "Hide Finished",
+            [{"title": "Y"}, {"title": "X"}, {"title": "Z"}],
+        )
+        # Mark the middle canonical entry (X) finished for this viewer.
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    "INSERT INTO consumption_overrides (user_id, media_id, status) "
+                    "VALUES (:u, :m, 'finished')"
+                ),
+                {"u": user_id, "m": x},
             )
             session.commit()
 
-        for media_id in (article_media_id, episode_media_id):
-            direct_db.register_cleanup("library_entries", "media_id", media_id)
-            direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("podcast_listening_states", "media_id", episode_media_id)
-        direct_db.register_cleanup("podcast_episodes", "media_id", episode_media_id)
+        page = _list_library_entries(
+            auth_client, user_id, library_id, completion="unfinished", limit=2
+        )
+        assert page.status_code == 200, page.text
+        # Both surviving unfinished rows fill the page; the finished X is filtered
+        # out up front, not counted then dropped (which would yield a short page).
+        assert _view_ids(page) == [str(y), str(z)]
+        assert page.json()["page"] == {"has_more": False, "next_cursor": None}
+
+    def test_hide_finished_keeps_podcast_shows(self, auth_client, direct_db):
+        """AC8: podcast-show rows always remain under completion=unfinished; a
+        finished media alongside them drops out."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        library_id, (media_finished,) = _seed_view_library(
+            direct_db, user_id, "Podcast Keep", [{"title": "Finished Media"}]
+        )
+        podcast_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcast_index', :pid, 'Kept Show', :feed)
+                    """
+                ),
+                {
+                    "id": podcast_id,
+                    "pid": f"keep-{podcast_id}",
+                    "feed": f"https://ex/{podcast_id}.xml",
+                },
+            )
+            session.execute(
+                text(
+                    "INSERT INTO library_entries (library_id, podcast_id, position, created_at) "
+                    "VALUES (:lib, :pid, 99, now())"
+                ),
+                {"lib": library_id, "pid": podcast_id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO consumption_overrides (user_id, media_id, status) "
+                    "VALUES (:u, :m, 'finished')"
+                ),
+                {"u": user_id, "m": media_finished},
+            )
+            session.commit()
         direct_db.register_cleanup("podcasts", "id", podcast_id)
+        direct_db.register_cleanup("library_entries", "podcast_id", podcast_id)
+
+        page = _list_library_entries(auth_client, user_id, library_id, completion="unfinished")
+        assert page.status_code == 200, page.text
+        rows = page.json()["data"]
+        podcast_ids = [row["podcast"]["id"] for row in rows if row["kind"] == "podcast"]
+        assert podcast_ids == [str(podcast_id)]
+        assert str(media_finished) not in _view_ids(page)
+
+
+class TestLibraryEntryViewSurfaces:
+    """Every library surface (Default, system, read-only member) receives the
+    factual view lenses (spec capability contract, AC6/AC7)."""
+
+    def test_default_supports_factual_sort(self, auth_client, direct_db):
+        """AC6: Default supports factual sorts over its live virtual set."""
+        user_id = create_test_user_id()
+        library_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+            "default_library_id"
+        ]
+        with direct_db.session() as session:
+            zebra = create_test_media(session, title="Zebra")
+            apple = create_test_media(session, title="Apple")
+            for media_id in (zebra, apple):
+                add_media_to_library(session, UUID(library_id), media_id)
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.commit()
+
+        response = _list_library_entries(
+            auth_client, user_id, library_id, sort="title", direction="asc"
+        )
+        assert response.status_code == 200, response.text
+        assert _view_ids(response) == [str(apple), str(zebra)]
+
+    def test_system_library_supports_view_sort(self, auth_client, direct_db):
+        """AC7: a system library receives view sorts (read-only surface)."""
+        user_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(user_id))
+        system_library_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO libraries (id, name, owner_user_id, is_default, system_key)
+                    VALUES (:id, 'System View', :owner, false, :system_key)
+                    """
+                ),
+                {
+                    "id": system_library_id,
+                    "owner": user_id,
+                    "system_key": f"test-system-{system_library_id}",
+                },
+            )
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :uid, 'admin')"
+                ),
+                {"lib": system_library_id, "uid": user_id},
+            )
+            zebra = create_test_media(session, title="Zebra")
+            apple = create_test_media(session, title="Apple")
+            for position, media_id in enumerate((zebra, apple)):
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (library_id, media_id, position) "
+                        "VALUES (:lib, :mid, :pos)"
+                    ),
+                    {"lib": system_library_id, "mid": media_id, "pos": position},
+                )
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.commit()
+        direct_db.register_cleanup("memberships", "library_id", system_library_id)
+        direct_db.register_cleanup("libraries", "id", system_library_id)
+
+        response = _list_library_entries(
+            auth_client, user_id, str(system_library_id), sort="title", direction="asc"
+        )
+        assert response.status_code == 200, response.text
+        assert _view_ids(response) == [str(apple), str(zebra)]
+
+    def test_read_only_member_supports_view_sort(self, auth_client, direct_db):
+        """AC7: a non-admin (read-only) member of a shared library gets view
+        sorts without any mutation capability."""
+        owner_id = create_test_user_id()
+        viewer_id = create_test_user_id()
+        auth_client.get("/me", headers=auth_headers(owner_id))
+        auth_client.get("/me", headers=auth_headers(viewer_id))
+        with direct_db.session() as session:
+            library_id = create_test_library(session, owner_id, "Shared Read Only")
+            zebra = create_test_media(session, title="Zebra")
+            apple = create_test_media(session, title="Apple")
+            for position, media_id in enumerate((zebra, apple)):
+                session.execute(
+                    text(
+                        "INSERT INTO library_entries (library_id, media_id, position) "
+                        "VALUES (:lib, :mid, :pos)"
+                    ),
+                    {"lib": library_id, "mid": media_id, "pos": position},
+                )
+                direct_db.register_cleanup("library_entries", "media_id", media_id)
+                direct_db.register_cleanup("media", "id", media_id)
+            session.execute(
+                text(
+                    "INSERT INTO memberships (library_id, user_id, role) "
+                    "VALUES (:lib, :uid, 'member')"
+                ),
+                {"lib": library_id, "uid": viewer_id},
+            )
+            session.commit()
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
 
-        default = self._entries(auth_client, user_id, library_id)
-        assert default.status_code == 200, default.text
-        assert _library_entry_media_ids(default.json()["data"]) == [
-            str(article_media_id),
-            str(episode_media_id),
-        ]
-
-        resonance = self._entries(auth_client, user_id, library_id, sort="resonance")
-        assert resonance.status_code == 200, resonance.text
-        assert _library_entry_media_ids(resonance.json()["data"]) == [
-            str(episode_media_id),
-            str(article_media_id),
-        ]
-
-    def test_resonance_includes_shared_author_hits(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        from nexus.services import contributors as contributors_service
-        from nexus.services.contributor_taxonomy import (
-            ContributorObservation,
-            ObservedRoleSlices,
+        response = _list_library_entries(
+            auth_client, viewer_id, str(library_id), sort="title", direction="asc"
         )
-
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, media_a, media_b, media_c = self._seed_library_with_three_entries(
-            direct_db, user_id
-        )
-
-        def _observe(media_id: UUID, names: list[str]) -> None:
-            contributors_service.replace_observed_role_slices(
-                target=contributors_service.MediaTarget(media_id),
-                observation=ObservedRoleSlices(
-                    managed_roles=frozenset({"author"}),
-                    credits=tuple(
-                        ContributorObservation(
-                            credited_name=name, role="author", raw_role=None, identity_key=None
-                        )
-                        for name in names
-                    ),
-                ),
-                source="epub_opf",
-            )
-
-        # The facade resolves each name to one contributor, so media_b — which shares
-        # "Shared One" with media_a and "Shared Two" with media_c — carries the most
-        # shared-author affinity and ranks first under resonance.
-        _observe(media_a, ["Shared One"])
-        _observe(media_b, ["Shared One", "Shared Two"])
-        _observe(media_c, ["Shared Two"])
-
-        # Clean the facade-created rows FK-safe (LIFO): credits first, then each
-        # contributor's alias, then the contributor.
-        for name in ("Shared One", "Shared Two"):
-            direct_db.register_cleanup("contributors", "display_name", name)
-            direct_db.register_cleanup("contributor_aliases", "alias", name)
-        for media_id in (media_a, media_b, media_c):
-            direct_db.register_cleanup("contributor_credits", "media_id", media_id)
-
-        response = self._entries(auth_client, user_id, library_id, sort="resonance")
-
         assert response.status_code == 200, response.text
-        assert _library_entry_media_ids(response.json()["data"])[0] == str(media_b)
-
-    def test_resonance_is_stable_for_identical_input(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        library_id, _media_a, _media_b, _media_c = self._seed_library_with_three_entries(
-            direct_db, user_id
-        )
-
-        first = self._entries(auth_client, user_id, library_id, sort="resonance")
-        second = self._entries(auth_client, user_id, library_id, sort="resonance")
-        assert first.status_code == 200, first.text
-        assert second.status_code == 200, second.text
-        # No engagement/connection signal on any entry: the score collapses to the
-        # equal recency baseline, so the id-DESC tiebreak gives one fixed order.
-        first_ids = _library_entry_media_ids(first.json()["data"])
-        second_ids = _library_entry_media_ids(second.json()["data"])
-        assert first_ids == second_ids, "resonance order must be stable for identical input"
-        assert len(first_ids) == 3
+        assert _view_ids(response) == [str(apple), str(zebra)]

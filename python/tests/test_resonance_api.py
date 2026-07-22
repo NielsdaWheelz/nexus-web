@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -19,11 +17,6 @@ from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
-
-
-def _encode_cursor(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
 def _seed_podcast_subscription(
@@ -933,121 +926,3 @@ def test_library_slate_masks_an_inaccessible_library(auth_client) -> None:
     response = auth_client.get(f"/libraries/{uuid4()}/slate", headers=auth_headers(viewer_id))
     assert response.status_code == 404, response.text
     assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
-
-
-def test_library_resonance_preserves_default_rejection_and_hard_rejects_v1_cursor(
-    auth_client, direct_db: DirectSessionManager
-) -> None:
-    user_id = create_test_user_id()
-    me = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"]
-    default_response = auth_client.get(
-        f"/libraries/{me['default_library_id']}/entries",
-        headers=auth_headers(user_id),
-        params={"sort": "resonance"},
-    )
-    assert default_response.status_code == 403, default_response.text
-    assert default_response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
-
-    with direct_db.session() as session:
-        library_id = create_test_library(session, user_id, "Cursor v2 only")
-    direct_db.register_cleanup("libraries", "id", library_id)
-    direct_db.register_cleanup("memberships", "library_id", library_id)
-
-    legacy = _encode_cursor(
-        {
-            "k": "library_entries:resonance:v1",
-            "viewer_id": str(user_id),
-            "library_id": str(library_id),
-            "sort": "resonance",
-            "resonance_as_of": "2026-07-21T12:00:00+00:00",
-            "after_score": 1.0,
-            "after_entry_id": str(UUID(int=1)),
-        }
-    )
-    response = auth_client.get(
-        f"/libraries/{library_id}/entries",
-        headers=auth_headers(user_id),
-        params={"sort": "resonance", "cursor": legacy},
-    )
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
-
-    with direct_db.session() as session:
-        other_library_id = create_test_library(session, user_id, "Wrong cursor scope")
-    direct_db.register_cleanup("libraries", "id", other_library_id)
-    direct_db.register_cleanup("memberships", "library_id", other_library_id)
-    wrong_scope = _encode_cursor(
-        {
-            "k": "library_entries:resonance:v2",
-            "viewer_id": str(user_id),
-            "library_id": str(library_id),
-            "sort": "resonance",
-            "as_of": "2026-07-21T12:00:00+00:00",
-            "score": 1.0,
-            "entry_id": str(UUID(int=1)),
-        }
-    )
-    wrong_scope_response = auth_client.get(
-        f"/libraries/{other_library_id}/entries",
-        headers=auth_headers(user_id),
-        params={"sort": "resonance", "cursor": wrong_scope},
-    )
-    assert wrong_scope_response.status_code == 400, wrong_scope_response.text
-    assert wrong_scope_response.json()["error"]["code"] == "E_INVALID_CURSOR"
-
-
-def test_library_resonance_cursor_rejects_naive_as_of(
-    auth_client, direct_db: DirectSessionManager
-) -> None:
-    user_id = create_test_user_id()
-    auth_client.get("/me", headers=auth_headers(user_id))
-    with direct_db.session() as session:
-        library_id = create_test_library(session, user_id, "Strict cursor")
-    direct_db.register_cleanup("libraries", "id", library_id)
-    direct_db.register_cleanup("memberships", "library_id", library_id)
-    cursor = _encode_cursor(
-        {
-            "k": "library_entries:resonance:v2",
-            "viewer_id": str(user_id),
-            "library_id": str(library_id),
-            "sort": "resonance",
-            "as_of": "2026-07-21T12:00:00",
-            "score": 1.0,
-            "entry_id": str(UUID(int=1)),
-        }
-    )
-    response = auth_client.get(
-        f"/libraries/{library_id}/entries",
-        headers=auth_headers(user_id),
-        params={"sort": "resonance", "cursor": cursor},
-    )
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "E_INVALID_CURSOR"
-
-
-def test_invalid_calendar_date_is_null_for_full_library_resonance(
-    auth_client, direct_db: DirectSessionManager
-) -> None:
-    user_id = create_test_user_id()
-    auth_client.get("/me", headers=auth_headers(user_id))
-    with direct_db.session() as session:
-        library_id = create_test_library(session, user_id, "Invalid publication date")
-        media_id = create_test_media(session, title="Impossible publication date")
-        add_media_to_library(session, library_id, media_id)
-        session.execute(
-            text("UPDATE media SET published_date = '2026-02-31' WHERE id = :media_id"),
-            {"media_id": media_id},
-        )
-        session.commit()
-    direct_db.register_cleanup("libraries", "id", library_id)
-    direct_db.register_cleanup("memberships", "library_id", library_id)
-    direct_db.register_cleanup("library_entries", "media_id", media_id)
-    direct_db.register_cleanup("media", "id", media_id)
-
-    response = auth_client.get(
-        f"/libraries/{library_id}/entries",
-        headers=auth_headers(user_id),
-        params={"sort": "resonance"},
-    )
-    assert response.status_code == 200, response.text
-    assert [entry["media"]["id"] for entry in response.json()["data"]] == [str(media_id)]

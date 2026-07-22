@@ -5610,7 +5610,11 @@ class TestPodcastSubscriptionLifecycleClosure:
         pins the tie-break-divergence fix by seeding several entries at the SAME
         initial position so the DESC/DESC tie-break is observable.
         """
-        from nexus.services.library_entries import list_library_entries
+        from nexus.services.library_entries import (
+            Canonical,
+            LibraryEntryView,
+            list_library_entries,
+        )
 
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -5729,6 +5733,7 @@ class TestPodcastSubscriptionLifecycleClosure:
                 session,
                 viewer_id=user_id,
                 library_id=affected_library_id,
+                view=LibraryEntryView(order=Canonical(), completion="all"),
                 limit=200,
             )
         canonical_entry_ids = [entry.id for entry in canonical_entries]

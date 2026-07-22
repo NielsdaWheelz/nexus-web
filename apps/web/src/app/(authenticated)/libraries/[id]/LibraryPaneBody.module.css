@@ -1,0 +1,12 @@
+/* Library view toolbar controls. The Sort-by field is a labelled native select
+   (Podcasts pattern) and shrinks to nothing so the toolbar reflows without any
+   horizontal scroll at 320px; PaneToolbar's `filters` slot owns the wrapping. */
+.selectField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}

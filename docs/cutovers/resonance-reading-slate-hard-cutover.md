@@ -1,5 +1,12 @@
 # Resonance + Reading Slate Hard Cutover
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
+> this document's non-default library Resonance ordering (`rank_library_entry_page`,
+> `rank_library_entries`, library rank weights/SQL, the `library_entries:resonance:v2`
+> cursor) in favor of factual view lenses. Slate and Related ordering remain
+> Resonance-owned and unaffected.
+
 Status: IMPLEMENTED — 2026-07-21
 
 Type: hard cutover. No legacy paths, compatibility decoding, fallbacks, dual

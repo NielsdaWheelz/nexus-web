@@ -21,7 +21,6 @@ from nexus.ids import new_uuid7
 from nexus.services.resonance import service as resonance_service
 from tests.factories import (
     create_searchable_media,
-    create_test_library,
     create_test_media_in_library,
     get_user_default_library,
 )
@@ -212,53 +211,3 @@ def test_lectern_slate_has_fixed_query_ceiling_at_zero_one_five_and_many_anchors
 
     assert counts["zero"] <= counts["1"] <= counts["5"]
     assert counts["5"] == counts["12"] == counts["many_candidates"]
-
-
-def test_full_library_resonance_query_count_does_not_grow_with_membership(
-    db_session: Session,
-    bootstrapped_user: UUID,
-) -> None:
-    library_id = create_test_library(
-        db_session,
-        bootstrapped_user,
-        "Resonance query bound",
-    )
-    for ordinal in range(5):
-        _add_visible_media(
-            db_session,
-            viewer_id=bootstrapped_user,
-            library_id=library_id,
-            title=f"Member {ordinal:02d}",
-        )
-
-    page, five_statements = _capture_queries(
-        db_session,
-        lambda: resonance_service.rank_library_entry_page(
-            db_session,
-            viewer_id=bootstrapped_user,
-            library_id=library_id,
-            limit=5,
-        ),
-    )
-    assert len(page[0]) == 5
-    _assert_read_only_and_bounded(five_statements)
-
-    for ordinal in range(5, 35):
-        _add_visible_media(
-            db_session,
-            viewer_id=bootstrapped_user,
-            library_id=library_id,
-            title=f"Member {ordinal:02d}",
-        )
-    page, many_statements = _capture_queries(
-        db_session,
-        lambda: resonance_service.rank_library_entry_page(
-            db_session,
-            viewer_id=bootstrapped_user,
-            library_id=library_id,
-            limit=5,
-        ),
-    )
-    assert len(page[0]) == 5
-    _assert_read_only_and_bounded(many_statements)
-    assert len(many_statements) == len(five_statements)

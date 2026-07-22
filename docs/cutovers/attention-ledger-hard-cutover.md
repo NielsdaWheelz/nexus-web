@@ -1,5 +1,11 @@
 # Attention Ledger — reading sessions, dwell, single read-state owner — Hard Cutover
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
+> the library resonance order — `_RESONANCE_ORDER` and its use of
+> `_LAST_ENGAGED_AT_SQL` are gone, invalidating this document's "still used for
+> the library resonance order" notes.
+
 **Status:** Spec · Rev 1 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 

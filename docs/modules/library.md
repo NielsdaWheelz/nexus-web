@@ -18,14 +18,19 @@ The domain is split into three owned modules, each owning its own tables:
   the `library_entries` table**. It owns the `EntryTarget` discriminated union
   (`{kind: "media"|"podcast", id}` — a faithful model of the
   exactly-one-target check) and the `media_target`/`podcast_target` constructors,
-  the single entry ordering constant (`_ENTRY_ORDER = "position ASC, created_at
-DESC, id DESC"`), the locked `ensure_entry` append, deletes and
+  the single canonical entry ordering constant (`_ENTRY_ORDER = "position ASC,
+created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `normalize_positions`, all read accessors, hydration, and the item-in-library
   commands (`list_item_libraries`, `ensure_media_in_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
   `ensure_media_in_libraries_for_viewer`,
   `ensure_media_absent_from_library_for_viewer`, `assign_libraries_for_media`,
   `set_subscription_libraries`, `remove_user_podcast_subscription_libraries`, …).
+  It also composes, for reads only, the factual view lenses (Title/Creator/
+  Published/Added, each ascending or descending) and a hide-finished
+  completion filter — see
+  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md);
+  none of these write `position`.
 - **`services/library_invitations.py`** owns the `library_invitations` table:
   create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
   — membership upsert, then invite status update — and returns
@@ -115,14 +120,14 @@ contribution the moment it is gone, on the very next read.
   another membership can still be explicitly filed; that direct row is what
   survives a later membership loss that would otherwise have removed it from
   view.
-- **Stateless keyset pagination, three cursor kinds.** Listing any library
-  never touches a snapshot table. The default library's own listing paginates
-  the deduplicated virtual set by media recency; a non-default library
-  paginates its physical entries either by position or by Resonance order.
-  Each cursor is opaque, self-describing (`k`), and scoped to the exact
-  `(viewer_id, library_id, kind)` it was minted for — a cursor from the wrong
-  viewer, library, or kind (including any cursor minted before this cutover)
-  is a clean `400 E_INVALID_CURSOR`, never silently reinterpreted.
+- **Stateless keyset pagination, one cursor family.** Listing any library
+  never touches a snapshot table. Every listing — default or non-default —
+  paginates with the single `library_entries:view:v1` cursor family, opaque
+  and self-describing, scoped to the exact `(viewer_id, library_id, view)` it
+  was minted for, where `view` is the order (canonical or a factual lens) plus
+  the completion filter in effect. A cursor from the wrong viewer, library, or
+  view — including every pre-cutover cursor kind — is a clean
+  `400 E_INVALID_CURSOR`, never silently reinterpreted.
 - **Media deletion counts physical references only.** Whether a document
   media has any reference left — the question that gates last-reference
   teardown — is answered by counting physical `library_entries` rows for
@@ -164,9 +169,10 @@ composes public, policy-neutral read ports from `library_entries`, consumption,
 the resource graph, contributor credits, media/podcasts, and the semantic index;
 those modules retain their tables and mutations.
 
-- `GET /libraries/{id}/entries?sort=resonance` ranks the complete eligible
-  physical membership before keyset pagination. The strict cursor kind is
-  `library_entries:resonance:v2`; prior cursor payloads are invalid.
+- Library entry ordering is no longer Resonance's: it is the factual view
+  lenses owned by `library_entries` (see
+  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)).
+  Resonance here retains only the Reading Slate.
 - `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
   outside complete destination membership. A library suggestion must have a
   factual graph, shared-author, or calibrated semantic relation to one of five

@@ -219,6 +219,26 @@ def contributor_credits_rollup_cte_sql(owner_column: Literal["media_id", "podcas
     """
 
 
+def primary_creator_rows_sql(owner_column: Literal["media_id", "podcast_id"]) -> str:
+    """First displayed contributor (lowest ordinal, ANY role) per owner.
+
+    Columns: ``owner_id``, ``primary_name``. ``owner_id`` is the media/podcast id;
+    ``primary_name`` is the joined ``contributors.display_name`` of the lowest-ordinal
+    credit. No viewer scope — the composing query must already scope owners to visible
+    content. Used by the Library view lens Creator sort; missing (no credits) becomes a
+    LEFT JOIN NULL that the caller pushes last.
+    """
+    return f"""
+        SELECT DISTINCT ON (cc.{owner_column})
+            cc.{owner_column} AS owner_id,
+            c.display_name AS primary_name
+        FROM contributor_credits cc
+        JOIN contributors c ON c.id = cc.contributor_id
+        WHERE cc.{owner_column} IS NOT NULL
+        ORDER BY cc.{owner_column}, cc.ordinal ASC, cc.created_at ASC, cc.id ASC
+    """
+
+
 def credit_target_filter_exists_sql(
     owner_column: Literal["media_id", "podcast_id"],
     owner_id_expr: str,

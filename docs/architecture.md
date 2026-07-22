@@ -967,8 +967,10 @@ Content organization + access control, split into three owned modules:
 `services/library_governance.py` (the `libraries`/`memberships` tables: CRUD,
 roles, ownership transfer, membership guards, ingest access checks),
 `services/library_entries.py` (the **sole writer** of `library_entries` — the
-`EntryTarget` media|podcast union, the locked append, position ordering, and all
-item-in-library commands), and `services/library_invitations.py` (the
+`EntryTarget` media|podcast union, the locked append, canonical position
+ordering, and all item-in-library commands; it also composes the temporary
+factual view lenses and hide-finished completion filter for reads — no DML on
+alternate views, positions unchanged), and `services/library_invitations.py` (the
 `library_invitations` table). Visibility itself is enforced by the boolean
 predicates in `auth/permissions.py`; the search/object readers read
 `library_entries` under an explicit Tier-R allowlist.
@@ -1005,11 +1007,15 @@ predicates in `auth/permissions.py`; the search/object readers read
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
   membership loss cannot take away. Pagination over any library — default or
-  not — is stateless keyset pagination with three cursor kinds (default-set
-  media-recency, non-default position order, and non-default Resonance
-  order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
-  any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
-  reinterpretation.
+  not — is stateless keyset pagination with one cursor family,
+  `library_entries:view:v1`, scoped to `(viewer_id, library_id, view)` where
+  `view` is the exact order plus completion filter in effect; any mismatch —
+  including every pre-cutover cursor kind — is a clean `400 E_INVALID_CURSOR`,
+  never a silent reinterpretation. Canonical order is the durable authored
+  order (non-default position order; Default media-recency). Factual view
+  lenses (Title/Creator/Published/Added, each ascending or descending) and a
+  hide-finished completion filter are temporary and URL-only: they are never
+  persisted and never write `library_entries.position`.
 - **Library reading-time is a list projection, not shared media state.**
   `services/media_document_metrics.py` batch-aggregates only the STORED integer
   source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
@@ -1023,9 +1029,10 @@ predicates in `auth/permissions.py`; the search/object readers read
   scans source text.
 - **Resonance is the one relevance owner.** `services/resonance/` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
-  contributors, and the semantic index. It owns Related ordering, non-default
-  library Resonance ordering, and the on-demand Reading Slate projection; fact
-  owners retain their tables and mutations. `GET /libraries/{id}/slate`
+  contributors, and the semantic index. It owns Related ordering and the
+  on-demand Reading Slate projection; fact owners retain their tables and
+  mutations. Library entry ordering is not Resonance's — see
+  [`cutovers/library-sorting-hard-cutover.md`](cutovers/library-sorting-hard-cutover.md). `GET /libraries/{id}/slate`
   returns at most ten deterministic, destination-addable suggestions outside
   complete membership. A successful Add preserves visible Slate survivors and
   appends at most one novel result from a canonical refetch.

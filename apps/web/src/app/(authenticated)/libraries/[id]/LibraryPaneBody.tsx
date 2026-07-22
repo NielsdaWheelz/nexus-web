@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
-import type { Presence } from "@/lib/api/presence";
+import { present, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -46,13 +46,14 @@ import {
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryBrief from "@/components/library/LibraryBrief";
 import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
+import Toggle from "@/components/ui/Toggle";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import PaneToolbar from "@/components/ui/PaneToolbar";
-import SortSelect from "@/components/ui/SortSelect";
-import type { CollectionRowView } from "@/lib/collections/types";
+import type { CollectionContext, CollectionRowView } from "@/lib/collections/types";
 import type {
   PositiveCount,
   ProgressFraction,
@@ -76,9 +77,20 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
-  usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
+import {
+  decodeLibraryView,
+  encodeLibraryView,
+  orderPresetIdsFor,
+  orderToPresetId,
+  presetIdToOrder,
+  presetLabel,
+  type DecodedLibraryView,
+  type LibraryEntryView,
+  type LibraryOrderPresetId,
+} from "@/lib/libraries/libraryView";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { isAbortError } from "@/lib/errors";
@@ -89,6 +101,7 @@ import {
 } from "@/lib/libraries/readingTime";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
+import styles from "./LibraryPaneBody.module.css";
 
 interface Library {
   id: string;
@@ -107,6 +120,10 @@ interface LibraryMediaEntry {
   id: string;
   kind: LibraryMediaKind;
   title: string;
+  // Instant the underlying media entered Nexus. Drives the "Added to Nexus …"
+  // row line under the Added order for the default (virtual) library, where each
+  // row keys by media rather than by physical library entry.
+  created_at: string;
   contributors: ContributorCredit[];
   published_date: string | null;
   publicationDate: Presence<PublicationDate>;
@@ -206,7 +223,7 @@ interface LibraryEntryPageWire {
 
 interface EntryReconciliationRequest {
   ownerId: string;
-  sort: "manual" | "resonance";
+  view: LibraryEntryView;
   serial: number;
 }
 
@@ -262,30 +279,103 @@ function toLibraryAddError(error: unknown): ApiError {
       );
 }
 
+// The one full-date formatter for the "Added …" row line; the whole instant is
+// formatted (not a date-only weekday folio), so it reads unambiguously.
+const ADDED_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+};
+
+function formatAdded(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, ADDED_DATE_FORMAT).format(date);
+}
+
+// A canonical/all view is exactly the server's default order that the bootstrap
+// `libraryResource` already seeded; any factual order or an unfinished filter is
+// a different first page fetched from the entries endpoint.
+function isInitialLibraryView(view: LibraryEntryView): boolean {
+  return view.order.kind === "Canonical" && view.completion === "all";
+}
+
+// The one code that turns an entry fetch error into the "Invalid library view"
+// terminal state: the backend rejects a bad request/cursor with these codes.
+function isInvalidViewError(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
+  );
+}
+
+const CANONICAL_VIEW: LibraryEntryView = {
+  order: { kind: "Canonical" },
+  completion: "all",
+};
+
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
     throw new Error("library route requires an id");
   }
   const router = usePaneRouter();
-  const paneSearchParams = usePaneSearchParams();
   const paneRuntime = usePaneRuntime();
   const { openInNewPane } = paneRuntime ?? {};
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
   const lectern = useLectern();
+
+  // The pane URL owns the library view (order + completion) via a strict, total
+  // codec; `decodedView` is a discriminated result and `view` is null only when
+  // the URL is Invalid, which is a terminal, user-recoverable state.
+  const libraryViewCodec = useMemo(
+    () => ({
+      basePath: `/libraries/${id}`,
+      decode: (params: URLSearchParams): DecodedLibraryView =>
+        decodeLibraryView(params),
+      encode: (
+        decoded: DecodedLibraryView,
+        current: URLSearchParams,
+      ): URLSearchParams => {
+        if (decoded.kind === "Valid") {
+          return encodeLibraryView(decoded.view, current);
+        }
+        const next = new URLSearchParams(current);
+        next.delete("sort");
+        next.delete("direction");
+        next.delete("completion");
+        return next;
+      },
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" } as const,
+      },
+    }),
+    [id],
+  );
+  const { state: decodedView, setState: setDecodedView } =
+    usePaneUrlState(libraryViewCodec);
+  const view = decodedView.kind === "Valid" ? decodedView.view : null;
+  const isInitialView = view !== null && isInitialLibraryView(view);
+  // Stable per-view signature (independent of unrelated pane params): the view
+  // key that resets and reloads the single paginated controller on any change.
+  const viewSignature = view ? `${orderToPresetId(view.order)}:${view.completion}` : "invalid";
+  const setView = useCallback(
+    (next: LibraryEntryView) => setDecodedView({ kind: "Valid", view: next }),
+    [setDecodedView],
+  );
+
   const [library, setLibrary] = useState<Library | null>(null);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [entryCursor, setEntryCursor] = useState<string | null>(null);
-  const [manualLoadingMore, setManualLoadingMore] = useState(false);
-  const [manualLoadMoreError, setManualLoadMoreError] =
-    useState<FeedbackContent | null>(null);
-  const [resonanceEntries, setResonanceEntries] = useState<LibraryEntry[]>([]);
-  const [resonanceCursor, setResonanceCursor] = useState<string | null>(null);
-  const [resonanceLoadingMore, setResonanceLoadingMore] = useState(false);
-  const [resonanceLoadMoreError, setResonanceLoadMoreError] =
-    useState<FeedbackContent | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<FeedbackContent | null>(
+    null,
+  );
+  // Set when an entry fetch for the current view is rejected as invalid; cleared
+  // whenever the view changes. Renders the terminal "Invalid library view" state.
+  const [viewInvalid, setViewInvalid] = useState(false);
   const removedEntryIds = useStringIdSet();
   const retryingMediaIds = useStringIdSet();
   const refreshingMediaIds = useStringIdSet();
@@ -300,19 +390,45 @@ export default function LibraryPaneBody() {
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
   const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
+
+  // Focus continuity: when an action removes the focused row, move focus to the
+  // next visible row, else the previous, else the "Sort by" select.
+  const listRegionRef = useRef<HTMLDivElement | null>(null);
+  const sortSelectRef = useRef<HTMLSelectElement | null>(null);
+  const pendingFocusNeighborRef = useRef<string | null | undefined>(undefined);
+  const pendingFocusRafRef = useRef(0);
+  const captureFocusNeighbor = useCallback((removedKey: string) => {
+    const region = listRegionRef.current;
+    if (!region) {
+      pendingFocusNeighborRef.current = null;
+      return;
+    }
+    const rows = Array.from(
+      region.querySelectorAll<HTMLElement>("[data-collection-row-id]"),
+    );
+    const index = rows.findIndex(
+      (el) => el.dataset.collectionRowId === removedKey,
+    );
+    if (index === -1) {
+      pendingFocusNeighborRef.current = undefined;
+      return;
+    }
+    const neighbor = rows[index + 1] ?? rows[index - 1] ?? null;
+    pendingFocusNeighborRef.current = neighbor?.dataset.collectionRowId ?? null;
+  }, []);
+
   const patchMediaInViews = useCallback(
     (
       mediaId: string,
       patch: (media: LibraryMediaEntry) => LibraryMediaEntry,
     ) => {
-      const apply = (current: LibraryEntry[]) =>
+      setEntries((current) =>
         current.map((entry) =>
           entry.kind === "media" && entry.media.id === mediaId
             ? { ...entry, media: patch(entry.media) }
             : entry,
-        );
-      setEntries(apply);
-      setResonanceEntries(apply);
+        ),
+      );
     },
     [],
   );
@@ -327,13 +443,6 @@ export default function LibraryPaneBody() {
   });
   const currentLibrary = library?.id === id ? library : null;
   const isDefaultLibrary = currentLibrary?.is_default === true;
-  // Default's read surface is a live, server-ordered virtual set: resonance is
-  // rejected by the endpoint and the UI must never request or offer it, so a
-  // stale/manually-crafted `?sort=resonance` is always forced back to manual.
-  const sort =
-    !isDefaultLibrary && paneSearchParams.get("sort") === "resonance"
-      ? "resonance"
-      : "manual";
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
   const canEditEntries =
@@ -346,40 +455,32 @@ export default function LibraryPaneBody() {
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
-  const connectionSummaryEntries =
-    sort === "resonance" ? resonanceEntries : entries;
   const connectionSummaries = useConnectionSummaries(
-    connectionSummaryEntries.map((entry) =>
+    entries.map((entry) =>
       entry.kind === "podcast"
         ? `podcast:${entry.podcast.id}`
         : `media:${entry.media.id}`,
     ),
   );
-  const setSort = useCallback(
-    (next: "manual" | "resonance") => {
-      const params = new URLSearchParams(paneSearchParams);
-      if (next === "resonance") {
-        params.set("sort", "resonance");
-      } else {
-        params.delete("sort");
+
+  // The single non-initial first-page seam: a canonical/all view seeds from the
+  // bootstrap resource, any other view fetches page 1 from the entries endpoint.
+  const viewFirstPageParams: LibraryEntriesResourceParams | null =
+    view !== null && !isInitialView ? { id, view } : null;
+  const viewFirstPagePath = viewFirstPageParams
+    ? libraryEntriesResource.clientPath(viewFirstPageParams)
+    : null;
+  const viewFetch = useDebouncedFetch<LibraryEntryPage>(
+    viewFirstPagePath,
+    async (signal) => {
+      if (viewFirstPagePath === null) {
+        // justify-defect: a non-null key is only built from a non-null path.
+        throw new Error("Library view first-page fetch lost its path");
       }
-      const qs = params.toString();
-      router.replace(qs ? `/libraries/${id}?${qs}` : `/libraries/${id}`, {
-        viewTransition: { kind: "collection-reflow" },
-      });
+      return decodeLibraryEntryPage(
+        await apiFetch<LibraryEntryPageWire>(viewFirstPagePath, { signal }),
+      );
     },
-    [id, paneSearchParams, router],
-  );
-  const resonanceEntriesPath = libraryEntriesResource.clientPath({
-    id,
-    sort: "resonance",
-  });
-  const resonanceFetch = useDebouncedFetch<LibraryEntryPage>(
-    sort === "resonance" ? resonanceEntriesPath : null,
-    async (signal) =>
-      decodeLibraryEntryPage(
-        await apiFetch<LibraryEntryPageWire>(resonanceEntriesPath, { signal }),
-      ),
   );
 
   const [editOpen, setEditOpen] = useState(false);
@@ -407,8 +508,7 @@ export default function LibraryPaneBody() {
     entryLoadMoreGenerationRef.current += 1;
     entryLoadMoreAbortRef.current?.abort();
     entryLoadMoreAbortRef.current = null;
-    setManualLoadingMore(false);
-    setResonanceLoadingMore(false);
+    setLoadingMore(false);
   }, []);
   useEffect(() => () => entryLoadMoreAbortRef.current?.abort(), []);
   useEffect(() => {
@@ -418,12 +518,12 @@ export default function LibraryPaneBody() {
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   const requestEntryReconciliation = useCallback(
-    (requestedSort: "manual" | "resonance") => {
+    (requestedView: LibraryEntryView) => {
       const serial = entryReconciliationSerialRef.current + 1;
       entryReconciliationSerialRef.current = serial;
       setEntryReconciliationRequest({
         ownerId: id,
-        sort: requestedSort,
+        view: requestedView,
         serial,
       });
     },
@@ -433,10 +533,7 @@ export default function LibraryPaneBody() {
     entryReconciliationRequest
       ? {
           id: entryReconciliationRequest.ownerId,
-          sort:
-            entryReconciliationRequest.sort === "resonance"
-              ? "resonance"
-              : undefined,
+          view: entryReconciliationRequest.view,
         }
       : null;
   const entryReconciliationPath = entryReconciliationParams
@@ -472,22 +569,15 @@ export default function LibraryPaneBody() {
       request === null ||
       request.ownerId !== id ||
       result.request.ownerId !== request.ownerId ||
-      result.request.sort !== request.sort ||
       result.request.serial !== request.serial
     ) {
       return;
     }
     cancelEntryLoadMore();
     clearRemovedEntryIds();
-    if (request.sort === "resonance") {
-      setResonanceEntries(result.page.data);
-      setResonanceCursor(result.page.page.next_cursor);
-      setResonanceLoadMoreError(null);
-    } else {
-      setEntries(result.page.data);
-      setEntryCursor(result.page.page.next_cursor);
-      setManualLoadMoreError(null);
-    }
+    setEntries(result.page.data);
+    setEntryCursor(result.page.page.next_cursor);
+    setLoadMoreError(null);
     libraryEntriesStaleRef.current = false;
     setEntryReconciliationRequest(null);
   }, [
@@ -502,10 +592,10 @@ export default function LibraryPaneBody() {
     if (entryReconciliationOwnerIdRef.current !== id) return;
     const becameActive = isPaneActive && !wasPaneActiveRef.current;
     wasPaneActiveRef.current = isPaneActive;
-    if (becameActive && libraryEntriesStaleRef.current) {
-      requestEntryReconciliation(sort);
+    if (becameActive && libraryEntriesStaleRef.current && view !== null) {
+      requestEntryReconciliation(view);
     }
-  }, [id, isPaneActive, requestEntryReconciliation, sort]);
+  }, [id, isPaneActive, requestEntryReconciliation, view]);
 
   useEffect(() => {
     entryReconciliationOwnerIdRef.current = id;
@@ -515,15 +605,11 @@ export default function LibraryPaneBody() {
     setEntryReconciliationRequest(null);
   }, [id]);
 
+  // Library identity + error ownership. First-page entry seeding is owned by the
+  // view effect below, not here, so appended pages survive resource re-reads.
   useEffect(() => {
     if (libraryResource.status === "ready") {
-      cancelEntryLoadMore();
       setLibrary(libraryResource.data.library);
-      setEntries(libraryResource.data.entries);
-      setEntryCursor(libraryResource.data.entriesPage.next_cursor);
-      setManualLoadingMore(false);
-      setManualLoadMoreError(null);
-      clearRemovedEntryIds();
       setError(null);
       return;
     }
@@ -545,26 +631,70 @@ export default function LibraryPaneBody() {
       setLibrary((current) => (current?.id === id ? null : current));
       setEntries([]);
       setEntryCursor(null);
-      setManualLoadingMore(false);
-      setManualLoadMoreError(null);
+      setLoadMoreError(null);
     }
-  }, [cancelEntryLoadMore, clearRemovedEntryIds, id, libraryResource, router]);
+  }, [cancelEntryLoadMore, id, libraryResource, router]);
 
+  // The single controller keyed by the view: reset on any view change, then seed
+  // page 1 from the bootstrap resource (canonical/all) or clear until the view
+  // fetch delivers page 1 (factual order or unfinished filter).
   useEffect(() => {
-    if (sort !== "resonance") {
-      setResonanceEntries([]);
-      setResonanceCursor(null);
-      setResonanceLoadingMore(false);
-      setResonanceLoadMoreError(null);
+    if (view === null) return;
+    cancelEntryLoadMore();
+    clearRemovedEntryIds();
+    setLoadMoreError(null);
+    setViewInvalid(false);
+    libraryEntriesStaleRef.current = false;
+    // A reconciliation is bound to the view it was requested under; the fresh
+    // page-1 load below supersedes it, so drop any pending/in-flight one (and
+    // bump the serial) rather than let a stale view's rows/cursor land here.
+    entryReconciliationSerialRef.current += 1;
+    setEntryReconciliationRequest(null);
+    if (isInitialView) {
+      if (libraryResource.status === "ready") {
+        setEntries(libraryResource.data.entries);
+        setEntryCursor(libraryResource.data.entriesPage.next_cursor);
+      } else {
+        setEntries([]);
+        setEntryCursor(null);
+      }
       return;
     }
-    if (resonanceFetch.data === null) {
-      return;
+    setEntries([]);
+    setEntryCursor(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    viewSignature,
+    isInitialView,
+    libraryResource,
+    id,
+    cancelEntryLoadMore,
+    clearRemovedEntryIds,
+  ]);
+
+  // Apply the non-initial view's first page once it lands.
+  useEffect(() => {
+    if (isInitialView || viewFetch.data === null) return;
+    cancelEntryLoadMore();
+    clearRemovedEntryIds();
+    setEntries(viewFetch.data.data);
+    setEntryCursor(viewFetch.data.page.next_cursor);
+    setLoadMoreError(null);
+    setViewInvalid(false);
+    libraryEntriesStaleRef.current = false;
+  }, [
+    isInitialView,
+    viewFetch.data,
+    cancelEntryLoadMore,
+    clearRemovedEntryIds,
+  ]);
+
+  // A rejected (invalid) view fetch is terminal until the view changes.
+  useEffect(() => {
+    if (!isInitialView && isInvalidViewError(viewFetch.error)) {
+      setViewInvalid(true);
     }
-    setResonanceEntries(resonanceFetch.data.data);
-    setResonanceCursor(resonanceFetch.data.page.next_cursor);
-    setResonanceLoadMoreError(null);
-  }, [resonanceFetch.data, sort]);
+  }, [isInitialView, viewFetch.error]);
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -904,21 +1034,16 @@ export default function LibraryPaneBody() {
 
   const handleSetConsumption = useCallback(
     async (mediaId: string, status: "finished" | "unread") => {
-      const capture = (current: LibraryEntry[]) => {
-        const previous = new Map<string, LibraryMediaConsumption>();
-        for (const entry of current) {
-          if (entry.kind === "media" && entry.media.id === mediaId) {
-            previous.set(entry.id, {
-              read_state: entry.media.read_state,
-              progress_fraction: entry.media.progress_fraction,
-            });
-          }
+      const previous = new Map<string, LibraryMediaConsumption>();
+      for (const entry of entries) {
+        if (entry.kind === "media" && entry.media.id === mediaId) {
+          previous.set(entry.id, {
+            read_state: entry.media.read_state,
+            progress_fraction: entry.media.progress_fraction,
+          });
         }
-        return previous;
-      };
-      const previousEntries = capture(entries);
-      const previousResonanceEntries = capture(resonanceEntries);
-      if (previousEntries.size === 0 && previousResonanceEntries.size === 0) {
+      }
+      if (previous.size === 0) {
         throw new Error(`Library media ${mediaId} is not present`);
       }
       const operationToken = Symbol(mediaId);
@@ -940,10 +1065,7 @@ export default function LibraryPaneBody() {
         ) {
           return;
         }
-        const restore = (
-          current: LibraryEntry[],
-          previous: Map<string, LibraryMediaConsumption>,
-        ) =>
+        setEntries((current) =>
           current.map((entry) => {
             const fields = previous.get(entry.id);
             return entry.kind === "media" &&
@@ -951,10 +1073,7 @@ export default function LibraryPaneBody() {
               fields
               ? { ...entry, media: { ...entry.media, ...fields } }
               : entry;
-          });
-        setEntries((current) => restore(current, previousEntries));
-        setResonanceEntries((current) =>
-          restore(current, previousResonanceEntries),
+          }),
         );
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -968,7 +1087,7 @@ export default function LibraryPaneBody() {
         }
       }
     },
-    [entries, feedback, lectern, patchMediaInViews, resonanceEntries],
+    [entries, feedback, lectern, patchMediaInViews],
   );
 
   const handleAddToLectern = useCallback(
@@ -1152,105 +1271,63 @@ export default function LibraryPaneBody() {
     [openInNewPane],
   );
 
-  const handleLoadMoreEntries = useCallback(
-    (requestedSort: "manual" | "resonance") => {
-      const cursor =
-        requestedSort === "resonance" ? resonanceCursor : entryCursor;
-      if (cursor === null) {
-        return;
-      }
-      if (requestedSort === "resonance") {
-        if (resonanceLoadingMore) return;
-      } else {
-        if (manualLoadingMore) return;
-      }
-
-      entryLoadMoreAbortRef.current?.abort();
-      const generation = entryLoadMoreGenerationRef.current + 1;
-      entryLoadMoreGenerationRef.current = generation;
-      const controller = new AbortController();
-      entryLoadMoreAbortRef.current = controller;
-      setManualLoadingMore(requestedSort === "manual");
-      setResonanceLoadingMore(requestedSort === "resonance");
-      if (requestedSort === "resonance") {
-        setResonanceLoadMoreError(null);
-      } else {
-        setManualLoadMoreError(null);
-      }
-      void apiFetch<LibraryEntryPageWire>(
-        libraryEntriesResource.clientPath({
-          id,
-          cursor,
-          sort: requestedSort === "resonance" ? "resonance" : undefined,
-        }),
-        { signal: controller.signal },
-      )
-        .then(decodeLibraryEntryPage)
-        .then((page) => {
-          if (
-            controller.signal.aborted ||
-            generation !== entryLoadMoreGenerationRef.current
-          ) {
-            return;
-          }
-          if (requestedSort === "resonance") {
-            setResonanceEntries((current) =>
-              appendUniqueEntries(current, page.data),
-            );
-            setResonanceCursor(page.page.next_cursor);
-          } else {
-            setEntries((current) =>
-              appendUniqueEntries(current, page.data, (entry) =>
-                libraryRowKey(entry, isDefaultLibrary),
-              ),
-            );
-            setEntryCursor(page.page.next_cursor);
-          }
-        })
-        .catch((err: unknown) => {
-          if (
-            isAbortError(err) ||
-            controller.signal.aborted ||
-            generation !== entryLoadMoreGenerationRef.current
-          ) {
-            return;
-          }
-          if (handleUnauthenticatedApiError(err)) return;
-          const feedbackContent = toFeedback(err, {
-            fallback:
-              requestedSort === "resonance"
-                ? "Failed to load more resonance entries"
-                : "Failed to load more entries",
-          });
-          if (requestedSort === "resonance") {
-            setResonanceLoadMoreError(feedbackContent);
-          } else {
-            setManualLoadMoreError(feedbackContent);
-          }
-        })
-        .finally(() => {
-          if (
-            controller.signal.aborted ||
-            generation !== entryLoadMoreGenerationRef.current
-          ) {
-            return;
-          }
-          if (requestedSort === "resonance") {
-            setResonanceLoadingMore(false);
-          } else {
-            setManualLoadingMore(false);
-          }
-        });
-    },
-    [
-      entryCursor,
-      id,
-      isDefaultLibrary,
-      manualLoadingMore,
-      resonanceCursor,
-      resonanceLoadingMore,
-    ],
-  );
+  const handleLoadMoreEntries = useCallback(() => {
+    if (entryCursor === null || loadingMore || view === null) {
+      return;
+    }
+    entryLoadMoreAbortRef.current?.abort();
+    const generation = entryLoadMoreGenerationRef.current + 1;
+    entryLoadMoreGenerationRef.current = generation;
+    const controller = new AbortController();
+    entryLoadMoreAbortRef.current = controller;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    void apiFetch<LibraryEntryPageWire>(
+      libraryEntriesResource.clientPath({ id, view, cursor: entryCursor }),
+      { signal: controller.signal },
+    )
+      .then(decodeLibraryEntryPage)
+      .then((page) => {
+        if (
+          controller.signal.aborted ||
+          generation !== entryLoadMoreGenerationRef.current
+        ) {
+          return;
+        }
+        setEntries((current) =>
+          appendUniqueEntries(current, page.data, (entry) =>
+            libraryRowKey(entry, isDefaultLibrary),
+          ),
+        );
+        setEntryCursor(page.page.next_cursor);
+      })
+      .catch((err: unknown) => {
+        if (
+          isAbortError(err) ||
+          controller.signal.aborted ||
+          generation !== entryLoadMoreGenerationRef.current
+        ) {
+          return;
+        }
+        if (handleUnauthenticatedApiError(err)) return;
+        if (isInvalidViewError(err)) {
+          setViewInvalid(true);
+          return;
+        }
+        setLoadMoreError(
+          toFeedback(err, { fallback: "Failed to load more entries" }),
+        );
+      })
+      .finally(() => {
+        if (
+          controller.signal.aborted ||
+          generation !== entryLoadMoreGenerationRef.current
+        ) {
+          return;
+        }
+        setLoadingMore(false);
+      });
+  }, [entryCursor, id, isDefaultLibrary, loadingMore, view]);
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!canReorder || entryCursor !== null) {
@@ -1324,9 +1401,47 @@ export default function LibraryPaneBody() {
       ]
     : [];
 
-  const entryFolioCount = entries.filter(
-    (entry) => !removedEntryIds.ids.has(entry.id),
-  ).length;
+  const hideFinished = view?.completion === "unfinished";
+  // Under the unfinished filter the client also drops a row the moment it is
+  // marked finished, so Mark Finished visibly removes it from the filtered view.
+  const isVisibleEntry = useCallback(
+    (entry: LibraryEntry): boolean => {
+      if (removedEntryIds.ids.has(entry.id)) return false;
+      if (
+        hideFinished &&
+        entry.kind === "media" &&
+        entry.media.read_state === "finished"
+      ) {
+        return false;
+      }
+      return true;
+    },
+    [hideFinished, removedEntryIds.ids],
+  );
+  const visibleEntries = entries.filter(isVisibleEntry);
+  const entryFolioCount = visibleEntries.length;
+  // Client-side filtering (hide finished, optimistic removal) can empty the
+  // visible page while more entries remain server-side. Advance until an
+  // eligible row appears or the cursor is exhausted, so the empty notice never
+  // lies and a real next page is never stranded behind a hidden footer (AC3/AC8).
+  useEffect(() => {
+    if (
+      view !== null &&
+      entryCursor !== null &&
+      visibleEntries.length === 0 &&
+      !loadingMore &&
+      loadMoreError === null
+    ) {
+      handleLoadMoreEntries();
+    }
+  }, [
+    view,
+    entryCursor,
+    visibleEntries.length,
+    loadingMore,
+    loadMoreError,
+    handleLoadMoreEntries,
+  ]);
   usePanePrimaryChrome({
     options: paneOptions,
     header: {
@@ -1335,6 +1450,41 @@ export default function LibraryPaneBody() {
       pending: loading,
     },
   });
+
+  const visibleRowSignature = visibleEntries
+    .map((entry) => libraryRowKey(entry, isDefaultLibrary))
+    .join("");
+  useEffect(() => {
+    const neighborKey = pendingFocusNeighborRef.current;
+    if (neighborKey === undefined) return;
+    pendingFocusNeighborRef.current = undefined;
+    const moveFocus = () => {
+      const region = listRegionRef.current;
+      const focusInRow = (key: string): boolean => {
+        const rowEl = region?.querySelector<HTMLElement>(
+          `[data-collection-row-id="${CSS.escape(key)}"]`,
+        );
+        const focusable = rowEl?.querySelector<HTMLElement>(
+          'a, button, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable) {
+          focusable.focus();
+          return true;
+        }
+        return false;
+      };
+      if (neighborKey !== null && focusInRow(neighborKey)) return;
+      sortSelectRef.current?.focus();
+    };
+    // Defer past the menu's own focus-restore and the row-removal reflow so the
+    // sibling (not the vanished trigger) ends up focused.
+    const outer = requestAnimationFrame(() => {
+      const inner = requestAnimationFrame(moveFocus);
+      pendingFocusRafRef.current = inner;
+    });
+    pendingFocusRafRef.current = outer;
+    return () => cancelAnimationFrame(pendingFocusRafRef.current);
+  }, [visibleRowSignature]);
 
   if (loading) {
     return <PaneLoadingState />;
@@ -1355,40 +1505,24 @@ export default function LibraryPaneBody() {
     role: currentLibrary.role,
     owner_user_id: currentLibrary.owner_user_id,
   };
-  const visibleEntries = entries.filter(
-    (entry) => !removedEntryIds.ids.has(entry.id),
-  );
-  const visibleResonanceEntries = resonanceEntries.filter(
-    (entry) => !removedEntryIds.ids.has(entry.id),
-  );
+  const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const canReorderVisibleEntries =
-    canReorder && sort === "manual" && entryCursor === null;
-  const entryFooter =
-    sort === "resonance" ? (
-      <>
-        {resonanceLoadMoreError ? (
-          <FeedbackNotice {...resonanceLoadMoreError} />
-        ) : null}
-        <LoadMoreFooter
-          hasMore={resonanceCursor !== null}
-          loading={resonanceLoadingMore}
-          onLoadMore={() => handleLoadMoreEntries("resonance")}
-          label="Load more entries"
-        />
-      </>
-    ) : (
-      <>
-        {manualLoadMoreError ? (
-          <FeedbackNotice {...manualLoadMoreError} />
-        ) : null}
-        <LoadMoreFooter
-          hasMore={entryCursor !== null}
-          loading={manualLoadingMore}
-          onLoadMore={() => handleLoadMoreEntries("manual")}
-          label="Load more entries"
-        />
-      </>
-    );
+    canReorder &&
+    view !== null &&
+    view.order.kind === "Canonical" &&
+    view.completion === "all" &&
+    entryCursor === null;
+  const entryFooter = (
+    <>
+      {loadMoreError ? <FeedbackNotice {...loadMoreError} /> : null}
+      <LoadMoreFooter
+        hasMore={entryCursor !== null}
+        loading={loadingMore}
+        onLoadMore={handleLoadMoreEntries}
+        label="Load more entries"
+      />
+    </>
+  );
   const entryReconciliationNotice = entryReconciliationRequest ? (
     entryReconciliationFetch.error === null ? (
       <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
@@ -1405,7 +1539,7 @@ export default function LibraryPaneBody() {
           variant="secondary"
           size="sm"
           onClick={() =>
-            requestEntryReconciliation(entryReconciliationRequest.sort)
+            requestEntryReconciliation(entryReconciliationRequest.view)
           }
         >
           Retry
@@ -1413,13 +1547,18 @@ export default function LibraryPaneBody() {
       </FeedbackNotice>
     )
   ) : null;
-  const resonanceStatus = resonanceFetch.loading
-    ? "loading"
-    : resonanceFetch.error !== null && resonanceEntries.length === 0
-      ? "error"
-      : "ready";
+
+  const addedContext = (entry: LibraryEntry): Presence<CollectionContext> => {
+    const iso =
+      isDefaultLibrary && entry.kind === "media"
+        ? entry.media.created_at
+        : entry.created_at;
+    const label = isDefaultLibrary ? "Added to Nexus " : "Added ";
+    return present({ kind: "Text", text: `${label}${formatAdded(iso)}` });
+  };
 
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
+    const showAdded = view?.order.kind === "Added";
     if (item.kind === "podcast") {
       const row = presentPodcast(
         {
@@ -1440,7 +1579,11 @@ export default function LibraryPaneBody() {
           },
         },
       );
-      return { ...row, id: item.id };
+      return {
+        ...row,
+        id: item.id,
+        context: showAdded ? addedContext(item) : row.context,
+      };
     }
     const row = presentMedia(item.media, {
       canManageLibraries: canEditEntries,
@@ -1475,6 +1618,9 @@ export default function LibraryPaneBody() {
             }
           : undefined,
       onMarkFinished: () => {
+        if (hideFinished) {
+          captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
+        }
         void handleSetConsumption(item.media.id, "finished");
       },
       onMarkUnread: () => {
@@ -1487,9 +1633,119 @@ export default function LibraryPaneBody() {
     return {
       ...row,
       id: libraryRowKey(item, isDefaultLibrary),
+      context: showAdded ? addedContext(item) : row.context,
     };
   };
   const visibleEntryRows = visibleEntries.map(entryRowView);
+
+  const orderPresetIds = orderPresetIdsFor(isDefaultLibrary);
+  const toolbar =
+    invalidView || view === null ? undefined : (
+      <PaneToolbar
+        filters={
+          <>
+            <label className={styles.selectField}>
+              <span>Sort by</span>
+              <Select
+                ref={sortSelectRef}
+                value={orderToPresetId(view.order)}
+                onChange={(event) =>
+                  setView({
+                    order: presetIdToOrder(
+                      event.target.value as LibraryOrderPresetId,
+                    ),
+                    completion: view.completion,
+                  })
+                }
+              >
+                {orderPresetIds.map((presetId) => (
+                  <option key={presetId} value={presetId}>
+                    {presetLabel(presetId, isDefaultLibrary)}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Toggle
+              checked={hideFinished}
+              onCheckedChange={(checked) =>
+                setView({
+                  order: view.order,
+                  completion: checked ? "unfinished" : "all",
+                })
+              }
+              label="Hide finished"
+            />
+          </>
+        }
+      />
+    );
+
+  const mainBody = invalidView ? (
+    <FeedbackNotice severity="error" title="Invalid library view">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setDecodedView({ kind: "Valid", view: CANONICAL_VIEW })}
+      >
+        Reset view
+      </Button>
+    </FeedbackNotice>
+  ) : visibleEntries.length > 0 ? (
+    <CollectionView
+      rows={visibleEntryRows}
+      status="ready"
+      ariaLabel="Library entries"
+      footer={entryFooter}
+      surface={false}
+      sortable={
+        canReorderVisibleEntries
+          ? {
+              disabled: reorderBusy,
+              onReorder: (nextRows) => {
+                const byEntryId = new Map(
+                  visibleEntries.map((entry) => [entry.id, entry]),
+                );
+                const nextEntries = nextRows
+                  .map((row) => byEntryId.get(row.id))
+                  .filter(
+                    (entry): entry is LibraryEntry => entry !== undefined,
+                  );
+                if (nextEntries.length === visibleEntries.length) {
+                  handleReorderEntries(nextEntries);
+                }
+              },
+            }
+          : undefined
+      }
+    />
+  ) : !isInitialView && viewFetch.loading ? (
+    <PaneLoadingState />
+  ) : !isInitialView && viewFetch.error !== null ? (
+    <FeedbackNotice
+      feedback={toFeedback(viewFetch.error, {
+        fallback: "Failed to load library entries",
+      })}
+    />
+  ) : entryCursor !== null ? (
+    // Empty after filtering but more pages remain: the auto-advance effect is
+    // fetching them; surface its progress/error instead of a false empty state.
+    entryFooter
+  ) : hideFinished ? (
+    <FeedbackNotice severity="neutral" title="No unfinished items">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setView({ order: view!.order, completion: "all" })}
+      >
+        Show finished
+      </Button>
+    </FeedbackNotice>
+  ) : (
+    <FeedbackNotice
+      severity="neutral"
+      title="No podcasts or media in this library yet."
+    />
+  );
 
   return (
     <>
@@ -1513,29 +1769,7 @@ export default function LibraryPaneBody() {
       <PaneSurface
         opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
         brief={<LibraryBrief libraryId={id} />}
-        toolbar={
-          visibleEntries.length > 0 ? (
-            <PaneToolbar
-              controls={
-                <>
-                  {isDefaultLibrary ? null : (
-                    <SortSelect
-                      label="Sort"
-                      value={sort}
-                      options={[
-                        { value: "manual", label: "Manual" },
-                        { value: "resonance", label: "Resonance" },
-                      ]}
-                      onChange={(value) =>
-                        setSort(value === "resonance" ? "resonance" : "manual")
-                      }
-                    />
-                  )}
-                </>
-              }
-            />
-          ) : undefined
-        }
+        toolbar={toolbar}
         state={
           error || entryReconciliationNotice ? (
             <>
@@ -1545,63 +1779,7 @@ export default function LibraryPaneBody() {
           ) : null
         }
       >
-        {sort === "resonance" ? (
-          <CollectionView
-            rows={visibleResonanceEntries.map(entryRowView)}
-            status={resonanceStatus}
-            ariaLabel="Library by resonance"
-            empty={
-              <FeedbackNotice
-                severity="neutral"
-                title="No entries to rank yet."
-              />
-            }
-            error={
-              resonanceFetch.error ? (
-                <FeedbackNotice
-                  feedback={toFeedback(resonanceFetch.error, {
-                    fallback: "Failed to rank library entries",
-                  })}
-                />
-              ) : undefined
-            }
-            footer={entryFooter}
-            surface={false}
-          />
-        ) : visibleEntries.length > 0 ? (
-          <CollectionView
-            rows={visibleEntryRows}
-            status="ready"
-            ariaLabel="Library entries"
-            footer={entryFooter}
-            surface={false}
-            sortable={
-              canReorderVisibleEntries
-                ? {
-                    disabled: reorderBusy,
-                    onReorder: (nextRows) => {
-                      const byEntryId = new Map(
-                        visibleEntries.map((entry) => [entry.id, entry]),
-                      );
-                      const nextEntries = nextRows
-                        .map((row) => byEntryId.get(row.id))
-                        .filter(
-                          (entry): entry is LibraryEntry => entry !== undefined,
-                        );
-                      if (nextEntries.length === visibleEntries.length) {
-                        handleReorderEntries(nextEntries);
-                      }
-                    },
-                  }
-                : undefined
-            }
-          />
-        ) : (
-          <FeedbackNotice
-            severity="neutral"
-            title="No podcasts or media in this library yet."
-          />
-        )}
+        <div ref={listRegionRef}>{mainBody}</div>
         <ReadingSlateSection
           destination={{
             kind: "Library",

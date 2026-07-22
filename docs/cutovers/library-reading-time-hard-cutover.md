@@ -1,5 +1,10 @@
 # Library Reading-Time Hard Cutover
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) collapses
+> the frontend "resonance" list/presenter this document references into a single
+> view controller; reading-time itself is unaffected.
+
 **Status:** Implemented and locally verified · 2026-07-21 · ordered production
 release pending
 **Type:** Ordered hard cutover — database/backend first, web second; no legacy

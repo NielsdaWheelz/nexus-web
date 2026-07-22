@@ -45,6 +45,7 @@ from nexus.services import library_governance as governance
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
+    primary_creator_rows_sql,
 )
 from nexus.services.media_document_metrics import load_media_word_counts
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
@@ -59,10 +60,126 @@ _READING_WORDS_PER_MINUTE = 240
 _READING_MINUTES_FINE_LIMIT = 10
 _READING_MINUTES_COARSE_LIMIT = 60
 
-# Strict, discriminated opaque cursor kinds for the two entry orderings this
-# owner retains. Resonance owns its separate cursor contract.
-_DEFAULT_CURSOR_KIND = "library_entries:default:v1"
-_POSITION_CURSOR_KIND = "library_entries:position:v1"
+# The one entry-view cursor kind. Bound to the exact view (order + completion)
+# and (viewer, library); every pre-cutover cursor kind fails the `k` check.
+_VIEW_CURSOR_KIND = "library_entries:view:v1"
+
+
+# ---------------------------------------------------------------------------
+# Library view lenses — closed order/completion types and strict query parsing
+# ---------------------------------------------------------------------------
+
+type Direction = Literal["asc", "desc"]
+
+
+@dataclass(frozen=True, slots=True)
+class Canonical:
+    """Durable authored order: Default's `media.created_at DESC`, else position."""
+
+
+@dataclass(frozen=True, slots=True)
+class Title:
+    direction: Direction
+
+
+@dataclass(frozen=True, slots=True)
+class Creator:
+    direction: Direction
+
+
+@dataclass(frozen=True, slots=True)
+class Published:
+    direction: Direction
+
+
+@dataclass(frozen=True, slots=True)
+class Added:
+    direction: Direction
+
+
+type LibraryEntryOrder = Canonical | Title | Creator | Published | Added
+type Completion = Literal["all", "unfinished"]
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryEntryView:
+    order: LibraryEntryOrder
+    completion: Completion
+
+
+_ALLOWED_QUERY_KEYS = frozenset({"sort", "direction", "completion", "cursor", "limit"})
+_FACTUAL_SORTS: dict[str, type[Title | Creator | Published | Added]] = {
+    "title": Title,
+    "creator": Creator,
+    "published": Published,
+    "added": Added,
+}
+_DEFAULT_LIMIT = 100
+_MAX_LIMIT = 200
+
+
+def parse_entries_query(
+    items: Sequence[tuple[str, str]],
+) -> tuple[LibraryEntryView, int, str | None]:
+    """Strict entry-view query parse (spec API validation). ``items`` is the
+    request's ``multi_items()`` so duplicate keys are visible. Every malformed
+    request — unknown/duplicate key, factual sort without direction, direction
+    without a factual sort, unsupported sort/completion, bad/non-positive limit —
+    is ``E_INVALID_REQUEST``. Cursor validity is checked separately at decode."""
+    seen: dict[str, str] = {}
+    for key, value in items:
+        if key not in _ALLOWED_QUERY_KEYS:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Unsupported library-entry query parameter"
+            )
+        if key in seen:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "Duplicate library-entry query parameter"
+            )
+        seen[key] = value
+
+    order = _parse_order(seen.get("sort"), seen.get("direction"))
+    completion = _parse_completion(seen.get("completion"))
+    limit = _parse_limit(seen.get("limit"))
+    return LibraryEntryView(order=order, completion=completion), limit, seen.get("cursor")
+
+
+def _parse_order(sort: str | None, direction: str | None) -> LibraryEntryOrder:
+    if sort is None:
+        if direction is not None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST, "direction requires a factual sort"
+            )
+        return Canonical()
+    variant = _FACTUAL_SORTS.get(sort)
+    if variant is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported sort")
+    if direction != "asc" and direction != "desc":
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Factual sort requires direction asc or desc"
+        )
+    return variant(direction)
+
+
+def _parse_completion(value: str | None) -> Completion:
+    if value is None:
+        return "all"
+    if value == "unfinished":
+        return "unfinished"
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported completion")
+
+
+def _parse_limit(value: str | None) -> int:
+    if value is None:
+        return _DEFAULT_LIMIT
+    try:
+        limit = int(value)
+    except ValueError:
+        # justify-ignore-error: a non-integer limit is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid limit") from None
+    if limit <= 0:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
+    return min(limit, _MAX_LIMIT)
 
 
 def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
@@ -163,29 +280,6 @@ def destination_membership_rows_sql() -> str:
               AND destination.is_default = true
               AND destination.system_key IS NULL
         )
-    """
-
-
-def physical_entry_rows_sql() -> str:
-    """Uncapped physical rows for ``:library_id``.
-
-    Columns are the canonical entry columns plus ``target_scheme`` and
-    ``target_id``. Visibility and recommendation policy belong to the composing
-    query.
-    """
-    return """
-        SELECT
-            le.id,
-            le.library_id,
-            le.media_id,
-            le.podcast_id,
-            le.created_at,
-            le.position,
-            CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
-                AS target_scheme,
-            COALESCE(le.media_id, le.podcast_id) AS target_id
-        FROM library_entries le
-        WHERE le.library_id = :library_id
     """
 
 
@@ -1208,29 +1302,161 @@ def remove_user_podcast_subscription_libraries(
     )
 
 
-def _encode_entry_cursor(payload: dict[str, Any]) -> str:
-    encoded = base64.urlsafe_b64encode(json.dumps(payload, default=str).encode("utf-8")).decode(
-        "ascii"
-    )
+type _SortValue = Literal["int", "datetime", "uuid", "text", "text_or_null"]
+
+
+@dataclass(frozen=True, slots=True)
+class _SortKey:
+    """One key of a total keyset order: a facts-CTE column (== cursor `after`
+    key), its direction, and how the value round-trips through the cursor."""
+
+    column: str
+    direction: Direction
+    value: _SortValue
+
+
+def _plan(order: LibraryEntryOrder, *, is_default: bool) -> list[_SortKey]:
+    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
+    cursor `after`. The identity tie-break is ALWAYS ``sort_identity DESC``
+    (stable regardless of primary direction); missing-rank keys are ALWAYS ASC so
+    missing sorts last in both directions (0=present, 1=missing)."""
+    identity = _SortKey("sort_identity", "desc", "uuid")
+    match order:
+        case Canonical():
+            if is_default:
+                return [_SortKey("media_created_at", "desc", "datetime"), identity]
+            return [
+                _SortKey("position", "asc", "int"),
+                _SortKey("created_at", "desc", "datetime"),
+                identity,
+            ]
+        case Title(direction):
+            return [_SortKey("title_key", direction, "text"), identity]
+        case Creator(direction):
+            return [
+                _SortKey("creator_missing", "asc", "int"),
+                _SortKey("creator_name", direction, "text_or_null"),
+                _SortKey("title_key", "asc", "text"),
+                identity,
+            ]
+        case Published(direction):
+            return [
+                _SortKey("published_missing", "asc", "int"),
+                _SortKey("published_date", direction, "text_or_null"),
+                _SortKey("title_key", "asc", "text"),
+                identity,
+            ]
+        case Added(direction):
+            return [_SortKey("added_at", direction, "datetime"), identity]
+        case _:
+            assert_never(order)
+
+
+def _keyset_clause(plan: Sequence[_SortKey]) -> str:
+    """Generic strict keyset over the plan. Equality via ``IS NOT DISTINCT FROM``
+    is NULL-safe; strict ``<``/``>`` on a NULL bound yields NULL (false), which is
+    correct because the leading missing-rank key already partitions the
+    present/missing buckets before any nullable value key is compared."""
+    ors = []
+    for i, key in enumerate(plan):
+        conj = [f"facts.{p.column} IS NOT DISTINCT FROM :ks_{p.column}" for p in plan[:i]]
+        op = ">" if key.direction == "asc" else "<"
+        conj.append(f"facts.{key.column} {op} :ks_{key.column}")
+        ors.append("(" + " AND ".join(conj) + ")")
+    return "AND (" + " OR ".join(ors) + ")"
+
+
+def _order_json(order: LibraryEntryOrder) -> dict[str, str]:
+    match order:
+        case Canonical():
+            return {"sort": "canonical"}
+        case Title(direction):
+            return {"sort": "title", "direction": direction}
+        case Creator(direction):
+            return {"sort": "creator", "direction": direction}
+        case Published(direction):
+            return {"sort": "published", "direction": direction}
+        case Added(direction):
+            return {"sort": "added", "direction": direction}
+        case _:
+            assert_never(order)
+
+
+def _encode_key_value(value: Any, kind: _SortValue) -> Any:
+    match kind:
+        case "int":
+            return int(value)
+        case "datetime":
+            return value.isoformat()
+        case "uuid":
+            return str(value)
+        case "text":
+            return str(value)
+        case "text_or_null":
+            return None if value is None else str(value)
+        case _:
+            assert_never(kind)
+
+
+def _decode_key_value(value: Any, kind: _SortValue) -> Any:
+    match kind:
+        case "int":
+            return int(value)
+        case "datetime":
+            return datetime.fromisoformat(str(value))
+        case "uuid":
+            return UUID(str(value))
+        case "text":
+            return str(value)
+        case "text_or_null":
+            return None if value is None else str(value)
+        case _:
+            assert_never(kind)
+
+
+def _encode_view_cursor(
+    *, viewer_id: UUID, library_id: UUID, view: LibraryEntryView, plan: Sequence[_SortKey], row: Any
+) -> str:
+    """Encode the exact-view cursor from a raw facts row. justify-base64url: the
+    cursor rides in a URL query parameter, so URL-safe base64 (with padding
+    stripped) avoids percent-encoding `+`/`/`/`=`."""
+    payload = {
+        "k": _VIEW_CURSOR_KIND,
+        "viewer_id": str(viewer_id),
+        "library_id": str(library_id),
+        "order": _order_json(view.order),
+        "completion": view.completion,
+        "after": {key.column: _encode_key_value(row[key.column], key.value) for key in plan},
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
     return encoded.rstrip("=")
 
 
-def _decode_entry_cursor(
-    cursor: str, expected_k: str, *, viewer_id: UUID, library_id: UUID
-) -> dict[str, Any]:
-    """Strict, discriminated cursor decode (spec S4.2). Any `k`/viewer/library
-    mismatch — including every pre-cutover `library_entries:snapshot` cursor,
-    whose `k` never equals one of the three v1 kinds — is E_INVALID_CURSOR."""
+def _decode_view_cursor(
+    cursor: str,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    view: LibraryEntryView,
+    plan: Sequence[_SortKey],
+) -> dict[str, object]:
+    """Decode a cursor into ``:ks_<column>`` keyset binds. Any mismatch — a
+    non-view `k` (every legacy default/position/resonance cursor), a different
+    viewer/library, or a different order/completion (cross-sort, cross-direction,
+    cross-filter reuse) — is E_INVALID_CURSOR."""
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
         if (
-            payload.get("k") != expected_k
+            payload["k"] != _VIEW_CURSOR_KIND
             or UUID(str(payload["viewer_id"])) != viewer_id
             or UUID(str(payload["library_id"])) != library_id
+            or payload["order"] != _order_json(view.order)
+            or payload["completion"] != view.completion
         ):
             raise ValueError
-        return payload
+        after = payload["after"]
+        return {f"ks_{key.column}": _decode_key_value(after[key.column], key.value) for key in plan}
     except Exception:
         # justify-ignore-error: malformed cursor input is an expected API error path.
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
@@ -1256,81 +1482,143 @@ def _finish_entry_page(
     return page_entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
 
 
-def _list_default_library_entries(
+def _membership_cte_sql(*, is_default: bool) -> str:
+    """The final ``membership`` CTE (plus its inner CTEs when Default): complete,
+    already viewer-visibility-scoped physical rows exposing the canonical entry
+    columns. Non-default is one CTE; Default assembles the two-stage
+    media-deduplication before it."""
+    entry_cols = "le.id, le.library_id, le.media_id, le.podcast_id, le.created_at, le.position"
+    if not is_default:
+        return f"""
+            membership AS (
+                SELECT {entry_cols}
+                FROM library_entries le
+                WHERE le.library_id = :library_id
+                  AND (le.podcast_id IS NOT NULL
+                       OR le.media_id IN ({visible_media_ids_cte_sql()}))
+            )
+        """
+    return f"""
+        default_media AS (
+            {library_media_ids_cte_sql()}
+        ),
+        candidate_entries AS (
+            SELECT
+                le.id AS entry_id,
+                le.media_id,
+                (le.library_id = :library_id) AS is_direct_default,
+                le.created_at AS entry_created_at
+            FROM library_entries le
+            JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
+            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE le.media_id IN (SELECT media_id FROM default_media)
+        ),
+        ranked AS (
+            SELECT DISTINCT ON (media_id) entry_id
+            FROM candidate_entries
+            ORDER BY media_id, is_direct_default DESC, entry_created_at ASC, entry_id ASC
+        ),
+        membership AS (
+            SELECT {entry_cols}
+            FROM ranked r
+            JOIN library_entries le ON le.id = r.entry_id
+        )
+    """
+
+
+def _query_view_page(
     db: Session,
     *,
     viewer_id: UUID,
     library_id: UUID,
+    is_default: bool,
+    view: LibraryEntryView,
     limit: int,
-    cursor: str | None,
+    after: dict[str, object] | None,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """Default virtual read surface (spec S4.1/S4.2): accessible non-system
-    physical media entries, deduplicated by media_id via a two-stage DISTINCT ON
-    — ``candidate_entries`` gathers every qualifying physical row per media
-    across the viewer's non-system libraries, ``ranked`` picks the winner (a
-    direct default entry first, else deterministic earliest
-    (entry.created_at, id)) — then joins back for the full entry row, ordered
-    (media.created_at DESC, media.id DESC)."""
-    after_media_created_at: datetime | None = None
-    after_media_id: UUID | None = None
-    if cursor is not None:
-        payload = _decode_entry_cursor(
-            cursor, _DEFAULT_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
+    """The single view query (spec backend architecture): one statement with a
+    single top-level ``WITH`` — membership (branched default vs non-default), a
+    uniform ``facts`` CTE, completion filter, generic keyset, plan-driven ORDER
+    BY, LIMIT+1 — then the shared hydration tail."""
+    plan = _plan(view.order, is_default=is_default)
+    needs_creator = isinstance(view.order, Creator)
+    unfinished = view.completion == "unfinished"
+
+    creator_name_expr = (
+        "COALESCE(mc.primary_name, pc.primary_name)" if needs_creator else "NULL::text"
+    )
+    added_at_expr = "md.created_at" if is_default else "membership.created_at"
+    sort_identity_expr = "membership.media_id" if is_default else "membership.id"
+    read_state_expr = "eng.read_state" if unfinished else "NULL::text"
+
+    facts_joins = [
+        "LEFT JOIN media md ON md.id = membership.media_id",
+        "LEFT JOIN podcasts pod ON pod.id = membership.podcast_id",
+    ]
+    if needs_creator:
+        facts_joins.append(
+            f"LEFT JOIN ({primary_creator_rows_sql('media_id')}) mc"
+            " ON mc.owner_id = membership.media_id"
         )
-        try:
-            after_media_created_at = datetime.fromisoformat(str(payload["after_media_created_at"]))
-            after_media_id = UUID(str(payload["after_media_id"]))
-        except Exception:
-            # justify-ignore-error: malformed cursor input is an expected API error path.
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+        facts_joins.append(
+            f"LEFT JOIN ({primary_creator_rows_sql('podcast_id')}) pc"
+            " ON pc.owner_id = membership.podcast_id"
+        )
+    if unfinished:
+        facts_joins.append(
+            f"LEFT JOIN ({consumption_service.engagement_fact_rows_sql()}) eng"
+            " ON eng.media_id = membership.media_id"
+        )
+
+    completion_clause = (
+        "AND (facts.podcast_id IS NOT NULL OR facts.read_state IS DISTINCT FROM 'Finished')"
+        if unfinished
+        else ""
+    )
+    keyset_clause = _keyset_clause(plan) if after is not None else ""
+    order_by = ", ".join(f"facts.{key.column} {key.direction.upper()}" for key in plan)
 
     params: dict[str, object] = {
         "viewer_id": viewer_id,
         "library_id": library_id,
         "limit": limit + 1,
     }
-    keyset_clause = ""
-    if after_media_id is not None:
-        keyset_clause = """
-          AND (
-            md.created_at < :after_media_created_at
-            OR (md.created_at = :after_media_created_at AND md.id < :after_media_id)
-          )
-        """
-        params["after_media_created_at"] = after_media_created_at
-        params["after_media_id"] = after_media_id
+    if after is not None:
+        params.update(after)
 
     rows = (
         db.execute(
             text(f"""
-                WITH default_media AS (
-                    {library_media_ids_cte_sql()}
-                ),
-                candidate_entries AS (
+                WITH {_membership_cte_sql(is_default=is_default)},
+                facts AS (
                     SELECT
-                        le.id AS entry_id,
-                        le.media_id AS media_id,
-                        (le.library_id = :library_id) AS is_direct_default,
-                        le.created_at AS entry_created_at
-                    FROM library_entries le
-                    JOIN libraries l ON l.id = le.library_id AND l.system_key IS NULL
-                    JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-                    WHERE le.media_id IN (SELECT media_id FROM default_media)
-                ),
-                ranked AS (
-                    SELECT DISTINCT ON (media_id) entry_id
-                    FROM candidate_entries
-                    ORDER BY media_id, is_direct_default DESC, entry_created_at ASC, entry_id ASC
+                        membership.id,
+                        membership.library_id,
+                        membership.media_id,
+                        membership.podcast_id,
+                        membership.created_at,
+                        membership.position,
+                        md.created_at AS media_created_at,
+                        {added_at_expr} AS added_at,
+                        lower(btrim(COALESCE(md.title, pod.title))) AS title_key,
+                        {creator_name_expr} AS creator_name,
+                        ({creator_name_expr} IS NULL)::int AS creator_missing,
+                        md.published_date AS published_date,
+                        (md.published_date IS NULL)::int AS published_missing,
+                        {sort_identity_expr} AS sort_identity,
+                        {read_state_expr} AS read_state
+                    FROM membership
+                    {" ".join(facts_joins)}
                 )
                 SELECT
-                    le.id, le.library_id, le.media_id, le.podcast_id, le.created_at, le.position,
-                    md.created_at AS media_created_at
-                FROM ranked r
-                JOIN library_entries le ON le.id = r.entry_id
-                JOIN media md ON md.id = le.media_id
+                    id, library_id, media_id, podcast_id, created_at, position,
+                    media_created_at, added_at, title_key, creator_name, creator_missing,
+                    published_date, published_missing, sort_identity
+                FROM facts
                 WHERE 1 = 1
-                {keyset_clause}
-                ORDER BY md.created_at DESC, md.id DESC
+                  {completion_clause}
+                  {keyset_clause}
+                ORDER BY {order_by}
                 LIMIT :limit
             """),
             params,
@@ -1339,109 +1627,14 @@ def _list_default_library_entries(
         .all()
     )
 
-    def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor(
-            {
-                "k": _DEFAULT_CURSOR_KIND,
-                "viewer_id": str(viewer_id),
-                "library_id": str(library_id),
-                "sort": "position",
-                "after_media_created_at": row["media_created_at"].isoformat(),
-                "after_media_id": str(row["media_id"]),
-            }
-        )
-
     return _finish_entry_page(
         db,
         viewer_id=viewer_id,
         rows=rows,
         limit=limit,
-        build_cursor=build_cursor,
-    )
-
-
-def _list_position_library_entries(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    limit: int,
-    cursor: str | None,
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """Non-default ``sort="position"``: a true keyset over the canonical
-    `_ENTRY_ORDER` (position ASC, created_at DESC, id DESC)."""
-    after_position: int | None = None
-    after_entry_created_at: datetime | None = None
-    after_entry_id: UUID | None = None
-    if cursor is not None:
-        payload = _decode_entry_cursor(
-            cursor, _POSITION_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
-        )
-        try:
-            after_position = int(payload["after_position"])
-            after_entry_created_at = datetime.fromisoformat(str(payload["after_entry_created_at"]))
-            after_entry_id = UUID(str(payload["after_entry_id"]))
-        except Exception:
-            # justify-ignore-error: malformed cursor input is an expected API error path.
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-    params: dict[str, object] = {
-        "library_id": library_id,
-        "viewer_id": viewer_id,
-        "limit": limit + 1,
-    }
-    keyset_clause = ""
-    if after_entry_id is not None:
-        keyset_clause = """
-          AND (
-            le.position > :after_position
-            OR (le.position = :after_position AND le.created_at < :after_entry_created_at)
-            OR (
-              le.position = :after_position
-              AND le.created_at = :after_entry_created_at
-              AND le.id < :after_entry_id
-            )
-          )
-        """
-        params["after_position"] = after_position
-        params["after_entry_created_at"] = after_entry_created_at
-        params["after_entry_id"] = after_entry_id
-
-    rows = (
-        db.execute(
-            text(f"""
-                SELECT {_ENTRY_COLUMNS} FROM library_entries le
-                WHERE le.library_id = :library_id
-                  AND (le.podcast_id IS NOT NULL OR le.media_id IN ({visible_media_ids_cte_sql()}))
-                {keyset_clause}
-                ORDER BY {_ENTRY_ORDER}
-                LIMIT :limit
-            """),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-
-    def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor(
-            {
-                "k": _POSITION_CURSOR_KIND,
-                "viewer_id": str(viewer_id),
-                "library_id": str(library_id),
-                "sort": "position",
-                "after_position": int(row["position"]),
-                "after_entry_created_at": row["created_at"].isoformat(),
-                "after_entry_id": str(row["id"]),
-            }
-        )
-
-    return _finish_entry_page(
-        db,
-        viewer_id=viewer_id,
-        rows=rows,
-        limit=limit,
-        build_cursor=build_cursor,
+        build_cursor=lambda row: _encode_view_cursor(
+            viewer_id=viewer_id, library_id=library_id, view=view, plan=plan, row=row
+        ),
     )
 
 
@@ -1450,35 +1643,38 @@ def list_library_entries(
     viewer_id: UUID,
     library_id: UUID,
     *,
+    view: LibraryEntryView,
     limit: int = 100,
     cursor: str | None = None,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """List a library's position-ordered, hydrated entries. Member-only.
+    """List a library's hydrated entries under a view lens. Member-only.
 
-    Default is the live, deduplicated personal-All virtual view; non-default
-    libraries use the canonical physical position order. Resonance ordering is
-    owned exclusively by the Resonance service.
+    The view's ``order`` selects Canonical (Default's `media.created_at DESC`,
+    else the physical position order) or one of the factual sorts; ``completion``
+    optionally excludes finished media (podcast shows always remain). Every page
+    is a true keyset over the view's total order; the returned cursor is bound to
+    this exact view.
     """
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 200)
-
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
 
-    if ctx.is_default:
-        return _list_default_library_entries(
-            db,
+    after: dict[str, object] | None = None
+    if cursor is not None:
+        after = _decode_view_cursor(
+            cursor,
             viewer_id=viewer_id,
             library_id=library_id,
-            limit=limit,
-            cursor=cursor,
+            view=view,
+            plan=_plan(view.order, is_default=ctx.is_default),
         )
-    return _list_position_library_entries(
+
+    return _query_view_page(
         db,
         viewer_id=viewer_id,
         library_id=library_id,
+        is_default=ctx.is_default,
+        view=view,
         limit=limit,
-        cursor=cursor,
+        after=after,
     )
 
 

@@ -1,5 +1,10 @@
 # Canonical Collection Row Hard Cutover
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) collapses
+> the "resonance list, gallery entries, list entries" three-way split of
+> `LibraryPaneBody` this document references into one view controller.
+
 **Status:** Implemented and locally verified · 2026-07-21 · adversarially
 reviewed
 

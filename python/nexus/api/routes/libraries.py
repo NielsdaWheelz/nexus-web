@@ -11,7 +11,7 @@ IMPORTANT: Static routes (/libraries/invites) must be registered BEFORE
 dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -329,40 +329,24 @@ def list_library_entries(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
-    limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    sort: Annotated[
-        Literal["position", "resonance"],
-        Query(description="Entry ordering: 'position' (default) or 'resonance'"),
-    ] = "position",
 ) -> dict:
-    """List ordered entries in a library.
+    """List a library's entries under a view lens.
 
-    Returns one mixed list of podcasts and media. ``sort='position'`` (default)
-    orders by entry position ASC; ``sort='resonance'`` delegates the
-    deterministic contextual order to Resonance (no request-time model call).
+    Returns one mixed list of podcasts and media. Canonical order (sort omitted)
+    is Default's `media.created_at DESC` or the physical position order;
+    ``sort=title|creator|published|added`` with a ``direction`` and an optional
+    ``completion=unfinished`` select a factual view. The whole query is parsed
+    strictly (see ``library_entries.parse_entries_query``).
     """
-    if set(request.query_params) - {"limit", "cursor", "sort"}:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Unsupported library-entry query parameter",
-        )
-    if sort == "resonance":
-        result, page = resonance_service.rank_library_entry_page(
-            db,
-            viewer_id=viewer.user_id,
-            library_id=library_id,
-            limit=limit,
-            cursor=cursor,
-        )
-    else:
-        result, page = library_entries.list_library_entries(
-            db,
-            viewer.user_id,
-            library_id,
-            limit=limit,
-            cursor=cursor,
-        )
+    view, limit, cursor = library_entries.parse_entries_query(request.query_params.multi_items())
+    result, page = library_entries.list_library_entries(
+        db,
+        viewer.user_id,
+        library_id,
+        view=view,
+        limit=limit,
+        cursor=cursor,
+    )
     return ok_page(result, page, by_alias=True)
 
 

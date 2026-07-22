@@ -176,17 +176,15 @@ function Harness({
   children,
   isActive,
   initialEntries = [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")],
-  sort = "resonance",
+  search = "",
 }: {
   children: ReactNode;
   isActive: boolean;
   initialEntries?: ReturnType<typeof entry>[];
-  sort?: "manual" | "resonance";
+  // Pane URL search (e.g. "sort=title&direction=asc"); empty = canonical view.
+  search?: string;
 }) {
-  const params = new URLSearchParams();
-  if (sort === "resonance") params.set("sort", "resonance");
-  const query = params.toString();
-  const href = `/libraries/${LIBRARY_ID}${query ? `?${query}` : ""}`;
+  const href = `/libraries/${LIBRARY_ID}${search ? `?${search}` : ""}`;
   const identity = resolvePaneRouteIdentity(href);
   return withRenderEnvironment(
     <FeedbackProvider>
@@ -336,7 +334,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       }),
     );
     render(
-      <Harness isActive initialEntries={[]} sort="manual">
+      <Harness isActive initialEntries={[]}>
         <LibraryPaneBody />
       </Harness>,
     );
@@ -377,7 +375,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(
-      <Harness isActive sort="manual">
+      <Harness isActive>
         <LibraryPaneBody />
       </Harness>,
     );
@@ -414,7 +412,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         data-testid="narrow-library-host"
         style={{ width: "320px", maxWidth: "320px" }}
       >
-        <Harness isActive sort="manual">
+        <Harness isActive>
           <LibraryPaneBody />
         </Harness>
       </div>,
@@ -457,7 +455,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     render(
       <Harness
         isActive
-        sort="manual"
+       
         initialEntries={[
           entry("entry-1", EXISTING_MEDIA_ID, "Minimal row", {
             publisher,
@@ -478,10 +476,10 @@ describe("LibraryPaneBody Reading Slate host", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
-  it("retries the exact Add, preserves main rows, and reconciles only the current sort", async () => {
+  it("retries the exact Add, preserves main rows, and reconciles only the current view", async () => {
     let slateReads = 0;
     let addAttempts = 0;
-    let resonanceReads = 0;
+    let entryReads = 0;
     const requestBodies: string[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathWithSearch(input);
@@ -509,11 +507,11 @@ describe("LibraryPaneBody Reading Slate host", () => {
           : new Response(null, { status: 204 });
       }
       if (
-        path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance` &&
+        path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc` &&
         method === "GET"
       ) {
-        resonanceReads += 1;
-        if (resonanceReads === 2) {
+        entryReads += 1;
+        if (entryReads === 2) {
           return response(
             { error: { code: "E_UPSTREAM", message: "Refresh failed" } },
             503,
@@ -521,7 +519,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         }
         return response({
           data:
-            resonanceReads === 1
+            entryReads === 1
               ? [entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work")]
               : [
                   entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work"),
@@ -535,13 +533,13 @@ describe("LibraryPaneBody Reading Slate host", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     const view = render(
-      <Harness isActive>
+      <Harness isActive search="sort=title&direction=asc">
         <LibraryPaneBody />
       </Harness>,
     );
 
     const rankedList = await screen.findByRole("list", {
-      name: "Library by resonance",
+      name: "Library entries",
     });
     expect(within(rankedList).getByText("Existing work")).toBeVisible();
     await user.click(
@@ -559,21 +557,23 @@ describe("LibraryPaneBody Reading Slate host", () => {
       library_ids: [LIBRARY_ID],
     });
     expect(within(rankedList).getByText("Existing work")).toBeVisible();
-    expect(resonanceReads).toBe(1);
+    expect(entryReads).toBe(1);
 
     view.rerender(
-      <Harness isActive={false}>
+      <Harness isActive={false} search="sort=title&direction=asc">
         <LibraryPaneBody />
       </Harness>,
     );
     view.rerender(
-      <Harness isActive>
+      <Harness isActive search="sort=title&direction=asc">
         <LibraryPaneBody />
       </Harness>,
     );
-    await waitFor(() => expect(resonanceReads).toBe(2));
+    await waitFor(() => expect(entryReads).toBe(2));
     expect(within(rankedList).getByText("Existing work")).toBeVisible();
     expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
+    // Reconciliation used only the current factual view, never the canonical
+    // (query-less) entries endpoint.
     expect(
       fetchMock.mock.calls.some(
         ([input]) =>
@@ -583,7 +583,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     ).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(resonanceReads).toBe(3));
+    await waitFor(() => expect(entryReads).toBe(3));
     expect(await within(rankedList).findByText("Suggested work")).toBeVisible();
   });
 });

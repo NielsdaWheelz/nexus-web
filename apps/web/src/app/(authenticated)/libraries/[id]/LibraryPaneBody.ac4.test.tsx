@@ -1,4 +1,5 @@
-import { screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
@@ -8,6 +9,10 @@ import {
   fetchInputPath,
   stubFetch,
 } from "@/__tests__/helpers/fetch";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import {
   OPEN_LAUNCHER_EVENT,
@@ -17,6 +22,46 @@ import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChr
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
+
+// A pane host whose href is real state, so a pane-router replace (the library
+// view codec's write path) re-decodes the view and drives the entries endpoint
+// exactly as production does. renderHydratedPane's onReplacePane is inert, so it
+// cannot exercise a user-driven view change.
+function StatefulLibraryPane({
+  initialHref,
+  resources,
+}: {
+  initialHref: string;
+  resources: Record<string, unknown>;
+}) {
+  const [href, setHref] = useState(initialHref);
+  const identity = resolvePaneRouteIdentity(href);
+  return (
+    <FeedbackProvider>
+      <ResourceCacheProvider value={resources}>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          isActive
+          href={href}
+          routeId={identity.routeId}
+          routeKey={identity.routeKey}
+          pathParams={{ id: LIBRARY_ID }}
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={(_paneId: string, next: string) => setHref(next)}
+          onReplacePane={(_paneId: string, next: string) => setHref(next)}
+          onOpenInNewPane={vi.fn()}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+        >
+          <LecternProvider>
+            <LibraryPaneBody />
+          </LecternProvider>
+        </PaneRuntimeProvider>
+      </ResourceCacheProvider>
+    </FeedbackProvider>
+  );
+}
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
 // resource into the bootstrap hydration cache under the bare library id (the
@@ -87,13 +132,14 @@ function mediaEntryWire(
     totalMinutes?: number;
     remainingMinutes?: number;
     capabilities?: Record<string, boolean>;
+    createdAt?: string;
   } = {},
 ) {
   return {
     id,
     kind: "media",
     position: 0,
-    created_at: "2026-01-01T00:00:00Z",
+    created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
     media: {
       id: mediaId,
       kind: "web_article",
@@ -102,6 +148,7 @@ function mediaEntryWire(
       published_date: null,
       publisher: null,
       canonical_source_url: null,
+      created_at: options.createdAt ?? "2026-01-01T00:00:00Z",
       processing_status: "ready_for_reading",
       read_state: options.readState ?? "unread",
       progress_fraction: options.progressFraction ?? null,
@@ -423,28 +470,24 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
   });
 
-  it("loads another page of resonance-sorted library entries", async () => {
+  it("loads another page of a factually sorted view with the view query", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
         return Response.json({
-          data: [
-            mediaEntryWire("entry-r1", "media-r1", "First Resonance Work"),
-          ],
-          page: { has_more: true, next_cursor: "cursor-r2" },
+          data: [mediaEntryWire("entry-t1", "media-t1", "Alpha Work")],
+          page: { has_more: true, next_cursor: "cursor-2" },
         });
       }
       if (
         path ===
-        `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`
+        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2`
       ) {
         return Response.json({
-          data: [
-            mediaEntryWire("entry-r2", "media-r2", "Second Resonance Work"),
-          ],
+          data: [mediaEntryWire("entry-t2", "media-t2", "Beta Work")],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -455,25 +498,25 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "Manual Work")],
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("First Resonance Work")).toBeInTheDocument();
+    // The factual first page comes from the endpoint, not the canonical seed.
+    expect(await screen.findByText("Alpha Work")).toBeInTheDocument();
+    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
-    expect(
-      await screen.findByText("Second Resonance Work"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Beta Work")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`,
+      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc&cursor=cursor-2`,
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -520,19 +563,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(screen.queryByText("Invalid Work")).not.toBeInTheDocument();
   });
 
-  it("rejects a malformed resonance entry at the shared reading-time boundary", async () => {
+  it("rejects a malformed factual first-page entry at the reading-time boundary", async () => {
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       if (
         fetchInputPathWithSearch(input) ===
-        `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`
+        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
       ) {
-        const invalid = mediaEntryWire(
-          "entry-r1",
-          "media-r1",
-          "Invalid Resonance Work",
-        );
+        const invalid = mediaEntryWire("entry-t1", "media-t1", "Invalid Work");
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
           data: [invalid],
@@ -546,11 +585,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [seededMediaEntry("entry-1", "media-1", "Manual Work")],
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -558,11 +597,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     expect(
-      await screen.findByText("Failed to rank library entries"),
+      await screen.findByText("Failed to load library entries"),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Invalid Resonance Work"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Invalid Work")).not.toBeInTheDocument();
   });
 
   it("optimistically shows finished state and restores progress without losing a concurrent page", async () => {
@@ -714,16 +751,16 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).toBeInTheDocument();
   });
 
-  it("suppresses a stale estimate in both manual and resonance views after source refresh", async () => {
+  it("suppresses a stale estimate under a factual view after a source refresh", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);
       if (lectern) return lectern;
       const path = fetchInputPathWithSearch(input);
-      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
         return Response.json({
           data: [
-            mediaEntryWire("entry-r1", ACTION_MEDIA_ID, "Refreshing Work", {
+            mediaEntryWire("entry-t1", ACTION_MEDIA_ID, "Refreshing Work", {
               readState: "in_progress",
               progressFraction: 0.5,
               remainingMinutes: 5,
@@ -765,18 +802,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     });
 
     renderHydratedPane({
-      href: `/libraries/${LIBRARY_ID}?sort=resonance`,
+      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
       resources: {
         [LIBRARY_ID]: {
           library: seededLibrary(),
-          entries: [
-            seededMediaEntry("entry-1", ACTION_MEDIA_ID, "Refreshing Work", {
-              readState: "in_progress",
-              progressFraction: 0.5,
-              remainingMinutes: 5,
-              capabilities: { can_refresh_source: true },
-            }),
-          ],
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
           entriesPage: { has_more: false, next_cursor: null },
         },
       },
@@ -794,12 +824,528 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       expect(screen.queryByText("50% · ≈5 min left")).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Processing")).toBeInTheDocument();
+  });
+
+  it("switches the Sort-by preset, requesting the new view query and re-paginating", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+        return Response.json({
+          data: [mediaEntryWire("entry-t1", "media-t1", "Titled Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Sort by" }),
+      "title-asc",
+    );
+
+    expect(await screen.findByText("Titled Work")).toBeInTheDocument();
+    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("toggles Hide finished, requesting completion=unfinished", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
+        return Response.json({
+          data: [mediaEntryWire("entry-u1", "media-u1", "Unfinished Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Hide finished" }));
+
+    expect(await screen.findByText("Unfinished Work")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("renders the filtered-empty notice with a Show finished recovery", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`
+      ) {
+        return Response.json({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?completion=unfinished`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("No unfinished items")).toBeInTheDocument();
+    // The toolbar controls stay visible in the filtered-empty state.
+    expect(
+      screen.getByRole("combobox", { name: "Sort by" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show finished" }));
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(screen.queryByText("No unfinished items")).not.toBeInTheDocument();
+  });
+
+  it("renders the Invalid library view state with a Reset view recovery", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    // sort absent + direction present decodes to an Invalid view.
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?direction=asc`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Invalid library view"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Canonical Seed")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Sort by" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reset view" }));
+
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(screen.queryByText("Invalid library view")).not.toBeInTheDocument();
+  });
+
+  it("shows an Added line under the Added order and not under the canonical order", async () => {
+    const addedIso = "2026-03-04T00:00:00Z";
+    const expectedAdded = new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(addedIso));
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=added&direction=desc`
+      ) {
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-a1", "media-a1", "Dated Work", {
+              createdAt: addedIso,
+            }),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    // Canonical order: no Added line.
+    const { unmount } = render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [
+              seededMediaEntry("entry-1", "media-1", "Canonical Seed", {
+                createdAt: addedIso,
+              }),
+            ],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+    expect(await screen.findByText("Canonical Seed")).toBeInTheDocument();
+    expect(screen.queryByText(`Added ${expectedAdded}`)).not.toBeInTheDocument();
+    unmount();
+
+    // Added order: the Added line renders.
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?sort=added&direction=desc`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+    expect(await screen.findByText("Dated Work")).toBeInTheDocument();
+    expect(screen.getByText(`Added ${expectedAdded}`)).toBeInTheDocument();
+  });
+
+  it("hides reorder handles under a factual sort even when reorder is otherwise allowed", async () => {
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      if (
+        fetchInputPathWithSearch(input) ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`
+      ) {
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-t1", "media-t1", "Alpha Work"),
+            mediaEntryWire("entry-t2", "media-t2", "Beta Work"),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?sort=title&direction=asc`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(await screen.findByText("Alpha Work")).toBeInTheDocument();
+    // Reorder is gated to the canonical/all view, so no per-row Move up/down.
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "More actions for Alpha Work" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Move up" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Move down" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("moves focus to a sibling row after Mark Finished removes it under the unfinished filter", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`) {
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-1", ACTION_MEDIA_ID, "First Work", {
+              readState: "in_progress",
+              progressFraction: 0.5,
+              remainingMinutes: 5,
+            }),
+            mediaEntryWire("entry-2", "media-2", "Second Work"),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (path === "/api/consumption/commands") {
+        return consumptionSuccessResponse();
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-0", "media-0", "Canonical Seed")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(await screen.findByText("First Work")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "More actions for First Work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    // The finished row leaves the filtered view and focus lands on a sibling row.
+    await waitFor(() =>
+      expect(screen.queryByText("First Work")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => {
+      const secondRow = screen
+        .getByText("Second Work")
+        .closest("[data-collection-row-id]");
+      expect(secondRow?.contains(document.activeElement)).toBe(true);
+    });
+  });
+
+  // Regression: under Hide finished, marking the only visible row(s) on a page
+  // finished must not strand the next server page behind a false empty notice
+  // when next_cursor was non-null (AC3/AC8's auto-advance effect). It should
+  // instead auto-fetch the next unfinished page with the view's query intact,
+  // and only show "No unfinished items" once the cursor is truly exhausted.
+  it("auto-advances past a client-emptied filtered page instead of stranding it", async () => {
+    const user = userEvent.setup();
+    let resolvePage2!: (value: Response) => void;
+    const page2Response = new Promise<Response>((resolve) => {
+      resolvePage2 = resolve;
+    });
+    const page1Path = `/api/libraries/${LIBRARY_ID}/entries?completion=unfinished`;
+    const page2Path = `${page1Path}&cursor=cursor-p2`;
+    // parseMediaId requires a canonical UUID; these are the media ids that get
+    // a real "Mark as finished" click (which calls lectern.ensureMediaFinished).
+    const PAGE1_MEDIA_ID = "11111111-1111-4111-8111-222222222221";
+    const PAGE2_MEDIA_ID = "11111111-1111-4111-8111-222222222222";
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === page1Path) {
+        return Response.json({
+          data: [
+            mediaEntryWire("entry-p1", PAGE1_MEDIA_ID, "Page One Unfinished"),
+          ],
+          page: { has_more: true, next_cursor: "cursor-p2" },
+        });
+      }
+      if (path === page2Path) {
+        return page2Response;
+      }
+      if (fetchInputPath(input) === "/api/consumption/commands") {
+        return consumptionSuccessResponse();
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    renderHydratedPane({
+      href: `/libraries/${LIBRARY_ID}?completion=unfinished`,
+      resources: {
+        [LIBRARY_ID]: {
+          library: seededLibrary(),
+          entries: [seededMediaEntry("entry-0", "media-0", "Canonical Seed")],
+          entriesPage: { has_more: false, next_cursor: null },
+        },
+      },
+      children: paneWithLectern,
+    });
+
+    expect(await screen.findByText("Page One Unfinished")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for Page One Unfinished",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    // Page 1's only unfinished row is filtered client-side, but its
+    // next_cursor was non-null, so the pane must auto-fetch page 2 with the
+    // view's query preserved rather than declare a (false) empty state.
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        page2Path,
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+    expect(screen.queryByText("No unfinished items")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Page One Unfinished"),
+    ).not.toBeInTheDocument();
+
+    resolvePage2(
+      Response.json({
+        data: [
+          mediaEntryWire("entry-p2", PAGE2_MEDIA_ID, "Page Two Unfinished"),
+        ],
+        page: { has_more: false, next_cursor: null },
+      }),
+    );
+
+    expect(await screen.findByText("Page Two Unfinished")).toBeInTheDocument();
+
+    // Now the page-2 row is the only one left; marking it finished too
+    // legitimately empties the view with the cursor exhausted (null), so the
+    // real "No unfinished items" empty state (with its recovery) renders.
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for Page Two Unfinished",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+
+    expect(await screen.findByText("No unfinished items")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Show finished" }),
+    ).toBeInTheDocument();
+  });
+
+  // Regression/invariant: switching the Sort-by preset from one factual view
+  // to another must issue a fresh page-1 request for the new view — never
+  // carrying the outgoing view's outstanding cursor along. This is the
+  // lightweight form of the view-change reconciliation guard: the full
+  // pane-active/reconciliation race additionally requires toggling pane
+  // activity mid-flight, which the current harness's PaneRuntimeProvider
+  // wiring (isActive is a fixed prop, not stateful) doesn't expose, so this
+  // asserts the simpler, directly-verifiable invariant instead.
+  it("resets the cursor when switching between factual sort views (never carries a stale cursor)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=title&direction=asc`) {
+        return Response.json({
+          data: [mediaEntryWire("entry-t1", "media-t1", "Alpha Work")],
+          page: { has_more: true, next_cursor: "cursor-title-2" },
+        });
+      }
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`
+      ) {
+        return Response.json({
+          data: [mediaEntryWire("entry-c1", "media-c1", "Creator Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(
+      <StatefulLibraryPane
+        initialHref={`/libraries/${LIBRARY_ID}?sort=title&direction=asc`}
+        resources={{
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-1", "media-1", "Canonical Seed")],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Alpha Work")).toBeInTheDocument();
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Sort" }),
-      "manual",
+      screen.getByRole("combobox", { name: "Sort by" }),
+      "creator-asc",
     );
-    expect(await screen.findByText("Processing")).toBeInTheDocument();
-    expect(screen.queryByText("50% · ≈5 min left")).not.toBeInTheDocument();
+
+    expect(await screen.findByText("Creator Work")).toBeInTheDocument();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/libraries/${LIBRARY_ID}/entries?sort=creator&direction=asc`,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        fetchInputPathWithSearch(input).includes("cursor=cursor-title-2"),
+      ),
+    ).toBe(false);
   });
 });

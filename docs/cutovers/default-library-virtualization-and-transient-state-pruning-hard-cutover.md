@@ -3,6 +3,12 @@
 **Status:** IMPLEMENTED · Rev 2 · 2026-07-16 (implemented 2026-07-17)
 **Type:** Hard cutover — no legacy paths, fallbacks, dual reads/writes, feature flags, or backward compatibility.
 
+> **Superseded (2026-07-22):**
+> [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) deletes
+> the `library_entries:resonance:v*` cursor kinds and the default `sort=resonance`
+> rejection this document describes, replacing all library-entry cursor kinds
+> with the single `library_entries:view:v1` family.
+
 **Resonance supersession (2026-07-21):**
 [`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
 removes `viewer_tz`, Surfaced Today, and the root entry engagement field; moves
