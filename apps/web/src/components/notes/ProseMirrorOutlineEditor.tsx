@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
 import {
   EditorState,
@@ -165,6 +172,7 @@ export default function ProseMirrorOutlineEditor({
   const triggerRef = useRef<ObjectRefTrigger | null>(null);
   const targetsRef = useRef<ResourceTarget[]>([]);
   const activeKeyRef = useRef<string | null>(null);
+  const menuOpenRef = useRef(false);
 
   const schemes =
     trigger?.filter === "page_note" ? PAGE_NOTE_SCHEMES : undefined;
@@ -300,12 +308,13 @@ export default function ProseMirrorOutlineEditor({
   }
 
   const menuOpen = Boolean(trigger && targets.length > 0);
+  menuOpenRef.current = menuOpen;
   const activeOptionId =
     trigger && activeKey
       ? `${autocompleteListboxId}-option-${activeKey}`
       : undefined;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.setProps({
@@ -636,7 +645,7 @@ export default function ProseMirrorOutlineEditor({
           if (!(event.target instanceof HTMLElement)) {
             return false;
           }
-          if (triggerRef.current) {
+          if (menuOpenRef.current) {
             const handledAutocompleteKey = handleObjectRefMenuKeydown(event, {
               targets: targetsRef.current,
               activeKey: activeKeyRef.current,

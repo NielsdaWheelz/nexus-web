@@ -1,26 +1,29 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { AppRouterContext, type AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthenticatedWorkspaceErrorBoundary } from "./AuthenticatedWorkspaceErrorBoundary";
 
-function stubRouter(overrides: Partial<AppRouterInstance> = {}): AppRouterInstance {
+const routerRefresh = vi.fn<() => void>();
+
+vi.mock("next/navigation", () => ({
+  useRouter: vi.fn(),
+}));
+
+function stubRouter(): ReturnType<typeof useRouter> {
   return {
     back: vi.fn(),
     forward: vi.fn(),
-    refresh: vi.fn(),
+    refresh: routerRefresh,
     push: vi.fn(),
     replace: vi.fn(),
     prefetch: vi.fn(),
-    ...overrides,
-  } as AppRouterInstance;
+  };
 }
 
-function renderBoundary(children: ReactNode, router: AppRouterInstance) {
+function renderBoundary(children: ReactNode) {
   return render(
-    <AppRouterContext.Provider value={router}>
-      <AuthenticatedWorkspaceErrorBoundary>{children}</AuthenticatedWorkspaceErrorBoundary>
-    </AppRouterContext.Provider>,
+    <AuthenticatedWorkspaceErrorBoundary>{children}</AuthenticatedWorkspaceErrorBoundary>,
   );
 }
 
@@ -28,23 +31,25 @@ function Bomb(): ReactNode {
   throw new Error("bootstrap failed");
 }
 
+beforeEach(() => {
+  routerRefresh.mockReset();
+  vi.mocked(useRouter).mockReturnValue(stubRouter());
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("AuthenticatedWorkspaceErrorBoundary", () => {
-  beforeEach(() => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("renders children when nothing throws", () => {
-    renderBoundary(<p>workspace</p>, stubRouter());
+    renderBoundary(<p>workspace</p>);
     expect(screen.getByText("workspace")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("replaces a crashed subtree with a focused, labelled alert region", async () => {
-    renderBoundary(<Bomb />, stubRouter());
+    renderBoundary(<Bomb />);
     const region = screen.getByRole("alert");
     expect(region).toHaveAccessibleName("The workspace couldn’t load");
     expect(region).toHaveAttribute("tabindex", "-1");
@@ -53,8 +58,6 @@ describe("AuthenticatedWorkspaceErrorBoundary", () => {
   });
 
   it("retries with a new server request: router.refresh plus boundary reset in one transition", async () => {
-    const router = stubRouter();
-
     // First render throws; after the boundary resets, the child renders clean —
     // standing in for the refreshed Server Component tree.
     let shouldThrow = true;
@@ -65,21 +68,20 @@ describe("AuthenticatedWorkspaceErrorBoundary", () => {
       return <p>workspace</p>;
     }
 
-    renderBoundary(<HealsAfterRefresh />, router);
+    renderBoundary(<HealsAfterRefresh />);
     shouldThrow = false;
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(router.refresh).toHaveBeenCalledTimes(1);
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("workspace")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("catches again when the retried subtree still fails", async () => {
-    const router = stubRouter();
-    renderBoundary(<Bomb />, router);
+    renderBoundary(<Bomb />);
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(router.refresh).toHaveBeenCalledTimes(1);
+    expect(routerRefresh).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
@@ -90,14 +92,12 @@ describe("AuthenticatedWorkspaceErrorBoundary", () => {
     const [outer] = [
       () =>
         render(
-          <AppRouterContext.Provider value={stubRouter()}>
-            <>
-              <AuthenticatedWorkspaceErrorBoundary>
-                <p>inside</p>
-              </AuthenticatedWorkspaceErrorBoundary>
-              <Outside />
-            </>
-          </AppRouterContext.Provider>,
+          <>
+            <AuthenticatedWorkspaceErrorBoundary>
+              <p>inside</p>
+            </AuthenticatedWorkspaceErrorBoundary>
+            <Outside />
+          </>,
         ),
     ];
     expect(outer).toThrow("outside");
@@ -110,21 +110,13 @@ describe("reset contract", () => {
   it("clears hasError through onReset and re-renders children", async () => {
     function Harness() {
       const [crash, setCrash] = useState(true);
+      routerRefresh.mockImplementation(() => setCrash(false));
       return (
-        <AppRouterContext.Provider
-          value={stubRouter({
-            refresh: () => {
-              setCrash(false);
-            },
-          })}
-        >
-          <AuthenticatedWorkspaceErrorBoundary>
-            {crash ? <Bomb /> : <p>restored</p>}
-          </AuthenticatedWorkspaceErrorBoundary>
-        </AppRouterContext.Provider>
+        <AuthenticatedWorkspaceErrorBoundary>
+          {crash ? <Bomb /> : <p>restored</p>}
+        </AuthenticatedWorkspaceErrorBoundary>
       );
     }
-    vi.spyOn(console, "error").mockImplementation(() => {});
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("restored")).toBeInTheDocument();

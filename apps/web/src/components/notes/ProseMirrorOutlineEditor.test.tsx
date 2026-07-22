@@ -903,12 +903,56 @@ describe("ProseMirrorOutlineEditor object refs", () => {
       expect(escapeDefaultStates).toEqual([false]);
 
       await user.keyboard("@missing");
-      await screen.findByRole("option", { name: /Missing result/ });
+      const option = await screen.findByRole("option", { name: /Missing result/ });
+      const listbox = screen.getByRole("listbox", { name: "Object references" });
       expect(editor).toHaveAttribute("aria-expanded", "true");
+      expect(editor).toHaveAttribute("aria-controls", listbox.id);
+      await waitFor(() => {
+        expect(editor).toHaveAttribute("aria-activedescendant", option.id);
+      });
       await user.keyboard("{Escape}");
 
       expect(editor).toHaveAttribute("aria-expanded", "false");
+      expect(editor).not.toHaveAttribute("aria-controls");
+      expect(editor).not.toHaveAttribute("aria-activedescendant");
       expect(escapeDefaultStates).toEqual([false, true]);
+    } finally {
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+      spy.mockRestore();
+    }
+  });
+
+  it("leaves Escape to the outer owner when autocomplete has no visible options", async () => {
+    const user = userEvent.setup();
+    const escapeDefaultStates: boolean[] = [];
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        escapeDefaultStates.push(event.defaultPrevented);
+      }
+    };
+    const { spy } = mockTargetSearch(() => []);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:empty-autocomplete-escape"
+          initialDoc={emptyDoc()}
+        />,
+      );
+
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("@missing");
+
+      expect(
+        screen.queryByRole("listbox", { name: "Object references" }),
+      ).toBeNull();
+      expect(editor).toHaveAttribute("aria-expanded", "false");
+      expect(editor).not.toHaveAttribute("aria-controls");
+      await user.keyboard("{Escape}");
+
+      expect(escapeDefaultStates).toEqual([false]);
     } finally {
       document.removeEventListener("keydown", handleDocumentKeyDown);
       spy.mockRestore();

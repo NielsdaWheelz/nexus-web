@@ -2864,7 +2864,7 @@
         "arxiv-2606-source-package": {
             "contract": "source_package_unit_and_remote_pdf_api_contract",
             "test_selector": "tests/test_reader_apparatus_fixture_contracts.py::test_reader_apparatus_arxiv_source_package_fixture_matches_independent_graph",
-            "api_test_selector": "tests/test_from_url.py::TestFromUrlRemoteFiles::test_arxiv_pdf_from_url_persists_source_package_apparatus_api",
+            "api_test_selector": "tests/test_from_url.py::TestFromUrlRemoteFiles::test_arxiv_pdf_from_url_projects_source_package_apparatus_as_evidence",
             "reason": "The committed arXiv source package has an independent parser graph contract and is also exercised through the remote arXiv PDF ingest path; source-package apparatus items retain missing PDF geometry locators."
         },
         "pdf-attention-native-link-graph": {
