@@ -34,7 +34,7 @@ from nexus.schemas.media import (
     MediaOut,
     PodcastEpisodeChapterOut,
 )
-from nexus.schemas.presence import absent, present
+from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services.capabilities import derive_capabilities, is_text_document_ready
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -189,6 +189,116 @@ _MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
     "NULL::double precision AS listening_playback_speed",
     "NULL::boolean AS listening_is_completed",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CompactMediaTarget:
+    """Narrow media display facts for a selected reading-surface target."""
+
+    media_id: UUID
+    media_kind: MediaKind
+    title: str
+    subtitle: Absent | Present[str]
+    image_url: Absent | Present[str]
+    href: str
+
+
+def media_candidate_rows_sql() -> str:
+    """Policy-neutral media candidate facts.
+
+    Columns: ``media_id``, ``media_kind``, canonical Nexus ``created_at``, and
+    raw partial-date ``published_date``. Visibility, teardown, destination
+    eligibility, and exact-date interpretation belong to the composing query.
+    """
+    return """
+        SELECT
+            m.id AS media_id,
+            m.kind AS media_kind,
+            m.created_at,
+            m.published_date
+        FROM media m
+    """
+
+
+def hydrate_compact_media_targets(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> dict[UUID, CompactMediaTarget]:
+    """Batch-hydrate visible media into compact target facts.
+
+    The read is bounded by ``media_ids``. Podcast episodes use the parent
+    podcast title/artwork; other media use publisher as their optional
+    subtitle and have no image in the canonical media store.
+    """
+    ordered_ids = _dedupe_uuid_order(media_ids)
+    if not ordered_ids:
+        return {}
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            )
+            SELECT
+                m.id AS media_id,
+                m.kind AS media_kind,
+                m.title,
+                CASE
+                    WHEN m.kind = 'podcast_episode' THEN p.title
+                    ELSE m.publisher
+                END AS subtitle,
+                CASE
+                    WHEN m.kind = 'podcast_episode' THEN p.image_url
+                    ELSE NULL
+                END AS image_url
+            FROM media m
+            JOIN visible_media vm ON vm.media_id = m.id
+            LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+            LEFT JOIN podcasts p ON p.id = pe.podcast_id
+            WHERE m.id = ANY(:media_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "media_ids": ordered_ids},
+    ).mappings()
+    by_id = {UUID(str(row["media_id"])): row for row in rows}
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.routing import resource_activations_for_refs
+
+    refs = [
+        ResourceRef(scheme="media", id=media_id) for media_id in ordered_ids if media_id in by_id
+    ]
+    activations = resource_activations_for_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=refs,
+    )
+    hydrated: dict[UUID, CompactMediaTarget] = {}
+    for media_id in ordered_ids:
+        row = by_id.get(media_id)
+        if row is None:
+            continue
+        try:
+            media_kind = MediaKind(str(row["media_kind"]))
+        except ValueError as exc:
+            # justify-defect: media.kind is storage-owned and constrained to the
+            # closed MediaKind vocabulary.
+            raise AssertionError(f"unknown media.kind: {row['media_kind']!r}") from exc
+        subtitle = str(row["subtitle"]) if row["subtitle"] is not None else None
+        image_url = str(row["image_url"]) if row["image_url"] is not None else None
+        ref = ResourceRef(scheme="media", id=media_id)
+        href = activations[ref.uri].href
+        if href is None:
+            # justify-defect: media is a statically routeable ResourceRef and
+            # the visibility query above proved the selected row exists.
+            raise AssertionError(f"visible media target is not routeable: {ref.uri}")
+        hydrated[media_id] = CompactMediaTarget(
+            media_id=media_id,
+            media_kind=media_kind,
+            title=str(row["title"]),
+            subtitle=presence_from_nullable(subtitle),
+            image_url=presence_from_nullable(image_url),
+            href=href,
+        )
+    return hydrated
 
 
 def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:

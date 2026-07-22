@@ -989,7 +989,7 @@ predicates in `auth/permissions.py`; the search/object readers read
   still be explicitly filed, and that direct entry is what a later
   membership loss cannot take away. Pagination over any library — default or
   not — is stateless keyset pagination with three cursor kinds (default-set
-  media-recency, non-default position order, and non-default resonance
+  media-recency, non-default position order, and non-default Resonance
   order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
   any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
   reinterpretation.
@@ -1004,6 +1004,14 @@ predicates in `auth/permissions.py`; the search/object readers read
   positive word count rather than reading `plain_text`. Nested `media` owns read
   state/progress; the entry does not duplicate them, and no Library list path
   scans source text.
+- **Resonance is the one relevance owner.** `services/resonance/` composes
+  policy-neutral read ports from consumption, libraries, the resource graph,
+  contributors, and the semantic index. It owns Related ordering, non-default
+  library Resonance ordering, and the on-demand Reading Slate projection; fact
+  owners retain their tables and mutations. `GET /libraries/{id}/slate`
+  returns at most ten deterministic, destination-addable suggestions outside
+  complete membership. A successful Add preserves visible Slate survivors and
+  appends at most one novel result from a canonical refetch.
 - **Library Intelligence** (`services/library_intelligence.py`) is one stable
   synthesis artifact head per library plus immutable generated revisions.
   Citations belong to `library_intelligence_revision:<id>`; the artifact head
@@ -1084,11 +1092,12 @@ the sole DML owner of current-state reader recency — `last_engaged_at` plus,
 for non-PDF locators, a monotonic `max_total_progression`; no session,
 device, span, or dwell history), and `_projection.py` (the combined
 explicit-override + reader-engagement read model, plus batched
-`PlayerDescriptor`s reusing `derive_playback_source`, plus the visible,
-viewer-indexed recent-reading/listening projection). `GET /lectern/recent`
-is independent from the ordered Lectern snapshot: it merges truthful
-`last_engaged_at` from the reader/listener sources, excludes invisible and
-never-engaged media, and uses stable `media_id DESC` ties. Two bounded
+`PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
+policy-neutral engagement and complete queue-membership reads to Resonance;
+it does not own a second public Recent product. `GET /lectern/slate` builds the
+on-demand **At hand** projection from Continuity, Arrival, and factual graph,
+author, and calibrated semantic evidence. It returns at most ten placeable
+media outside the complete queue and excludes `Finished` targets. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
@@ -1113,7 +1122,11 @@ across pane navigation and is never an editor. A single app-wide `<audio>`
 element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
 OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
-[`modules/player.md`](modules/player.md) for the full file map.
+[`modules/player.md`](modules/player.md) for the full file map. The shared
+  `ReadingSlateSection` consumes an optional Lectern first-paint seed and
+  otherwise queries only while its pane is active. It delegates Add to the
+  existing Lectern or library mutation owner and owns deterministic stable
+  refill, not destination state.
 
 ### 8.9 Search surfaces & Launcher
 
@@ -1181,8 +1194,9 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   source trigger for an already-active destination or to the destination for a
   real pane handoff, so closing mobile/account surfaces do not strand or steal
   focus. Lectern is the brand and authenticated-home target.
-  Pinning is intentionally absent; personalization lives in Lectern recents and
-  Launcher ranking. See [`modules/app-navigation.md`](modules/app-navigation.md).
+  Pinning is intentionally absent; personalized retrieval lives in the Lectern
+  Reading Slate and Launcher ranking. See
+  [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
   `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in

@@ -148,6 +148,7 @@ include = [
     "nexus/services/reader.py",
     "nexus/services/reader_navigation.py",
     "nexus/services/redact.py",
+    "nexus/services/resonance",
     "nexus/services/resource_graph",
     "nexus/services/resource_mutation_replay.py",
     "nexus/services/retrieval_citation.py",
@@ -194,6 +195,7 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "unit: pure logic tests, no DB/network",
     "integration: DB/API-backed tests",
+    "artifact: checked-in artifact and fixture contract tests with local file I/O",
     "slow: tests that are materially slower than normal local feedback loops",
     "supabase: requires Supabase local Auth services",
     "network: requires internet access (hits real external services)",

@@ -5,13 +5,11 @@ import {
   assumeMediaId,
   type ConsumptionInfo,
   type LecternItem,
-  type RecentConsumptionItem,
 } from "@/lib/lectern/contract";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import {
   playbackVerb,
   presentLecternItem,
-  presentRecentConsumptionItem,
 } from "./lectern";
 
 const MEDIA_ID = assumeMediaId("11111111-0000-4000-8000-000000000001");
@@ -37,19 +35,6 @@ function queueItem(overrides: Partial<LecternItem> = {}): LecternItem {
     href: assumeAppHref(`/media/${MEDIA_ID}`),
     consumption: consumption("Unread"),
     activation: { kind: "Readable" },
-    ...overrides,
-  };
-}
-
-function recentItem(overrides: Partial<RecentConsumptionItem> = {}): RecentConsumptionItem {
-  return {
-    mediaId: MEDIA_ID,
-    kind: "podcast_episode",
-    title: "Recent episode",
-    href: assumeAppHref(`/media/${MEDIA_ID}`),
-    consumption: consumption("InProgress"),
-    lastEngagedAt: "2026-07-20T12:00:00Z",
-    playerDescriptor: { kind: "Absent" },
     ...overrides,
   };
 }
@@ -89,21 +74,4 @@ describe("Lectern collection presenters", () => {
     expect(onRemove).toHaveBeenCalledOnce();
   });
 
-  it("projects recent listening with truthful recency and add availability", () => {
-    const onAdd = vi.fn();
-    const view = presentRecentConsumptionItem(recentItem(), {
-      canAdd: false,
-      onAdd,
-    });
-
-    expect(view.kind).toBe("podcast_episode");
-    expect(view.recency).toEqual({ at: "2026-07-20T12:00:00Z" });
-    expect(view.relatedMediaId).toBeNull();
-    expect(view.actions?.[0]).toMatchObject({
-      id: "add-to-lectern",
-      disabled: true,
-    });
-    view.actions?.[0]?.onSelect?.({ triggerEl: null });
-    expect(onAdd).toHaveBeenCalledWith(MEDIA_ID);
-  });
 });

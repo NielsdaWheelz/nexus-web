@@ -10,13 +10,11 @@ request-time provider call happens on this path.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
-import nexus.services.media_related as media_related
 import nexus.services.semantic_chunks as semantic_chunks
 import nexus.services.structured_synthesis as structured_synthesis
 from nexus.services import contributors as contributors_service
@@ -29,15 +27,6 @@ pytestmark = pytest.mark.integration
 
 RELATED_KEYS = {"peers"}
 PEER_KEYS = {"ref", "scheme", "id", "label", "description", "activation", "href", "missing"}
-
-
-def test_related_similarity_query_uses_single_seed_ann_shape():
-    source = inspect.getsource(media_related._similar_media)
-
-    assert "JOIN target_vectors tv ON true" not in source
-    assert "target_vector AS" in source
-    assert "ORDER BY ce.embedding_vector <=> tv.vec ASC" in source
-    assert "LIMIT :candidate_limit" in source
 
 
 def _seed_media(direct_db: DirectSessionManager, user_id: UUID, *, title: str, text: str) -> UUID:

@@ -1,5 +1,12 @@
 # Collection Surface — Hard Cutover
 
+> **Resonance supersession (2026-07-21):**
+> [`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
+> removes the Surfaced Today lane and its entry/timezone fields, moves Related
+> and non-default Resonance ordering to the single Resonance owner, and replaces
+> the `media_related.py`/inline-library implementations. This document remains
+> historical provenance for the collection primitives and unaffected slices.
+
 ## Status
 
 Implemented — 2026-06-19 (completion audit passed). S0–S6 are built, with

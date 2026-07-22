@@ -1,17 +1,12 @@
 /**
- * Lectern collection presenters. These pure mappings own the queue/recent row
+ * Lectern collection presenters. These pure mappings own the item-row
  * hierarchy and actions; the pane owns resource state and renders playable
  * controls because those controls bind to the global player capability.
  */
 
 import { Trash2 } from "lucide-react";
 import type { CollectionRowView, ReadStatus } from "@/lib/collections/types";
-import type {
-  ConsumptionInfo,
-  LecternItem,
-  MediaId,
-  RecentConsumptionItem,
-} from "@/lib/lectern/contract";
+import type { ConsumptionInfo, LecternItem } from "@/lib/lectern/contract";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 
 function presentConsumption(
@@ -65,37 +60,6 @@ export function presentLecternItem(
         icon: Trash2,
         tone: "danger",
         onActivate: () => onRemove(null),
-      },
-    ],
-  };
-}
-
-export function presentRecentConsumptionItem(
-  item: RecentConsumptionItem,
-  input: { canAdd: boolean; onAdd: (mediaId: MediaId) => void },
-): CollectionRowView {
-  const subtitle =
-    item.playerDescriptor.kind === "Present" &&
-    item.playerDescriptor.value.subtitle.kind === "Present"
-      ? item.playerDescriptor.value.subtitle.value
-      : undefined;
-  return {
-    id: item.mediaId,
-    kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
-    primary: { kind: "link", href: item.href, paneLabelHint: item.title },
-    lead: { icon: mediaKindIcon(item.kind) },
-    headline: { text: item.title },
-    signals: subtitle ? [{ value: subtitle }] : [],
-    consumption: presentConsumption(item.consumption),
-    recency: { at: item.lastEngagedAt },
-    relatedMediaId: null,
-    actions: [
-      {
-        kind: "command",
-        id: "add-to-lectern",
-        label: "Add to Lectern",
-        disabled: !input.canAdd,
-        onSelect: () => input.onAdd(item.mediaId),
       },
     ],
   };

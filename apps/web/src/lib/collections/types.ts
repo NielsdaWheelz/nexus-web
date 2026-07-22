@@ -58,6 +58,8 @@ export interface CollectionRowView {
   primary: ResourceRowPrimary;
   lead: ResourceThumbSpec;
   headline: { text: string; segments?: EmphasisSegment[] };
+  /** Compact identity context rendered separately from explanatory signals. */
+  description?: string;
   signals: SignalFact[];
   /** Derived read/listen state (S3). */
   consumption?: { status: ReadStatus; fraction?: number };

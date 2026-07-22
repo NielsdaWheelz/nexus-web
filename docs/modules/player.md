@@ -2,18 +2,19 @@
 
 ## Scope
 
-The player module owns two related but distinct concerns: the **Lectern** (the
-daily return surface: one ordered, mixed-media list of outstanding intentions
-plus an independent recent-reading/listening projection) and **Now Playing**
-(one device-local audio session, not a second durable list). Podcast, video,
-reader, agent, and Launcher actions address the ordered list; recent activity is
-read-only and never becomes another queue. It is the consumer of
+The player module owns two related but distinct concerns: the **Lectern** (one
+ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
+device-local audio session, not a second durable list). Podcast, video, reader,
+agent, and Launcher actions address the ordered list. The Resonance subsystem's
+read-only **At hand** Slate is adjacent to the Lectern but does not become
+another queue or acquire mutation ownership. The player is the consumer of
 podcast episodes (and YouTube videos) for playback; the
 [podcast module](podcast.md) owns discovery, sync, and transcription, and
 hands episodes to the Lectern via auto-subscription.
 
-Full behavioral contract, wire shapes, and acceptance criteria:
-`docs/cutovers/lectern-player-lifecycle-hard-cutover.md`.
+Full behavioral contracts, wire shapes, and acceptance criteria:
+`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
+`docs/cutovers/resonance-reading-slate-hard-cutover.md`.
 
 ## Backend Owners
 
@@ -24,8 +25,9 @@ split one table per store:
   (`run_lectern_command` / `run_consumption_command`) each open a fresh
   session and own one `retry_serializable` transaction: viewer lock -> replay
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
-  facades (`get_lectern` / `get_recent_consumption` /
-  `get_listening_state`) run on the request-scoped session. Two narrow
+  facades (`get_lectern` / `get_listening_state`) run on the request-scoped
+  session. Policy-neutral engagement, recent-anchor, complete membership, and
+  item-count ports are consumed by Resonance. Two narrow
   in-transaction exceptions compose here rather than going
   through a command: `ensure_missing_items_in_txn` (the auto-subscription
   watermark step; only caller is `services/podcasts/poll.py`) and
@@ -65,11 +67,14 @@ split one table per store:
   directly except the one documented exception in `services/media.py`
   (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
   distinct from the derived read-state projection).
-  It also owns `GET /lectern/recent`: canonical visible media only, merging the
-  bounded top-N reader and listener streams by `last_engaged_at`, with
-  `media_id DESC` as the stable tie-break. Both sources have
-  `(user_id, last_engaged_at DESC, media_id DESC)` indexes; the listening index
-  is partial over non-null engagement.
+
+`python/nexus/services/resonance/` owns the deterministic Reading Slate. It
+combines Consumption-owned Continuity with media- and podcast-owned Arrival
+facts plus policy-neutral graph, contributor, and calibrated semantic evidence,
+then returns at most ten placeable media outside the complete queue. `Finished`
+targets are excluded; finished resources may still serve as anchors. The request
+performs no model or provider call and uses one repeatable-read, read-only
+database snapshot.
 
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
@@ -87,7 +92,7 @@ media/podcast DTOs, and the Lectern snapshot so activation derivation
 
 ```http
 GET  /lectern
-GET  /lectern/recent?limit={1..50}
+GET  /lectern/slate
 POST /lectern/commands
 POST /consumption/commands
 GET  /media/{id}/listening-state
@@ -132,19 +137,19 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
   FIFO + optimistic-mutation owner), and `useCompletionUndo.ts` (the ten-second
   Undo toast after explicit exact completion). Server pane seeding imports the
   pure contract directly and never imports the browser transport facade.
-- `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` — two
-  independently loading sections: canonical **On the lectern**, and
-  **Recently read & listened**. The latter requests the bounded maximum of 50,
-  removes media already in the queue, and shows at most 6. Fetching before
-  de-duplication prevents a full queued top slice from hiding the next useful
-  recent item. It reuses the same media link, consumption, and
-  `PlayerDescriptor` contracts. Playable rows expose a one-gesture
-  **Play**/**Resume**/**Replay** control; Add/Remove stay in the contextual
-  action menu. Queue rows render the server-owned exact media kind rather than
-  guessing an icon from activation. Its pane loader seeds only this read-only
-  resource at refresh version zero; a retained pane re-fetches recent activity
-  only when it transitions from inactive to active. `LecternProvider` remains
-  the sole queue snapshot owner.
+- `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
+  canonical **On the lectern** collection followed by the shared **At hand**
+  Slate. The Slate consumes an optional server first-paint seed, otherwise
+  queries on first active mount and every inactive-to-active transition,
+  delegates Add to `LecternProvider.placeItems`, and never owns a second
+  mutation lane. After success it preserves the exact surviving rows and
+  appends at most one novel canonical replacement. `LecternMutationNotice`
+  remains the sole assertive owner and Retry surface for an unknown Lectern
+  command outcome.
+- `apps/web/src/lib/resonance/` and
+  `components/collections/ReadingSlateSection.tsx` own strict Slate transport,
+  presentation, the destination-keyed read/add/refill state machine, focus,
+  and quiet read recovery. They do not own queue state or write commands.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
   `listeningHeartbeat.ts` (the single-flight, generation-keyed heartbeat

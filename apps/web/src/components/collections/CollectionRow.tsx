@@ -8,7 +8,7 @@ import ResourceThumb from "@/components/ui/ResourceThumb";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import type { CollectionDensity } from "@/lib/collections/collectionViewState";
 import type { CollectionRowView } from "@/lib/collections/types";
-import { useMediaRelated } from "@/lib/collections/useMediaRelated";
+import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
 import { formatRelativeTime } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useRowSwipe } from "@/lib/ui/useRowSwipe";
@@ -51,7 +51,7 @@ export default function CollectionRow({
         : null
       : row.relatedMediaId;
   const canShowRelated = relatedMediaId !== null;
-  const related = useMediaRelated(canShowRelated && showPeers ? relatedMediaId : null);
+  const related = useRelatedMedia(canShowRelated && showPeers ? relatedMediaId : null);
   const relatedPeers =
     related.data && related.data.length > 0 ? related.data : (row.related ?? []);
   const relatedStatus =
@@ -199,6 +199,7 @@ export default function CollectionRow({
         <ResourceThumb spec={row.lead} alt="" size={density === "compact" ? "sm" : "md"} />
       }
       title={<>{headline}</>}
+      description={row.description}
       eyebrow={
         eyebrow ? (
           <time className={styles.recency} dateTime={row.recency?.at}>
