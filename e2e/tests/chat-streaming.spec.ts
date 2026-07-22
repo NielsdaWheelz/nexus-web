@@ -3,11 +3,19 @@ import { expect, test, type Page } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
 import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
+import {
   startE2eWorkerUntilChatRunTerminal,
   type E2eWorkerIterationResult,
 } from "./worker";
 
 const FIXTURE_WORKER_ENV = {
+  // The fixture runtime makes no provider network call, but closed platform-
+  // credential validation intentionally runs before fixture dispatch.
+  OPENAI_API_KEY: "e2e-fixture-openai-key",
   REAL_MEDIA_PROVIDER_FIXTURES: "1",
   REAL_MEDIA_FIXTURE_DIR: path.resolve(
     __dirname,
@@ -41,12 +49,15 @@ async function deleteConversation(
 }
 
 async function sendChat(page: Page, text: string): Promise<string> {
-  const modelSettings = page.getByRole("button", { name: /model settings:/i });
-  const input = page.getByRole("textbox", { name: /ask anything/i });
+  const activePane = activeWorkspacePane(page);
+  const profilePicker = activePane.getByRole("combobox", {
+    name: "AI profile",
+  });
+  const input = activePane.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible({ timeout: 30_000 });
   await requireRunnableChatComposer({
     page,
-    modelSettings,
+    profilePicker,
     skipReason: "No runnable chat model in the e2e environment.",
   });
 
@@ -57,7 +68,7 @@ async function sendChat(page: Page, text: string): Promise<string> {
     { timeout: 30_000 },
   );
   await input.fill(text);
-  await page.getByRole("button", { name: "SEND", exact: true }).click();
+  await activePane.getByRole("button", { name: "SEND", exact: true }).click();
   const response = await responsePromise;
   const body = await response.text();
   expect(response.ok(), body).toBeTruthy();
@@ -87,12 +98,16 @@ test.describe("chat streaming", () => {
 
   test("streams through reconnect, reload, and final citation reconcile", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const conversationId = await createConversation(page);
     let worker: Promise<E2eWorkerIterationResult> | null = null;
     let workerError: unknown = null;
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-chat-streaming-reconnect"),
+        `/conversations/${conversationId}`,
+      );
       const runId = await sendChat(
         page,
         "What does this source say about water on the Moon? Use the attached evidence.",
@@ -103,11 +118,13 @@ test.describe("chat streaming", () => {
       });
       worker = expectWorkerStatus(worker, "complete");
 
-      const chatLog = page.getByRole("log", { name: "Chat messages" });
+      const chatLog = activeWorkspacePane(page).getByRole("log", {
+        name: "Chat messages",
+      });
       await expect(chatLog).toContainText("Searching library", {
         timeout: 30_000,
       });
-      await expect(chatLog).toContainText('"query": "water on the Moon"', {
+      await expect(chatLog).toContainText("app_search - complete", {
         timeout: 30_000,
       });
       await expect(chatLog).toContainText("The source says SOFIA", {
@@ -122,7 +139,9 @@ test.describe("chat streaming", () => {
       });
 
       await page.reload();
-      const reloadedLog = page.getByRole("log", { name: "Chat messages" });
+      const reloadedLog = activeWorkspacePane(page).getByRole("log", {
+        name: "Chat messages",
+      });
       await expect(reloadedLog).toContainText("The source says SOFIA", {
         timeout: 30_000,
       });
@@ -154,12 +173,25 @@ test.describe("chat streaming", () => {
     }
   });
 
-  test("stop cancels the running backend chat run", async ({ page }) => {
+  test("stop cancels the running backend chat run", async ({
+    page,
+  }, testInfo) => {
+    const renderDiagnostics: string[] = [];
+    page.on("pageerror", (error) => {
+      renderDiagnostics.push(error.stack ?? error.message);
+    });
+    page.on("console", (message) => {
+      if (message.type() === "error") renderDiagnostics.push(message.text());
+    });
     const conversationId = await createConversation(page);
     let worker: Promise<E2eWorkerIterationResult> | null = null;
     let workerError: unknown = null;
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-chat-streaming-stop"),
+        `/conversations/${conversationId}`,
+      );
       const runId = await sendChat(
         page,
         "What does this source say about water on the Moon? Use the attached evidence.",
@@ -170,14 +202,23 @@ test.describe("chat streaming", () => {
       });
       worker = expectWorkerStatus(worker, "cancelled");
 
-      const chatLog = page.getByRole("log", { name: "Chat messages" });
+      const activePane = activeWorkspacePane(page);
+      const chatLog = activePane.getByRole("log", { name: "Chat messages" });
       await expect(chatLog).toContainText("Searching library", {
         timeout: 30_000,
       });
-      await page.getByRole("button", { name: "Stop response" }).click();
-      await expect(chatLog).toContainText("Response cancelled.", {
-        timeout: 30_000,
-      });
+      await activePane.getByRole("button", { name: "Stop response" }).click();
+      await expect
+        .poll(
+          async () => {
+            if (renderDiagnostics.length > 0) {
+              throw new Error(renderDiagnostics.join("\n\n"));
+            }
+            return chatLog.textContent();
+          },
+          { timeout: 30_000 },
+        )
+        .toContain("This response was cancelled.");
       await worker;
       worker = null;
       await expectRunStatus(page, runId, "cancelled");

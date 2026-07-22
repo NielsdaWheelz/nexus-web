@@ -2,8 +2,9 @@
 
 Hybrid retrieval is an invariant (spec §5.5): the query embedding is built once and
 fed to every semantic-capable retriever regardless of structured filters. The build
-is operationally resilient — a missing embedding key degrades to lexical-only,
-typed and logged, never a silent legacy fallback.
+is operationally resilient — a closed, expected non-generation provider failure
+degrades to lexical-only, typed and logged, never a silent legacy fallback. Missing
+platform credentials remain a deployment defect.
 """
 
 from __future__ import annotations
@@ -38,8 +39,9 @@ def build_query_embedding(
     """Build the query embedding once, or return None for lexical-only fallback.
 
     Rolls back a non-caller transaction first so the embedding HTTP call does not
-    hold a DB transaction open. A missing embedding key degrades to lexical-only
-    (typed + logged); a wrong-dimension response is a hard provider error.
+    hold a DB transaction open. A closed, expected non-generation provider failure
+    degrades to lexical-only (typed + logged); a missing platform credential or
+    wrong-dimension response remains a hard error.
     """
     if not transaction_active_at_entry and db.in_transaction():
         db.rollback()

@@ -10,7 +10,7 @@ import path from "node:path";
 import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
-import { openEvidencePane } from "./reader";
+import { evidenceHighlightArticle, openEvidencePane } from "./reader";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
@@ -185,7 +185,7 @@ async function putReaderState(
   const response = await page.request.put(
     `/api/media/${mediaId}/reader-state`,
     {
-      data: { cursor: { locator, base_revision: baseRevision } },
+      data: { locator, base_revision: baseRevision },
       headers: stateChangingApiHeaders(),
     },
   );
@@ -262,7 +262,7 @@ async function quoteRowToNewChat(row: Locator): Promise<void> {
   await quoteItem.click();
 }
 
-async function expectHighlightRowToBeExpanded(row: Locator): Promise<void> {
+async function expectHighlightRowActionsAvailable(row: Locator): Promise<void> {
   await expect(row).toBeVisible();
   const actionsTrigger = row.getByRole("button", { name: "Highlight actions" });
   await expect(actionsTrigger).toBeVisible();
@@ -501,12 +501,9 @@ test.describe("pdf reader", () => {
       });
 
       const evidencePane = await openEvidencePane(page);
-      const linkedRow = evidencePane.getByTestId(
-        `evidence-highlight-row-${createdHighlightId}`,
-      );
+      const linkedRow = evidenceHighlightArticle(evidencePane, exact);
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
-      await linkedRow.click();
-      await expectHighlightRowToBeExpanded(linkedRow);
+      await expectHighlightRowActionsAvailable(linkedRow);
       await expect(
         page.getByRole("dialog", { name: /highlight details/i }),
       ).toHaveCount(0);
@@ -560,7 +557,7 @@ test.describe("pdf reader", () => {
     }
   });
 
-  test("pdf highlights stay scoped to the active page and appear after page navigation", async ({
+  test("evidence keeps media-wide PDF highlights and jumps across pages", async ({
     page,
   }, testInfo) => {
     const seeded = readSeededPdfMedia();
@@ -635,7 +632,7 @@ test.describe("pdf reader", () => {
       pageTwoHighlightId = (await createPageTwo.json()).data.id as string;
       if (!pageOneHighlightId || !pageTwoHighlightId) {
         throw new Error(
-          "Expected created PDF highlight ids for active-page scoping coverage",
+          "Expected created PDF highlight ids for cross-page Evidence coverage",
         );
       }
 
@@ -645,22 +642,19 @@ test.describe("pdf reader", () => {
       });
       const evidencePane = await openEvidencePane(page);
 
-      const onPageRow = evidencePane.getByTestId(
-        `evidence-highlight-row-${pageOneHighlightId}`,
-      );
-      const offPageRow = evidencePane.getByTestId(
-        `evidence-highlight-row-${pageTwoHighlightId}`,
-      );
+      const onPageRow = evidenceHighlightArticle(evidencePane, pageOneExact);
+      const offPageRow = evidenceHighlightArticle(evidencePane, pageTwoExact);
       await expect(onPageRow).toBeVisible({ timeout: 10_000 });
-      await expect(offPageRow).toHaveCount(0);
+      await expect(offPageRow).toBeVisible({ timeout: 10_000 });
 
-      await clickToolbarButtonByAriaLabel(page, "Next page");
+      await evidencePane
+        .getByRole("button", { name: `Jump to ${pageTwoExact}`, exact: true })
+        .click();
       await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({
         timeout: 20_000,
       });
-      await expect(onPageRow).toHaveCount(0);
+      await expect(onPageRow).toBeVisible({ timeout: 10_000 });
       await expect(offPageRow).toBeVisible({ timeout: 10_000 });
-      await offPageRow.click();
 
       await expect
         .poll(
@@ -699,7 +693,7 @@ test.describe("pdf reader", () => {
         }
       }
       throwE2eCleanupFailures(
-        "PDF active-page highlight flow",
+        "PDF cross-page Evidence flow",
         productError,
         cleanupErrors,
       );

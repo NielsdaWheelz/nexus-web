@@ -129,7 +129,7 @@ import {
   type ReaderDocumentMap,
   type ReaderDocumentMapMarker,
   type ReaderEvidenceItem,
-  type ReaderEvidenceLink,
+  type ReaderEvidenceUserEdge,
   type ReaderEvidenceObject,
   type ReaderEvidencePassageGroup,
   type ReaderEvidenceResolution,
@@ -1024,6 +1024,8 @@ export default function MediaPaneBody() {
   // ---- Highlight interaction state ----
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [documentMapVersion, setDocumentMapVersion] = useState(0);
+  const [linkHighlightRefreshVersion, setLinkHighlightRefreshVersion] =
+    useState(0);
   // Accumulated PDF highlights across rendered pages. The reader streams page
   // highlights into us via `onPageHighlightsChange`; visible projection uses
   // only highlights whose page geometry is currently rendered.
@@ -2922,8 +2924,8 @@ export default function MediaPaneBody() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: only re-fetch when active fragment changes
-  }, [activeContent?.fragmentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: re-fetch only when the active fragment changes or a Link command materializes/removes its Highlight source
+  }, [activeContent?.fragmentId, linkHighlightRefreshVersion]);
 
   const refreshMediaHighlights = useCallback(() => {
     setDocumentMapVersion((version) => version + 1);
@@ -3919,9 +3921,10 @@ export default function MediaPaneBody() {
       applyToAllHighlightSlots((list) =>
         patchHighlightLinkedNoteBlock(list, highlightId, linkedNoteBlock),
       );
+      refreshMediaHighlights();
       return linkedNoteBlock;
     },
-    [applyToAllHighlightSlots],
+    [applyToAllHighlightSlots, refreshMediaHighlights],
   );
 
   const handleNoteDelete = useCallback(
@@ -3937,8 +3940,9 @@ export default function MediaPaneBody() {
           removeHighlightLinkedNoteBlock(list, noteBlockId),
         );
       }
+      refreshMediaHighlights();
     },
-    [applyToAllHighlightSlots],
+    [applyToAllHighlightSlots, refreshMediaHighlights],
   );
 
   // ==========================================================================
@@ -4450,20 +4454,22 @@ export default function MediaPaneBody() {
     setDocumentMapVersion((v) => v + 1);
   }, []);
 
-  // Remove a stable user Link/stance Evidence row: neutral (context) Links delete
-  // via the Link command, stances (supports·contradicts) via the stance command.
-  // The Evidence Link carries the edge id and role, so presenters never infer
-  // meaning from storage direction.
-  const handleRemoveReaderLink = useCallback(async (item: ReaderEvidenceLink) => {
-    if (item.role === "context") {
-      const { deleteLink } = await import("@/lib/resourceGraph/links");
-      await deleteLink(item.edge_id);
-    } else {
-      const { deleteStance } = await import("@/lib/resourceGraph/stances");
-      await deleteStance(item.edge_id);
-    }
-    setDocumentMapVersion((v) => v + 1);
-  }, []);
+  // Remove an explicit user relation whether Evidence projects it as a
+  // top-level Link or folds it onto another fact. The typed role selects the
+  // domain command; presentation never infers meaning from storage direction.
+  const handleRemoveReaderUserEdge = useCallback(
+    async (edge: ReaderEvidenceUserEdge) => {
+      if (edge.role === "context") {
+        const { deleteLink } = await import("@/lib/resourceGraph/links");
+        await deleteLink(edge.edge_id);
+      } else {
+        const { deleteStance } = await import("@/lib/resourceGraph/stances");
+        await deleteStance(edge.edge_id);
+      }
+      setDocumentMapVersion((v) => v + 1);
+    },
+    [],
+  );
 
   const handleSaveReaderLinkNote = useCallback(
     async (
@@ -5105,8 +5111,17 @@ export default function MediaPaneBody() {
     return created?.id ?? null;
   }, [handleCreateHighlight]);
 
+  const refreshLinkedReaderState = useCallback(() => {
+    refreshMediaHighlights();
+    // Link creation can atomically materialize a fresh Highlight outside the
+    // ordinary highlight mutation callbacks. Refresh both reader families so
+    // the durable source is immediately painted and can be acted on again.
+    setLinkHighlightRefreshVersion((version) => version + 1);
+    setPdfRefreshToken((version) => version + 1);
+  }, [refreshMediaHighlights]);
+
   const linkComposer = useLinkComposer({
-    onLinked: refreshMediaHighlights,
+    onLinked: refreshLinkedReaderState,
     // The Connection's note lives on the Evidence sidecar's Link card, where the
     // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
     onAddLinkNote: () => requestSecondarySurface?.("reader-evidence"),
@@ -5631,45 +5646,6 @@ export default function MediaPaneBody() {
     );
   }, []);
 
-  const handleEvidenceNoteSave = useCallback(
-    async (
-      highlightId: string,
-      noteBlockId: string | null,
-      createBlockId: string,
-      bodyPmJson: Record<string, unknown>,
-      clientMutationId: string,
-    ) => {
-      const note = await handleNoteSave(
-        highlightId,
-        noteBlockId,
-        createBlockId,
-        bodyPmJson,
-        clientMutationId,
-      );
-      refreshMediaHighlights();
-      return note;
-    },
-    [handleNoteSave, refreshMediaHighlights],
-  );
-
-  const handleEvidenceNoteDelete = useCallback(
-    async (
-      highlightId: string,
-      noteBlockId: string,
-      clientMutationId: string,
-      shouldApply: () => boolean,
-    ) => {
-      await handleNoteDelete(
-        highlightId,
-        noteBlockId,
-        clientMutationId,
-        shouldApply,
-      );
-      refreshMediaHighlights();
-    },
-    [handleNoteDelete, refreshMediaHighlights],
-  );
-
   const readerSecondarySurfaces = useMemo<
     PaneSecondarySurfacePublication[]
   >(() => {
@@ -5702,8 +5678,8 @@ export default function MediaPaneBody() {
               onDelete: handleDelete,
               onStartEditBounds: startEditBounds,
               onCancelEditBounds: cancelEditBounds,
-              onNoteSave: handleEvidenceNoteSave,
-              onNoteDelete: handleEvidenceNoteDelete,
+              onNoteSave: handleNoteSave,
+              onNoteDelete: handleNoteDelete,
               onOpenNoteLink: handleOpenNoteLink,
             }}
             onActivatePassage={activateEvidencePassage}
@@ -5711,7 +5687,7 @@ export default function MediaPaneBody() {
             onActivateSourceTarget={handleActivateEvidenceSourceTarget}
             onHoverItem={handleHoverEvidenceItem}
             onDismissSynapse={handleDismissSynapse}
-            onRemoveLink={handleRemoveReaderLink}
+            onRemoveUserEdge={handleRemoveReaderUserEdge}
             onSaveLinkNote={handleSaveReaderLinkNote}
             onDeleteLinkNote={handleDeleteReaderLinkNote}
           />
@@ -5737,11 +5713,11 @@ export default function MediaPaneBody() {
     handleColorChange,
     handleDelete,
     handleDismissSynapse,
-    handleRemoveReaderLink,
+    handleRemoveReaderUserEdge,
     handleSaveReaderLinkNote,
     handleDeleteReaderLinkNote,
-    handleEvidenceNoteDelete,
-    handleEvidenceNoteSave,
+    handleNoteDelete,
+    handleNoteSave,
     handleHoverEvidenceItem,
     handleOpenNoteLink,
     hoveredEvidenceItemId,

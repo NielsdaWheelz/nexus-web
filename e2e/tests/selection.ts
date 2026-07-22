@@ -1,12 +1,15 @@
 import type { Page } from "@playwright/test";
 
 type SelectionPoint = { x: number; y: number };
-type SelectionCandidate = {
+type DragSelectionCandidate = {
   text: string;
   start: SelectionPoint;
   end: SelectionPoint;
+};
+type SelectionCandidate = DragSelectionCandidate & {
   containerIndex: number;
-  textNodeIndex: number;
+  startTextNodeIndex: number;
+  endTextNodeIndex: number;
   startOffset: number;
   endOffset: number;
 };
@@ -76,35 +79,106 @@ export async function selectFreshVisibleTextSnippet(
 
       for (const [containerIndex, container] of containers.entries()) {
         const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let textNodeIndex = -1;
+        const textNodes: Array<{
+          node: Text;
+          index: number;
+          rawText: string;
+          selectable: boolean;
+        }> = [];
         while (walker.nextNode()) {
           const textNode = walker.currentNode;
           if (!(textNode instanceof Text)) {
             continue;
           }
-          textNodeIndex += 1;
-
           const parent = textNode.parentElement;
-          const rawText = textNode.textContent ?? "";
-          if (!parent) {
-            continue;
-          }
-          const style = window.getComputedStyle(parent);
+          const style = parent ? window.getComputedStyle(parent) : null;
+          textNodes.push({
+            node: textNode,
+            index: textNodes.length,
+            rawText: textNode.textContent ?? "",
+            selectable: Boolean(
+              style &&
+                style.display !== "none" &&
+                style.visibility !== "hidden",
+            ),
+          });
+        }
+
+        const buildCandidate = (
+          startNode: (typeof textNodes)[number],
+          startOffset: number,
+          endNode: (typeof textNodes)[number],
+          endOffset: number,
+        ) => {
+          const candidateRange = document.createRange();
+          candidateRange.setStart(startNode.node, startOffset);
+          candidateRange.setEnd(endNode.node, endOffset);
+          const normalizedCandidate = candidateRange
+            .toString()
+            .replace(/\s+/g, " ")
+            .trim();
+          candidateRange.detach();
           if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            rawText.trim().length < minLength
+            normalizedCandidate.length < minLength ||
+            normalizedCandidate.length > maxLength ||
+            blocked.has(normalizedCandidate) ||
+            countOccurrences(containerText, normalizedCandidate) !== 1
           ) {
-            continue;
+            return null;
           }
 
+          const startRange = document.createRange();
+          startRange.setStart(startNode.node, startOffset);
+          startRange.setEnd(
+            startNode.node,
+            Math.min(startOffset + 1, startNode.rawText.length),
+          );
+          const startRect = visibleRectForRange(startRange);
+          startRange.detach();
+          if (!startRect) {
+            return null;
+          }
+
+          const endRange = document.createRange();
+          endRange.setStart(endNode.node, Math.max(0, endOffset - 1));
+          endRange.setEnd(endNode.node, endOffset);
+          const endRect = visibleRectForRange(endRange);
+          endRange.detach();
+          if (!endRect) {
+            return null;
+          }
+
+          return {
+            text: normalizedCandidate,
+            start: {
+              x: startRect.left + 1,
+              y: startRect.top + startRect.height / 2,
+            },
+            end: {
+              x: endRect.right - 1,
+              y: endRect.top + endRect.height / 2,
+            },
+            containerIndex,
+            startTextNodeIndex: startNode.index,
+            endTextNodeIndex: endNode.index,
+            startOffset,
+            endOffset,
+          };
+        };
+
+        // Prefer a range contained in one text node. This is the stable path for
+        // normal HTML content and keeps the chosen quote as small as possible.
+        for (const textNode of textNodes) {
+          const { rawText } = textNode;
+          if (!textNode.selectable || rawText.trim().length < minLength) {
+            continue;
+          }
           for (let start = 0; start <= rawText.length - minLength; start += 1) {
             const current = rawText[start] ?? "";
             const previous = start > 0 ? rawText[start - 1] : " ";
             if (!/\S/.test(current) || /\S/.test(previous)) {
               continue;
             }
-
             for (
               let end = Math.min(rawText.length, start + maxLength);
               end >= start + minLength;
@@ -115,44 +189,84 @@ export async function selectFreshVisibleTextSnippet(
               if (!/\S/.test(last) || (/\w/.test(last) && /\w/.test(next))) {
                 continue;
               }
+              const candidate = buildCandidate(textNode, start, textNode, end);
+              if (candidate) {
+                return candidate;
+              }
+            }
+          }
+        }
 
-              const rawCandidate = rawText.slice(start, end);
-              const normalizedCandidate = rawCandidate.replace(/\s+/g, " ").trim();
-              if (
-                normalizedCandidate.length < minLength ||
-                blocked.has(normalizedCandidate) ||
-                countOccurrences(containerText, normalizedCandidate) !== 1
-              ) {
+        // PDF.js commonly renders a visual line as several short, absolutely
+        // positioned spans. A real browser selection crosses those adjacent
+        // text nodes, so mirror that DOM range instead of requiring one span to
+        // contain an arbitrary minimum number of characters.
+        for (
+          let startNodeIndex = 0;
+          startNodeIndex < textNodes.length;
+          startNodeIndex += 1
+        ) {
+          const startNode = textNodes[startNodeIndex];
+          if (!startNode.selectable || !startNode.rawText.trim()) {
+            continue;
+          }
+          for (let start = 0; start < startNode.rawText.length; start += 1) {
+            const current = startNode.rawText[start] ?? "";
+            const previous = start > 0 ? startNode.rawText[start - 1] : " ";
+            if (!/\S/.test(current) || /\S/.test(previous)) {
+              continue;
+            }
+
+            const lastEndNodeIndex = Math.min(
+              textNodes.length - 1,
+              startNodeIndex + 64,
+            );
+            for (
+              let endNodeIndex = startNodeIndex + 1;
+              endNodeIndex <= lastEndNodeIndex;
+              endNodeIndex += 1
+            ) {
+              const endNode = textNodes[endNodeIndex];
+              if (!endNode.selectable && endNode.rawText.trim()) {
+                break;
+              }
+              if (!endNode.selectable || !endNode.rawText.trim()) {
                 continue;
               }
 
-              const startRange = document.createRange();
-              startRange.setStart(textNode, start);
-              startRange.setEnd(textNode, Math.min(start + 1, end));
-              const startRect = visibleRectForRange(startRange);
-              startRange.detach();
-              if (!startRect) {
-                continue;
+              let rangeExceededMaxLength = false;
+              for (let end = 1; end <= endNode.rawText.length; end += 1) {
+                const last = endNode.rawText[end - 1] ?? "";
+                const next =
+                  end < endNode.rawText.length ? endNode.rawText[end] : " ";
+                if (!/\S/.test(last) || (/\w/.test(last) && /\w/.test(next))) {
+                  continue;
+                }
+                const probe = document.createRange();
+                probe.setStart(startNode.node, start);
+                probe.setEnd(endNode.node, end);
+                const probeLength = probe
+                  .toString()
+                  .replace(/\s+/g, " ")
+                  .trim().length;
+                probe.detach();
+                if (probeLength > maxLength) {
+                  rangeExceededMaxLength = true;
+                  break;
+                }
+                const candidate = buildCandidate(
+                  startNode,
+                  start,
+                  endNode,
+                  end,
+                );
+                if (candidate) {
+                  return candidate;
+                }
               }
-
-              const endRange = document.createRange();
-              endRange.setStart(textNode, Math.max(start, end - 1));
-              endRange.setEnd(textNode, end);
-              const endRect = visibleRectForRange(endRange);
-              endRange.detach();
-              if (!endRect) {
-                continue;
+              if (rangeExceededMaxLength) {
+                break;
               }
-
-              return {
-                text: normalizedCandidate,
-                start: { x: startRect.left + 1, y: startRect.top + startRect.height / 2 },
-                end: { x: endRect.right - 1, y: endRect.top + endRect.height / 2 },
-                containerIndex,
-                textNodeIndex,
-                startOffset: start,
-                endOffset: end,
-              };
             }
           }
         }
@@ -160,7 +274,12 @@ export async function selectFreshVisibleTextSnippet(
 
       return null;
     },
-    { selector: containerSelector, blockedExacts: existingExacts, minLength: 20, maxLength: 48 },
+    {
+      selector: containerSelector,
+      blockedExacts: existingExacts,
+      minLength: 20,
+      maxLength: 48,
+    },
   );
 
   if (!candidate) {
@@ -187,23 +306,29 @@ async function selectCandidateRange(
         return "";
       }
       const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      let textNode: Text | null = null;
+      let startTextNode: Text | null = null;
+      let endTextNode: Text | null = null;
       let textNodeIndex = -1;
       while (walker.nextNode()) {
         if (walker.currentNode instanceof Text) {
           textNodeIndex += 1;
-          if (textNodeIndex === target.textNodeIndex) {
-            textNode = walker.currentNode;
+          if (textNodeIndex === target.startTextNodeIndex) {
+            startTextNode = walker.currentNode;
+          }
+          if (textNodeIndex === target.endTextNodeIndex) {
+            endTextNode = walker.currentNode;
+          }
+          if (startTextNode && endTextNode) {
             break;
           }
         }
       }
-      if (!textNode) {
+      if (!startTextNode || !endTextNode) {
         return "";
       }
       const range = document.createRange();
-      range.setStart(textNode, target.startOffset);
-      range.setEnd(textNode, target.endOffset);
+      range.setStart(startTextNode, target.startOffset);
+      range.setEnd(endTextNode, target.endOffset);
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
@@ -271,7 +396,10 @@ export async function selectExactVisibleText(
   return dragSelection(page, candidate);
 }
 
-async function dragSelection(page: Page, candidate: SelectionCandidate): Promise<string> {
+async function dragSelection(
+  page: Page,
+  candidate: DragSelectionCandidate,
+): Promise<string> {
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
   await page.mouse.move(candidate.start.x, candidate.start.y);
   await page.mouse.down();

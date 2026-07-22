@@ -89,7 +89,7 @@ describe("SettingsIdentitiesPaneBody", () => {
     render(<SettingsIdentitiesPaneBody />);
 
     expect(
-      await screen.findByText("owner+github@example.com")
+      await screen.findByText(/^owner\+github@example\.com · linked /)
     ).toBeInTheDocument();
   });
 
@@ -99,7 +99,7 @@ describe("SettingsIdentitiesPaneBody", () => {
     render(<SettingsIdentitiesPaneBody />);
 
     // Wait for the linked identity to load before asserting connectable state.
-    await screen.findByText("owner+github@example.com");
+    await screen.findByText(/^owner\+github@example\.com · linked /);
 
     // GitHub is linked; only Google remains connectable.
     expect(
@@ -129,11 +129,13 @@ describe("SettingsIdentitiesPaneBody", () => {
 
     render(<SettingsIdentitiesPaneBody />);
 
-    await screen.findByText("owner+github@example.com");
-    await screen.findByText("owner+google@example.com");
+    await screen.findByText(/^owner\+github@example\.com · linked /);
+    await screen.findByText(/^owner\+google@example\.com · linked /);
 
-    const unlinkButtons = screen.getAllByRole("button", { name: /unlink/i });
-    await user.click(unlinkButtons[0]);
+    await user.click(
+      screen.getByRole("button", { name: "More actions for GitHub" })
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Unlink" }));
 
     expect(unlinkIdentitySpy).toHaveBeenCalledWith(
       expect.objectContaining({ identity_id: "github-id" })
@@ -154,9 +156,11 @@ describe("SettingsIdentitiesPaneBody", () => {
 
     render(<SettingsIdentitiesPaneBody />);
 
-    await screen.findByText("owner+github@example.com");
-    const unlinkButtons = screen.getAllByRole("button", { name: /unlink/i });
-    await user.click(unlinkButtons[0]);
+    await screen.findByText(/^owner\+github@example\.com · linked /);
+    await user.click(
+      screen.getByRole("button", { name: "More actions for GitHub" })
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Unlink" }));
 
     await waitFor(() => {
       expect(

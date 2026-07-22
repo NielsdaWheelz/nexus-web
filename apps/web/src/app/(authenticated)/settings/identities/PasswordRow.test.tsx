@@ -59,7 +59,8 @@ describe("PasswordRow", () => {
     );
   });
 
-  it("renders the email subtitle plus Change and Remove buttons when an email identity exists alongside others", () => {
+  it("renders the email support line, primary Change action, and overflow Remove action", async () => {
+    const user = userEvent.setup();
     render(
       <PasswordRow
         identities={[emailIdentity(), googleIdentity()]}
@@ -73,25 +74,24 @@ describe("PasswordRow", () => {
     const changeButton = screen.getByRole("button", {
       name: /change password/i,
     });
-    const removeButton = screen.getByRole("button", {
-      name: /remove password/i,
+    const actionsButton = screen.getByRole("button", {
+      name: "More actions for Password",
     });
     expect(changeButton).toBeEnabled();
-    expect(removeButton).toBeEnabled();
+    await user.click(actionsButton);
     expect(
-      screen.queryByText(/add a linked provider first/i)
-    ).not.toBeInTheDocument();
+      screen.getByRole("menuitem", { name: "Remove password" })
+    ).toBeEnabled();
   });
 
-  it("disables Remove password and shows the hint text when the email identity is the only one", () => {
+  it("does not expose Remove password when the email identity is the only one", () => {
     render(<PasswordRow identities={[emailIdentity()]} onChanged={vi.fn()} />);
 
-    const removeButton = screen.getByRole("button", {
-      name: /remove password/i,
-    });
-    expect(removeButton).toBeDisabled();
     expect(
-      screen.getByText(/add a linked provider first/i)
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "More actions for Password" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Change password" })
+    ).toBeEnabled();
   });
 });

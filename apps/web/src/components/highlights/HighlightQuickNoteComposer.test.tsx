@@ -201,7 +201,7 @@ describe("HighlightQuickNoteComposer", () => {
       const draftBlockId = noteBlockIdFromEditor(editor);
       await user.keyboard("bye");
 
-      fireEvent.keyDown(document, { key: "Escape" });
+      await user.keyboard("{Escape}");
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
       // Unmounting the editor flushes the debounced save — dismissal never discards.

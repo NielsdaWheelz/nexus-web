@@ -1,6 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
 import { requireRunnableChatComposer } from "./chatReadiness";
+import {
+  activeWorkspacePane,
+  gotoSinglePaneWorkspace,
+  workspaceE2eDeviceId,
+} from "./workspace";
 
 async function ensureAppContext(page: Page) {
   if (page.url() === "about:blank") {
@@ -52,24 +57,29 @@ async function deleteConversationViaApi(
 
 test.describe("chat composer (post-cutover)", () => {
   // Wave 8.3 / §13.3: the composer no longer exposes a web-search selector
-  // or any scope chip. Its action row is model-pill + send-button only.
+  // or any scope chip. Its action row is profile controls + send-button only.
   test("composer renders no web-search selector and no scope chip", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const conversationId = await createConversationViaApi(page);
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-chat-composer-shape"),
+        `/conversations/${conversationId}`,
+      );
+      const activePane = activeWorkspacePane(page);
 
-      const input = page.getByRole("textbox", { name: /ask anything/i });
+      const input = activePane.getByRole("textbox", { name: /ask anything/i });
       await expect(input).toBeVisible({ timeout: 30_000 });
 
-      // The action row exposes exactly the model pill and the send button
-      // — no Auto/Required/Off web-search select, no Allow web search toggle.
+      // The action row has no Auto/Required/Off web-search select or Allow web
+      // search toggle alongside the server-backed profile controls.
       await expect(
-        page.getByRole("combobox", { name: /web search/i }),
+        activePane.getByRole("combobox", { name: /web search/i }),
       ).toHaveCount(0);
-      await expect(page.getByLabel(/allow web search/i)).toHaveCount(0);
-      await expect(page.getByLabel(/enable web search/i)).toHaveCount(0);
+      await expect(activePane.getByLabel(/allow web search/i)).toHaveCount(0);
+      await expect(activePane.getByLabel(/enable web search/i)).toHaveCount(0);
 
       // Native <select> labels can carry "Auto", "Required", or "Off" only
       // on the deleted picker. Asserting on the combobox role above is the
@@ -78,17 +88,19 @@ test.describe("chat composer (post-cutover)", () => {
       const optionLabels = ["Auto", "Required", "Off"];
       for (const label of optionLabels) {
         await expect(
-          page.getByRole("option", { name: new RegExp(`^${label}$`, "i") }),
+          activePane.getByRole("option", {
+            name: new RegExp(`^${label}$`, "i"),
+          }),
         ).toHaveCount(0);
       }
 
       // The deleted scope chip surfaces with these exact a11y handles; both
       // would re-introduce a scope taxonomy into the composer.
       await expect(
-        page.getByRole("button", { name: /clear scope/i }),
+        activePane.getByRole("button", { name: /clear scope/i }),
       ).toHaveCount(0);
       await expect(
-        page.getByLabel(/conversation scope/i),
+        activePane.getByLabel(/conversation scope/i),
       ).toHaveCount(0);
     } finally {
       await deleteConversationViaApi(page, conversationId);
@@ -97,20 +109,25 @@ test.describe("chat composer (post-cutover)", () => {
 
   test("sending a message succeeds without scope or web-search controls", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const conversationId = await createConversationViaApi(page);
     try {
-      await page.goto(`/conversations/${conversationId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        workspaceE2eDeviceId(testInfo, "e2e-chat-composer-send"),
+        `/conversations/${conversationId}`,
+      );
+      const activePane = activeWorkspacePane(page);
 
-      const input = page.getByRole("textbox", { name: /ask anything/i });
-      const modelSettings = page.getByRole("button", {
-        name: /model settings/i,
+      const input = activePane.getByRole("textbox", { name: /ask anything/i });
+      const profilePicker = activePane.getByRole("combobox", {
+        name: "AI profile",
       });
 
       await expect(input).toBeVisible({ timeout: 30_000 });
       await requireRunnableChatComposer({
         page,
-        modelSettings,
+        profilePicker,
         skipReason:
           "No runnable chat model in the e2e environment; cannot drive a composer send.",
       });
@@ -123,7 +140,7 @@ test.describe("chat composer (post-cutover)", () => {
       // existing scope-free composer wire shape (no web_search or
       // conversation_scope fields are sent — those would have been rejected
       // by the API surface per §7.1).
-      await expect(page.getByText(messageText).first()).toBeVisible({
+      await expect(activePane.getByText(messageText).first()).toBeVisible({
         timeout: 10_000,
       });
     } finally {

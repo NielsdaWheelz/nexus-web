@@ -1378,9 +1378,7 @@ def test_delete_document_removes_passage_anchors_and_preserves_note_prose(
     as standalone authored data."""
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
 
     with direct_db.session() as session:
         media_id = create_test_media(session, title="Doomed Document")
@@ -1418,12 +1416,6 @@ def test_delete_document_removes_passage_anchors_and_preserves_note_prose(
     direct_db.register_cleanup("media", "id", keeper_media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 201, add_response.json()
 
     note_response = auth_client.put(
         f"/highlights/{highlight_id}/note",
@@ -1486,9 +1478,7 @@ def test_delete_document_with_stale_highlight_cache_after_refresh(
     disposable fragment cache — or the Highlight-root delete violates its FK."""
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    assert auth_client.get("/me", headers=auth_headers(user_id)).status_code == 200
     # The stale-cache highlight belongs to ANOTHER user: the deleting viewer's
     # own highlights are already removed by the viewer-scoped path, so only
     # true deletion's all-users cleanup ever sees this row.
@@ -1509,12 +1499,6 @@ def test_delete_document_with_stale_highlight_cache_after_refresh(
     direct_db.register_cleanup("media", "id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 201, add_response.json()
 
     # Refresh-style wholesale fragment replacement, with NO list read afterward:
     # the highlight and its anchor survive with a stale fragment_id cache.

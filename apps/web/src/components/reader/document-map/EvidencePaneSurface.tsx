@@ -18,11 +18,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import type {
   ReaderEvidence,
   ReaderEvidenceItem,
-  ReaderEvidenceLink,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
+  ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
+import { isReaderEvidenceUserLink } from "@/lib/reader/documentMap";
 import {
   evidenceItemPassesFilters,
   type EvidenceFilters,
@@ -58,9 +59,10 @@ export interface EvidencePaneSurfaceProps {
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => void;
-  /** Remove a stable user Link fact; the caller deletes it via `links.ts`
-   * `deleteLink(item.edge_id)`. */
-  onRemoveLink: (item: ReaderEvidenceLink) => void;
+  /** Remove an explicit user edge whether it is a top-level Link or folded
+   * association. The caller dispatches context to Link DELETE and stances to
+   * stance DELETE from the typed role; generated associations never qualify. */
+  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => void;
   /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
    * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
   onSaveLinkNote: (
@@ -88,7 +90,7 @@ export default function EvidencePaneSurface({
   onActivateSourceTarget,
   onHoverItem,
   onDismissSynapse,
-  onRemoveLink,
+  onRemoveUserEdge,
   onSaveLinkNote,
   onDeleteLinkNote,
 }: EvidencePaneSurfaceProps) {
@@ -156,13 +158,18 @@ export default function EvidencePaneSurface({
     const exists = [
       ...evidence.passage_groups.flatMap((group) => group.items),
       ...evidence.document_items,
-    ].some((item) => item.kind === "Link" && item.edge_id === editingLinkId);
+    ].some(
+      (item) =>
+        isReaderEvidenceUserLink(item) &&
+        item.role === "context" &&
+        item.edge_id === editingLinkId,
+    );
     if (!exists) setEditingLinkId(null);
   }, [editingLinkId, evidence]);
 
   const linkActions: EvidenceLinkActions = {
     editingLinkId,
-    onRemoveLink,
+    onRemoveUserEdge,
     onEditLink: setEditingLinkId,
     onSaveLinkNote,
     onDeleteLinkNote,
@@ -567,6 +574,7 @@ function PassageGroup({
           open={openDisclosureIds.has(groupDisclosureId)}
           onToggle={() => onToggleDisclosure(groupDisclosureId)}
           onActivateObject={onActivateObject}
+          onRemoveUserEdge={linkActions.onRemoveUserEdge}
         />
       ) : null}
     </section>

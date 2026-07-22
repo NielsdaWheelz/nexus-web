@@ -39,6 +39,8 @@ export const isDeployed = (): boolean => {
 
 interface ResolvedEnv {
   readonly nexusEnv: NexusEnv;
+  /** Canonical browser origin used for absolute metadata URLs. */
+  readonly appPublicOrigin: string;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
   readonly connectOrigins: readonly string[];
   readonly serverActionAllowedOrigins: readonly string[];
@@ -73,15 +75,36 @@ export function getEnv(): ResolvedEnv {
   }
   const fastApiBaseUrl =
     process.env.FASTAPI_BASE_URL?.trim() || (deployed ? "" : "http://localhost:8000");
+  const appPublicOrigin = resolveAppPublicOrigin(deployed);
 
   resolved = Object.freeze({
     nexusEnv: env,
+    appPublicOrigin,
     connectOrigins,
     serverActionAllowedOrigins,
     internalApi: Object.freeze({ fastApiBaseUrl, internalSecret }),
     disableCspForE2E: !deployed && process.env.E2E_DISABLE_CSP === "1",
   });
   return resolved;
+}
+
+function resolveAppPublicOrigin(deployed: boolean): string {
+  const rawValue = process.env.APP_PUBLIC_URL?.trim();
+  if (!rawValue) {
+    if (deployed) {
+      throw new Error("APP_PUBLIC_URL is required in staging/prod");
+    }
+    return "http://localhost:3000";
+  }
+
+  const origin = parseWebOrigin(rawValue);
+  if (!origin) {
+    throw new Error(`Invalid APP_PUBLIC_URL: ${rawValue}`);
+  }
+  if (deployed && origin.protocol !== "https:") {
+    throw new Error(`APP_PUBLIC_URL must use HTTPS in staging/prod: ${rawValue}`);
+  }
+  return origin.origin;
 }
 
 /** Clears the memo so `vi.stubEnv()` takes effect (mirrors clear_settings_cache). Test-only. */

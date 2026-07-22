@@ -2,19 +2,19 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 interface LlmProfilesResponse {
   data: {
-    default_profile_id: string | null;
+    default_profile_id: string;
     profiles: Array<{ id: string }>;
   };
 }
 
 export async function requireRunnableChatComposer({
   page,
-  modelSettings,
+  profilePicker,
   skipReason,
   timeout = 15_000,
 }: {
   page: Page;
-  modelSettings: Locator;
+  profilePicker: Locator;
   skipReason: string;
   timeout?: number;
 }): Promise<void> {
@@ -28,14 +28,17 @@ export async function requireRunnableChatComposer({
   const profilesPayload = JSON.parse(profilesBody) as LlmProfilesResponse;
   test.skip(profilesPayload.data.profiles.length === 0, skipReason);
 
-  await expect(modelSettings).toBeVisible();
+  const runnableProfileIds = new Set(
+    profilesPayload.data.profiles.map((profile) => profile.id),
+  );
+  await expect(profilePicker).toBeVisible({ timeout });
   await expect
     .poll(
       async () => {
-        const modelLabel = await modelSettings
-          .getAttribute("aria-label")
+        const selectedProfileId = await profilePicker
+          .inputValue()
           .catch(() => "");
-        return Boolean(modelLabel && modelLabel !== "Model settings: Model");
+        return runnableProfileIds.has(selectedProfileId);
       },
       { timeout },
     )

@@ -1,7 +1,11 @@
 import { test, expect, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { openEvidencePane, openMediaInSinglePaneWorkspace } from "./reader";
+import {
+  evidenceHighlightArticle,
+  openEvidencePane,
+  openMediaInSinglePaneWorkspace,
+} from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import { stateChangingApiHeaders } from "./api";
 import {
@@ -144,9 +148,7 @@ test.describe("youtube transcript media", () => {
     const existingExacts = existingHighlightsPayload.data.highlights.map((highlight) => highlight.exact);
 
     const evidencePane = await openEvidencePane(page);
-    const linkedRows = evidencePane.locator("[data-highlight-id]");
     const highlightedSegments = transcriptContent.locator("[data-active-highlight-ids]");
-    const beforeLinkedRowCount = await linkedRows.count();
     const beforeHighlightedCount = await highlightedSegments.count();
     // The video embed + capped segment list push the transcript reader surface
     // below the initial fold; bring it into view so the selection helper (which
@@ -176,14 +178,11 @@ test.describe("youtube transcript media", () => {
     const createdHighlightResponse = await createHighlightResponse;
     expect(createdHighlightResponse.ok()).toBeTruthy();
 
-    const linkedRow = linkedRows.filter({ hasText: selectedText }).first();
+    const linkedRow = evidenceHighlightArticle(evidencePane, selectedText);
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
     await expect(linkedRow).toContainText(selectedText);
     await expect(highlightActions).toHaveCount(0);
 
-    await expect
-      .poll(async () => linkedRows.count(), { timeout: 10_000 })
-      .toBeGreaterThan(beforeLinkedRowCount);
     await expect
       .poll(async () => highlightedSegments.count(), { timeout: 10_000 })
       .toBeGreaterThan(beforeHighlightedCount);

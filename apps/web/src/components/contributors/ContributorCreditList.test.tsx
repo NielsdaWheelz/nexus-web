@@ -56,6 +56,6 @@ describe("ContributorCreditList", () => {
     );
     expect(screen.getByRole("link", { name: "Octavia E. Butler" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "Samuel R. Delany" })).not.toBeInTheDocument();
-    expect(screen.getByText(", +1 more")).toBeVisible();
+    expect(screen.getByText(", +1")).toBeVisible();
   });
 });

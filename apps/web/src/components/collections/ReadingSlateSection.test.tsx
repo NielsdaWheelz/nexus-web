@@ -170,7 +170,9 @@ describe("ReadingSlateSection", () => {
     const section = await screen.findByRole("region", {
       name: "At hand suggestions",
     });
-    expect(await within(section).findByText("Subtitle 2")).toBeVisible();
+    expect(
+      await within(section).findByText("Subtitle 2 · Added to Nexus")
+    ).toBeVisible();
     expect(within(section).getAllByText(/Added to Nexus/)).toHaveLength(3);
     const addButtons = within(section).getAllByRole("button", {
       name: /Add Item .* to Lectern/,

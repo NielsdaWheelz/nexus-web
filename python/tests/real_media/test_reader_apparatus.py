@@ -1,14 +1,16 @@
-"""Reader apparatus real-media ingest/API checks."""
+"""Reader apparatus real-media ingest, owner-model, and API checks."""
 
 from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import fitz
 import pytest
 
+from nexus.services.reader_apparatus import get_media_apparatus
 from nexus.storage.client import get_storage_client
 from tests.helpers import auth_headers, create_test_user_id
 from tests.reader_apparatus_assertions import (
@@ -66,6 +68,17 @@ UNSUPPORTED_PDF_CASES = fixture_cases_by_real_media_contract(
     "pdf_upload_unsupported_pdf_adapter_api"
 )
 
+_FORWARD_APPARATUS_RELATIONS = frozenset(
+    {
+        "points_to_note",
+        "points_to_endnote",
+        "points_to_sidenote",
+        "points_to_margin_note",
+        "cites_bibliography_entry",
+        "contains_reference",
+    }
+)
+
 
 @pytest.mark.parametrize(
     "case",
@@ -111,11 +124,12 @@ def test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix(
     assert result["status"] == "success", result
 
     register_background_job_cleanup(direct_db, media_id)
-    apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-    assert apparatus_response.status_code == 200, apparatus_response.text
-    apparatus = apparatus_response.json()["data"]["apparatus"]
+    document_map, apparatus = _read_document_map_and_apparatus_owner(
+        auth_client, direct_db, headers, user_id, media_id
+    )
     assert apparatus["media_kind"] == "web_article"
     _assert_apparatus_matches_case(apparatus, case)
+    _assert_document_map_projects_apparatus(document_map, apparatus)
 
     write_trace(
         tmp_path,
@@ -126,6 +140,7 @@ def test_real_browser_captured_article_fixture_matches_reader_apparatus_matrix(
             "license": "synthetic minimal fixture modeled after source-authored markup shape",
             "ingest": result,
             "apparatus": apparatus,
+            "evidence": document_map["evidence"],
         },
     )
 
@@ -160,9 +175,9 @@ def test_real_epub_noteref_persists_reader_apparatus(
         assert result["chapter_count"] == case["expected"]["chapter_count"], result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "epub"
         assert apparatus["status"] == case["expected"]["status"]
         assert_item_and_edge_counts_match_case(
@@ -194,6 +209,7 @@ def test_real_epub_noteref_persists_reader_apparatus(
             and item["source_ref"]["spine_index"] == 0
             for item in apparatus["items"]
         ), apparatus["items"]
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -204,6 +220,7 @@ def test_real_epub_noteref_persists_reader_apparatus(
                 "license": case["license_note"],
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
@@ -247,12 +264,13 @@ def test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparat
         assert result["chapter_count"] == case.chapter_count, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "epub"
         _assert_epub_apparatus_matches_case(apparatus, case)
         assert_epub_noteref_pairs_match_apparatus(apparatus, expected_noterefs)
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -263,6 +281,7 @@ def test_real_standardebooks_epub_cross_fragment_endnotes_persist_reader_apparat
                 "license": case.license_note,
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
@@ -297,16 +316,19 @@ def test_real_epub_waste_land_notes_chapter_does_not_invent_reader_apparatus(
     try:
         result = run_source_attempt_for_media(direct_db, media_id)
         assert result["status"] == "success", result
-        assert result["chapter_count"] > 0, result
+        chapter_count = result["chapter_count"]
+        assert isinstance(chapter_count, int), result
+        assert chapter_count > 0, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "epub"
         assert apparatus["status"] == case["expected"]["status"]
         assert apparatus["items"] == []
         assert apparatus["edges"] == []
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -317,6 +339,7 @@ def test_real_epub_waste_land_notes_chapter_does_not_invent_reader_apparatus(
                 "license": case["license_note"],
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
@@ -358,9 +381,9 @@ def test_real_pdf_attention_persists_native_link_graph_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "pdf"
         _assert_pdf_native_link_graph_apparatus_matches_case(
             apparatus,
@@ -368,6 +391,7 @@ def test_real_pdf_attention_persists_native_link_graph_reader_apparatus(
             media_id,
             graph,
         )
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -378,6 +402,7 @@ def test_real_pdf_attention_persists_native_link_graph_reader_apparatus(
                 "license": case["license_note"],
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
@@ -415,9 +440,9 @@ def test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "pdf"
         _assert_pdf_legal_footnote_apparatus_matches_case(
             apparatus,
@@ -425,6 +450,7 @@ def test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus(
             media_id,
             graph,
         )
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -435,6 +461,7 @@ def test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus(
                 "license": case["license_note"],
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
@@ -447,7 +474,7 @@ def test_real_pdf_law_review_fixture_persists_legal_footnote_reader_apparatus(
     ids=[case["id"] for case in UNSUPPORTED_PDF_CASES],
 )
 def test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus(
-    case: dict[str, object],
+    case: dict[str, Any],
     auth_client,
     direct_db: DirectSessionManager,
     tmp_path,
@@ -488,14 +515,15 @@ def test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus(
         assert result["has_text"] is True, result
 
         register_background_job_cleanup(direct_db, media_id)
-        apparatus_response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
-        assert apparatus_response.status_code == 200, apparatus_response.text
-        apparatus = apparatus_response.json()["data"]["apparatus"]
+        document_map, apparatus = _read_document_map_and_apparatus_owner(
+            auth_client, direct_db, headers, user_id, media_id
+        )
         assert apparatus["media_kind"] == "pdf"
         assert apparatus["status"] == case["expected"]["status"]
         assert apparatus["items"] == []
         assert apparatus["edges"] == []
         assert apparatus["diagnostics"] == expected["diagnostics"]
+        _assert_document_map_projects_apparatus(document_map, apparatus)
 
         write_trace(
             tmp_path,
@@ -506,14 +534,93 @@ def test_real_pdf_unsupported_adapter_fixture_does_not_invent_reader_apparatus(
                 "license": case["license_note"],
                 "ingest": result,
                 "apparatus": apparatus,
+                "evidence": document_map["evidence"],
             },
         )
     finally:
         get_storage_client().delete_object(storage_path)
 
 
+def _read_document_map_and_apparatus_owner(
+    auth_client,
+    direct_db: DirectSessionManager,
+    headers: dict[str, str],
+    viewer_id: UUID,
+    media_id: UUID,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    response = auth_client.get(f"/media/{media_id}/document-map", headers=headers)
+    assert response.status_code == 200, response.text
+    with direct_db.session() as session:
+        apparatus = get_media_apparatus(session, viewer_id, media_id).model_dump(mode="json")
+    return response.json()["data"], apparatus
+
+
+def _assert_document_map_projects_apparatus(
+    document_map: dict[str, Any],
+    apparatus: dict[str, Any],
+) -> None:
+    """Verify the hard-cut current API without resurrecting its raw predecessor."""
+
+    assert "apparatus" not in document_map
+    assert document_map["media_id"] == apparatus["media_id"]
+    assert document_map["media_kind"] == apparatus["media_kind"]
+    assert document_map["source_version"]["apparatus_source_fingerprint"] == {
+        "kind": "Present",
+        "value": apparatus["source_fingerprint"],
+    }
+    evidence = document_map["evidence"]
+    source_references = [
+        item
+        for group in evidence["passage_groups"]
+        for item in group["items"]
+        if item["kind"] == "SourceReference"
+    ] + [item for item in evidence["document_items"] if item["kind"] == "SourceReference"]
+    actual_by_key = {item["stable_key"]: item for item in source_references}
+
+    apparatus_items = apparatus["items"]
+    apparatus_edges = [
+        edge for edge in apparatus["edges"] if edge["relation"] in _FORWARD_APPARATUS_RELATIONS
+    ]
+    items_by_key = {item["stable_key"]: item for item in apparatus_items}
+    outgoing: dict[str, list[dict[str, Any]]] = {}
+    targeted_keys: set[str] = set()
+    for edge in apparatus_edges:
+        outgoing.setdefault(edge["from_stable_key"], []).append(edge)
+        targeted_keys.add(edge["to_stable_key"])
+
+    expected_owners: list[dict[str, Any]] = []
+    if apparatus["status"] in ("ready", "partial"):
+        expected_owners = [
+            item
+            for item in apparatus_items
+            if item["kind"].endswith("_ref") or item["stable_key"] in outgoing
+        ]
+        owner_keys = {item["stable_key"] for item in expected_owners}
+        expected_owners.extend(
+            item
+            for item in apparatus_items
+            if item["stable_key"] not in owner_keys and item["stable_key"] not in targeted_keys
+        )
+    expected_by_key = {item["stable_key"]: item for item in expected_owners}
+
+    assert actual_by_key.keys() == expected_by_key.keys()
+    assert evidence["counts"]["citations"] == len(actual_by_key)
+    for stable_key, expected_owner in expected_by_key.items():
+        actual = actual_by_key[stable_key]
+        assert actual["apparatus_kind"] == expected_owner["kind"]
+        assert actual["confidence"] == expected_owner["confidence"]
+        expected_target_keys = list(
+            dict.fromkeys(
+                edge["to_stable_key"]
+                for edge in outgoing.get(stable_key, [])
+                if edge["to_stable_key"] in items_by_key
+            )
+        )
+        assert [target["stable_key"] for target in actual["targets"]] == expected_target_keys
+
+
 def _assert_apparatus_matches_case(
-    apparatus: dict[str, object],
+    apparatus: dict[str, Any],
     case: WebArticleApparatusCase,
 ) -> None:
     assert apparatus["status"] == case.expected_status
@@ -541,7 +648,7 @@ def _assert_apparatus_matches_case(
 
 
 def _assert_epub_apparatus_matches_case(
-    apparatus: dict[str, object],
+    apparatus: dict[str, Any],
     case: EpubApparatusCase,
 ) -> None:
     assert apparatus["status"] == "ready"
@@ -575,8 +682,8 @@ def _assert_epub_apparatus_matches_case(
 
 
 def _assert_pdf_native_link_graph_apparatus_matches_case(
-    apparatus: dict[str, object],
-    case: dict[str, object],
+    apparatus: dict[str, Any],
+    case: dict[str, Any],
     media_id: UUID,
     graph,
 ) -> None:
@@ -670,8 +777,8 @@ def _assert_pdf_native_link_graph_apparatus_matches_case(
 
 
 def _assert_pdf_legal_footnote_apparatus_matches_case(
-    apparatus: dict[str, object],
-    case: dict[str, object],
+    apparatus: dict[str, Any],
+    case: dict[str, Any],
     media_id: UUID,
     graph,
 ) -> None:
@@ -749,7 +856,7 @@ def _capture_url(case: WebArticleApparatusCase) -> str:
     return case.modeled_source_url
 
 
-def _single_real_media_fixture_case(contract: str) -> dict[str, object]:
+def _single_real_media_fixture_case(contract: str) -> dict[str, Any]:
     cases = fixture_cases_by_real_media_contract(contract)
     assert len(cases) == 1, contract
     return cases[0]

@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Browser,
   type BrowserContext,
+  type Locator,
   type Page,
   type Request,
   type TestInfo,
@@ -131,11 +132,15 @@ async function writeReaderCursor(
 ): Promise<ReaderCursorSnapshot> {
   const current = await fetchReaderCursor(request, mediaId);
   const response = await request.put(`/api/media/${mediaId}/reader-state`, {
-    data: { cursor: { locator, base_revision: current.revision } },
+    data: { locator, base_revision: current.revision },
     headers: stateChangingApiHeaders(),
   });
-  expect(response.ok()).toBeTruthy();
-  const payload = (await response.json()) as { data: ReaderCursorSnapshot };
+  const body = await response.text();
+  expect(
+    response.ok(),
+    `PUT /api/media/${mediaId}/reader-state failed: status=${response.status()} body=${body}`,
+  ).toBeTruthy();
+  const payload = JSON.parse(body) as { data: ReaderCursorSnapshot };
   return payload.data;
 }
 
@@ -204,6 +209,175 @@ async function awaitCursorWriteQuiescence(tracker: {
       { timeout: 20_000 },
     )
     .toBe(true);
+}
+
+function isCursorWriteRequest(request: Request, mediaId: string): boolean {
+  if (
+    request.method() !== "PUT" ||
+    new URL(request.url()).pathname !== `/api/media/${mediaId}/reader-state`
+  ) {
+    return false;
+  }
+  const body = request.postData();
+  if (!body) return false;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "locator" in parsed &&
+      "base_revision" in parsed
+    );
+  } catch {
+    return false;
+  }
+}
+
+function trackCursorWrites(page: Page, mediaId: string) {
+  const tracker = { started: 0, inFlight: 0, lastStartedAt: 0 };
+  page.on("request", (request) => {
+    if (!isCursorWriteRequest(request, mediaId)) return;
+    tracker.started += 1;
+    tracker.inFlight += 1;
+    tracker.lastStartedAt = Date.now();
+  });
+  const settle = (request: Request) => {
+    if (!isCursorWriteRequest(request, mediaId)) return;
+    tracker.inFlight = Math.max(0, tracker.inFlight - 1);
+  };
+  page.on("requestfinished", settle);
+  page.on("requestfailed", settle);
+  return tracker;
+}
+
+async function awaitCanonicalWebAnchorInViewportIfPresent(
+  request: APIRequestContext,
+  pane: Locator,
+  mediaId: string,
+): Promise<void> {
+  const canonical = await fetchReaderCursor(request, mediaId);
+  if (canonical.state === "Empty") {
+    return;
+  }
+  const canonicalQuote =
+    canonical.locator.kind === "web"
+      ? (canonical.locator.text.quote ?? "")
+      : "";
+  const anchorParagraph = canonicalQuote.match(
+    /reader resume paragraph \d{3}/,
+  )?.[0];
+  if (!anchorParagraph) {
+    throw new Error(
+      `Canonical quote does not anchor a web paragraph: ${canonicalQuote}`,
+    );
+  }
+  await expect(pane.getByText(anchorParagraph).first()).toBeInViewport({
+    timeout: 15_000,
+  });
+}
+
+async function wheelReaderToTarget(
+  page: Page,
+  pane: Locator,
+  targetText: string,
+): Promise<Locator> {
+  const viewport = pane.getByTestId("document-viewport").first();
+  const target = pane.getByText(targetText).first();
+  await expect(viewport).toBeVisible();
+  const readGeometry = () =>
+    target.evaluate((element) => {
+      const targetRect = element.getBoundingClientRect();
+      let clipLeft = 0;
+      let clipTop = 0;
+      let clipRight = window.innerWidth;
+      let clipBottom = window.innerHeight;
+      let scrollOwner: HTMLElement | null = null;
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== document.body) {
+        const style = window.getComputedStyle(ancestor);
+        const clipsX = /(auto|scroll|overlay|hidden|clip)/.test(
+          style.overflowX,
+        );
+        const clipsY = /(auto|scroll|overlay|hidden|clip)/.test(
+          style.overflowY,
+        );
+        if (clipsX || clipsY) {
+          const rect = ancestor.getBoundingClientRect();
+          if (clipsX) {
+            clipLeft = Math.max(clipLeft, rect.left);
+            clipRight = Math.min(clipRight, rect.right);
+          }
+          if (clipsY) {
+            clipTop = Math.max(clipTop, rect.top);
+            clipBottom = Math.min(clipBottom, rect.bottom);
+          }
+        }
+        if (
+          scrollOwner === null &&
+          /(auto|scroll|overlay)/.test(style.overflowY) &&
+          ancestor.scrollHeight > ancestor.clientHeight
+        ) {
+          scrollOwner = ancestor;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      const ownerRect = (
+        scrollOwner ?? document.scrollingElement ?? document.documentElement
+      ).getBoundingClientRect();
+      const pointerLeft = Math.max(clipLeft, ownerRect.left, 0);
+      const pointerTop = Math.max(clipTop, ownerRect.top, 0);
+      const pointerRight = Math.min(
+        clipRight,
+        ownerRect.right,
+        window.innerWidth,
+      );
+      const pointerBottom = Math.min(
+        clipBottom,
+        ownerRect.bottom,
+        window.innerHeight,
+      );
+      return {
+        visible:
+          targetRect.right > clipLeft &&
+          targetRect.left < clipRight &&
+          targetRect.bottom > clipTop &&
+          targetRect.top < clipBottom,
+        distanceY:
+          targetRect.bottom <= clipTop
+            ? targetRect.top - clipTop
+            : targetRect.top >= clipBottom
+              ? targetRect.bottom - clipBottom
+              : 0,
+        pointerX: (pointerLeft + pointerRight) / 2,
+        pointerY: (pointerTop + pointerBottom) / 2,
+      };
+    });
+  const initialGeometry = await readGeometry();
+  await page.mouse.move(initialGeometry.pointerX, initialGeometry.pointerY);
+  // Take control from any in-flight canonical restore with genuine input,
+  // then let React commit the cancelled/settled restore before the meaningful
+  // movement. Programmatic scrollIntoView can otherwise be mistaken for the
+  // restore itself and intentionally suppressed by the production reader.
+  await page.mouse.wheel(0, 1);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  for (let step = 0; step < 64; step += 1) {
+    const geometry = await readGeometry();
+    if (geometry.visible) {
+      return target;
+    }
+    await page.mouse.move(geometry.pointerX, geometry.pointerY);
+    const direction = Math.sign(geometry.distanceY);
+    const deltaY =
+      direction * Math.min(400, Math.max(80, Math.abs(geometry.distanceY)));
+    await page.mouse.wheel(0, deltaY);
+  }
+  await expect(target).toBeInViewport({ timeout: 5_000 });
+  return target;
 }
 
 function pdfControlsToolbar(page: Page) {
@@ -456,43 +630,10 @@ test.describe("reader progress continuity", () => {
       epubLocatorForSection(chapterOneSection),
     );
 
-    // Cursor-bearing saves are the only writes traversal must never emit; track
-    // PUT starts and in-flight count so a recorded total can be proven quiescent.
-    // The reader-state endpoint also receives attention-only lifecycle-flush PUTs
-    // on unmount (see useReaderProgress.ts's lifecycleFlush) — those carry an
-    // `attention` field but no `cursor` field, so pane Back would otherwise emit
-    // one and falsely look like traversal wrote a cursor. Filter by body shape.
-    const cursorWrites = { started: 0, inFlight: 0, lastStartedAt: 0 };
-    const isCursorWrite = (request: Request) => {
-      if (
-        request.method() !== "PUT" ||
-        new URL(request.url()).pathname !== `/api/media/${mediaId}/reader-state`
-      ) {
-        return false;
-      }
-      const body = request.postData();
-      if (!body) return false;
-      try {
-        const parsed: unknown = JSON.parse(body);
-        return (
-          typeof parsed === "object" && parsed !== null && "cursor" in parsed
-        );
-      } catch {
-        return false;
-      }
-    };
-    page.on("request", (request) => {
-      if (!isCursorWrite(request)) return;
-      cursorWrites.started += 1;
-      cursorWrites.inFlight += 1;
-      cursorWrites.lastStartedAt = Date.now();
-    });
-    const settleCursorWrite = (request: Request) => {
-      if (!isCursorWrite(request)) return;
-      cursorWrites.inFlight = Math.max(0, cursorWrites.inFlight - 1);
-    };
-    page.on("requestfinished", settleCursorWrite);
-    page.on("requestfailed", settleCursorWrite);
+    // Track canonical cursor PUT starts and in-flight count so a recorded total
+    // can be proven quiescent. The hard-cutover wire body is the top-level
+    // CursorWrite contract: `{ locator, base_revision }`.
+    const cursorWrites = trackCursorWrites(page, mediaId);
 
     // The seeded non-media structural origin; reader churn must never evict it.
     await gotoSinglePaneWorkspace(
@@ -874,6 +1015,7 @@ test.describe("reader progress continuity", () => {
 
     const seed = readReaderResumeSeed();
     const mediaId = seed.web_media_id;
+    const desktopCursorWrites = trackCursorWrites(page, mediaId);
 
     // Desktop laptop: genuine reading commits a position and stays active.
     await gotoSinglePaneWorkspace(
@@ -885,13 +1027,24 @@ test.describe("reader progress continuity", () => {
     await expect(
       desktopPane.getByText("reader resume paragraph 001"),
     ).toBeVisible({ timeout: 15_000 });
-    await desktopPane
-      .getByText("reader resume paragraph 040")
-      .first()
-      .scrollIntoViewIfNeeded();
+    await awaitCanonicalWebAnchorInViewportIfPresent(
+      page.request,
+      desktopPane,
+      mediaId,
+    );
+    const desktopTarget = await wheelReaderToTarget(
+      page,
+      desktopPane,
+      "reader resume paragraph 080",
+    );
+    await expect(desktopTarget).toBeInViewport();
+    // This media is shared by earlier scenarios in the serial E2E run, so a
+    // bare `revision >= 1` can observe their stale cursor and race this mount's
+    // debounced save. Prove the desktop is quiescent before the phone starts.
     await expect
-      .poll(async () => (await fetchReaderCursor(page.request, mediaId)).revision)
-      .toBeGreaterThanOrEqual(1);
+      .poll(() => desktopCursorWrites.started, { timeout: 10_000 })
+      .toBeGreaterThan(0);
+    await awaitCursorWriteQuiescence(desktopCursorWrites);
 
     // Phone: read much further, committing a newer revision. While it is
     // still open, the laptop keeps reading: dirty local state means the
@@ -907,13 +1060,22 @@ test.describe("reader progress continuity", () => {
         `/media/${mediaId}`,
       );
       const phonePane = activeWorkspacePane(phone.page);
-      await expect(
-        phonePane.getByText("reader resume paragraph 001"),
-      ).toBeVisible({ timeout: 15_000 });
-      await phonePane
-        .getByText("reader resume paragraph 200")
-        .first()
-        .scrollIntoViewIfNeeded();
+      await awaitCanonicalWebAnchorInViewportIfPresent(
+        phone.page.request,
+        phonePane,
+        mediaId,
+      );
+      const phoneCursorWrites = trackCursorWrites(phone.page, mediaId);
+      const phoneTarget = await wheelReaderToTarget(
+        phone.page,
+        phonePane,
+        "reader resume paragraph 200",
+      );
+      await expect(phoneTarget).toBeInViewport();
+      await expect
+        .poll(() => phoneCursorWrites.started, { timeout: 10_000 })
+        .toBeGreaterThan(0);
+      await awaitCursorWriteQuiescence(phoneCursorWrites);
       // Wait until the PHONE's position is canonical (not merely any newer
       // revision — a trailing desktop save could bump the revision too).
       await expect
@@ -966,27 +1128,17 @@ test.describe("reader progress continuity", () => {
       const phonePane = activeWorkspacePane(phoneAgain.page);
       // A cold mount resumes the canonical (post-Stay) position internally:
       // the paragraph the canonical quote anchors to is in the viewport.
-      const canonical = await fetchReaderCursor(page.request, mediaId);
-      const canonicalQuote =
-        canonical.state === "Positioned" && canonical.locator.kind === "web"
-          ? (canonical.locator.text.quote ?? "")
-          : "";
-      const anchorParagraph = canonicalQuote.match(
-        /reader resume paragraph \d{3}/,
-      )?.[0];
-      if (!anchorParagraph) {
-        throw new Error(
-          `Canonical quote does not anchor a paragraph: ${canonicalQuote}`,
-        );
-      }
-      await expect(
-        phonePane.getByText(anchorParagraph).first(),
-      ).toBeInViewport({ timeout: 15_000 });
+      await awaitCanonicalWebAnchorInViewportIfPresent(
+        phoneAgain.page.request,
+        phonePane,
+        mediaId,
+      );
 
-      await phonePane
-        .getByText("reader resume paragraph 230")
-        .first()
-        .scrollIntoViewIfNeeded();
+      await wheelReaderToTarget(
+        phoneAgain.page,
+        phonePane,
+        "reader resume paragraph 230",
+      );
       await expect
         .poll(async () => {
           const snapshot = await fetchReaderCursor(

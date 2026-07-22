@@ -3065,7 +3065,7 @@ class TestFromUrlRemoteFiles:
         assert retry_payload["url"] == url
         assert "arxiv_source_package" not in retry_payload
 
-    def test_arxiv_pdf_from_url_persists_source_package_apparatus_api(
+    def test_arxiv_pdf_from_url_projects_source_package_apparatus_as_evidence(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -3113,49 +3113,40 @@ class TestFromUrlRemoteFiles:
         )
 
         assert response.status_code == 200, response.text
-        data = response.json()["data"]["apparatus"]
+        data = response.json()["data"]
         assert data["media_kind"] == "pdf"
         assert data["status"] == "ready"
-        assert data["capabilities"]["has_sidecar_items"] is True
-        assert data["capabilities"]["has_inline_markers"] is False
-        assert data["capabilities"]["supports_jump_to_marker"] is False
-        assert data["capabilities"]["supports_jump_to_target"] is False
-        assert Counter(item["kind"] for item in data["items"]) == {
-            "bibliography_entry": 17,
+        assert "apparatus" not in data
+        assert data["source_version"]["apparatus_source_fingerprint"]["kind"] == "Present"
+        evidence = data["evidence"]
+        assert evidence["counts"] == {
+            "highlights": 0,
+            "citations": 16,
+            "links": 0,
+            "synapses": 0,
+            "passages": 16,
+            "document": 0,
+        }
+        source_references = [
+            item
+            for group in evidence["passage_groups"]
+            for item in group["items"]
+            if item["kind"] == "SourceReference"
+        ]
+        assert Counter(item["apparatus_kind"] for item in source_references) == {
             "bibliography_ref": 15,
             "footnote": 1,
         }
-        assert Counter(item["extraction_method"] for item in data["items"]) == {
-            "latex_biblatex_bibliography": 17,
-            "latex_biblatex_citation": 15,
-            "latex_footnote": 1,
+        assert {group["resolution"]["reason"] for group in evidence["passage_groups"]} == {
+            "Missing"
         }
-        assert len(data["items"]) == 33
-        assert len(data["edges"]) == 20
-        assert {item["locator_status"] for item in data["items"]} == {"missing"}
-        assert {item["locator"] for item in data["items"]} == {None}
-        assert {item["source_ref"]["format"] for item in data["items"]} == {"arxiv_source"}
-        assert {item["source_ref"]["arxiv_id"] for item in data["items"]} == {"2606.01109"}
-        assert {item["source_ref"]["sha256_hex"] for item in data["items"]} == {
-            hashlib.sha256(source_bytes).hexdigest()
-        }
-        assert {edge["relation"] for edge in data["edges"]} == {"cites_bibliography_entry"}
-        assert data["diagnostics"]["arxiv_source_package"]["status"] == "fetched"
-        assert data["diagnostics"]["arxiv_source_package"]["source_url"] == source_url
-        assert (
-            data["diagnostics"]["arxiv_source_package"]["sha256_hex"]
-            == hashlib.sha256(source_bytes).hexdigest()
-        )
-        assert data["diagnostics"]["latex_biblatex"] == {
-            "status": "ready",
-            "citation_marker_count": 15,
-            "citation_edge_count": 20,
-            "cited_bibliography_entry_count": 17,
-            "bib_entry_count": 22,
-            "uncited_bib_entry_count": 5,
-            "footnote_count": 1,
-            "missing_citation_keys": [],
-        }
+        targets = [target for item in source_references for target in item["targets"]]
+        assert len(targets) == 20
+        assert {target["apparatus_kind"] for target in targets} == {"bibliography_entry"}
+        assert {target["resolution"]["reason"] for target in targets} == {"Missing"}
+        assert {target["activation"]["kind"] for target in targets} == {"none"}
+        assert data["markers"] == []
+        assert data["diagnostics"] == {"omitted_item_counts": {}}
         assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
 
     def test_arxiv_pdf_from_url_rejects_unsafe_source_package_but_completes_pdf_ingest(
@@ -3201,7 +3192,7 @@ class TestFromUrlRemoteFiles:
         with direct_db.session() as session:
             row = session.execute(
                 text("""
-                    SELECT m.processing_status, msa.status, msa.id
+                    SELECT m.processing_status, msa.status
                     FROM media m
                     JOIN media_source_attempts msa ON msa.media_id = m.id
                     WHERE m.id = :media_id
@@ -3220,29 +3211,24 @@ class TestFromUrlRemoteFiles:
         )
 
         assert response.status_code == 200, response.text
-        data = response.json()["data"]["apparatus"]
+        data = response.json()["data"]
         assert data["media_kind"] == "pdf"
         assert data["status"] == "empty"
-        assert data["items"] == []
-        assert data["edges"] == []
-        assert data["capabilities"] == {
-            "has_inline_markers": False,
-            "has_sidecar_items": False,
-            "supports_hover_preview": False,
-            "supports_jump_to_marker": False,
-            "supports_jump_to_target": False,
-            "has_probable_items": False,
+        assert "apparatus" not in data
+        assert data["evidence"] == {
+            "counts": {
+                "highlights": 0,
+                "citations": 0,
+                "links": 0,
+                "synapses": 0,
+                "passages": 0,
+                "document": 0,
+            },
+            "passage_groups": [],
+            "document_items": [],
         }
-        assert data["diagnostics"]["arxiv_source_package"] == {
-            "status": "unsafe_archive",
-            "storage_path": build_source_artifact_storage_path(
-                media_id,
-                row[2],
-                "tar",
-            ),
-            "source_url": source_url,
-            "reason": "path_traversal",
-        }
+        assert data["markers"] == []
+        assert data["diagnostics"] == {"omitted_item_counts": {}}
 
     def test_create_remote_epub_url_success_via_http_fetch(
         self,

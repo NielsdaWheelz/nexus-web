@@ -39,10 +39,17 @@ test.describe("authenticated shell AC-4", () => {
     );
 
     const activePane = activeWorkspacePane(page);
-    await expect(activePane.getByText(/^default$/i)).toBeVisible();
+    const defaultLibraryItem = activePane
+      .getByRole("listitem")
+      .filter({ hasText: "Default library" });
+    const defaultLibraryLabel = defaultLibraryItem.getByText(
+      "Default library",
+      { exact: true },
+    );
+    await expect(defaultLibraryLabel).toBeVisible();
     await expect.poll(() => browserLibraryListFetches).toEqual([]);
 
-    const libraryLink = activePane.locator("a[href^='/libraries/']").first();
+    const libraryLink = defaultLibraryItem.getByRole("link");
     await expect(libraryLink).toBeVisible();
     await page.waitForLoadState("networkidle");
     await page.evaluate(() => {

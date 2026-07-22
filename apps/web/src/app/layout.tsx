@@ -7,8 +7,10 @@ import "@/lib/reader/apparatus.css";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { readThemeCookie } from "@/lib/theme/cookie";
 import { BRAND_BG_DARK, BRAND_BG_LIGHT } from "@/lib/brand";
+import { getEnv } from "@/lib/env";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getEnv().appPublicOrigin),
   title: "Nexus",
   description: "A reading and notes platform",
   applicationName: "Nexus",

@@ -872,6 +872,49 @@ describe("ProseMirrorOutlineEditor object refs", () => {
     }
   });
 
+  it("lets unhandled Escape reach an outer owner while autocomplete keeps first ownership", async () => {
+    const user = userEvent.setup();
+    const escapeDefaultStates: boolean[] = [];
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        escapeDefaultStates.push(event.defaultPrevented);
+      }
+    };
+    const { spy } = mockTargetSearch(() => [
+      resourceTarget(
+        "page",
+        "abababab-abab-4bab-8bab-abababababab",
+        "Missing result",
+      ),
+    ]);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:escape-ownership"
+          initialDoc={emptyDoc()}
+        />,
+      );
+
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("{Escape}");
+      expect(escapeDefaultStates).toEqual([false]);
+
+      await user.keyboard("@missing");
+      await screen.findByRole("option", { name: /Missing result/ });
+      expect(editor).toHaveAttribute("aria-expanded", "true");
+      await user.keyboard("{Escape}");
+
+      expect(editor).toHaveAttribute("aria-expanded", "false");
+      expect(escapeDefaultStates).toEqual([false, true]);
+    } finally {
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+      spy.mockRestore();
+    }
+  });
+
   it("keeps the live editor doc when parent props echo a new snapshot for the same resource", async () => {
     const user = userEvent.setup();
     const { rerender } = render(

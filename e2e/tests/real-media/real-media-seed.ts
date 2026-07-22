@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, type Page, type TestInfo } from "@playwright/test";
 import { openAddContentPanel } from "../add-content";
 import { stateChangingApiHeaders } from "../api";
-import { openEvidencePane } from "../reader";
+import { evidenceHighlightArticle, openEvidencePane } from "../reader";
 import { selectFreshVisibleTextSnippet } from "../selection";
 import { runE2eWorkerOnce, startE2eWorkerUntilMediaReady } from "../worker";
 import {
@@ -30,17 +30,27 @@ const REAL_MEDIA_FIXTURE_DIR = path.join(
 const REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS = 120_000;
 const REAL_MEDIA_WORKER_POLL_MS = 200;
 const NON_LOCAL_STORAGE_OPT_IN = "REAL_MEDIA_ALLOW_NON_LOCAL_STORAGE";
+const REAL_MEDIA_FIXTURE_WORKER_ENV = {
+  // Fixture dispatch performs no provider I/O, but the production execution
+  // boundary intentionally validates its platform credential first.
+  OPENAI_API_KEY: "e2e-real-media-fixture-openai-key",
+  REAL_MEDIA_PROVIDER_FIXTURES: "1",
+  REAL_MEDIA_FIXTURE_DIR:
+    process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
+} as const;
 
 export const FRESH_REAL_MEDIA_FIXTURES = {
   pdfSvms: {
     sizeBytes: 1_502_380,
     query: "support vectors",
     needle: "support vectors",
+    selectionPageNumber: 2,
   },
   epubMobyDickOld: {
     sizeBytes: 840_468,
     query: "Call me Ishmael",
     needle: "Call me Ishmael",
+    selectionSectionLabel: "CHAPTER 1. Loomings.",
   },
 } as const;
 
@@ -234,11 +244,7 @@ function runRealMediaWorkerOnce(mediaId?: string): RealMediaWorkerResult {
   const result = runE2eWorkerOnce({
     mediaId,
     allowedNexusEnvs: ["local"],
-    extraEnv: {
-      REAL_MEDIA_PROVIDER_FIXTURES: "1",
-      REAL_MEDIA_FIXTURE_DIR:
-        process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
-    },
+    extraEnv: REAL_MEDIA_FIXTURE_WORKER_ENV,
   });
   return {
     worker_iterations: result.processed ? 1 : 0,
@@ -321,11 +327,7 @@ export async function drainRealMediaWorkerForMediaReady(
   const workerResult = await startE2eWorkerUntilMediaReady({
     mediaId,
     allowedNexusEnvs: ["local"],
-    extraEnv: {
-      REAL_MEDIA_PROVIDER_FIXTURES: "1",
-      REAL_MEDIA_FIXTURE_DIR:
-        process.env.REAL_MEDIA_FIXTURE_DIR ?? REAL_MEDIA_FIXTURE_DIR,
-    },
+    extraEnv: REAL_MEDIA_FIXTURE_WORKER_ENV,
     deadlineSeconds: Math.floor(REAL_MEDIA_WORKER_DRAIN_TIMEOUT_MS / 1000),
   });
 
@@ -935,9 +937,7 @@ export async function createFragmentHighlightThroughVisibleSelection(
         .first(),
     ).toBeVisible({ timeout: 10_000 });
     const highlightsPane = await openEvidencePane(page);
-    const row = highlightsPane
-      .locator(`[data-highlight-id="${highlightIdSelectorValue}"]`)
-      .first();
+    const row = evidenceHighlightArticle(highlightsPane, selectedText);
     try {
       await expect(row).toBeVisible({ timeout: 10_000 });
     } catch (error) {

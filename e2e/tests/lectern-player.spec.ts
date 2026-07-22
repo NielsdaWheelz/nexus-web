@@ -166,6 +166,13 @@ function lecternRow(page: Page, title: string): Locator {
   return lecternList(page).getByRole("listitem").filter({ hasText: title });
 }
 
+function lecternRowActions(row: Locator, title: string): Locator {
+  return row.getByRole("button", {
+    name: `More actions for ${title}`,
+    exact: true,
+  });
+}
+
 /** Fire the window event the provider revalidates on, as the browser would. */
 async function dispatchWindowFocus(page: Page): Promise<void> {
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -185,6 +192,7 @@ test.describe("lectern + global player lifecycle", () => {
 
   test.beforeEach(async ({ request }) => {
     await clearLectern(request);
+    await setUnread(request, articleId);
   });
 
   test.afterEach(async ({ request }) => {
@@ -245,16 +253,17 @@ test.describe("lectern + global player lifecycle", () => {
     // A Readable row offers Remove but no footer "Play" (Play is FooterAudio-only).
     const articleRow = lecternRow(page, READABLE_ARTICLE.title);
     await articleRow.hover();
-    await articleRow.getByRole("button", { name: /^Actions for / }).click();
+    await lecternRowActions(articleRow, READABLE_ARTICLE.title).click();
     await expect(page.getByRole("menuitem", { name: "Remove from Lectern" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Play" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    // (c) Reorder with optimistic UI: the drag handle's keyboard affordance moves
-    // the article down one slot; the DOM reflects it before the server responds.
-    await articleRow
-      .getByRole("button", { name: `Reorder ${READABLE_ARTICLE.title}` })
-      .press("ArrowDown");
+    // (c) Reorder with optimistic UI: the unified actions/sort trigger's
+    // keyboard affordance moves the article down one slot; the DOM reflects it
+    // before the server responds.
+    await lecternRowActions(articleRow, READABLE_ARTICLE.title).press(
+      "Alt+ArrowDown",
+    );
     await expect(list.getByRole("listitem")).toHaveText([
       escapeRegExp(READABLE_RESUME.title),
       escapeRegExp(READABLE_ARTICLE.title),
@@ -268,7 +277,7 @@ test.describe("lectern + global player lifecycle", () => {
     // the canonical snapshot confirms it (Remove is not completion, §3.2/§8.2).
     const removeRow = lecternRow(page, READABLE_ARTICLE.title);
     await removeRow.hover();
-    await removeRow.getByRole("button", { name: /^Actions for / }).click();
+    await lecternRowActions(removeRow, READABLE_ARTICLE.title).click();
     await page.getByRole("menuitem", { name: "Remove from Lectern" }).click();
     await expect(list.getByRole("listitem")).toHaveText([
       escapeRegExp(READABLE_RESUME.title),

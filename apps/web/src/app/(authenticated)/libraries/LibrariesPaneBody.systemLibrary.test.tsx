@@ -65,9 +65,11 @@ describe("LibrariesPaneBody (system library protection)", () => {
     expect(await screen.findByText("Oracle Corpus")).toBeInTheDocument();
     expect(screen.getByText("Reading Room")).toBeInTheDocument();
 
-    // The system library carries no menu actions, so it renders no Actions
+    // The system library carries no menu actions, so it renders no actions
     // trigger; only the owner-admin sibling does.
-    const actionButton = screen.getByRole("button", { name: "Actions for Reading Room" });
+    const actionButton = screen.getByRole("button", {
+      name: "More actions for Reading Room",
+    });
 
     // A normal owner-admin library still exposes the full mutation set, proving
     // the suppression is keyed on the capability flags, not the surface.

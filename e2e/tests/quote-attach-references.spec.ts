@@ -119,14 +119,14 @@ test.describe("quote-attach references (post-cutover)", () => {
       name: "SEND",
       exact: true,
     });
-    const modelSettings = conversationPane.getByRole("button", {
-      name: /model settings/i,
+    const profilePicker = conversationPane.getByRole("combobox", {
+      name: "AI profile",
     });
 
     await expect(composerInput).toBeVisible({ timeout: 15_000 });
     await requireRunnableChatComposer({
       page,
-      modelSettings,
+      profilePicker,
       skipReason:
         "No runnable chat model in the e2e environment; quote-to-chat needs to create a conversation.",
     });

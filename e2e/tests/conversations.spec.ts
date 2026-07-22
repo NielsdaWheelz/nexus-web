@@ -170,8 +170,8 @@ test.describe("conversations", () => {
       );
 
       const activePane = activeWorkspacePane(page);
-      const modelSettingsButton = activePane.getByRole("button", {
-        name: /model settings:/i,
+      const profilePicker = activePane.getByRole("combobox", {
+        name: "AI profile",
       });
       const input = activePane.getByRole("textbox", {
         name: /ask anything|type a message/i,
@@ -180,7 +180,7 @@ test.describe("conversations", () => {
       await expect(input).toBeVisible({ timeout: 30_000 });
       await requireRunnableChatComposer({
         page,
-        modelSettings: modelSettingsButton,
+        profilePicker,
         skipReason:
           "No runnable chat model in the e2e environment; cannot send a conversation message.",
       });

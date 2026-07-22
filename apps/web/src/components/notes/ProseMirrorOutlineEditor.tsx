@@ -648,6 +648,13 @@ export default function ProseMirrorOutlineEditor({
               return true;
             }
           }
+          // ProseMirror's fallback key capture prevents Escape even when no
+          // editor command handles it. Stop that fallback without consuming
+          // the browser event so the enclosing interaction surface can own
+          // dismissal through the shared Escape arbiter.
+          if (event.key === "Escape") {
+            return true;
+          }
           if (
             (event.metaKey || event.ctrlKey) &&
             !event.altKey &&
@@ -1093,6 +1100,12 @@ function handleObjectRefMenuKeydown(
     pick: (target: ResourceTarget) => void;
   },
 ): boolean {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    input.close();
+    return true;
+  }
+
   const { targets } = input;
   if (targets.length === 0) {
     return false;
@@ -1139,10 +1152,6 @@ function handleObjectRefMenuKeydown(
       }
       return true;
     }
-    case "Escape":
-      event.preventDefault();
-      input.close();
-      return true;
     default:
       return false;
   }

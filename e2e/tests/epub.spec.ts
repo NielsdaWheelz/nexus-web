@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openAddContentPanel } from "./add-content";
 import { stateChangingApiHeaders } from "./api";
-import { openEvidencePane } from "./reader";
+import { evidenceHighlightArticle, openEvidencePane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -375,34 +375,20 @@ async function ensureFragmentHighlight(
   );
 }
 
-async function readLinkedItemOrder(
-  page: Page,
-  highlightIds: string[],
+async function readEvidenceQuoteOrder(
+  evidencePane: Locator,
+  exactQuotes: string[],
 ): Promise<{ order: string[]; missing: string[] }> {
-  return await activeWorkspacePane(page).evaluate((pane, ids) => {
-    const linkedContainer = pane.querySelector<HTMLElement>(
-      '[data-testid="evidence-pane-surface"]',
-    );
+  const rowTexts = await evidencePane.getByRole("article").allTextContents();
+  const order = rowTexts.flatMap((text) => {
+    const quote = exactQuotes.find((candidate) => text.includes(candidate));
+    return quote ? [quote] : [];
+  });
 
-    if (!linkedContainer) {
-      return { order: [], missing: [...ids] };
-    }
-
-    const rowIds = Array.from(
-      linkedContainer.querySelectorAll<HTMLElement>(
-        '[data-evidence-item-id^="highlight:"]',
-      ),
-    )
-      .map(
-        (row) => row.dataset.evidenceItemId?.replace(/^highlight:/, "") ?? null,
-      )
-      .filter((id): id is string => id !== null);
-
-    return {
-      order: rowIds.filter((id) => ids.includes(id)),
-      missing: ids.filter((id) => !rowIds.includes(id)),
-    };
-  }, highlightIds);
+  return {
+    order,
+    missing: exactQuotes.filter((quote) => !order.includes(quote)),
+  };
 }
 
 async function rowContainsVisibleTextOrFieldValue(
@@ -1302,9 +1288,7 @@ test.describe("epub", () => {
     };
 
     const highlightsPane = await openEvidencePane(page);
-    const linkedRow = highlightsPane.locator(
-      `[data-evidence-item-id="highlight:${createdHighlightPayload.data.id}"]`,
-    );
+    const linkedRow = evidenceHighlightArticle(highlightsPane, selectedText);
     await expect(linkedRow).toHaveCount(1);
     await expect(linkedRow).toBeVisible({ timeout: 10_000 });
     await expect(linkedRow).toContainText(selectedText);
@@ -1364,14 +1348,14 @@ test.describe("epub", () => {
     expect(startB).toBeGreaterThanOrEqual(0);
     expect(startA).toBeLessThan(startB);
 
-    const highlightA = await ensureFragmentHighlight(
+    await ensureFragmentHighlight(
       page,
       section.data.fragment_id,
       startA,
       startA + needleA.length,
       "yellow",
     );
-    const highlightB = await ensureFragmentHighlight(
+    await ensureFragmentHighlight(
       page,
       section.data.fragment_id,
       startB,
@@ -1379,7 +1363,7 @@ test.describe("epub", () => {
       "green",
     );
 
-    const targetIds = [highlightA.id, highlightB.id];
+    const targetQuotes = [needleA, needleB];
 
     for (let iteration = 0; iteration < 2; iteration++) {
       activePane = await gotoEpubReader(
@@ -1391,20 +1375,23 @@ test.describe("epub", () => {
       await expect(
         activePane.getByRole("heading", { name: seed.chapter_titles[0] }),
       ).toBeVisible({ timeout: 30_000 });
-      await openEvidencePane(page);
+      const evidencePane = await openEvidencePane(page);
 
       await expect
         .poll(
           async () => {
-            const rows = await readLinkedItemOrder(page, targetIds);
+            const rows = await readEvidenceQuoteOrder(
+              evidencePane,
+              targetQuotes,
+            );
             return rows.missing.length;
           },
           { timeout: 15_000 },
         )
         .toBe(0);
 
-      const rows = await readLinkedItemOrder(page, targetIds);
-      expect(rows.order).toEqual(targetIds);
+      const rows = await readEvidenceQuoteOrder(evidencePane, targetQuotes);
+      expect(rows.order).toEqual(targetQuotes);
     }
   });
 
@@ -1502,14 +1489,17 @@ test.describe("epub", () => {
       activePane.getByRole("button", { name: /all highlights|entire book/i }),
     ).toHaveCount(0);
 
-    const chapter1PrimaryRow = highlightsPane.locator(
-      `[data-evidence-item-id="highlight:${chapter1PrimaryHighlight.id}"]`,
+    const chapter1PrimaryRow = evidenceHighlightArticle(
+      highlightsPane,
+      chapter1PrimaryNeedle,
     );
-    const chapter1SecondaryRow = highlightsPane.locator(
-      `[data-evidence-item-id="highlight:${chapter1SecondaryHighlight.id}"]`,
+    const chapter1SecondaryRow = evidenceHighlightArticle(
+      highlightsPane,
+      chapter1SecondaryNeedle,
     );
-    const chapter2Row = highlightsPane.locator(
-      `[data-evidence-item-id="highlight:${chapter2Highlight.id}"]`,
+    const chapter2Row = evidenceHighlightArticle(
+      highlightsPane,
+      chapter2Needle,
     );
     const chapter1PrimaryAnchor = activePane
       .locator(`[data-active-highlight-ids~="${chapter1PrimaryHighlight.id}"]`)

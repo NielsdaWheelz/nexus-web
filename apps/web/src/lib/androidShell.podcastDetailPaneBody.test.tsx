@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
@@ -75,7 +76,8 @@ describe("PodcastDetailPaneBody transcript billing", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the transcript upgrade affordance when transcription is locked", async () => {
+  it("keeps transcript requests unavailable when transcription is locked", async () => {
+    const user = userEvent.setup();
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? "podcast-1" : null
     );
@@ -111,8 +113,8 @@ describe("PodcastDetailPaneBody transcript billing", () => {
               title: "Episode 0",
               canonical_source_url: "https://feeds.example.com/systems.xml",
               processing_status: "ready_for_reading",
-              transcript_state: "ready",
-              transcript_coverage: "full",
+              transcript_state: "not_requested",
+              transcript_coverage: "none",
               listening_state: null,
               subscription_default_playback_speed: null,
               episode_state: "unplayed",
@@ -128,7 +130,7 @@ describe("PodcastDetailPaneBody transcript billing", () => {
                 can_play: true,
                 can_download_file: false,
               },
-              authors: [],
+              contributors: [],
               published_date: null,
               publisher: null,
               language: null,
@@ -155,11 +157,13 @@ describe("PodcastDetailPaneBody transcript billing", () => {
 
     render(<Wrapped />);
 
+    await screen.findByRole("link", { name: "Episode 0" });
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Episode 0" })
+    );
     expect(
-      await screen.findByText(
-        "Transcription is included with AI Plus and AI Pro."
-      )
-    ).toBeInTheDocument();
+      screen.queryByRole("menuitem", { name: "Request transcript..." })
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(
         "Transcription requests require AI Plus or AI Pro. Plan changes are not available in this Android app."

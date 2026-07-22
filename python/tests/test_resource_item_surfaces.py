@@ -55,7 +55,7 @@ def test_resource_item_routes_use_product_paths(db_session: Session, bootstrappe
     )
     assert (
         _route(db_session, bootstrapped_user, "message", message_id)
-        == f"/conversations/{conversation_id}"
+        == f"/conversations/{conversation_id}?message={message_id}"
     )
 
 

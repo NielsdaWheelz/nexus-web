@@ -2,8 +2,8 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  evidenceHighlightArticle,
   openEvidencePane,
-  readerSecondaryForActivePane,
 } from "./reader";
 import {
   activeWorkspacePane,
@@ -42,10 +42,6 @@ function readSeededNonPdfMedia(): SeededNonPdfMedia {
   }
 
   return parsed;
-}
-
-function linkedItemRowByHighlightId(highlightId: string): string {
-  return `[data-highlight-id="${highlightId}"]`;
 }
 
 async function quoteRowToNewChat(row: Locator): Promise<void> {
@@ -122,7 +118,7 @@ async function scrollHighlightIntoView(contentPane: Locator, highlightId: string
 }
 
 test.describe("non-pdf linked-items", () => {
-  test("contextual highlights expand inline and keep row-local chat + source focus in sync", async ({
+  test("contextual highlights keep row-local chat and reciprocal source hover in sync", async ({
     page,
   }, testInfo) => {
     const seeded = readSeededNonPdfMedia();
@@ -140,12 +136,8 @@ test.describe("non-pdf linked-items", () => {
     await expect(contentPane).toBeVisible({ timeout: 10_000 });
     const evidencePane = await openEvidencePane(page);
 
-    const quoteRow = evidencePane
-      .locator(linkedItemRowByHighlightId(seeded.quote_highlight_id))
-      .first();
-    const focusRow = evidencePane
-      .locator(linkedItemRowByHighlightId(seeded.focus_highlight_id))
-      .first();
+    const quoteRow = evidenceHighlightArticle(evidencePane, seeded.quote_exact);
+    const focusRow = evidenceHighlightArticle(evidencePane, seeded.focus_exact);
 
     await scrollHighlightIntoView(contentPane, seeded.quote_highlight_id);
     await expectHighlightRowVisible(quoteRow, quoteNote);
@@ -153,10 +145,6 @@ test.describe("non-pdf linked-items", () => {
     await expectHighlightRowVisible(focusRow, focusNote);
     await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
-
-    await focusRow.click();
-    await expectHighlightRowVisible(focusRow, focusNote);
-    await expect(contentPane).toBeVisible({ timeout: 10_000 });
 
     const focusedSegment = contentPane
       .locator(`[data-active-highlight-ids~="${seeded.focus_highlight_id}"]`)
@@ -169,15 +157,9 @@ test.describe("non-pdf linked-items", () => {
         Math.round((element as HTMLElement).getBoundingClientRect().top),
       );
 
-    const secondary = readerSecondaryForActivePane(page);
-    await secondary.getByRole("tab", { name: "Evidence" }).click();
-    await expect(secondary.getByRole("tab", { name: "Evidence" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     await scrollHighlightIntoView(contentPane, seeded.focus_highlight_id);
     const topBefore = await readFocusedSegmentTop();
-    await focusRow.click();
+    await focusRow.hover();
 
     await expect
       .poll(
@@ -186,7 +168,7 @@ test.describe("non-pdf linked-items", () => {
       )
       .toBe(true);
     await expect(focusedSegment).toBeVisible();
-    await expect(focusedSegment).toHaveClass(/hl-focused/);
+    await expect(focusedSegment).toHaveClass(/hl-hover-outline/);
     await expectHighlightRowVisible(focusRow, focusNote);
 
     const quoteSegment = await scrollHighlightIntoView(contentPane, seeded.quote_highlight_id);

@@ -16,16 +16,20 @@ import Pill from "@/components/ui/Pill";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
-import { highlightNoteAssociations } from "@/lib/reader/documentMap";
+import {
+  highlightNoteAssociations,
+  isReaderEvidenceUserAssociation,
+  isReaderEvidenceUserLink,
+} from "@/lib/reader/documentMap";
 import type {
   ReaderEvidenceAlsoReference,
   ReaderEvidenceAssociation,
   ReaderEvidenceHighlight,
   ReaderEvidenceItem,
-  ReaderEvidenceLink,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
+  ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
 import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
@@ -68,7 +72,7 @@ export interface EvidenceHighlightActions {
  */
 export interface EvidenceLinkActions {
   editingLinkId: string | null;
-  onRemoveLink: (item: ReaderEvidenceLink) => void;
+  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => void;
   onEditLink: (linkId: string | null) => void;
   onSaveLinkNote: (
     linkId: string,
@@ -76,13 +80,6 @@ export interface EvidenceLinkActions {
     bodyPmJson: Record<string, unknown>,
   ) => Promise<{ note_block_id: string }>;
   onDeleteLinkNote: (linkId: string) => Promise<void>;
-}
-
-/** A user-authored, neutral (context) Link the reader may remove or annotate. */
-function isRemovableUserLink(
-  item: ReaderEvidenceItem,
-): item is ReaderEvidenceLink {
-  return item.kind === "Link" && item.origin === "user";
 }
 
 type ActivateEvidenceObject = (
@@ -126,10 +123,14 @@ export function EvidenceItemRow({
   onDismissSynapse: (edgeId: string) => void;
   linkActions: EvidenceLinkActions;
 }) {
-  const removableLink = isRemovableUserLink(item) ? item : null;
+  const removableLink = isReaderEvidenceUserLink(item) ? item : null;
+  // Link notes are a capability of neutral top-level Links only. A user stance
+  // or a folded association may be removable, but neither mints note parity.
+  const annotatableLink =
+    removableLink?.role === "context" ? removableLink : null;
   const editingLinkNote =
-    removableLink !== null &&
-    linkActions.editingLinkId === removableLink.edge_id;
+    annotatableLink !== null &&
+    linkActions.editingLinkId === annotatableLink.edge_id;
   const relationshipCount =
     item.associations.length +
     (item.kind === "SourceReference" ? item.targets.length : 0);
@@ -239,37 +240,37 @@ export function EvidenceItemRow({
               <X size={14} aria-hidden="true" />
             </button>
           ) : null}
+          {annotatableLink ? (
+            <button
+              type="button"
+              className={styles.iconButton}
+              aria-pressed={editingLinkNote}
+              aria-label={`Note on link ${annotatableLink.label}`}
+              onClick={() =>
+                linkActions.onEditLink(
+                  editingLinkNote ? null : annotatableLink.edge_id,
+                )
+              }
+            >
+              <MessageSquare size={14} aria-hidden="true" />
+            </button>
+          ) : null}
           {removableLink ? (
-            <>
-              <button
-                type="button"
-                className={styles.iconButton}
-                aria-pressed={editingLinkNote}
-                aria-label={`Note on link ${removableLink.label}`}
-                onClick={() =>
-                  linkActions.onEditLink(
-                    editingLinkNote ? null : removableLink.edge_id,
-                  )
-                }
-              >
-                <MessageSquare size={14} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className={styles.iconButton}
-                aria-label={`Remove link ${removableLink.label}`}
-                onClick={() => linkActions.onRemoveLink(removableLink)}
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
-            </>
+            <button
+              type="button"
+              className={styles.iconButton}
+              aria-label={`Remove link ${removableLink.label}`}
+              onClick={() => linkActions.onRemoveUserEdge(removableLink)}
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
           ) : null}
         </div>
       </div>
-      {editingLinkNote && removableLink ? (
+      {editingLinkNote && annotatableLink ? (
         <div className={styles.noteEditor}>
           <HighlightNoteEditor
-            highlightId={removableLink.edge_id}
+            highlightId={annotatableLink.edge_id}
             note={null}
             editable
             onSave={async (linkId, noteBlockId, createBlockId, bodyPmJson) => {
@@ -341,6 +342,7 @@ export function EvidenceItemRow({
                   key={`${association.relationship}:${association.object.ref}:${index}`}
                   association={association}
                   onActivateObject={onActivateObject}
+                  onRemoveUserEdge={linkActions.onRemoveUserEdge}
                 />
               ))}
               {item.kind === "SourceReference"
@@ -366,12 +368,14 @@ export function AssociationDisclosure({
   open,
   onToggle,
   onActivateObject,
+  onRemoveUserEdge,
 }: {
   label: string;
   associations: Array<ReaderEvidenceAssociation | ReaderEvidenceAlsoReference>;
   open: boolean;
   onToggle: () => void;
   onActivateObject: ActivateEvidenceObject;
+  onRemoveUserEdge: EvidenceLinkActions["onRemoveUserEdge"];
 }) {
   const panelId = useId();
   return (
@@ -397,6 +401,7 @@ export function AssociationDisclosure({
               key={`${association.object.ref}:${index}`}
               association={association}
               onActivateObject={onActivateObject}
+              onRemoveUserEdge={onRemoveUserEdge}
             />
           ))}
         </div>
@@ -408,28 +413,50 @@ export function AssociationDisclosure({
 function AssociationRow({
   association,
   onActivateObject,
+  onRemoveUserEdge,
 }: {
   association: ReaderEvidenceAssociation | ReaderEvidenceAlsoReference;
   onActivateObject: ActivateEvidenceObject;
+  onRemoveUserEdge: EvidenceLinkActions["onRemoveUserEdge"];
 }) {
   const Icon = resourceIconForUri(association.object.ref);
+  const removableAssociation = isReaderEvidenceUserAssociation(association)
+    ? association
+    : null;
+  const objectActionLabel =
+    association.object.kind === "Media"
+      ? `Open target in reader for ${association.object.label}`
+      : `Open ${association.object.label}`;
   return (
     <div className={styles.relationshipRow}>
       <span className={styles.relationshipKind}>
         {relationshipLabel(association.relationship)}
       </span>
-      <button
-        type="button"
-        className={styles.objectButton}
-        disabled={association.object.activation.kind === "none"}
-        onClick={(event) =>
-          onActivateObject(association.object, { newPane: event.shiftKey })
-        }
-      >
-        <Icon size={14} aria-hidden="true" />
-        <span>{association.object.label}</span>
-        <ExternalLink size={12} aria-hidden="true" />
-      </button>
+      <div className={styles.relationshipObject}>
+        <button
+          type="button"
+          className={styles.objectButton}
+          disabled={association.object.activation.kind === "none"}
+          aria-label={objectActionLabel}
+          onClick={(event) =>
+            onActivateObject(association.object, { newPane: event.shiftKey })
+          }
+        >
+          <Icon size={14} aria-hidden="true" />
+          <span>{association.object.label}</span>
+          <ExternalLink size={12} aria-hidden="true" />
+        </button>
+        {removableAssociation ? (
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={`Remove connection to ${association.object.label}`}
+            onClick={() => onRemoveUserEdge(removableAssociation)}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
       {association.object.excerpt.kind === "Present" ? (
         <p className={styles.relationshipExcerpt}>
           {association.object.excerpt.value}

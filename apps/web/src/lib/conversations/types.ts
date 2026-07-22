@@ -8,6 +8,7 @@ import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { Presence } from "@/lib/api/presence";
 
 export interface ConversationSummary {
   id: string;
@@ -66,7 +67,7 @@ export interface LlmProfilesOut {
 // =============================================================================
 
 interface ExpectedChatFailureBase {
-  support_id: string | null;
+  support_id: Presence<string>;
   can_rerun: boolean;
 }
 

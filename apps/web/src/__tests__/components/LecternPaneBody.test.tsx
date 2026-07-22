@@ -278,11 +278,9 @@ describe("LecternPaneBody Slate host", () => {
     expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
     expect(horizontallyScrollableElements(host)).toEqual([]);
     expect(add).toBeVisible();
-    expect(screen.getByText("A deterministic suggestion")).toBeVisible();
-    expect(screen.getByText("Connected with Queued article")).toBeVisible();
-    expect(screen.getByRole("list", { name: "At hand suggestions" })).toHaveAttribute(
-      "data-view",
-      "list",
-    );
+    expect(
+      screen.getByText("A deterministic suggestion · Connected with Queued article")
+    ).toBeVisible();
+    expect(screen.getByRole("list", { name: "At hand suggestions" })).toBeVisible();
   });
 });

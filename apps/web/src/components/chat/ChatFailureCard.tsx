@@ -57,7 +57,8 @@ export default function ChatFailureCard(props: ChatFailureCardProps) {
 
   const { failure, canRerun, onRerun, rerunning } = props;
   const { title, body } = chatFailureMessage(failure);
-  const supportId = failure?.support_id ?? null;
+  const supportId =
+    failure?.support_id.kind === "Present" ? failure.support_id.value : null;
   const showRerun = Boolean(canRerun && onRerun);
 
   return (

@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import path from "node:path";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
-import { openEvidencePane } from "./reader";
+import { evidenceHighlightArticle, openEvidencePane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   ACTIVE_WORKSPACE_PANE_SELECTOR,
@@ -86,6 +86,14 @@ function toastByTitle(page: Page, title: RegExp): Locator {
     .first();
 }
 
+/** Actionable toasts intentionally do not auto-dismiss. Once an assertion has
+ * consumed one, close it through the product affordance before driving chrome
+ * it may cover. */
+async function dismissToast(toast: Locator): Promise<void> {
+  await toast.getByRole("button", { name: /^Dismiss / }).click();
+  await expect(toast).toBeHidden();
+}
+
 /** The Link action lives in the reader selection popup / highlight action bar as
  * a plain button whose accessible name is the "Link…" descriptor
  * (highlightActions.tsx). */
@@ -149,15 +157,48 @@ async function confirmTarget(page: Page, option: Locator): Promise<{
   };
 }
 
-/** Drag-select a fresh, unique run of text in the currently visible PDF page's
- * text layer (real mouse geometry via selection.ts's PDF `range` path — a real
- * drag over PDF.js spans is unreliable). Returns the page-scoped text-layer
- * selector so the caller can re-select a *different* fresh run later. */
+async function navigateToPdfSelectionPage(page: Page): Promise<number> {
+  const targetPageNumber =
+    FRESH_REAL_MEDIA_FIXTURES.pdfSvms.selectionPageNumber;
+  const controls = activeWorkspacePane(page).getByRole("toolbar", {
+    name: "PDF controls",
+  });
+  await expect(controls).toBeVisible({ timeout: 15_000 });
+  const status = controls.locator('[aria-label^="Page "]');
+  await expect(status).toBeVisible({ timeout: 15_000 });
+
+  const readCurrentPage = async () => {
+    const label = (await status.getAttribute("aria-label")) ?? "";
+    const match = /^Page (\d+) of (\d+)$/.exec(label);
+    expect(match, `Expected a PDF page status, received "${label}"`).toBeTruthy();
+    return Number(match?.[1] ?? 0);
+  };
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const currentPageNumber = await readCurrentPage();
+    if (currentPageNumber === targetPageNumber) {
+      return targetPageNumber;
+    }
+    const direction =
+      currentPageNumber < targetPageNumber ? "Next page" : "Previous page";
+    await controls.getByRole("button", { name: direction }).click();
+    await expect
+      .poll(readCurrentPage, { timeout: 10_000 })
+      .toBe(currentPageNumber + (direction === "Next page" ? 1 : -1));
+  }
+  throw new Error(`Could not navigate PDF reader to page ${targetPageNumber}.`);
+}
+
+/** Drag-select a fresh, unique run of text in the fixture's deterministic PDF
+ * page. Page 1 repeats text-layer material, so the public reader controls move
+ * to the declared unique-text page before a genuine mouse drag over PDF.js
+ * spans. */
 async function selectFreshPdfText(
   page: Page,
   mediaId: string,
 ): Promise<{ selectedText: string; pageNumber: number }> {
   const activePane = activeWorkspacePane(page);
+  const pageNumber = await navigateToPdfSelectionPage(page);
   await expect(
     activePane
       .locator('[aria-label="PDF document"] .textLayer')
@@ -165,29 +206,13 @@ async function selectFreshPdfText(
       .first(),
   ).toBeVisible({ timeout: 15_000 });
 
-  const pdfRootSelector = `${ACTIVE_WORKSPACE_PANE_SELECTOR} [aria-label="PDF document"]`;
-  const pageNumber = await page.evaluate((selector) => {
-    const root = document.querySelector(selector);
-    const visible = Array.from(
-      root?.querySelectorAll<HTMLElement>(".page[data-page-number]") ?? [],
-    )
-      .map((element) => {
-        const rect = element.getBoundingClientRect();
-        return {
-          element,
-          visibleHeight:
-            Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0),
-        };
-      })
-      .filter((entry) => entry.visibleHeight > 0)
-      .sort((a, b) => b.visibleHeight - a.visibleHeight);
-    return Number(visible[0]?.element.dataset.pageNumber ?? "1");
-  }, pdfRootSelector);
-
   const textLayerSelector = `${ACTIVE_WORKSPACE_PANE_SELECTOR} .page[data-page-number="${pageNumber}"] .textLayer`;
-  await expect(
-    page.locator(textLayerSelector).filter({ hasText: /\S/ }),
-  ).toBeVisible({ timeout: 15_000 });
+  const textLayer = page
+    .locator(textLayerSelector)
+    .filter({ hasText: /\S/ })
+    .first();
+  await expect(textLayer).toBeVisible({ timeout: 15_000 });
+  await expect(textLayer).toBeInViewport({ ratio: 0.25, timeout: 15_000 });
 
   const existing = await page.request.get(
     `/api/media/${mediaId}/pdf-highlights?page_number=${pageNumber}&mine_only=false`,
@@ -205,14 +230,17 @@ async function selectFreshPdfText(
     page,
     textLayerSelector,
     existingExacts,
-    { method: "range" },
   );
   return { selectedText, pageNumber };
 }
 
-async function pdfHighlightIds(page: Page, mediaId: string): Promise<string[]> {
+async function pdfHighlightIds(
+  page: Page,
+  mediaId: string,
+  pageNumber: number,
+): Promise<string[]> {
   const response = await page.request.get(
-    `/api/media/${mediaId}/pdf-highlights?mine_only=true`,
+    `/api/media/${mediaId}/pdf-highlights?page_number=${pageNumber}&mine_only=true`,
   );
   expect(response.ok()).toBeTruthy();
   return (
@@ -258,7 +286,10 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     ).data.title;
 
     // --- Link from a real PDF text-layer drag (AC16) ---------------------
-    await selectFreshPdfText(page, mediaId);
+    const { pageNumber: selectionPageNumber } = await selectFreshPdfText(
+      page,
+      mediaId,
+    );
     const selectionActions = page.getByRole("group", {
       name: /selection actions/i,
     });
@@ -279,7 +310,9 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
 
     // The fresh selection materialized exactly one durable Highlight (invariant 6:
     // it is written only because the Link confirmed).
-    expect(await pdfHighlightIds(page, mediaId)).toContain(materializedHighlightId);
+    expect(
+      await pdfHighlightIds(page, mediaId, selectionPageNumber),
+    ).toContain(materializedHighlightId);
 
     // --- Undo removes only the Link; the Highlight survives (AC10, invariant 8) --
     const [undoResponse] = await Promise.all([
@@ -293,24 +326,36 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     ]);
     expect(undoResponse.ok()).toBeTruthy();
     expect(
-      await pdfHighlightIds(page, mediaId),
+      await pdfHighlightIds(page, mediaId, selectionPageNumber),
       "Undo deletes the Link but keeps the authored Highlight",
     ).toContain(materializedHighlightId);
 
     // --- A second Link, then opposite-end activation + Remove -------------
-    await selectFreshPdfText(page, mediaId);
+    const { selectedText: secondSelectedText } = await selectFreshPdfText(
+      page,
+      mediaId,
+    );
     await expect(selectionActions).toBeVisible({ timeout: 5_000 });
     await clickLinkAction(selectionActions);
     const secondOption = await searchExactTarget(page, targetRef);
     const secondLink = await confirmTarget(page, secondOption);
     expect(secondLink.created).toBe(true);
-    await expect(toastByTitle(page, /Linked to /)).toBeVisible({ timeout: 10_000 });
+    const secondLinkedToast = toastByTitle(page, /Linked to /);
+    await expect(secondLinkedToast).toBeVisible({ timeout: 10_000 });
+    await dismissToast(secondLinkedToast);
 
     const evidence = await openEvidencePane(page);
-    const targetButton = evidence.getByRole("button", {
+    const secondHighlightRow = evidenceHighlightArticle(
+      evidence,
+      secondSelectedText,
+    );
+    await secondHighlightRow
+      .getByRole("button", { name: "1 linked object" })
+      .click();
+    const targetButton = secondHighlightRow.getByRole("button", {
       name: `Open target in reader for ${targetTitle}`,
     });
-    const removeButton = evidence.getByRole("button", {
+    const removeButton = secondHighlightRow.getByRole("button", {
       name: `Remove connection to ${targetTitle}`,
     });
     await expect(
@@ -329,7 +374,14 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     // Back to the source reader; Remove deletes the Link (AC10).
     await gotoRealMediaSinglePane(page, `/media/${mediaId}`);
     const evidenceAgain = await openEvidencePane(page);
-    const removeAgain = evidenceAgain.getByRole("button", {
+    const secondHighlightRowAgain = evidenceHighlightArticle(
+      evidenceAgain,
+      secondSelectedText,
+    );
+    await secondHighlightRowAgain
+      .getByRole("button", { name: "1 linked object" })
+      .click();
+    const removeAgain = secondHighlightRowAgain.getByRole("button", {
       name: `Remove connection to ${targetTitle}`,
     });
     await expect(removeAgain).toBeVisible({ timeout: 10_000 });
@@ -345,7 +397,9 @@ test("@real-media PDF text-layer drag links to a target, undo keeps the highligh
     expect(removeResponse.ok()).toBeTruthy();
     await expect(removeAgain).toHaveCount(0, { timeout: 10_000 });
     // Removing the Link never touches the authored Highlights.
-    expect(await pdfHighlightIds(page, mediaId)).toContain(materializedHighlightId);
+    expect(
+      await pdfHighlightIds(page, mediaId, selectionPageNumber),
+    ).toContain(materializedHighlightId);
   } catch (error) {
     productError = error;
     throw error;
@@ -395,6 +449,24 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
         data: { title: string };
       }
     ).data.title;
+    // The EPUB's first spine entry is intentionally a cover-only section. Use
+    // the reader's public navigation control to enter the fixture's stable prose
+    // chapter before exercising text selection; a cover is a valid cold-open
+    // state and must not be mistaken for a missing reader.
+    const sectionSelect = activeWorkspacePane(page).getByRole("combobox", {
+      name: "Select section",
+    });
+    await expect(sectionSelect).toBeVisible({ timeout: 15_000 });
+    const proseSection = sectionSelect.getByRole("option", {
+      name: FRESH_REAL_MEDIA_FIXTURES.epubMobyDickOld.selectionSectionLabel,
+      exact: true,
+    });
+    await expect(proseSection).toHaveCount(1, { timeout: 10_000 });
+    const proseSectionId = await proseSection.getAttribute("value");
+    expect(proseSectionId).toBeTruthy();
+    await sectionSelect.selectOption(proseSectionId!);
+    await expect(sectionSelect).toHaveValue(proseSectionId!);
+
     const reader = page.locator(htmlRenderer).filter({ hasText: /\S/ }).first();
     await expect(reader).toBeVisible({ timeout: 15_000 });
     await reader.scrollIntoViewIfNeeded();
@@ -427,7 +499,11 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     }
 
     // --- Fresh selection -> confirmed Link -> Connections row ------------
-    await selectFreshVisibleTextSnippet(page, htmlRenderer, []);
+    const linkedSelectionText = await selectFreshVisibleTextSnippet(
+      page,
+      htmlRenderer,
+      [],
+    );
     const selectionActions = page.getByRole("group", {
       name: /selection actions/i,
     });
@@ -437,27 +513,37 @@ test("@real-media reflowable Link: cancel writes nothing, a Connections row appe
     const link = await confirmTarget(page, option);
     expect(link.created).toBe(true);
     const highlightId = refId(link.createdSourceRef);
-    await expect(toastByTitle(page, /Linked to /)).toBeVisible({ timeout: 10_000 });
+    const linkedToast = toastByTitle(page, /Linked to /);
+    await expect(linkedToast).toBeVisible({ timeout: 10_000 });
+    await dismissToast(linkedToast);
 
     const evidence = await openEvidencePane(page);
+    const linkedHighlightRow = evidenceHighlightArticle(
+      evidence,
+      linkedSelectionText,
+    );
+    await linkedHighlightRow
+      .getByRole("button", { name: "1 linked object" })
+      .click();
     await expect(
-      evidence.getByRole("button", {
+      linkedHighlightRow.getByRole("button", {
         name: `Remove connection to ${targetTitle}`,
       }),
       "the confirmed neutral Link folds into one Connections row",
     ).toBeVisible({ timeout: 10_000 });
 
     // --- Duplicate from the now-existing Highlight is Already linked (AC15) ---
-    // Re-open the reader popover on the painted Highlight (a durable `highlight:`
-    // source, so the dialog computes existing-link dedupe) and pick the target
-    // that now carries the textual "Linked" state.
+    // The durable Highlight must paint without a reload, and its canonical
+    // Evidence-row action must compute existing-link dedupe for the same
+    // `highlight:` source.
     const paintedHighlight = page
       .locator(`${htmlRenderer} [data-active-highlight-ids~="${highlightId}"]`)
       .first();
     await expect(paintedHighlight).toBeVisible({ timeout: 10_000 });
-    await paintedHighlight.click();
-    const highlightActions = page.getByRole("group", { name: "Highlight actions" });
-    await clickLinkAction(highlightActions);
+    await linkedHighlightRow
+      .getByRole("button", { name: "Highlight actions" })
+      .click();
+    await page.getByRole("menuitem", { name: "Link…" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Link" });
     await expect(dialog).toBeVisible({ timeout: 5_000 });

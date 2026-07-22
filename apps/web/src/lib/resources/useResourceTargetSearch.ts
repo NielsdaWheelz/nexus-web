@@ -45,13 +45,21 @@ export function useResourceTargetSearch(
 ): ResourceTargetSearchState {
   const { purpose, query, schemes, sourceRef, excludeRefs, limit } = args;
   const trimmed = query.trim();
-  const schemesKey = schemes?.join(",") ?? "";
-  const key = trimmed.length === 0 ? null : `${purpose}:${trimmed}:${schemesKey}`;
+  const key =
+    trimmed.length === 0
+      ? null
+      : JSON.stringify([
+          purpose,
+          trimmed,
+          schemes ?? [],
+          sourceRef ?? null,
+          excludeRefs ?? [],
+          limit ?? null,
+        ]);
 
-  // `useDebouncedFetch` re-captures this closure into a ref every render and
-  // only (re)schedules a fetch when `key` changes, so a plain inline fetcher
-  // here already picks up the latest `sourceRef`/`excludeRefs`/`limit` at
-  // call time — no memoization needed.
+  // Every request-shaping input belongs in the key. In particular, reopening a
+  // populated Link dialog with a durable source must re-run the same query so
+  // the backend can annotate already-linked targets for that source.
   const { data, loading, error } = useDebouncedFetch(
     key,
     (signal) =>

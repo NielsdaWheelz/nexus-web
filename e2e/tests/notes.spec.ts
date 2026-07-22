@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stateChangingApiHeaders } from "./api";
 import { deleteE2eResource, throwE2eCleanupFailures } from "./cleanup";
-import { openEvidencePane } from "./reader";
+import { evidenceHighlightArticle, openEvidencePane } from "./reader";
 import { selectFreshVisibleTextSnippet } from "./selection";
 import {
   activePaneSelector,
@@ -206,7 +206,7 @@ async function readResourceGraphEdges(page: Page, ref: string, origin = "user") 
 async function nextCreatedHighlight(
   page: Page,
   action: () => Promise<void>
-): Promise<{ id: string; fragmentId: string }> {
+): Promise<{ id: string; exact: string; fragmentId: string }> {
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -221,7 +221,7 @@ async function nextCreatedHighlight(
   const payload = (await response.json()) as HighlightPayload;
   const fragmentId = /\/api\/fragments\/([^/]+)\/highlights/.exec(response.url())?.[1];
   if (!fragmentId) throw new Error(`No fragment id in highlight create URL: ${response.url()}`);
-  return { id: payload.data.id, fragmentId };
+  return { id: payload.data.id, exact: payload.data.exact, fragmentId };
 }
 
 async function scrollHighlightIntoView(contentPane: Locator, highlightId: string): Promise<void> {
@@ -363,10 +363,15 @@ test.describe("notes cutover", () => {
       await expect(contentPane).toBeVisible({ timeout: 10_000 });
       await scrollHighlightIntoView(contentPane, highlight.id);
       const highlightsPane = await openEvidencePane(page);
-      const linkedRow = highlightsPane.locator(`[data-highlight-id="${highlight.id}"]`).first();
+      const linkedRow = evidenceHighlightArticle(highlightsPane, highlight.exact);
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await expect(linkedRow).toContainText(highlight.exact);
 
+      await expect(
+        linkedRow.getByRole("textbox", { name: "Highlight note" }),
+      ).toHaveCount(0);
+      await linkedRow.getByRole("button", { name: "Highlight actions" }).click();
+      await page.getByRole("menuitem", { name: "Add note", exact: true }).click();
       const noteEditor = linkedRow.getByRole("textbox", { name: "Highlight note" });
       await expect(noteEditor).toBeVisible({ timeout: 10_000 });
       await noteEditor.scrollIntoViewIfNeeded();
@@ -389,6 +394,9 @@ test.describe("notes cutover", () => {
       if (!linkedNote) throw new Error("Expected linked note after save");
       noteBlockId = linkedNote.noteBlockId;
       expect(linkedNote.bodyText).toContain(noteText);
+      await linkedRow.getByRole("button", { name: "Done editing note" }).click();
+      await expect(noteEditor).toHaveCount(0);
+      await expect(linkedRow).toContainText(noteText, { timeout: 10_000 });
 
       await gotoSinglePaneWorkspace(page, deviceId, `/notes/${noteBlockId}`);
       await expect(page).toHaveURL(new RegExp(`/notes/${noteBlockId}`));
@@ -590,7 +598,7 @@ test.describe("notes cutover", () => {
       // AC-2: the sidecar highlight row reflects the saved note.
       await scrollHighlightIntoView(contentPane, created.id);
       const highlightsPane = await openEvidencePane(page);
-      const row = highlightsPane.locator(`[data-highlight-id="${created.id}"]`).first();
+      const row = evidenceHighlightArticle(highlightsPane, created.exact);
       await expect(row).toBeVisible({ timeout: 20_000 });
       await expect(row).toContainText(noteText);
 

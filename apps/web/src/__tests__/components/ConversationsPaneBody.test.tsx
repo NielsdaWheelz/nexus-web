@@ -159,8 +159,12 @@ describe("ConversationsPaneBody", () => {
     await screen.findByRole("link", { name: /first chat/i });
     await screen.findByRole("link", { name: /second chat/i });
 
-    expect(screen.getByRole("button", { name: "Actions for First chat" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Actions for Second chat" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More actions for First chat" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More actions for Second chat" })
+    ).toBeInTheDocument();
   });
 
   it("aborts the in-flight list request on unmount", async () => {

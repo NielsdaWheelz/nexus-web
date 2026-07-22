@@ -11,7 +11,9 @@ async function createLibraryViaUi(
   prefix: string
 ): Promise<{ id: string; name: string; role: string }> {
   const activePane = activeWorkspacePane(page);
-  await expect(activePane.getByText(/^default$/i)).toBeVisible({ timeout: 10_000 });
+  await expect(
+    activePane.getByText("Default library", { exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
   const nameInput = activePane.getByPlaceholder("New library name...");
   await expect(nameInput).toBeVisible();
   const libraryName = `${prefix} ${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
@@ -68,11 +70,14 @@ test.describe("libraries", () => {
       "/libraries",
     );
     const activePane = activeWorkspacePane(page);
-    // The default library always exists — look for the default badge text.
-    const defaultBadge = activePane.getByText(/^default$/i);
-    await expect(defaultBadge).toBeVisible();
-    // Click the first library link to navigate to its detail page
-    const libraryLink = activePane.locator("a[href^='/libraries/']").first();
+    const defaultLibraryLabel = activePane.getByText("Default library", {
+      exact: true,
+    });
+    await expect(defaultLibraryLabel).toBeVisible();
+    const libraryLink = activePane
+      .getByRole("listitem")
+      .filter({ hasText: "Default library" })
+      .getByRole("link");
     await expect(libraryLink).toBeVisible();
     await libraryLink.click();
     await expect(page).toHaveURL(/libraries\/.+/);

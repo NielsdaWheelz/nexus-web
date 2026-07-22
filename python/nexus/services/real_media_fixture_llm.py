@@ -21,14 +21,18 @@ from collections.abc import AsyncIterator, Awaitable
 from typing import cast
 
 from provider_runtime import (
+    CATALOG,
     Absent,
     AssistantMessage,
     CallMeta,
     CallOutcome,
     CancelSignal,
+    ContinuationArtifact,
+    ContinuationDelta,
     FinalizedProviderCall,
     GenerateIntent,
     PossiblyBillable,
+    Presence,
     Present,
     PromptMessage,
     ProviderCredential,
@@ -228,24 +232,38 @@ async def _stream(
 ) -> AsyncIterator[RuntimeStreamEvent]:
     if _should_request_app_search(intent):
         query = _latest_user_query(intent)
+        tool_call = ToolCall(
+            id="real-media-fixture-app-search",
+            name=APP_SEARCH_TOOL_NAME,
+            arguments={"query": query},
+        )
         yield RuntimeStreamEvent(
             seq=1,
-            event=ToolCallStart(call_id="real-media-fixture-app-search", name=APP_SEARCH_TOOL_NAME),
+            event=ToolCallStart(call_id=tool_call.id, name=tool_call.name),
         )
         if await _cancelled_during_fixture_delay(cancel):
             yield RuntimeStreamEvent(seq=2, event=TerminalEvent(outcome=_cancelled(intent)))
             return
         yield RuntimeStreamEvent(
             seq=2,
-            event=ToolCallDone(
-                tool_call=ToolCall(
-                    id="real-media-fixture-app-search",
-                    name=APP_SEARCH_TOOL_NAME,
-                    arguments={"query": query},
+            event=ToolCallDone(tool_call=tool_call),
+        )
+        continuation = _tool_call_continuation(intent, tool_call)
+        yield RuntimeStreamEvent(
+            seq=3,
+            event=ContinuationDelta(artifact=continuation),
+        )
+        yield RuntimeStreamEvent(
+            seq=4,
+            event=TerminalEvent(
+                outcome=_succeeded(
+                    intent,
+                    "",
+                    tool_calls=(tool_call,),
+                    continuation=Present(continuation),
                 )
             ),
         )
-        yield RuntimeStreamEvent(seq=3, event=TerminalEvent(outcome=_succeeded(intent, "")))
         return
 
     response = (
@@ -268,14 +286,60 @@ async def _stream(
         if await _cancelled_during_fixture_delay(cancel):
             yield RuntimeStreamEvent(seq=seq, event=TerminalEvent(outcome=_cancelled(intent)))
             return
-    yield RuntimeStreamEvent(seq=seq, event=TerminalEvent(outcome=_succeeded(intent, response)))
+    yield RuntimeStreamEvent(
+        seq=seq,
+        event=TerminalEvent(
+            outcome=_succeeded(
+                intent,
+                response,
+                tool_calls=(),
+                continuation=Absent(),
+            )
+        ),
+    )
 
 
-def _succeeded(intent: GenerateIntent, text: str) -> Succeeded:
+def _tool_call_continuation(intent: GenerateIntent, tool_call: ToolCall) -> ContinuationArtifact:
+    contract = CATALOG.chat_contract(intent.target)
+    if contract.protocol != "openai_responses":
+        raise AssertionError(
+            "real-media fixture: app-search tool streaming requires an "
+            f"OpenAI Responses target, got {contract.protocol!r}"
+        )
+    return ContinuationArtifact(
+        target=intent.target,
+        codec_id=contract.continuation_codec,
+        opaque_payload={
+            "output": (
+                {
+                    "id": f"{tool_call.id}-item",
+                    "type": "function_call",
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": json.dumps(
+                        dict(tool_call.arguments),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                },
+            )
+        },
+    )
+
+
+def _succeeded(
+    intent: GenerateIntent,
+    text: str,
+    *,
+    tool_calls: tuple[ToolCall, ...],
+    continuation: Presence[ContinuationArtifact],
+) -> Succeeded:
     return Succeeded(
         meta=_meta(intent, text),
         response=ResponsePayload(
-            content=TextContent(text=text, tool_calls=()), continuation=Absent()
+            content=TextContent(text=text, tool_calls=tool_calls),
+            continuation=continuation,
         ),
     )
 

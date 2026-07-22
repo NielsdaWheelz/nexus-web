@@ -60,6 +60,20 @@ export async function openEvidencePane(page: Page): Promise<Locator> {
   return evidence;
 }
 
+export function evidenceHighlightArticle(
+  evidencePane: Locator,
+  exactQuote: string,
+): Locator {
+  const visibleExactQuote = evidencePane
+    .page()
+    .getByText(exactQuote, { exact: true })
+    .filter({ visible: true });
+
+  return evidencePane.getByRole("article").filter({
+    has: visibleExactQuote,
+  });
+}
+
 export async function openMediaInSinglePaneWorkspace(
   page: Page,
   deviceId: string,

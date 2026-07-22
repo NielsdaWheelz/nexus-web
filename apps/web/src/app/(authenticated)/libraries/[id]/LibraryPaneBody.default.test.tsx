@@ -8,6 +8,7 @@ import {
   stubFetch,
 } from "@/__tests__/helpers/fetch";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // Default-library ("My Library") coverage per the default-library-virtualization
@@ -34,7 +35,7 @@ function seededDefaultLibrary() {
   };
 }
 
-function seededMediaEntry(id: string, mediaId: string, title: string) {
+function mediaEntryWire(id: string, mediaId: string, title: string) {
   return {
     id,
     kind: "media",
@@ -61,6 +62,10 @@ function seededMediaEntry(id: string, mediaId: string, title: string) {
       },
     },
   };
+}
+
+function seededMediaEntry(id: string, mediaId: string, title: string) {
+  return decodeLibraryReadingTimeEntry(mediaEntryWire(id, mediaId, title));
 }
 
 function fetchInputPathWithSearch(input: unknown): string {
@@ -192,8 +197,8 @@ describe("LibraryPaneBody (Default library)", () => {
         // present on the first page, alongside one genuinely new entry.
         return Response.json({
           data: [
-            seededMediaEntry("entry-1b", "media-1", "First Default Work"),
-            seededMediaEntry("entry-2", "media-2", "Second Default Work"),
+            mediaEntryWire("entry-1b", "media-1", "First Default Work"),
+            mediaEntryWire("entry-2", "media-2", "Second Default Work"),
           ],
           page: { has_more: false, next_cursor: null },
         });

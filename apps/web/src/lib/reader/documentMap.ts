@@ -180,6 +180,20 @@ export interface ReaderEvidenceLink extends ReaderEvidenceItemBase {
   object: ReaderEvidenceObject;
 }
 
+/** Explicit user-authored graph facts that the Evidence presenter may remove.
+ * A fact can arrive either as a top-level Link row or folded onto another fact
+ * as a DirectlyAttached association; both carry the authoritative mutation key
+ * and relation role. */
+export type ReaderEvidenceUserLink = ReaderEvidenceLink & {
+  origin: "user";
+};
+export type ReaderEvidenceUserAssociation =
+  ReaderEvidenceDirectlyAttachedAssociation & {
+    origin: "user";
+  };
+export type ReaderEvidenceUserEdge =
+  ReaderEvidenceUserLink | ReaderEvidenceUserAssociation;
+
 export interface ReaderEvidenceSynapse extends ReaderEvidenceItemBase {
   kind: "Synapse";
   edge_id: string;
@@ -303,6 +317,21 @@ export function userStanceAssociations(
       association.origin === "user" &&
       association.direction === "Outgoing" &&
       (association.role === "supports" || association.role === "contradicts"),
+  );
+}
+
+export function isReaderEvidenceUserLink(
+  item: ReaderEvidenceItem,
+): item is ReaderEvidenceUserLink {
+  return item.kind === "Link" && item.origin === "user";
+}
+
+export function isReaderEvidenceUserAssociation(
+  association: ReaderEvidenceAssociation | ReaderEvidenceAlsoReference,
+): association is ReaderEvidenceUserAssociation {
+  return (
+    association.relationship === "DirectlyAttached" &&
+    association.origin === "user"
   );
 }
 

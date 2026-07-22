@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import LinkTargetDialog from "./LinkTargetDialog";
@@ -105,6 +106,48 @@ describe("LinkTargetDialog", () => {
     }
   });
 
+  it("re-searches a retained query when the durable source changes", async () => {
+    const sourceRef = "highlight:22222222-2222-4222-8222-222222222222";
+    const existingLinkId = "33333333-3333-4333-8333-333333333333";
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string);
+      return jsonResponse({
+        data: {
+          targets: [
+            rawResourceTarget({
+              existingLinkId: body.source_ref === sourceRef ? existingLinkId : null,
+            }),
+          ],
+          nextCursor: null,
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onPick = vi.fn();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <LinkTargetDialog open onPick={onPick} onClose={onClose} />,
+    );
+
+    await userEvent.type(screen.getByLabelText("Link search"), "dispossessed");
+    await screen.findByRole("option");
+    expect(screen.queryByText("Linked")).not.toBeInTheDocument();
+
+    rerender(
+      <LinkTargetDialog
+        open
+        sourceRef={sourceRef}
+        onPick={onPick}
+        onClose={onClose}
+      />,
+    );
+
+    expect(await screen.findByText("Linked")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, lastInit] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(lastInit?.body as string).source_ref).toBe(sourceRef);
+  });
+
   it("maps a picked passage target's candidateRef onto LinkTarget.candidate_ref", async () => {
     stubSearch([
       rawResourceTarget({
@@ -139,17 +182,33 @@ describe("LinkTargetDialog", () => {
   });
 
   it("goes busy and blocks a second pick while a commit is in flight", async () => {
+    const user = userEvent.setup();
     stubSearch([rawResourceTarget()]);
     const onPick = vi.fn();
-    const { rerender } = render(
-      <LinkTargetDialog open onPick={onPick} onClose={vi.fn()} />,
+    function BusyHarness() {
+      const [busy, setBusy] = useState(false);
+      return (
+        <LinkTargetDialog
+          open
+          busy={busy}
+          onPick={(target, label) => {
+            onPick(target, label);
+            setBusy(true);
+          }}
+          onClose={vi.fn()}
+        />
+      );
+    }
+    render(<BusyHarness />);
+
+    await user.type(screen.getByLabelText("Link search"), "dispossessed");
+    const option = await screen.findByRole("option");
+    await waitFor(() =>
+      expect(screen.getByRole("listbox")).not.toHaveAttribute("aria-busy")
     );
 
-    await userEvent.type(screen.getByLabelText("Link search"), "dispossessed");
-    const option = await screen.findByRole("option");
-
     // The caller flips busy once its createLink is in flight.
-    rerender(<LinkTargetDialog open busy onPick={onPick} onClose={vi.fn()} />);
+    await user.click(option);
 
     // The dialog advertises its busy state and refuses further picks.
     expect(screen.getByRole("dialog", { name: "Link" })).toHaveAttribute(
@@ -157,13 +216,11 @@ describe("LinkTargetDialog", () => {
       "true",
     );
     expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
-    // The keyboard path is guarded directly; the row click path is doubly
-    // guarded — CSS `pointer-events: none` (enforced by the real browser) plus
-    // an explicit `if (busy) return` in the handler. Bypass the pointer-events
-    // gate so the click actually reaches the handler and proves the JS guard.
-    await userEvent.keyboard("{Enter}");
-    await userEvent.click(option, { pointerEventsCheck: 0 });
-    expect(onPick).not.toHaveBeenCalled();
+    // The row click path is doubly guarded — CSS `pointer-events: none`
+    // (enforced by the real browser) plus an explicit `if (busy) return` in the
+    // handler. Bypass the CSS gate so the event proves the JS guard too.
+    fireEvent.click(option);
+    expect(onPick).toHaveBeenCalledOnce();
   });
 
   it("navigates and picks with the keyboard, and closes on Escape", async () => {

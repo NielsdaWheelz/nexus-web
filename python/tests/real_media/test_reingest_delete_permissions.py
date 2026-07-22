@@ -24,7 +24,7 @@ from tests.real_media.conftest import (
     run_web_article_source_fixture_with_dedupe_resolution,
     write_trace,
 )
-from tests.support.teardown import drive_media_teardown, zero_media_teardown_grace
+from tests.support.teardown import drive_media_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = [
@@ -147,12 +147,8 @@ def test_real_web_article_permissions_and_delete_remove_retrievable_evidence(
     auth_client,
     direct_db: DirectSessionManager,
     tmp_path,
-    monkeypatch,
 ):
     ensure_real_media_prerequisites()
-    # Physical deletion is now a durable job (spec §3.1); zero the cleanup grace so the
-    # driven teardown does not wait on cleanupNotBefore.
-    zero_media_teardown_grace(monkeypatch)
     owner_id = create_test_user_id()
     outsider_id = create_test_user_id()
     owner_headers = auth_headers(owner_id)
@@ -285,13 +281,11 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
     ), scoped_search.json()
 
     remove_response = auth_client.delete(
-        f"/media/{media_id}",
-        params={"library_id": str(library_id)},
+        f"/media/{media_id}/libraries/{library_id}",
         headers=headers,
     )
-    assert remove_response.status_code == 200, remove_response.text
-    # Scoped removal with references remaining returns Removed (never hard-deletes here).
-    assert remove_response.json()["data"]["kind"] == "Removed", remove_response.json()
+    assert remove_response.status_code == 204, remove_response.text
+    assert remove_response.content == b""
 
     removed_scope_search = auth_client.get(
         "/search",
@@ -328,7 +322,10 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
                 "scope": f"library:{library_id}",
                 "result_count": len(scoped_results),
             },
-            "remove": remove_response.json()["data"],
+            "remove": {
+                "status_code": remove_response.status_code,
+                "library_id": str(library_id),
+            },
             "scoped_search_after_removal": {
                 "scope": f"library:{library_id}",
                 "result_count": 0,

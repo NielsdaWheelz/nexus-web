@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, NoteBlock, Page, PassageAnchor
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.resource_targets import ResourceTargetSearchRequest
 from nexus.services import passage_anchors
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -61,15 +60,6 @@ def _no_embedding_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("nexus.services.search.embedding.build_text_embedding", boom)
 
 
-def _lexical_only_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
-    """LLM boundary: no embedding key -> typed lexical-only degradation."""
-
-    def no_key(_text: str):
-        raise ApiError(ApiErrorCode.E_LLM_NO_KEY, "no key")
-
-    monkeypatch.setattr("nexus.services.search.embedding.build_text_embedding", no_key)
-
-
 def _create_note(db: Session, user_id: UUID, body: str) -> NoteBlock:
     note = NoteBlock(
         id=uuid4(),
@@ -94,9 +84,8 @@ def _create_user_link(db: Session, user_id: UUID, source: ResourceRef, target: R
 
 class TestAdmission:
     def test_link_admits_direct_and_passage_targets(
-        self, db_session: Session, bootstrapped_user, monkeypatch
+        self, db_session: Session, bootstrapped_user
     ) -> None:
-        _lexical_only_embedding(monkeypatch)
         library_id = create_test_library(db_session, bootstrapped_user, name="Canonical Shelf")
         media_id = create_searchable_media(db_session, bootstrapped_user, title="Canonical Widgets")
         db_session.commit()
@@ -349,9 +338,8 @@ class TestExistingLinkLookup:
         assert by_ref[ref_b.uri].existing_link_id == edge_id
 
     def test_passage_candidate_reports_existing_anchor_link_without_materializing(
-        self, db_session: Session, bootstrapped_user, monkeypatch
+        self, db_session: Session, bootstrapped_user
     ) -> None:
-        _lexical_only_embedding(monkeypatch)
         media_id = create_searchable_media(db_session, bootstrapped_user, title="Anchored Widgets")
         fragment = db_session.execute(
             select(Fragment).where(Fragment.media_id == media_id)

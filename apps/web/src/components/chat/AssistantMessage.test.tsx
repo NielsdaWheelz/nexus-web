@@ -19,7 +19,7 @@ function failureRun(failure: ExpectedChatFailure): TrustRun {
     reasoning_option_id: "default",
     provider: null,
     model_name: null,
-    status: "error",
+    status: failure.code === "cancelled" ? "cancelled" : "error",
     usage: null,
     error_code: null,
     error_origin: null,
@@ -130,7 +130,7 @@ describe("AssistantMessage", () => {
     const message = failedMessage({
       code: "incomplete",
       origin: "provider_response",
-      support_id: "sup-1",
+      support_id: { kind: "Present", value: "sup-1" },
       can_rerun: true,
     });
 
@@ -164,7 +164,12 @@ describe("AssistantMessage", () => {
 
   it("renders valid partial text ABOVE the card for a non-refusal failure", () => {
     const message = failedMessage(
-      { code: "incomplete", origin: "provider_response", support_id: null, can_rerun: true },
+      {
+        code: "incomplete",
+        origin: "provider_response",
+        support_id: { kind: "Absent" },
+        can_rerun: true,
+      },
       "Here is a partial answer",
     );
 
@@ -176,7 +181,12 @@ describe("AssistantMessage", () => {
 
   it("suppresses all partial text for a Fable refusal (card is the only projection)", () => {
     const message = failedMessage(
-      { code: "refused", origin: "provider_stream", support_id: null, can_rerun: false },
+      {
+        code: "refused",
+        origin: "provider_stream",
+        support_id: { kind: "Absent" },
+        can_rerun: false,
+      },
       "leaked refusal preamble",
       false,
     );
@@ -186,6 +196,25 @@ describe("AssistantMessage", () => {
     expect(screen.getByText("Response declined")).toBeInTheDocument();
     expect(screen.queryByText("leaked refusal preamble")).toBeNull();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("renders the cancelled terminal projection without a support id", () => {
+    const message = failedMessage({
+      code: "cancelled",
+      support_id: { kind: "Absent" },
+      can_rerun: true,
+    });
+    message.status = "cancelled";
+    message.trust_trail = {
+      ...message.trust_trail!,
+      status: "cancelled",
+    };
+
+    render(<AssistantMessage message={message} forkOptions={[]} />);
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText("This response was cancelled.")).toBeInTheDocument();
+    expect(screen.queryByText(/Support ID:/)).toBeNull();
   });
 
   it("renders exactly one Reconnect action for the client-only connection-lost state", () => {

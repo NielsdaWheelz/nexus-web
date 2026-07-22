@@ -7,8 +7,8 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type {
   ReaderEvidence,
   ReaderEvidenceHighlight,
-  ReaderEvidenceLink,
   ReaderEvidenceObject,
+  ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import EvidencePaneSurface from "./EvidencePaneSurface";
@@ -179,7 +179,7 @@ function Harness({
   followGeneration = 0,
   aggregateStatus = "ready",
   activatePassage = vi.fn(() => true),
-  onRemoveLink = vi.fn(),
+  onRemoveUserEdge = vi.fn(),
   onSaveLinkNote = vi.fn().mockResolvedValue({ note_block_id: "nb-new" }),
   onDeleteLinkNote = vi.fn().mockResolvedValue(undefined),
 }: {
@@ -190,7 +190,7 @@ function Harness({
   activatePassage?: (
     group: ReaderEvidence["passage_groups"][number],
   ) => boolean;
-  onRemoveLink?: (item: ReaderEvidenceLink) => void;
+  onRemoveUserEdge?: (edge: ReaderEvidenceUserEdge) => void;
   onSaveLinkNote?: (
     linkId: string,
     noteBlockId: string,
@@ -216,7 +216,7 @@ function Harness({
         onActivateSourceTarget={vi.fn()}
         onHoverItem={vi.fn()}
         onDismissSynapse={vi.fn()}
-        onRemoveLink={onRemoveLink}
+        onRemoveUserEdge={onRemoveUserEdge}
         onSaveLinkNote={onSaveLinkNote}
         onDeleteLinkNote={onDeleteLinkNote}
       />
@@ -425,18 +425,92 @@ describe("EvidencePaneSurface", () => {
     ).not.toBeInTheDocument();
   });
 
+  describe("folded user association controls", () => {
+    it.each(["context", "supports", "contradicts"] as const)(
+      "removes an explicit user %s association by its typed edge fact",
+      async (role) => {
+        const source = evidence();
+        const item = source.passage_groups[0]!.items[0]!;
+        if (item.kind !== "Highlight")
+          throw new Error("Expected Highlight fixture");
+        item.associations = [
+          {
+            relationship: "DirectlyAttached",
+            object: mediaObject,
+            edge_id: `edge-${role}`,
+            role,
+            origin: "user",
+            direction: "Outgoing",
+          },
+        ];
+        const onRemoveUserEdge = vi.fn();
+        render(<Harness source={source} onRemoveUserEdge={onRemoveUserEdge} />);
+
+        await userEvent.click(
+          screen.getAllByRole("button", { name: "1 linked object" })[0]!,
+        );
+        await userEvent.click(
+          screen.getByRole("button", {
+            name: "Remove connection to Linked work",
+          }),
+        );
+
+        expect(onRemoveUserEdge).toHaveBeenCalledWith(
+          expect.objectContaining({
+            relationship: "DirectlyAttached",
+            edge_id: `edge-${role}`,
+            role,
+            origin: "user",
+          }),
+        );
+      },
+    );
+
+    it("does not mint removal for a generated folded association", async () => {
+      const source = evidence();
+      const item = source.passage_groups[0]!.items[0]!;
+      if (item.kind !== "Highlight")
+        throw new Error("Expected Highlight fixture");
+      item.associations = [
+        {
+          relationship: "DirectlyAttached",
+          object: mediaObject,
+          edge_id: "edge-citation",
+          role: "context",
+          origin: "citation",
+          direction: "Incoming",
+        },
+      ];
+      render(<Harness source={source} />);
+
+      await userEvent.click(
+        screen.getAllByRole("button", { name: "1 linked object" })[0]!,
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: "Remove connection to Linked work",
+        }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("stable user Link controls", () => {
-    it("removes a stable user Link via onRemoveLink with the Link fact", async () => {
-      const onRemoveLink = vi.fn();
-      render(<Harness onRemoveLink={onRemoveLink} />);
+    it("removes a stable user Link via the typed user-edge contract", async () => {
+      const onRemoveUserEdge = vi.fn();
+      render(<Harness onRemoveUserEdge={onRemoveUserEdge} />);
       await userEvent.click(
         screen.getByRole("tab", { name: /Whole document 1/ }),
       );
       await userEvent.click(
         screen.getByRole("button", { name: "Remove link Document relation" }),
       );
-      expect(onRemoveLink).toHaveBeenCalledWith(
-        expect.objectContaining({ edge_id: "edge-l1", kind: "Link" }),
+      expect(onRemoveUserEdge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          edge_id: "edge-l1",
+          kind: "Link",
+          origin: "user",
+          role: "context",
+        }),
       );
     });
 
@@ -457,6 +531,46 @@ describe("EvidencePaneSurface", () => {
       );
       expect(
         screen.queryByRole("button", { name: "Done editing note" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps note controls exclusive to neutral user Links", async () => {
+      const source = evidence();
+      const link = source.document_items[0]!;
+      if (link.kind !== "Link") throw new Error("Expected Link fixture");
+      link.role = "supports";
+      render(<Harness source={source} />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Remove link Document relation" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", {
+          name: "Note on link Document relation",
+        }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("exposes neither removal nor notes for a generated Link row", async () => {
+      const source = evidence();
+      const link = source.document_items[0]!;
+      if (link.kind !== "Link") throw new Error("Expected Link fixture");
+      link.origin = "citation";
+      render(<Harness source={source} />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
+      );
+
+      expect(
+        screen.queryByRole("button", { name: "Remove link Document relation" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", {
+          name: "Note on link Document relation",
+        }),
       ).not.toBeInTheDocument();
     });
   });

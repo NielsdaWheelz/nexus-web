@@ -309,8 +309,16 @@
   grid-row: 1 / span 2;
 }
 
+.relationshipObject {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .objectButton {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;

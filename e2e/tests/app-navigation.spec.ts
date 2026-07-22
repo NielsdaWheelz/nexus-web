@@ -142,7 +142,7 @@ test.describe("app navigation", () => {
 test.describe("mobile app navigation", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-  test("projects the desktop destination order and pane activation contract", async ({
+  test("projects the desktop destination order and mobile active-pane contract", async ({
     page,
   }, testInfo) => {
     await gotoSinglePaneWorkspace(
@@ -167,6 +167,14 @@ test.describe("mobile app navigation", () => {
     await sheet.getByRole("link", { name: "Chats" }).click();
     await expect(sheet).toBeHidden();
     await expect(page).toHaveURL(/\/conversations$/);
-    await expect(page.locator("[data-pane-id]")).toHaveCount(2);
+    const activeMobilePane = page.locator("[data-pane-id]");
+    await expect(activeMobilePane).toHaveCount(1);
+    await expect(activeMobilePane).toHaveAttribute("data-active", "true");
+    await expect(activeMobilePane).toHaveAttribute("data-mobile", "true");
+    await expect(
+      page.getByRole("button", {
+        name: "Search or ask anything (2 open tabs)",
+      }),
+    ).toBeVisible();
   });
 });

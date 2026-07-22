@@ -28,7 +28,6 @@ from nexus.db.models import (
     PassageAnchor,
     SynthesisArtifact,
 )
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.search.candidates import (
     candidate_resource_ref,
@@ -247,14 +246,8 @@ class TestReferenceProfile:
 
 class TestLinkProfile:
     def test_includes_metadata_and_hybrid_candidates(
-        self, db_session: Session, bootstrapped_user, monkeypatch
+        self, db_session: Session, bootstrapped_user
     ) -> None:
-        # LLM boundary: no embedding key -> typed lexical-only degradation.
-        def no_key(_text: str):
-            raise ApiError(ApiErrorCode.E_LLM_NO_KEY, "no key")
-
-        monkeypatch.setattr("nexus.services.search.embedding.build_text_embedding", no_key)
-
         library_id = create_test_library(db_session, bootstrapped_user, name="Quantum Widgets")
         media_id = create_searchable_media(db_session, bootstrapped_user, title="Quantum Reader")
         reading = OracleReading(

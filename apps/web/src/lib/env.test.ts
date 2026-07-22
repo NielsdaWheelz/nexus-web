@@ -19,6 +19,7 @@ function stubDeployed(env: "staging" | "prod") {
   vi.stubEnv("FASTAPI_BASE_URL", "https://api.nexus.app");
   vi.stubEnv("R2_S3_API_ORIGIN", "https://acc.r2.cloudflarestorage.com");
   vi.stubEnv("NEXUS_INTERNAL_SECRET", "deploy-secret");
+  vi.stubEnv("APP_PUBLIC_URL", "https://app.nexus.app");
   vi.stubEnv("AUTH_ALLOWED_REDIRECT_ORIGINS", "https://app.nexus.app");
 }
 
@@ -141,6 +142,28 @@ describe("getEnv() (resolve-once, frozen)", () => {
     vi.stubEnv("R2_S3_API_ORIGIN", "");
     vi.stubEnv("FASTAPI_BASE_URL", "https://two.example.com");
     expect(getEnv().connectOrigins).toEqual(["https://two.example.com"]);
+  });
+});
+
+describe("getEnv().appPublicOrigin", () => {
+  it("defaults to the local web origin outside deployed environments", () => {
+    expect(getEnv().appPublicOrigin).toBe("http://localhost:3000");
+  });
+
+  it("normalizes the configured origin", () => {
+    vi.stubEnv("APP_PUBLIC_URL", "https://APP.example.com:443");
+    expect(getEnv().appPublicOrigin).toBe("https://app.example.com");
+  });
+
+  it("requires an HTTPS origin in deployed environments", () => {
+    stubDeployed("prod");
+    vi.stubEnv("APP_PUBLIC_URL", "http://app.nexus.app");
+    expect(() => getEnv()).toThrow(/APP_PUBLIC_URL must use HTTPS/);
+  });
+
+  it("rejects a URL with a path", () => {
+    vi.stubEnv("APP_PUBLIC_URL", "https://app.example.com/path");
+    expect(() => getEnv()).toThrow(/Invalid APP_PUBLIC_URL/);
   });
 });
 

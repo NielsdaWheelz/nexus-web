@@ -1,17 +1,22 @@
 import asyncio
+import json
 from typing import cast
 from uuid import uuid4
 
 import pytest
 from provider_runtime import (
+    CATALOG,
+    AssistantMessage,
     Cancelled,
     CancelSignal,
     CanonicalTool,
+    ContinuationDelta,
     Dynamic,
     FinalizedProviderCall,
     GenerateIntent,
     GlobalScope,
     OutputSpec,
+    Present,
     PromptBlock,
     PromptMessage,
     ProviderCredential,
@@ -29,6 +34,7 @@ from provider_runtime import (
     ToolResultMessage,
     UserMessage,
     parse_canonical_schema,
+    plan_generate,
 )
 from pydantic import BaseModel
 
@@ -79,13 +85,23 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 _PLAN = cast(FinalizedProviderCall, None)
 _CREDENTIAL = cast(ProviderCredential, None)
 
-_TARGET = profile_lookup("fast").target
+_FAST_PROFILE = profile_lookup("fast")
+assert _FAST_PROFILE is not None
+_TARGET = _FAST_PROFILE.target
+_REASONING = _FAST_PROFILE.default_reasoning_option_id
 _TOOL_CALL_ID = "real-media-fixture-app-search"
 _APP_SEARCH_TOOLS = (
     CanonicalTool(
         name=APP_SEARCH_TOOL_NAME,
         description="Search saved content.",
-        parameters={"type": "object"},
+        parameters=parse_canonical_schema(
+            {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            }
+        ),
     ),
 )
 _TEXT_OUTPUT = TextOutput()
@@ -100,7 +116,7 @@ def _intent(
         target=_TARGET,
         messages=messages,
         max_output_tokens=1024,
-        reasoning=profile_lookup("fast").default_reasoning_option_id,
+        reasoning=_REASONING,
         tools=tools,
         tool_choice="auto" if tools else "none",
         output=output,
@@ -131,11 +147,11 @@ def _streamed_text(events: list[RuntimeStreamEvent]) -> str:
 
 
 async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None:
-    events = await _stream_events(
-        _intent(_user("What does this source say about SOFIA? Use the attached evidence."))
-    )
+    system = _system("Use saved sources to answer the user.")
+    user = _user("What does this source say about SOFIA? Use the attached evidence.")
+    events = await _stream_events(_intent(system, user))
 
-    assert len(events) == 3
+    assert len(events) == 4
     assert events[0].seq == 1
     assert isinstance(events[0].event, ToolCallStart)
     assert events[0].event.name == APP_SEARCH_TOOL_NAME
@@ -144,10 +160,49 @@ async def test_real_media_fixture_llm_uses_app_search_before_answering() -> None
     assert isinstance(events[1].event, ToolCallDone)
     assert events[1].event.tool_call.name == APP_SEARCH_TOOL_NAME
     assert events[1].event.tool_call.arguments == {"query": "SOFIA"}
+    tool_call = events[1].event.tool_call
 
     assert events[2].seq == 3
-    assert isinstance(events[2].event, TerminalEvent)
-    assert isinstance(events[2].event.outcome, Succeeded)
+    assert isinstance(events[2].event, ContinuationDelta)
+    artifact = events[2].event.artifact
+    assert artifact.target == _TARGET
+    assert artifact.codec_id == CATALOG.chat_contract(_TARGET).continuation_codec
+    function_call_item = {
+        "id": f"{_TOOL_CALL_ID}-item",
+        "type": "function_call",
+        "call_id": _TOOL_CALL_ID,
+        "name": APP_SEARCH_TOOL_NAME,
+        "arguments": '{"query":"SOFIA"}',
+    }
+    assert artifact.opaque_payload == {"output": (function_call_item,)}
+
+    assert events[3].seq == 4
+    assert isinstance(events[3].event, TerminalEvent)
+    assert isinstance(events[3].event.outcome, Succeeded)
+    terminal_response = events[3].event.outcome.response
+    assert terminal_response.content == TextContent(text="", tool_calls=(tool_call,))
+    assert terminal_response.continuation == Present(artifact)
+
+    # Exercise the pinned provider planner/codec, not a fixture-side facsimile:
+    # the exact artifact must replay before the corresponding tool result.
+    replay_plan = plan_generate(
+        _intent(
+            system,
+            user,
+            AssistantMessage(text="", tool_calls=(tool_call,), continuation=Present(artifact)),
+            _tool_result('{"results":[]}'),
+        )
+    )
+    assert isinstance(replay_plan, FinalizedProviderCall)
+    request_body = json.loads(replay_plan.request.body)
+    assert request_body["input"][-2:] == [
+        function_call_item,
+        {
+            "type": "function_call_output",
+            "call_id": _TOOL_CALL_ID,
+            "output": '{"results":[]}',
+        },
+    ]
 
 
 async def test_real_media_fixture_llm_cancel_event_matches_provider_contract(

@@ -372,6 +372,8 @@ describe("GlobalPlayerFooter mobile expanded sheet a11y", () => {
     expandSheet(opener);
     expect(history.pushState, "expanding the player must push one synthetic history entry").toHaveBeenCalledTimes(1);
 
+    // The browser consumes the synthetic entry before it dispatches popstate.
+    fakeState = null;
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Expanded player" })).toBeNull(),

@@ -44,6 +44,7 @@ from nexus.services.contributor_taxonomy import ContributorObservation, Observed
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import get_daily_note
+from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.search import get_search_result
 from nexus.services.search.projection import _snippet_around_query, _truncate_snippet
 from nexus.services.semantic_chunks import build_text_embedding, to_pgvector_literal
@@ -2402,7 +2403,9 @@ class TestSearchResultFormat:
         assert result["type"] == "message"
         assert "conversation_id" in result
         assert "seq" in result
-        assert result["activation"]["href"] == f"/conversations/{conversation_id}"
+        assert result["activation"]["href"] == (
+            f"/conversations/{conversation_id}?message={message_id}"
+        )
         assert "deep_link" not in result
         assert result["context_ref"] == {"type": "message", "id": str(message_id)}
 
@@ -3462,64 +3465,61 @@ class TestReaderApparatusSearch:
     ):
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
-        state_id = uuid4()
-        item_id = uuid4()
 
         with direct_db.session() as session:
-            media_id = create_searchable_media(session, user_id, title="Apparatus Search Source")
-            session.execute(
-                text("""
-                    INSERT INTO reader_apparatus_states (
-                        id, media_id, media_kind, source_fingerprint, extractor_version,
-                        status, item_count, edge_count, diagnostics
-                    )
-                    VALUES (
-                        :state_id, :media_id, 'web_article', 'sha256:test',
-                        'reader_apparatus_v1', 'ready', 1, 0, '{}'::jsonb
-                    )
-                """),
-                {"state_id": state_id, "media_id": media_id},
+            media_id = create_searchable_media(
+                session,
+                user_id,
+                title="Apparatus needle source",
             )
-            session.execute(
-                text("""
-                    INSERT INTO reader_apparatus_items (
-                        id, media_id, state_id, stable_key, kind, label, body_text,
-                        body_html_sanitized, locator, locator_status, confidence,
-                        extraction_method, source_ref, sort_key
-                    )
-                    VALUES (
-                        :item_id, :media_id, :state_id, 'apparatus-note-1',
-                        'footnote', '1', 'source-authored apparatus needle text',
-                        NULL, CAST(:locator AS jsonb), 'exact', 'exact',
-                        'test', '{}'::jsonb, '000001.target'
-                    )
-                """),
-                {
-                    "item_id": item_id,
-                    "media_id": media_id,
-                    "state_id": state_id,
-                    "locator": json.dumps(
-                        {
+            fragment_id, canonical_text = session.execute(
+                text("SELECT id, canonical_text FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).one()
+            exact = "Apparatus needle"
+            start_offset = canonical_text.index(exact)
+            replace_media_apparatus(
+                session,
+                media_id=media_id,
+                media_kind="web_article",
+                source_fingerprint_value=source_fingerprint("search-test", media_id),
+                items=[
+                    {
+                        "stable_key": "apparatus-note-1",
+                        "kind": "footnote",
+                        "label": "1",
+                        "body_text": exact,
+                        "body_html_sanitized": None,
+                        "locator": {
                             "type": "web_text_offsets",
                             "media_id": str(media_id),
-                            "fragment_id": str(uuid4()),
-                            "start_offset": 0,
-                            "end_offset": 37,
+                            "fragment_id": str(fragment_id),
+                            "start_offset": start_offset,
+                            "end_offset": start_offset + len(exact),
                             "media_kind": "web_article",
-                            "text_quote_selector": {
-                                "exact": "source-authored apparatus needle text"
-                            },
-                        }
-                    ),
-                },
+                            "text_quote_selector": {"exact": exact},
+                        },
+                        "confidence": "exact",
+                        "extraction_method": "html_semantic",
+                        "source_ref": {"format": "html"},
+                        "sort_key": "000001.target",
+                    }
+                ],
+                edges=[],
             )
+            item_id = session.scalar(
+                text(
+                    "SELECT id FROM reader_apparatus_items "
+                    "WHERE media_id = :media_id AND stable_key = 'apparatus-note-1'"
+                ),
+                {"media_id": media_id},
+            )
+            assert item_id is not None
             session.commit()
 
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
         direct_db.register_cleanup("fragments", "media_id", media_id)
-        direct_db.register_cleanup("reader_apparatus_states", "id", state_id)
-        direct_db.register_cleanup("reader_apparatus_items", "id", item_id)
 
         response = auth_client.get(
             "/search?q=apparatus+needle&kinds=documents",
