@@ -25,6 +25,7 @@ note). Structured synthesis is a pure decode/scaffold module: it never calls a
 provider, so these tests need no DB and no LLM stub.
 """
 
+import pytest
 from provider_runtime import (
     Absent,
     CallMeta,
@@ -52,7 +53,6 @@ from provider_runtime import (
     parse_canonical_schema,
 )
 from provider_runtime.types import Dynamic, PromptBlock, SystemMessage, UserMessage
-import pytest
 from pydantic import BaseModel, ConfigDict
 
 from nexus.services.artifacts.reducers.library_dossier import _LI_SYSTEM_PROMPT
