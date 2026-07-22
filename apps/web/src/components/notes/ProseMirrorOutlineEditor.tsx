@@ -12,6 +12,7 @@ import {
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
 import { isApiError } from "@/lib/api/client";
+import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   createMarkdownPastePlugin,
   createObjectRefSyntaxPlugin,
@@ -160,6 +161,7 @@ export default function ProseMirrorOutlineEditor({
   const notePulseTimeoutRef = useRef<number | null>(null);
   const [trigger, setTrigger] = useState<ObjectRefTrigger | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
   const triggerRef = useRef<ObjectRefTrigger | null>(null);
   const targetsRef = useRef<ResourceTarget[]>([]);
   const activeKeyRef = useRef<string | null>(null);
@@ -382,6 +384,9 @@ export default function ProseMirrorOutlineEditor({
             }
             if (warning) onFeedbackRef.current?.(warning);
           } catch (error: unknown) {
+            if (handleUnauthenticatedApiError(error)) {
+              return;
+            }
             if (isMediaAttachmentDefect(error)) {
               setDefect({ error });
               return;
@@ -396,7 +401,7 @@ export default function ProseMirrorOutlineEditor({
         });
       }
     },
-    [createBlockId, singleBlock],
+    [createBlockId, handleUnauthenticatedApiError, singleBlock],
   );
 
   const attachUrls = useCallback(
@@ -428,6 +433,9 @@ export default function ProseMirrorOutlineEditor({
           try {
             result = await captureSourceUrl({ url, libraryIds: [] });
           } catch (error) {
+            if (handleUnauthenticatedApiError(error)) {
+              return;
+            }
             if (isSourceUrlCaptureDefect(error)) {
               setDefect({ error });
               return;
@@ -468,7 +476,7 @@ export default function ProseMirrorOutlineEditor({
         });
       }
     },
-    [createBlockId, singleBlock],
+    [createBlockId, handleUnauthenticatedApiError, singleBlock],
   );
 
   useEffect(() => {

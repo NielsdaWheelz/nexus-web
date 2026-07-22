@@ -287,6 +287,8 @@ describe("loadWorkspaceBootstrap", () => {
         processing_status: "ready_for_reading",
         read_state: "unread",
         progress_fraction: null,
+        published_date: null,
+        canonical_source_url: "https://example.test/article",
         capabilities: { can_quote: true },
       },
       readingTimeEstimate: {
@@ -310,7 +312,24 @@ describe("loadWorkspaceBootstrap", () => {
 
     expect(result.resources["lib-1"]).toEqual({
       library,
-      entries: [entry],
+      entries: [
+        {
+          ...entry,
+          media: {
+            ...entry.media,
+            progressFraction: { kind: "Absent" },
+            publicationDate: { kind: "Absent" },
+            sourceHost: { kind: "Present", value: "example.test" },
+          },
+          readingTimeEstimate: {
+            kind: "Present",
+            value: {
+              totalMinutes: { value: 15 },
+              remainingMinutes: { kind: "Absent" },
+            },
+          },
+        },
+      ],
       entriesPage: { has_more: false, next_cursor: null },
     });
   });

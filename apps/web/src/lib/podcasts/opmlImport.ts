@@ -1,5 +1,8 @@
 import { apiFetch } from "@/lib/api/client";
+import { decodePodcastOpmlBytes } from "@/lib/podcasts/opmlEncoding";
 import { isRecord } from "@/lib/validation";
+
+export { PodcastOpmlEncodingError } from "@/lib/podcasts/opmlEncoding";
 
 export const PODCAST_OPML_MAX_BYTES = 1_000_000;
 
@@ -20,13 +23,6 @@ export class PodcastOpmlContractDefect extends Error {
     // same-system API contract and are not import outcomes.
     super(message);
     this.name = "PodcastOpmlContractDefect";
-  }
-}
-
-export class PodcastOpmlEncodingError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "PodcastOpmlEncodingError";
   }
 }
 
@@ -59,14 +55,7 @@ export async function importPodcastOpml({
   signal?.throwIfAborted();
   const bytes = await file.arrayBuffer();
   signal?.throwIfAborted();
-  let opml: string;
-  try {
-    opml = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch (error) {
-    throw new PodcastOpmlEncodingError("OPML files must use UTF-8 encoding.", {
-      cause: error,
-    });
-  }
+  const opml = decodePodcastOpmlBytes(bytes);
   const response = await apiFetch<unknown>("/api/podcasts/import/opml", {
     method: "POST",
     body: JSON.stringify({

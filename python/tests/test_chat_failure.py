@@ -52,6 +52,7 @@ _CODE_TABLE: list[tuple[str, str | None, type, bool, bool]] = [
 ]
 
 _ALL_CODES = [row[0] for row in _CODE_TABLE]
+_TRANSIENT_CODES_IN_TABLE_ORDER = tuple(row[0] for row in _CODE_TABLE if row[0] in TRANSIENT_CODES)
 
 
 # A reasoning option the active ("balanced") profile actually offers; a run's
@@ -171,7 +172,7 @@ def test_absent_support_id_when_run_has_no_support_id() -> None:
 # trail. (The write side that produces these columns stays strict.)
 
 
-@pytest.mark.parametrize("code", [c for c in TRANSIENT_CODES])
+@pytest.mark.parametrize("code", _TRANSIENT_CODES_IN_TABLE_ORDER)
 def test_transient_code_without_attempts_degrades_to_none(code: str) -> None:
     origin = next(row[1] for row in _CODE_TABLE if row[0] == code)
     run = _make_run(status="error", error_code=code, error_origin=origin)
@@ -285,7 +286,8 @@ def test_never_rerunnable_codes_ignore_profile_and_write_tool_state(code: str) -
 
 
 @pytest.mark.parametrize(
-    "code", ["incomplete", "cancelled", "invalid_tool_arguments", *TRANSIENT_CODES]
+    "code",
+    ["incomplete", "cancelled", "invalid_tool_arguments", *_TRANSIENT_CODES_IN_TABLE_ORDER],
 )
 def test_conditionally_rerunnable_codes_require_active_profile_and_no_write_tool(
     code: str,

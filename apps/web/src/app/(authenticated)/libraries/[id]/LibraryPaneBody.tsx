@@ -9,6 +9,7 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import {
   libraryEntriesResource,
   libraryResource as libraryResourceDescriptor,
+  type LibraryEntriesResourceParams,
 } from "@/lib/api/resource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
@@ -203,6 +204,17 @@ interface LibraryEntryPageWire {
   page: LibraryPageInfo;
 }
 
+interface EntryReconciliationRequest {
+  ownerId: string;
+  sort: "manual" | "resonance";
+  serial: number;
+}
+
+interface EntryReconciliationResult {
+  request: EntryReconciliationRequest;
+  page: LibraryEntryPage;
+}
+
 function decodeLibraryEntryPage(page: LibraryEntryPageWire): LibraryEntryPage {
   return {
     ...page,
@@ -284,17 +296,9 @@ export default function LibraryPaneBody() {
   const wasPaneActiveRef = useRef(isPaneActive);
   const paneActiveAtRenderRef = useRef(isPaneActive);
   paneActiveAtRenderRef.current = isPaneActive;
-  const entryReconciliationAbortRef = useRef<AbortController | null>(null);
-  const entryReconciliationGenerationRef = useRef(0);
-  const [entryReconciliation, setEntryReconciliation] = useState<
-    | { kind: "Idle" }
-    | { kind: "Loading"; sort: "manual" | "resonance" }
-    | {
-        kind: "Failed";
-        sort: "manual" | "resonance";
-        error: ApiError;
-      }
-  >({ kind: "Idle" });
+  const entryReconciliationSerialRef = useRef(0);
+  const [entryReconciliationRequest, setEntryReconciliationRequest] =
+    useState<EntryReconciliationRequest | null>(null);
   const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
   const patchMediaInViews = useCallback(
     (
@@ -413,83 +417,102 @@ export default function LibraryPaneBody() {
   }, [cancelEntryLoadMore, id]);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
-  const reconcileEntries = useCallback(
+  const requestEntryReconciliation = useCallback(
     (requestedSort: "manual" | "resonance") => {
-      entryReconciliationAbortRef.current?.abort();
-      const generation = entryReconciliationGenerationRef.current + 1;
-      entryReconciliationGenerationRef.current = generation;
-      const controller = new AbortController();
-      entryReconciliationAbortRef.current = controller;
-      setEntryReconciliation({ kind: "Loading", sort: requestedSort });
-      const path = libraryEntriesResource.clientPath({
-        id,
-        sort: requestedSort === "resonance" ? "resonance" : undefined,
+      const serial = entryReconciliationSerialRef.current + 1;
+      entryReconciliationSerialRef.current = serial;
+      setEntryReconciliationRequest({
+        ownerId: id,
+        sort: requestedSort,
+        serial,
       });
-      void apiFetch<LibraryEntryPageWire>(path, { signal: controller.signal })
-        .then(decodeLibraryEntryPage)
-        .then((page) => {
-          if (
-            controller.signal.aborted ||
-            entryReconciliationGenerationRef.current !== generation
-          ) {
-            return;
-          }
-          cancelEntryLoadMore();
-          clearRemovedEntryIds();
-          if (requestedSort === "resonance") {
-            setResonanceEntries(page.data);
-            setResonanceCursor(page.page.next_cursor);
-            setResonanceLoadMoreError(null);
-          } else {
-            setEntries(page.data);
-            setEntryCursor(page.page.next_cursor);
-            setManualLoadMoreError(null);
-          }
-          libraryEntriesStaleRef.current = false;
-          entryReconciliationAbortRef.current = null;
-          setEntryReconciliation({ kind: "Idle" });
-        })
-        .catch((error: unknown) => {
-          if (
-            controller.signal.aborted ||
-            entryReconciliationGenerationRef.current !== generation ||
-            isAbortError(error)
-          ) {
-            return;
-          }
-          if (handleUnauthenticatedApiError(error)) return;
-          entryReconciliationAbortRef.current = null;
-          setEntryReconciliation({
-            kind: "Failed",
-            sort: requestedSort,
-            error: toLibraryAddError(error),
-          });
-        });
     },
-    [cancelEntryLoadMore, clearRemovedEntryIds, id],
+    [id],
   );
+  const entryReconciliationParams: LibraryEntriesResourceParams | null =
+    entryReconciliationRequest
+      ? {
+          id: entryReconciliationRequest.ownerId,
+          sort:
+            entryReconciliationRequest.sort === "resonance"
+              ? "resonance"
+              : undefined,
+        }
+      : null;
+  const entryReconciliationPath = entryReconciliationParams
+    ? libraryEntriesResource.clientPath(entryReconciliationParams)
+    : null;
+  const entryReconciliationFetch = useDebouncedFetch<EntryReconciliationResult>(
+    entryReconciliationParams && entryReconciliationRequest
+      ? `${libraryEntriesResource.cacheKey(entryReconciliationParams)}:reconcile:${entryReconciliationRequest.serial}`
+      : null,
+    async (signal) => {
+      const request = entryReconciliationRequest;
+      const path = entryReconciliationPath;
+      if (request === null || path === null) {
+        // justify-defect: a non-null reconciliation query key is constructed
+        // from the same request/path pair consumed by this query function.
+        throw new Error("Library entry reconciliation lost its query identity");
+      }
+      return {
+        request,
+        page: decodeLibraryEntryPage(
+          await apiFetch<LibraryEntryPageWire>(path, { signal }),
+        ),
+      };
+    },
+    { debounceMs: 0 },
+  );
+
+  useEffect(() => {
+    const result = entryReconciliationFetch.data;
+    const request = entryReconciliationRequest;
+    if (
+      result === null ||
+      request === null ||
+      request.ownerId !== id ||
+      result.request.ownerId !== request.ownerId ||
+      result.request.sort !== request.sort ||
+      result.request.serial !== request.serial
+    ) {
+      return;
+    }
+    cancelEntryLoadMore();
+    clearRemovedEntryIds();
+    if (request.sort === "resonance") {
+      setResonanceEntries(result.page.data);
+      setResonanceCursor(result.page.page.next_cursor);
+      setResonanceLoadMoreError(null);
+    } else {
+      setEntries(result.page.data);
+      setEntryCursor(result.page.page.next_cursor);
+      setManualLoadMoreError(null);
+    }
+    libraryEntriesStaleRef.current = false;
+    setEntryReconciliationRequest(null);
+  }, [
+    cancelEntryLoadMore,
+    clearRemovedEntryIds,
+    entryReconciliationFetch.data,
+    entryReconciliationRequest,
+    id,
+  ]);
 
   useEffect(() => {
     if (entryReconciliationOwnerIdRef.current !== id) return;
     const becameActive = isPaneActive && !wasPaneActiveRef.current;
     wasPaneActiveRef.current = isPaneActive;
     if (becameActive && libraryEntriesStaleRef.current) {
-      reconcileEntries(sort);
+      requestEntryReconciliation(sort);
     }
-  }, [id, isPaneActive, reconcileEntries, sort]);
+  }, [id, isPaneActive, requestEntryReconciliation, sort]);
 
   useEffect(() => {
     entryReconciliationOwnerIdRef.current = id;
-    entryReconciliationGenerationRef.current += 1;
-    entryReconciliationAbortRef.current?.abort();
-    entryReconciliationAbortRef.current = null;
+    entryReconciliationSerialRef.current += 1;
     libraryEntriesStaleRef.current = false;
     wasPaneActiveRef.current = paneActiveAtRenderRef.current;
-    setEntryReconciliation({ kind: "Idle" });
-    return () => {
-      entryReconciliationGenerationRef.current += 1;
-      entryReconciliationAbortRef.current?.abort();
-    };
+    setEntryReconciliationRequest(null);
   }, [id]);
 
   useEffect(() => {
@@ -1366,24 +1389,30 @@ export default function LibraryPaneBody() {
         />
       </>
     );
-  const entryReconciliationNotice =
-    entryReconciliation.kind === "Loading" ? (
+  const entryReconciliationNotice = entryReconciliationRequest ? (
+    entryReconciliationFetch.error === null ? (
       <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
-    ) : entryReconciliation.kind === "Failed" ? (
+    ) : (
       <FeedbackNotice
-        feedback={toFeedback(entryReconciliation.error, {
-          fallback: "Failed to refresh library entries",
-        })}
+        feedback={toFeedback(
+          toLibraryAddError(entryReconciliationFetch.error),
+          {
+            fallback: "Failed to refresh library entries",
+          },
+        )}
       >
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => reconcileEntries(entryReconciliation.sort)}
+          onClick={() =>
+            requestEntryReconciliation(entryReconciliationRequest.sort)
+          }
         >
           Retry
         </Button>
       </FeedbackNotice>
-    ) : null;
+    )
+  ) : null;
   const resonanceStatus = resonanceFetch.loading
     ? "loading"
     : resonanceFetch.error !== null && resonanceEntries.length === 0
