@@ -4,6 +4,7 @@ import { APP_AUTHENTICATED_HOME_HREF } from "@/lib/routes/defaults";
 
 const deployedEnv = {
   NEXUS_ENV: "prod",
+  APP_PUBLIC_URL: "https://app.nexus.test",
   FASTAPI_BASE_URL: "https://api.nexus.test",
   R2_S3_API_ORIGIN: "https://acct.r2.cloudflarestorage.com",
   NEXUS_INTERNAL_SECRET: "deploy-secret",
