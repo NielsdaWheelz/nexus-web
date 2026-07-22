@@ -117,7 +117,7 @@ the mapping to a certified runtime target. Profiles are validated at startup.
 | `claude` | Claude · Sonnet 5 | `anthropic/claude-sonnet-5` | `low, medium, high, xhigh, max` | `medium` | Anthropic explicit stable prefix, 5m |
 | `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | `low, medium, high, xhigh, max` | `high` | Anthropic explicit stable prefix, 5m |
 | `gemini` | Gemini · 3.5 Flash | `gemini/gemini-3.5-flash` | `minimal, low, medium, high` | `medium` | Gemini implicit prefix |
-| `kimi` | Kimi · K3 | `moonshot/kimi-k3` | `low, high, max` | `high` | Moonshot automatic prefix |
+| `kimi` | Kimi · K3 | `moonshot/kimi-k3` | `low, high, max` | `high` | Moonshot keyed automatic prefix |
 
 Rules:
 
@@ -316,7 +316,7 @@ the identical provider/model/codec. A mismatch fails before network.
 | OpenAI Responses | Preserve `none` through `max`, including distinct `xhigh`; `store:false`; explicit prefix breakpoint + stable hashed `prompt_cache_key` + `prompt_cache_options.ttl=30m`; request `include:["reasoning.encrypted_content"]`; replay the entire ordered `response.output` sequence verbatim |
 | Anthropic Messages | Omit sampling; explicit 5m breakpoint at the stable prefix, optionally plus top-level automatic caching for append-only chat; emit native effort; replay thinking/redacted blocks unchanged; Fable thinking is always on; HTTP-200 `stop_reason=refusal` is terminal `refused`, not provider failure, and invalidates any partial Fable output |
 | Gemini `generateContent` | Stable `gemini-3.5-flash`; native `thinkingLevel`; implicit caching; preserve thought signatures for tool continuation |
-| Moonshot Chat Completions | `reasoning_effort=low|high|max`; omit fixed sampling fields; use `max_completion_tokens`; replay the complete assistant message unchanged; rely on automatic context caching |
+| Moonshot Chat Completions | `reasoning_effort=low|high|max`; omit fixed sampling fields; use `max_completion_tokens`; replay the complete assistant message unchanged; use stable hashed `prompt_cache_key` affinity with automatic cache management |
 | OpenRouter Chat Completions | Dedicated `moonshotai/kimi-k3` contract; `provider.only=["moonshotai/int4"]`, `provider.order=["moonshotai/int4"]`, `allow_fallbacks=false`, `require_parameters=true`, `data_collection=deny`, `zdr=true`, hashed `session_id`; `reasoning:{effort,exclude:false}`; use routed `max_tokens`, not direct-only `max_completion_tokens`; send `X-OpenRouter-Cache: false` and `X-OpenRouter-Metadata: enabled`; preserve full `reasoning_details`; runtime `max_attempts=1` |
 
 Moonshot and OpenRouter may share private, syntax-only Chat Completions wire
@@ -328,7 +328,8 @@ parsers. They do not inherit a generic provider-branching client.
 
 - `OpenAIExplicitPrefix(key, minimum_ttl="30m", breakpoints)`;
 - `AnthropicPrefix(stable_breakpoint, ttl="5m", automatic_append_only)`;
-- `ProviderAutomaticPrefix(provider="gemini" | "moonshot")`;
+- `GeminiAutomaticPrefix()`;
+- `MoonshotKeyedPrefix(key)`;
 - `OpenRouterCertifiedPrefix(session_id, pinned_upstream, evidence_revision)`.
 
 For OpenRouter, `evidence_revision` is the immutable id of the paid
@@ -345,7 +346,7 @@ narrowest contributing scope, and non-message cache inputs inherit that scope;
 a cache can never be shared more broadly than any contributing block.
 
 `OpaqueCacheAffinity` is private derived plan state, not public intent.
-`planning.py` solely owns `CACHE_AFFINITY_VERSION = 1` and the binary
+`planning.py` solely owns `CACHE_AFFINITY_VERSION = 3` and the binary
 `frame(bytes) = uint64_be(length) || bytes` encoder. The planner computes:
 
 ```text
@@ -365,9 +366,9 @@ that precede or participate in the provider's cache prefix. Byte-identical
 scope, target, contract/version, and prefix produce the same affinity across
 same-target retries, explicit reruns, workers, and deployments. Changing any
 input produces a new affinity. Raw scope ids and prompt bytes never enter wire
-metadata, logs, or the ledger. OpenAI uses the derived value as
-`prompt_cache_key`; OpenRouter uses it as `session_id`; other plans retain it
-only for fingerprint/telemetry and use their native prefix mechanism.
+metadata, logs, or the ledger. OpenAI and Moonshot use the derived value as
+`prompt_cache_key`; OpenRouter uses it as `session_id`; Gemini and Anthropic
+retain it only for fingerprint/telemetry and use their native prefix mechanism.
 Canonical cache-contract bytes are the deterministic encoding of the closed
 strategy and parameters. Any framing, scope, prefix-encoding, or cache-contract
 semantic change must increment `CACHE_AFFINITY_VERSION` and update checked-in
@@ -379,9 +380,12 @@ Rules:
 - Unsupported cache intent is a planning defect. It is never silently removed.
 - “Enabled” means the correct provider mechanism is present; it does not promise
   a hit below the provider's minimum prefix length.
-- Gemini and Moonshot caching are implicit: the catalog declares that fact and
-  live certification proves reported cache reads; there is no invented wire
-  control. OpenAI's `30m` is a minimum lifetime, not exact or maximum retention.
+- Gemini caching is automatic and opportunistic: the catalog declares that fact,
+  no wire control is invented, and live certification samples a bounded number
+  of successful calls for provider-reported cache reads.
+- Moonshot automatically manages cache contents; the runtime supplies stable
+  `prompt_cache_key` affinity and live certification proves a reported cache
+  read. OpenAI's `30m` is a minimum lifetime, not exact or maximum retention.
 - Live certification uses an above-minimum stable prefix twice and requires
   cache-read usage on the second call where the provider reports it.
 - OpenRouter's pinned endpoint currently reports no implicit-cache capability.
@@ -950,9 +954,8 @@ without this current paid certification.
 - [Gemini 3.5 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash),
   [generateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
   and [generateContent caching](https://ai.google.dev/gemini-api/docs/generate-content/caching)
-- [Kimi K3](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart),
-  [thinking effort](https://platform.kimi.ai/docs/guide/use-thinking-effort), and
-  [automatic context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api)
+- [Kimi Chat API](https://platform.kimi.ai/docs/api/chat) and
+  [Kimi K3 pricing and caching](https://platform.kimi.ai/docs/pricing/chat-k3)
 - [OpenRouter Kimi K3](https://openrouter.ai/moonshotai/kimi-k3-20260715),
   [endpoint metadata](https://openrouter.ai/api/v1/models/moonshotai/kimi-k3-20260715/endpoints),
   [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection),
