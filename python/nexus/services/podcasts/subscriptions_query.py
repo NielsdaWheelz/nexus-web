@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
 from nexus.errors import (
     ApiErrorCode,
     InvalidRequestError,
@@ -21,6 +22,7 @@ from nexus.schemas.podcast import (
     PodcastSubscriptionListItemOut,
     PodcastSubscriptionStatusOut,
 )
+from nexus.schemas.presence import Absent, Present, presence_from_nullable
 from nexus.services import library_entries
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
@@ -30,6 +32,91 @@ from nexus.services.contributor_credits import (
 
 PODCAST_SUBSCRIPTION_SORT_OPTIONS = {"recent_episode", "unplayed_count", "alpha"}
 PODCAST_SUBSCRIPTION_FILTER_OPTIONS = {"all", "has_new", "not_in_library"}
+
+
+@dataclass(frozen=True, slots=True)
+class CompactPodcastTarget:
+    """Narrow podcast display facts for a selected library target."""
+
+    podcast_id: UUID
+    title: str
+    subtitle: Absent | Present[str]
+    image_url: Absent | Present[str]
+    href: str
+
+
+def active_subscription_rows_sql() -> str:
+    """The viewer's complete active-subscription relation.
+
+    Binds ``:viewer_id`` and returns ``podcast_id``. Library membership and
+    destination authorization belong to the composing query.
+    """
+    return """
+        SELECT ps.podcast_id
+        FROM podcast_subscriptions ps
+        WHERE ps.user_id = :viewer_id
+          AND ps.status = 'active'
+    """
+
+
+def hydrate_compact_podcast_targets(
+    db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]
+) -> dict[UUID, CompactPodcastTarget]:
+    """Batch-hydrate visible podcasts into compact target facts."""
+    ordered_ids = list(dict.fromkeys(UUID(str(value)) for value in podcast_ids))
+    if not ordered_ids:
+        return {}
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_podcasts AS (
+                {visible_podcast_ids_cte_sql()}
+            )
+            SELECT p.id AS podcast_id, p.title, p.image_url
+            FROM podcasts p
+            JOIN visible_podcasts vp ON vp.podcast_id = p.id
+            WHERE p.id = ANY(:podcast_ids)
+            """
+        ),
+        {"viewer_id": viewer_id, "podcast_ids": ordered_ids},
+    ).mappings()
+    by_id = {UUID(str(row["podcast_id"])): row for row in rows}
+    credits = load_contributor_credits_for_podcasts(db, list(by_id))
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.routing import resource_activations_for_refs
+
+    refs = [
+        ResourceRef(scheme="podcast", id=podcast_id)
+        for podcast_id in ordered_ids
+        if podcast_id in by_id
+    ]
+    activations = resource_activations_for_refs(db, viewer_id=viewer_id, refs=refs)
+    hydrated: dict[UUID, CompactPodcastTarget] = {}
+    for podcast_id in ordered_ids:
+        row = by_id.get(podcast_id)
+        if row is None:
+            continue
+        author_names = tuple(
+            credit.contributor_display_name or credit.credited_name
+            for credit in credits.get(podcast_id, [])
+            if credit.role == "author"
+        )
+        subtitle = ", ".join(dict.fromkeys(author_names)) or None
+        image_url = str(row["image_url"]) if row["image_url"] is not None else None
+        ref = ResourceRef(scheme="podcast", id=podcast_id)
+        href = activations[ref.uri].href
+        if href is None:
+            # justify-defect: podcast is a statically routeable ResourceRef and
+            # the visibility query above proved the selected row exists.
+            raise AssertionError(f"visible podcast target is not routeable: {ref.uri}")
+        hydrated[podcast_id] = CompactPodcastTarget(
+            podcast_id=podcast_id,
+            title=str(row["title"]),
+            subtitle=presence_from_nullable(subtitle),
+            image_url=presence_from_nullable(image_url),
+            href=href,
+        )
+    return hydrated
 
 
 def _podcast_list_item_from_row(

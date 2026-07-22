@@ -26,6 +26,7 @@ from nexus.auth.permissions import (
     can_read_highlight,
     can_read_media,
     is_library_member,
+    visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
@@ -104,6 +105,140 @@ class ResolvedResource:
     resolved_revision_ref: str | None = None
 
 
+def resource_owner_rows_sql(endpoint_relation: str) -> str:
+    """Normalize one checked-in, bounded resource-endpoint relation one hop.
+
+    ``endpoint_relation`` must expose ``resource_scheme`` and ``resource_id``;
+    it is checked-in SQL assembled by a service, never request text. Returned
+    columns are ``resource_scheme``, ``resource_id``, ``owner_scheme``, and
+    ``owner_id``. Direct media, podcast, Page, and NoteBlock identities are
+    preserved. Media-owned fragments, highlights, evidence spans, content
+    chunks, and reader-apparatus items map to their canonical media; note-owned
+    spans/chunks map to their exact NoteBlock.
+
+    Requiring the endpoint relation makes the bounded-work contract structural:
+    every storage branch starts from the distinct supplied endpoints, so a
+    multiply referenced owner CTE cannot materialize the complete resource
+    corpus before filtering.
+    """
+    return f"""
+        WITH owner_endpoints AS (
+            SELECT DISTINCT resource_scheme, resource_id
+            FROM ({endpoint_relation}) supplied_endpoints
+            WHERE resource_scheme IS NOT NULL
+              AND resource_id IS NOT NULL
+        )
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            m.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN media m
+          ON endpoint.resource_scheme = 'media'
+         AND m.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'podcast'::text AS owner_scheme,
+            p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN podcasts p
+          ON endpoint.resource_scheme = 'podcast'
+         AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'page'::text AS owner_scheme,
+            p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN pages p
+          ON endpoint.resource_scheme = 'page'
+         AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'note_block'::text AS owner_scheme,
+            nb.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN note_blocks nb
+          ON endpoint.resource_scheme = 'note_block'
+         AND nb.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            f.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN fragments f
+          ON endpoint.resource_scheme = 'fragment'
+         AND f.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            h.anchor_media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN highlights h
+          ON endpoint.resource_scheme = 'highlight'
+         AND h.id = endpoint.resource_id
+        WHERE h.anchor_media_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            es.owner_kind AS owner_scheme,
+            es.owner_id
+        FROM owner_endpoints endpoint
+        JOIN evidence_spans es
+          ON endpoint.resource_scheme = 'evidence_span'
+         AND es.id = endpoint.resource_id
+        WHERE es.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            cc.owner_kind AS owner_scheme,
+            cc.owner_id
+        FROM owner_endpoints endpoint
+        JOIN content_chunks cc
+          ON endpoint.resource_scheme = 'content_chunk'
+         AND cc.id = endpoint.resource_id
+        WHERE cc.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            rai.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN reader_apparatus_items rai
+          ON endpoint.resource_scheme = 'reader_apparatus_item'
+         AND rai.id = endpoint.resource_id
+    """
+
+
 def resolve_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedResource:
     return resolve_refs(db, viewer_id=viewer_id, refs=[ref])[0]
 
@@ -113,11 +248,17 @@ def resolve_refs(
     *,
     viewer_id: UUID,
     refs: Sequence[ResourceRef],
+    include_media_document_summary: bool = True,
 ) -> list[ResolvedResource]:
     unique: dict[str, ResourceRef] = {}
     for ref in refs:
         unique.setdefault(ref.uri, ref)
-    loaded = load_resource_batch(db, list(unique.values()), viewer_id=viewer_id)
+    loaded = load_resource_batch(
+        db,
+        list(unique.values()),
+        viewer_id=viewer_id,
+        include_media_document_summary=include_media_document_summary,
+    )
     presented = {uri: _present(entry) for uri, entry in loaded.items()}
     return [presented[ref.uri] for ref in refs]
 
@@ -224,6 +365,7 @@ def load_resource_batch(
     refs: Sequence[ResourceRef],
     *,
     viewer_id: UUID,
+    include_media_document_summary: bool = True,
 ) -> dict[str, LoadedResource]:
     """Load each ref's scheme-specific row + permission check, keyed by ``ref.uri``."""
     by_scheme: dict[ResourceScheme, list[ResourceRef]] = defaultdict(list)
@@ -233,7 +375,12 @@ def load_resource_batch(
     out: dict[str, LoadedResource] = {}
     for scheme, items in by_scheme.items():
         if scheme == "media":
-            loaded = _load_media(db, items, viewer_id=viewer_id)
+            loaded = _load_media(
+                db,
+                items,
+                viewer_id=viewer_id,
+                include_document_summary=include_media_document_summary,
+            )
         elif scheme == "library":
             loaded = _load_library(db, items, viewer_id=viewer_id)
         elif scheme == "artifact":
@@ -486,29 +633,39 @@ def _reader_target_for_reader_apparatus_item(
     return row[0], retrieval_locator_json(row[1])
 
 
-def _load_media(db: Session, items: list[ResourceRef], *, viewer_id: UUID) -> list[LoadedResource]:
+def _load_media(
+    db: Session,
+    items: list[ResourceRef],
+    *,
+    viewer_id: UUID,
+    include_document_summary: bool,
+) -> list[LoadedResource]:
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
             f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
             SELECT m.id, m.title, m.kind, {_AUTHORS_SQL}
             FROM media m
+            JOIN visible_media visible ON visible.media_id = m.id
             {_AUTHORS_JOIN_SQL}
             WHERE m.id = ANY(:ids)
             GROUP BY m.id, m.title, m.kind
             """
         ),
-        {"ids": ids},
+        {"ids": ids, "viewer_id": viewer_id},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
-        if row is None or not can_read_media(db, viewer_id, ref.id):
+        if row is None:
             out.append(_missing(ref.uri, "media"))
             continue
         kind = str(row[2])
-        summary = load_media_document_summary(db, viewer_id, ref.id)
+        summary = (
+            load_media_document_summary(db, viewer_id, ref.id) if include_document_summary else None
+        )
         out.append(
             LoadedResource(
                 uri=ref.uri,

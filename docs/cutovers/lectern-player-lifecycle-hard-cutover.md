@@ -5,6 +5,14 @@
 
 No blocking question remains.
 
+**Reading-surface supersession (2026-07-21):**
+[`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
+removes `GET /lectern/recent` and its public projection/schema/client surface.
+Consumption retains engagement and queue-membership facts as policy-neutral
+ports; Resonance owns the on-demand **At hand** Slate. The command FIFO,
+replay, player lifecycle, and shell-owned unknown-outcome Retry remain
+canonical here.
+
 This is the sole runtime contract. `lectern-hard-cutover.md` §§2–4 and 6–16
 are superseded; its §5 is historical DDL provenance only.
 `attention-ledger-hard-cutover.md`'s One-line owner claim, §2 explicit-finished

@@ -1,5 +1,7 @@
 """Highlight service layer."""
 
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
@@ -9,6 +11,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import (
     can_read_media,
     highlight_visibility_filter,
+    visible_media_ids_cte_sql,
 )
 from nexus.db.models import (
     Fragment,
@@ -44,6 +47,60 @@ from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for
 from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class RecentHighlightAnchorFact:
+    """One media normalized from a viewer-owned highlight activity fact."""
+
+    media_id: UUID
+    activity_at: datetime
+
+
+def recent_highlight_anchor_facts(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> tuple[RecentHighlightAnchorFact, ...]:
+    """Newest distinct readable media touched through the viewer's highlights.
+
+    Highlight refs normalize to their canonical media owner in this owner read.
+    The result is capped by ``limit`` and ordered by activity descending then
+    media id ascending.
+    """
+    if limit < 1:
+        return ()
+    rows = db.execute(
+        text(
+            f"""
+            WITH visible_media AS (
+                {visible_media_ids_cte_sql()}
+            ),
+            newest_per_media AS (
+                SELECT DISTINCT ON (h.anchor_media_id)
+                    h.anchor_media_id AS media_id,
+                    h.updated_at AS activity_at
+                FROM highlights h
+                JOIN visible_media vm ON vm.media_id = h.anchor_media_id
+                WHERE h.user_id = :viewer_id
+                  AND h.anchor_media_id IS NOT NULL
+                  AND h.anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')
+                ORDER BY h.anchor_media_id ASC, h.updated_at DESC, h.id ASC
+            )
+            SELECT media_id, activity_at
+            FROM newest_per_media
+            ORDER BY activity_at DESC, media_id ASC
+            LIMIT :limit
+            """
+        ),
+        {"viewer_id": viewer_id, "limit": limit},
+    ).mappings()
+    return tuple(
+        RecentHighlightAnchorFact(
+            media_id=UUID(str(row["media_id"])),
+            activity_at=row["activity_at"],
+        )
+        for row in rows
+    )
+
 
 # =============================================================================
 # Shared Helpers

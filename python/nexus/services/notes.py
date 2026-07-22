@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,6 +57,71 @@ from nexus.services.resource_mutation_replay import (
 pm_doc_from_text = note_bodies.pm_doc_from_text
 pm_doc_from_markdown_projection = note_bodies.pm_doc_from_markdown_projection
 text_from_pm_json = note_bodies.text_from_pm_json
+
+
+@dataclass(frozen=True, slots=True)
+class RecentNoteAnchorFact:
+    """One exact Page or NoteBlock edit fact."""
+
+    ref: ResourceRef
+    activity_at: datetime
+
+
+def recent_note_anchor_facts(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> tuple[RecentNoteAnchorFact, ...]:
+    """Recent viewer-owned NoteBlock and Page edits in one bounded read.
+
+    Each source contributes at most ``limit`` rows so the contextual consumer
+    can apply its own cross-source priority without either source crowding the
+    other out before composition. Returned refs stay exact; note/page facts do
+    not normalize to media.
+    """
+    if limit < 1:
+        return ()
+    rows = db.execute(
+        text(
+            """
+            WITH recent_note_blocks AS (
+                SELECT
+                    'note_block'::text AS resource_scheme,
+                    id AS resource_id,
+                    updated_at AS activity_at
+                FROM note_blocks
+                WHERE user_id = :viewer_id
+                ORDER BY updated_at DESC, id ASC
+                LIMIT :limit
+            ),
+            recent_pages AS (
+                SELECT
+                    'page'::text AS resource_scheme,
+                    id AS resource_id,
+                    updated_at AS activity_at
+                FROM pages
+                WHERE user_id = :viewer_id
+                ORDER BY updated_at DESC, id ASC
+                LIMIT :limit
+            )
+            SELECT resource_scheme, resource_id, activity_at
+            FROM recent_note_blocks
+            UNION ALL
+            SELECT resource_scheme, resource_id, activity_at
+            FROM recent_pages
+            ORDER BY activity_at DESC, resource_scheme ASC, resource_id ASC
+            """
+        ),
+        {"viewer_id": viewer_id, "limit": limit},
+    ).mappings()
+    return tuple(
+        RecentNoteAnchorFact(
+            ref=ResourceRef(
+                scheme=cast(ResourceScheme, str(row["resource_scheme"])),
+                id=UUID(str(row["resource_id"])),
+            ),
+            activity_at=row["activity_at"],
+        )
+        for row in rows
+    )
 
 
 def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:

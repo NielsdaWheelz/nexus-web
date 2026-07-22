@@ -1,0 +1,364 @@
+{
+  "schema_version": 1,
+  "calibration": {
+    "provider": "openai",
+    "model": "openai_text_embedding_3_small_256_v1",
+    "dimensions": 256,
+    "min_similarity": 0.8
+  },
+  "provenance": {
+    "evidence_source": "production_active_content_index",
+    "observed_at": "2026-07-22T00:24:20.896516Z",
+    "observation_transaction": "repeatable_read_read_only",
+    "similarity_definition": "1 - cosine_distance",
+    "anchor_policy": "first active media chunk ordered by chunk_idx,id",
+    "peer_policy": "minimum distance across exact-active-tuple peer chunks",
+    "rank_policy": "distinct media ordered by distance,media_id",
+    "ready_media_count": 130,
+    "active_chunk_count": 22681,
+    "reviewed_by": "repository_owner",
+    "reviewed_at": "2026-07-22T00:48:48Z",
+    "review_outcome": "approved",
+    "review_note": "Repository owner approved all pair labels and the 0.80 precision floor."
+  },
+  "positive_pairs": [
+    {
+      "description": "Duplicate editions of Human, All Too Human",
+      "anchor": {
+        "id": "37273127-1cc0-43b4-9ede-c88ff5f8c843",
+        "title": "Human, All Too Human: A Book for Free Spirits"
+      },
+      "peer": {
+        "id": "c7472673-4834-45ff-bb3c-0930f710009d",
+        "title": "Human, All Too Human: A Book for Free Spirits"
+      },
+      "similarity": 1.0,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Duplicate ingestions of the Odyssey article",
+      "anchor": {
+        "id": "00619f4e-0a85-49d8-9cf2-23a99bcd0fa9",
+        "title": "Four reasons why I liked The #Odyssey: The story Chris Nolan has been trying to tell all along"
+      },
+      "peer": {
+        "id": "2b1361d4-20d0-47a3-96bb-ff4e9ff32bd8",
+        "title": "Four reasons why I liked The #Odyssey: The story Chris Nolan has been trying to tell all along"
+      },
+      "similarity": 0.9999997059871485,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "King James Bible editions",
+      "anchor": {
+        "id": "f23a43e4-ff5d-4797-b37f-fa2c34b0ca7b",
+        "title": "The Bible, King James Version, Complete"
+      },
+      "peer": {
+        "id": "3104a096-5ed6-4cc3-a02f-dd04acfc033d",
+        "title": "The King James Version of the Bible"
+      },
+      "similarity": 0.9337094002308918,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Visa and Minsky post pair",
+      "anchor": {
+        "id": "a7d8d327-a26b-49e5-b15a-55febd1ee6f7",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "beef5858-172b-4b01-8ed2-1501838fbb1e",
+        "title": "Post 1"
+      },
+      "similarity": 0.9328595219790138,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Internet monetization and gated-Internet articles",
+      "anchor": {
+        "id": "7d6724ba-0741-4fba-a30d-c4fdc0bde9fc",
+        "title": "Monetization & Monopolies: How The Internet You Loved Died"
+      },
+      "peer": {
+        "id": "4ebce306-9fde-4868-939d-786dedad8225",
+        "title": "Open Internet is dead. What’s coming is a Gated Internet"
+      },
+      "similarity": 0.921929536031428,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Information-theory post and quoting recommendation",
+      "anchor": {
+        "id": "dd5bea54-a23c-4110-acee-65796bb18462",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "55b6c0eb-ee2d-4cd6-a088-98dcd353017d",
+        "title": "Post 2"
+      },
+      "similarity": 0.8938038830360804,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Emily Dickinson poetry editions",
+      "anchor": {
+        "id": "3509567e-92bd-4549-a34d-7871083c0d22",
+        "title": "Poems by Emily Dickinson, Three Series, Complete"
+      },
+      "peer": {
+        "id": "e82c11e7-c3f6-4651-8cf3-49e13de07537",
+        "title": "Poems: Three Series, Complete"
+      },
+      "similarity": 0.8915980460846994,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Great Books post and quoted homeschool thread",
+      "anchor": {
+        "id": "29f45154-fd75-4a36-a8f1-2c58b3a0ec58",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "3c9e8718-5895-4a3d-93db-cf3cf8ab0d38",
+        "title": "X thread by Santi Ruiz"
+      },
+      "similarity": 0.8871333148028125,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Odyssey article and Nolan-adaptation follow-up",
+      "anchor": {
+        "id": "2b1361d4-20d0-47a3-96bb-ff4e9ff32bd8",
+        "title": "Four reasons why I liked The #Odyssey: The story Chris Nolan has been trying to tell all along"
+      },
+      "peer": {
+        "id": "e53d9dfe-b7fa-4389-89cc-dc7cb67ad743",
+        "title": "Nolan's adaptation also intuits -- something I never considered, maybe only in Kierkegaard's Fear and Trembling -- the great difference between virtue and honor"
+      },
+      "similarity": 0.8647961250959402,
+      "nearest_media_rank": 2,
+      "nearest_chunk_rank": 2
+    },
+    {
+      "description": "Adjacent Terra Ignota novels",
+      "anchor": {
+        "id": "f46e6a24-d56d-4600-bbcf-509ed1e33cc3",
+        "title": "Perhaps the Stars"
+      },
+      "peer": {
+        "id": "56166051-08d2-42e9-90ed-a6b242128989",
+        "title": "The Will to Battle"
+      },
+      "similarity": 0.8543370812071773,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "LLM-writing post and quoted source",
+      "anchor": {
+        "id": "03e08151-9d4a-497b-b5fd-0795484e3472",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "323440bf-11f3-4777-bf80-eb9b51204c9a",
+        "title": "Post 1"
+      },
+      "similarity": 0.8285976861749083,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Conrad Bastable Internet post and gated-Internet article",
+      "anchor": {
+        "id": "7f4a6758-2e3f-4880-a1e4-3ae54bfc9840",
+        "title": "X post by Conrad Bastable"
+      },
+      "peer": {
+        "id": "4ebce306-9fde-4868-939d-786dedad8225",
+        "title": "Open Internet is dead. What’s coming is a Gated Internet"
+      },
+      "similarity": 0.8154090243620336,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    }
+  ],
+  "hard_negative_pairs": [
+    {
+      "description": "Unrelated opaque link-only posts",
+      "anchor": {
+        "id": "d5ec0713-d67b-49fa-a6b1-c6209cb0b2bc",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "a478352e-589b-49cf-8c18-fe12b0087a10",
+        "title": "Post 1"
+      },
+      "similarity": 0.7744729364036932,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Thank-you post and unrelated opaque link-only post",
+      "anchor": {
+        "id": "592492b8-24b6-4f13-b214-1aac654725bf",
+        "title": "Post 1"
+      },
+      "peer": {
+        "id": "a478352e-589b-49cf-8c18-fe12b0087a10",
+        "title": "Post 1"
+      },
+      "similarity": 0.7502269977725258,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Moby-Dick and Leaves of Grass",
+      "anchor": {
+        "id": "44c980bd-ff3c-47c4-8674-df42a9694423",
+        "title": "Moby-Dick; or, The Whale"
+      },
+      "peer": {
+        "id": "59584b41-bee7-4722-9c42-04abad92679d",
+        "title": "Leaves of Grass"
+      },
+      "similarity": 0.7126329507717653,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Dead Forest Theory and Accelerando",
+      "anchor": {
+        "id": "eca0847d-c58d-4ff2-97e0-4d2816bb65e1",
+        "title": "Dead Forest Theory"
+      },
+      "peer": {
+        "id": "636d7219-8505-4361-bed0-716ac8c508cc",
+        "title": "Accelerando"
+      },
+      "similarity": 0.6945256663005429,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "The Long Voyage and Star Maker",
+      "anchor": {
+        "id": "30130fc0-c38e-4805-8d84-5f83be2b4d0c",
+        "title": "The Long Voyage"
+      },
+      "peer": {
+        "id": "00cc7e73-15c2-419b-81ba-ee890269f495",
+        "title": "Star Maker"
+      },
+      "similarity": 0.692588038049123,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Are you serious? and Human, All Too Human",
+      "anchor": {
+        "id": "2aa4b7d2-b222-4255-aa11-21a3992cde10",
+        "title": "Are you serious?"
+      },
+      "peer": {
+        "id": "37273127-1cc0-43b4-9ede-c88ff5f8c843",
+        "title": "Human, All Too Human: A Book for Free Spirits"
+      },
+      "similarity": 0.6388690636594155,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "The Jesuit Missions and Mosses from an Old Manse",
+      "anchor": {
+        "id": "6e1bb36b-bff7-431d-8062-dab2264cb5e0",
+        "title": "The Jesuit Missions: A Chronicle of the Cross in the Wilderness"
+      },
+      "peer": {
+        "id": "b09352f1-a394-46ba-a6b4-3e7a546fb291",
+        "title": "Mosses from an Old Manse"
+      },
+      "similarity": 0.6307777988601289,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "The Will to Battle and The Paper Menagerie",
+      "anchor": {
+        "id": "56166051-08d2-42e9-90ed-a6b242128989",
+        "title": "The Will to Battle"
+      },
+      "peer": {
+        "id": "444a7b47-5c4e-4e30-8d49-23becbbf3f0a",
+        "title": "The Paper Menagerie and Other Stories"
+      },
+      "similarity": 0.6016772044441355,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Bo Burnham essay and Dhalgren",
+      "anchor": {
+        "id": "2f2f5d00-12a1-4227-81ab-779181f6eb17",
+        "title": "Bo Burnham Is Not Your Uncomplicated White Boy"
+      },
+      "peer": {
+        "id": "87e234f5-6c85-4fbc-b542-20880a9b766b",
+        "title": "Dhalgren"
+      },
+      "similarity": 0.595786288029583,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "On Three Ways of Writing for Children and The Hidden Girl",
+      "anchor": {
+        "id": "24d7fe78-3e9d-4b4c-a0fa-72020ccffd05",
+        "title": "On Three Ways of Writing for Children"
+      },
+      "peer": {
+        "id": "a48ee710-ceb9-4428-a67e-da5e7870d634",
+        "title": "The Hidden Girl and Other Stories"
+      },
+      "similarity": 0.5927187066400207,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Drama Llama and Exhalation",
+      "anchor": {
+        "id": "f8ca66e5-8690-42ce-bdba-719d3ad95039",
+        "title": "Drama Llama: An LLM-Powered Storylets Framework for Authorable Responsiveness in Interactive Narrative"
+      },
+      "peer": {
+        "id": "ef3df8fe-cfcf-4c3e-9a27-f1b0ff15dbc9",
+        "title": "Exhalation"
+      },
+      "similarity": 0.5675901516588558,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    },
+    {
+      "description": "Goodhart's law essay and Blindsight",
+      "anchor": {
+        "id": "c498b80e-d193-443a-b539-25c660907058",
+        "title": "Too much efficiency makes everything worse: overfitting and the strong version of Goodhart’s law"
+      },
+      "peer": {
+        "id": "7cd1742c-067f-4a28-a3d1-da81a2ee7c41",
+        "title": "Blindsight"
+      },
+      "similarity": 0.5317538412150032,
+      "nearest_media_rank": 1,
+      "nearest_chunk_rank": 1
+    }
+  ]
+}

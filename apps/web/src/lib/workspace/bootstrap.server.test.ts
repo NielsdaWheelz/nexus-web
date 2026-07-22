@@ -60,7 +60,9 @@ function respondWith(routes: Record<string, unknown>): void {
 }
 
 function respondWithFn(responder: Responder): void {
-  mockCallFastAPI.mockImplementation(async (path: string) => responder(path) as never);
+  mockCallFastAPI.mockImplementation(
+    async (path: string) => responder(path) as never,
+  );
 }
 
 // The exact seven-field profile the strict decoder accepts; there is no frontend default.
@@ -117,7 +119,12 @@ function workspace(input: {
 function sessionEnvelope(input: {
   own?: WorkspaceState | null;
   mostRecentElsewhere?: WorkspaceState | null;
-}): { data: { own: { state: unknown } | null; most_recent_elsewhere: { state: unknown } | null } } {
+}): {
+  data: {
+    own: { state: unknown } | null;
+    most_recent_elsewhere: { state: unknown } | null;
+  };
+} {
   return {
     data: {
       own: input.own ? { state: input.own } : null,
@@ -169,17 +176,17 @@ describe("loadWorkspaceBootstrap", () => {
   });
 
   it("falls back to the Lectern home when no request-path header is present", async () => {
-    const recentEnvelope = { data: { items: [] } };
+    const slateEnvelope = { data: { items: [] } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/lectern/recent?limit=50": recentEnvelope,
+      "/lectern/slate": slateEnvelope,
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
     expect(result.initialHref).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
     expect(result.initialHref).toBe("/lectern");
-    expect(result.resources["lectern:recent:50:0"]).toEqual({ items: [] });
+    expect(result.resources["lectern:slate:0"]).toEqual({ items: [] });
   });
 
   it("loads fragments for a readable media kind and composes the media pane resource", async () => {
@@ -194,7 +201,10 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.resources["abc"]).toEqual({ media, fragments: [fragment] });
+    expect(result.resources["abc"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [fragment] },
+    });
     expect(mockCallFastAPI).toHaveBeenCalledWith(
       "/media/abc/fragments",
       expect.anything(),
@@ -211,7 +221,10 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.resources["ep"]).toEqual({ media, fragments: [] });
+    expect(result.resources["ep"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
       "/media/ep/fragments",
       expect.anything(),
@@ -237,7 +250,9 @@ describe("loadWorkspaceBootstrap", () => {
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/contributors/jane": { data: detail },
-      "/contributors/jane/works?limit=100": { data: { works: [work], nextCursor: null } },
+      "/contributors/jane/works?limit=100": {
+        data: { works: [work], nextCursor: null },
+      },
     });
 
     const result = await loadWorkspaceBootstrap(false);
@@ -434,7 +449,9 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
     });
 
-    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow("Invalid reader profile");
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "Invalid reader profile",
+    );
   });
 
   it("omits the pane resource when its loader fails (D-8) without throwing", async () => {
@@ -505,7 +522,9 @@ describe("loadWorkspaceBootstrap", () => {
     };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/libraries": librariesEnvelope,
       "/media/123": { data: media },
     });
@@ -516,7 +535,10 @@ describe("loadWorkspaceBootstrap", () => {
       ["/libraries", "/media/123"].sort(),
     );
     // AC-4: both restored visible panes' resources are seeded under their cacheKeys.
-    expect(result.resources["123"]).toEqual({ media, fragments: [] });
+    expect(result.resources["123"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
   });
 
@@ -530,15 +552,78 @@ describe("loadWorkspaceBootstrap", () => {
     const media = { kind: "epub", capabilities: { can_read: true } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
-      "/lectern/recent?limit=50": { data: { items: [] } },
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/lectern/slate": { data: { items: [] } },
       "/media/123": { data: media },
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(visibleHrefs(result.initialState)).toEqual(["/media/123", "/lectern"]);
+    expect(visibleHrefs(result.initialState)).toEqual([
+      "/media/123",
+      "/lectern",
+    ]);
     expect(activeHref(result.initialState)).toBe("/lectern");
+  });
+
+  it("prefetches an inactive visible Lectern as its first read", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/123");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/123"),
+        primary("pane-lectern", "/lectern"),
+      ],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/media/123": {
+        data: { kind: "epub", capabilities: { can_read: true } },
+      },
+      "/lectern/slate": { data: { items: [] } },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(activeHref(result.initialState)).toBe("/media/123");
+    expect(result.resources["lectern:slate:0"]).toEqual({ items: [] });
+    expect(
+      mockCallFastAPI.mock.calls.filter(([path]) => path === "/lectern/slate"),
+    ).toHaveLength(1);
+  });
+
+  it("does not prefetch a minimized Lectern", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/123");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/123"),
+        primary("pane-lectern", "/lectern", { visibility: "minimized" }),
+      ],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/media/123": {
+        data: { kind: "epub", capabilities: { can_read: true } },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(result.resources["lectern:slate:0"]).toBeUndefined();
+    expect(
+      mockCallFastAPI.mock.calls.filter(([path]) => path === "/lectern/slate"),
+    ).toHaveLength(0);
   });
 
   it("retries the URL pane in wave 2 when its wave-1 seed failed, so the active pane is still seeded (AC-4)", async () => {
@@ -663,7 +748,10 @@ describe("loadWorkspaceBootstrap", () => {
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
     expect(panes[0]?.href).toBe(result.initialHref);
-    expect(result.resources["solo"]).toEqual({ media, fragments: [] });
+    expect(result.resources["solo"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
   });
 
   it("merges the deep-link pane into the restored layout", async () => {
@@ -679,7 +767,9 @@ describe("loadWorkspaceBootstrap", () => {
     const media = { kind: "epub", capabilities: { can_read: true } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/conversations?limit=50": { data: [], page: { next_cursor: null } },
       "/media/xyz": { data: media },
     });
@@ -705,7 +795,9 @@ describe("loadWorkspaceBootstrap", () => {
     });
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
       "/billing/account": { data: { billing_plan_tier: "free" } },
     });

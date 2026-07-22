@@ -13,6 +13,12 @@ in the shared desktop/mobile app navigation. An explicit `/lectern` request
 restores or appends a Lectern pane and activates it while preserving the other
 saved panes. See [`docs/modules/app-navigation.md`](../modules/app-navigation.md).
 
+**Reading-surface supersession (2026-07-21):**
+[`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
+hard-cuts the independent Recent product and replaces it with the on-demand
+Resonance-owned **At hand** Slate. Lectern queue ordering and command ownership
+remain unchanged.
+
 ## One-line
 
 Rename `playback_queue_items` → `consumption_queue_items` and widen it to hold any

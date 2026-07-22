@@ -9,10 +9,7 @@ interface RelatedResponse {
   data: { peers: ConnectionEndpointOut[] };
 }
 
-/**
- * Fetch deterministic related peers for one media item.
- */
-export async function queryMediaRelated(
+export async function queryRelatedMedia(
   mediaId: string,
   options: { signal?: AbortSignal } = {},
 ): Promise<ConnectionEndpointOut[]> {
@@ -23,17 +20,12 @@ export async function queryMediaRelated(
   return response.data.peers;
 }
 
-/**
- * Lazily fetch similarity + shared-author peers for a media row. Pass `null`
- * (e.g. while the connection rail is collapsed) to disable the fetch. Deterministic
- * server-side — no request-time LLM.
- */
-export function useMediaRelated(
+export function useRelatedMedia(
   mediaId: string | null,
 ): DebouncedFetch<ConnectionEndpointOut[]> {
   return useDebouncedFetch(
     mediaId,
-    (signal) => queryMediaRelated(mediaId!, { signal }),
+    (signal) => queryRelatedMedia(mediaId!, { signal }),
     { debounceMs: 0 },
   );
 }

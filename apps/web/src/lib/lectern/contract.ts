@@ -12,8 +12,8 @@
  * unknown key throws. Discriminator `kind` values are the exact PascalCase
  * literals; alternate casing throws. Owned absence is `Presence<T>`
  * (`decodePresence`); `null`/omission/alternate casing throw. Bounded ranges
- * from the contract are enforced at decode (snapshot ≤ 2000 items, recent
- * snapshot ≤ 50, chapters ≤ 100, chapter title 1..300, progress a finite
+ * from the contract are enforced at decode (snapshot ≤ 2000 items,
+ * chapters ≤ 100, chapter title 1..300, progress a finite
  * fraction in 0..1, `*Ms`/revision/epoch integers).
  */
 
@@ -133,20 +133,6 @@ const CONSUMPTION_MEDIA_KINDS = [
 
 export type ConsumptionMediaKind = (typeof CONSUMPTION_MEDIA_KINDS)[number];
 
-export interface RecentConsumptionItem {
-  mediaId: MediaId;
-  kind: ConsumptionMediaKind;
-  title: string;
-  href: AppHref;
-  consumption: ConsumptionInfo;
-  lastEngagedAt: string;
-  playerDescriptor: Presence<PlayerDescriptor>;
-}
-
-export interface RecentConsumptionSnapshot {
-  items: RecentConsumptionItem[];
-}
-
 /** Derived from a `LecternItem`/media/podcast DTO whose activation is `FooterAudio`. */
 export interface PlayerDescriptor {
   mediaId: MediaId;
@@ -223,7 +209,6 @@ export interface ConsumptionResult {
 // --- Bounds ------------------------------------------------------------------
 
 const MAX_SNAPSHOT_ITEMS = 2000;
-export const RECENT_CONSUMPTION_MAX_ITEMS = 50;
 const MAX_CHAPTERS = 100;
 const MAX_CHAPTER_TITLE = 300;
 const INT32_MAX = 2_147_483_647;
@@ -252,17 +237,6 @@ function asString(raw: unknown, ctx: string): string {
     throw new Error(`Invalid ${ctx}: expected a string, got ${typeof raw}`);
   }
   return raw;
-}
-
-function asIsoDateTime(raw: unknown, ctx: string): string {
-  const value = asString(raw, ctx);
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
-    !Number.isFinite(Date.parse(value))
-  ) {
-    throw new Error(`Invalid ${ctx}: expected an ISO 8601 timestamp, got ${JSON.stringify(value)}`);
-  }
-  return value;
 }
 
 function asFiniteNumber(raw: unknown, ctx: string): number {
@@ -479,59 +453,6 @@ export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
     );
   }
   return { items: items.map(decodeLecternItem) };
-}
-
-export function decodeRecentConsumptionItem(raw: unknown): RecentConsumptionItem {
-  const rec = asRecord(raw, "RecentConsumptionItemOut");
-  exactKeys(
-    rec,
-    [
-      "mediaId",
-      "kind",
-      "title",
-      "href",
-      "consumption",
-      "lastEngagedAt",
-      "playerDescriptor",
-    ],
-    "RecentConsumptionItemOut",
-  );
-  return {
-    mediaId: decodeMediaId(rec.mediaId),
-    kind: asLiteral(
-      rec.kind,
-      CONSUMPTION_MEDIA_KINDS,
-      "RecentConsumptionItemOut.kind",
-    ),
-    title: asString(rec.title, "RecentConsumptionItemOut.title"),
-    href: decodeAppHref(rec.href),
-    consumption: decodeConsumption(rec.consumption),
-    lastEngagedAt: asIsoDateTime(
-      rec.lastEngagedAt,
-      "RecentConsumptionItemOut.lastEngagedAt",
-    ),
-    playerDescriptor: decodePresence(rec.playerDescriptor, decodePlayerDescriptor),
-  };
-}
-
-export function decodeRecentConsumptionSnapshot(raw: unknown): RecentConsumptionSnapshot {
-  const rec = asRecord(raw, "RecentConsumptionSnapshot");
-  exactKeys(rec, ["items"], "RecentConsumptionSnapshot");
-  const items = asArray(rec.items, "RecentConsumptionSnapshot.items");
-  if (items.length > RECENT_CONSUMPTION_MAX_ITEMS) {
-    throw new Error(
-      `Invalid RecentConsumptionSnapshot.items: at most ${RECENT_CONSUMPTION_MAX_ITEMS}, got ${items.length}`,
-    );
-  }
-  return { items: items.map(decodeRecentConsumptionItem) };
-}
-
-export function decodeRecentConsumptionEnvelope(raw: unknown): RecentConsumptionSnapshot {
-  return decodeDataEnvelope(
-    raw,
-    decodeRecentConsumptionSnapshot,
-    "GET /api/lectern/recent",
-  );
 }
 
 export function decodeListeningState(raw: unknown): ListeningStateOut {
