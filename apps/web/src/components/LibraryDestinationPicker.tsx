@@ -5,29 +5,36 @@ import { Check, Plus, X } from "lucide-react";
 import Input from "@/components/ui/Input";
 import LibraryColorDot from "@/components/LibraryColorDot";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isAbortError } from "@/lib/errors";
 import {
-  cachedLibraryDestinations,
-  createLibrary,
+  isLibraryDestinationDefect,
   searchWritableLibraryDestinations,
-  type LibraryDestination,
+  type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
 import styles from "./LibraryDestinationPicker.module.css";
 
-interface LibraryDestinationPickerProps {
-  selectedLibraryIds: string[];
-  onChange(next: string[]): void;
-  disabled?: boolean;
+export type LibraryDestinationPickerProps = {
+  selected: readonly LibraryDestinationSelection[];
+  onChange(next: readonly LibraryDestinationSelection[]): void;
+  presentation:
+    | { kind: "Inline" }
+    | { kind: "DisclosureContent"; onRequestClose(): void };
   label: string;
-  emptySelectionLabel?: string;
-  onBusyChange?(busy: boolean): void;
-}
+  interaction:
+    | { kind: "Enabled" }
+    | { kind: "Disabled" }
+    | { kind: "Creating" };
+  onCreateDestination(name: string): Promise<LibraryDestinationSelection>;
+};
 
 type Row =
-  | { kind: "library"; id: string; destination: LibraryDestination }
-  | { kind: "create"; id: "create"; name: string }
-  | { kind: "load-more"; id: "load-more" };
+  | { kind: "Library"; id: string; destination: LibraryDestinationSelection }
+  | { kind: "Create"; id: "create"; name: string }
+  | { kind: "LoadMore"; id: "load-more" };
 
-function uniqueDestinations(destinations: LibraryDestination[]) {
+function uniqueDestinations(
+  destinations: readonly LibraryDestinationSelection[],
+): LibraryDestinationSelection[] {
   const seen = new Set<string>();
   return destinations.filter((destination) => {
     if (seen.has(destination.id)) return false;
@@ -37,26 +44,27 @@ function uniqueDestinations(destinations: LibraryDestination[]) {
 }
 
 export default function LibraryDestinationPicker({
-  selectedLibraryIds,
+  selected,
   onChange,
-  disabled = false,
+  presentation,
   label,
-  emptySelectionLabel = "My Library only",
-  onBusyChange,
+  interaction,
+  onCreateDestination,
 }: LibraryDestinationPickerProps) {
   const id = useId();
   const listboxId = `${id}-listbox`;
+  const statusId = `${id}-status`;
   const optionId = (rowId: string) => `${id}-option-${rowId}`;
   const inputRef = useRef<HTMLInputElement>(null);
   const requestIdRef = useRef(0);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
   const composingRef = useRef(false);
-  const [open, setOpen] = useState(false);
+  const [inlineOpen, setInlineOpen] = useState(false);
   const [query, setQuery] = useState("");
   const normalizedQuery = useMemo(() => query.trim().toLowerCase(), [query]);
   const normalizedQueryRef = useRef(normalizedQuery);
   normalizedQueryRef.current = normalizedQuery;
-  const [results, setResults] = useState<LibraryDestination[]>([]);
+  const [results, setResults] = useState<LibraryDestinationSelection[]>([]);
   const [resultsQuery, setResultsQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,15 +72,26 @@ export default function LibraryDestinationPicker({
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [createFocusRequest, setCreateFocusRequest] = useState(0);
+  const handledCreateFocusRequestRef = useRef(0);
+  const enabled = interaction.kind === "Enabled";
+  const listVisible = presentation.kind === "DisclosureContent" || inlineOpen;
 
   useEffect(() => {
-    onBusyChange?.(creating || loadingMore);
-  }, [creating, loadingMore, onBusyChange]);
+    if (!enabled) setInlineOpen(false);
+  }, [enabled]);
 
   useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
+    if (
+      !enabled ||
+      handledCreateFocusRequestRef.current === createFocusRequest
+    ) {
+      return;
+    }
+    handledCreateFocusRequestRef.current = createFocusRequest;
+    inputRef.current?.focus();
+  }, [createFocusRequest, enabled]);
 
   useEffect(() => () => loadMoreAbortRef.current?.abort(), []);
 
@@ -81,7 +100,7 @@ export default function LibraryDestinationPicker({
     loadMoreAbortRef.current?.abort();
     loadMoreAbortRef.current = null;
     setLoadingMore(false);
-    if (!open || disabled) return;
+    if (!listVisible || !enabled) return;
     const controller = new AbortController();
     const requestedQuery = normalizedQuery;
     const timer = window.setTimeout(() => {
@@ -99,10 +118,19 @@ export default function LibraryDestinationPicker({
           setResultsQuery(requestedQuery);
           setNextCursor(page.page.next_cursor);
         })
-        .catch((err) => {
-          if (controller.signal.aborted || requestId !== requestIdRef.current) return;
-          if (handleUnauthenticatedApiError(err)) return;
-          setError(err instanceof Error ? err.message : "Could not load libraries");
+        .catch((caught) => {
+          if (controller.signal.aborted || requestId !== requestIdRef.current)
+            return;
+          if (handleUnauthenticatedApiError(caught)) return;
+          if (isLibraryDestinationDefect(caught)) {
+            setDefect({ error: caught });
+            return;
+          }
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Could not load libraries",
+          );
           setResults([]);
           setNextCursor(null);
         })
@@ -114,10 +142,10 @@ export default function LibraryDestinationPicker({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [disabled, normalizedQuery, open]);
+  }, [enabled, listVisible, normalizedQuery]);
 
   async function loadMoreResults() {
-    if (disabled || loadingMore || nextCursor === null) return;
+    if (!enabled || loadingMore || nextCursor === null) return;
     const requestId = requestIdRef.current;
     const requestedQuery = resultsQuery;
     const controller = new AbortController();
@@ -141,10 +169,19 @@ export default function LibraryDestinationPicker({
       }
       setResults((current) => uniqueDestinations([...current, ...page.data]));
       setNextCursor(page.page.next_cursor);
-    } catch (err) {
-      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
-      if (handleUnauthenticatedApiError(err)) return;
-      setMoreError(err instanceof Error ? err.message : "Could not load more libraries");
+    } catch (caught) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current)
+        return;
+      if (handleUnauthenticatedApiError(caught)) return;
+      if (isLibraryDestinationDefect(caught)) {
+        setDefect({ error: caught });
+        return;
+      }
+      setMoreError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not load more libraries",
+      );
     } finally {
       if (!controller.signal.aborted && requestId === requestIdRef.current) {
         setLoadingMore(false);
@@ -152,32 +189,9 @@ export default function LibraryDestinationPicker({
     }
   }
 
-  const selectedIds = useMemo(() => new Set(selectedLibraryIds), [selectedLibraryIds]);
-  const resultById = useMemo(
-    () => new Map(results.map((destination) => [destination.id, destination])),
-    [results],
-  );
-  const selectedRows = useMemo(
-    () => {
-      const cachedById = new Map(
-        cachedLibraryDestinations(selectedLibraryIds).map((destination) => [
-          destination.id,
-          destination,
-        ]),
-      );
-      return selectedLibraryIds.map(
-        (libraryId) =>
-          cachedById.get(libraryId) ??
-          resultById.get(libraryId) ?? {
-            id: libraryId,
-            name: "Selected library",
-            color: null,
-            created_at: "",
-            updated_at: "",
-          },
-      );
-    },
-    [resultById, selectedLibraryIds],
+  const selectedIds = useMemo(
+    () => new Set(selected.map((destination) => destination.id)),
+    [selected],
   );
   const createName = query.trim();
   const normalizedCreateName = createName.toLowerCase();
@@ -190,29 +204,38 @@ export default function LibraryDestinationPicker({
     nextCursor === null &&
     resultsQuery === normalizedCreateName &&
     !results.some(
-      (destination) => destination.name.trim().toLowerCase() === normalizedCreateName,
+      (destination) =>
+        destination.name.trim().toLowerCase() === normalizedCreateName,
     );
   const rows = useMemo<Row[]>(
     () => [
-      ...uniqueDestinations([...selectedRows, ...results]).map(
+      ...uniqueDestinations([...selected, ...results]).map(
         (destination): Row => ({
-          kind: "library",
+          kind: "Library",
           id: destination.id,
           destination,
         }),
       ),
       ...(canCreate
-        ? [{ kind: "create" as const, id: "create" as const, name: createName }]
+        ? [{ kind: "Create" as const, id: "create" as const, name: createName }]
         : []),
       ...(nextCursor !== null
-        ? [{ kind: "load-more" as const, id: "load-more" as const }]
+        ? [{ kind: "LoadMore" as const, id: "load-more" as const }]
         : []),
     ],
-    [canCreate, createName, nextCursor, results, selectedRows],
+    [canCreate, createName, nextCursor, results, selected],
   );
+  const activeOptionId =
+    listVisible &&
+    !loading &&
+    !error &&
+    activeId !== null &&
+    rows.some((row) => row.id === activeId)
+      ? optionId(activeId)
+      : undefined;
 
   useEffect(() => {
-    if (!open) return;
+    if (!listVisible) return;
     if (rows.length === 0) {
       setActiveId(null);
       return;
@@ -220,54 +243,75 @@ export default function LibraryDestinationPicker({
     if (!activeId || !rows.some((row) => row.id === activeId)) {
       setActiveId(rows[0]!.id);
     }
-  }, [activeId, open, rows]);
+  }, [activeId, listVisible, rows]);
 
-  function toggle(libraryId: string) {
-    if (disabled) return;
-    if (selectedIds.has(libraryId)) {
-      onChange(selectedLibraryIds.filter((id) => id !== libraryId));
+  function toggle(destination: LibraryDestinationSelection) {
+    if (!enabled) return;
+    if (selectedIds.has(destination.id)) {
+      onChange(selected.filter((item) => item.id !== destination.id));
       return;
     }
-    onChange([...selectedLibraryIds, libraryId]);
+    onChange([...selected, destination]);
   }
 
   async function runCreate(name: string) {
-    if (disabled || creating) return;
-    setCreating(true);
+    if (!enabled) return;
+    setError(null);
     try {
-      const destination = await createLibrary({ name });
-      setResults((current) => uniqueDestinations([destination, ...current]));
-      if (!selectedLibraryIds.includes(destination.id)) {
-        onChange([...selectedLibraryIds, destination.id]);
-      }
+      const destination = await onCreateDestination(name);
+      setResults((current) => [
+        destination,
+        ...current.filter((item) => item.id !== destination.id),
+      ]);
+      if (!selectedIds.has(destination.id))
+        onChange([...selected, destination]);
       setQuery("");
-      setOpen(true);
       setActiveId(destination.id);
-      inputRef.current?.focus();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setError(err instanceof Error ? err.message : "Could not create library");
-    } finally {
-      setCreating(false);
+      setCreateFocusRequest((current) => current + 1);
+    } catch (caught) {
+      if (isAbortError(caught)) return;
+      if (handleUnauthenticatedApiError(caught)) return;
+      if (isLibraryDestinationDefect(caught)) {
+        setDefect({ error: caught });
+        return;
+      }
+      setError(
+        caught instanceof Error ? caught.message : "Could not create library",
+      );
     }
   }
 
   function select(row: Row) {
-    if (disabled) return;
-    if (row.kind === "create") {
-      void runCreate(row.name);
-      return;
+    if (!enabled) return;
+    switch (row.kind) {
+      case "Create":
+        void runCreate(row.name);
+        return;
+      case "LoadMore":
+        void loadMoreResults();
+        return;
+      case "Library":
+        toggle(row.destination);
+        return;
     }
-    if (row.kind === "load-more") {
-      void loadMoreResults();
-      return;
-    }
-    toggle(row.destination.id);
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (disabled) return;
     if (composingRef.current) return;
+    if (event.key === "Escape") {
+      if (presentation.kind === "DisclosureContent") {
+        event.preventDefault();
+        if (interaction.kind !== "Creating") presentation.onRequestClose();
+      } else if (inlineOpen) {
+        event.preventDefault();
+        setInlineOpen(false);
+      } else if (query) {
+        event.preventDefault();
+        setQuery("");
+      }
+      return;
+    }
+    if (!enabled) return;
     if (
       event.key === "ArrowDown" ||
       event.key === "ArrowUp" ||
@@ -275,7 +319,7 @@ export default function LibraryDestinationPicker({
       event.key === "End"
     ) {
       event.preventDefault();
-      setOpen(true);
+      setInlineOpen(true);
       if (rows.length === 0) return;
       const current = rows.findIndex((row) => row.id === activeId);
       const start = current >= 0 ? current : 0;
@@ -292,20 +336,11 @@ export default function LibraryDestinationPicker({
       return;
     }
     if (event.key === "Enter") {
-      const row = rows.find((candidate) => candidate.id === activeId) ?? rows[0];
+      const row =
+        rows.find((candidate) => candidate.id === activeId) ?? rows[0];
       if (row) {
         event.preventDefault();
         select(row);
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      if (open) {
-        event.preventDefault();
-        setOpen(false);
-      } else if (query) {
-        event.preventDefault();
-        setQuery("");
       }
     }
   }
@@ -314,25 +349,29 @@ export default function LibraryDestinationPicker({
     ? "Loading libraries"
     : loadingMore
       ? "Loading more libraries"
-    : error
-      ? error
-      : moreError
-        ? moreError
-      : rows.length === 0
-        ? "No matching libraries"
-        : `${rows.length} library options`;
+      : interaction.kind === "Creating"
+        ? "Creating library"
+        : error
+          ? error
+          : moreError
+            ? moreError
+            : rows.length === 0
+              ? "No matching libraries"
+              : `${rows.length} library options`;
+
+  if (defect) throw defect.error;
 
   return (
     <div className={styles.root}>
       <label className={styles.label} htmlFor={`${id}-input`}>
         {label}
       </label>
-      <div className={styles.control} data-disabled={disabled || undefined}>
+      <div className={styles.control} data-disabled={!enabled || undefined}>
         <div className={styles.chips}>
-          {selectedRows.length === 0 ? (
-            <span className={styles.empty}>{emptySelectionLabel}</span>
+          {selected.length === 0 ? (
+            <span className={styles.empty}>My Library only</span>
           ) : (
-            selectedRows.map((destination) => (
+            selected.map((destination) => (
               <span key={destination.id} className={styles.chip}>
                 <LibraryColorDot color={destination.color} size="sm" />
                 <span className={styles.chipText}>{destination.name}</span>
@@ -340,8 +379,8 @@ export default function LibraryDestinationPicker({
                   type="button"
                   className={styles.remove}
                   aria-label={`Remove ${destination.name}`}
-                  disabled={disabled}
-                  onClick={() => toggle(destination.id)}
+                  disabled={!enabled}
+                  onClick={() => toggle(destination)}
                 >
                   <X size={14} aria-hidden="true" />
                 </button>
@@ -355,24 +394,24 @@ export default function LibraryDestinationPicker({
           variant="bare"
           className={styles.input}
           role="combobox"
-          aria-expanded={open}
+          aria-expanded={listVisible}
           aria-controls={listboxId}
           aria-autocomplete="list"
-          aria-activedescendant={open && activeId ? optionId(activeId) : undefined}
-          disabled={disabled}
+          aria-activedescendant={activeOptionId}
+          aria-describedby={statusId}
+          disabled={!enabled}
           value={query}
           placeholder="Search or create"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
           onFocus={() => {
-            if (disabled) return;
-            setOpen(true);
+            if (enabled) setInlineOpen(true);
           }}
           onChange={(event) => {
-            if (disabled) return;
+            if (!enabled) return;
             setQuery(event.target.value);
-            setOpen(true);
+            setInlineOpen(true);
             setError(null);
             setLoading(true);
           }}
@@ -385,10 +424,10 @@ export default function LibraryDestinationPicker({
           onKeyDown={onKeyDown}
         />
       </div>
-      <div className="sr-only" role="status" aria-live="polite">
+      <div id={statusId} className="sr-only">
         {status}
       </div>
-      {open ? (
+      {listVisible ? (
         <div
           id={listboxId}
           role="listbox"
@@ -437,66 +476,58 @@ export default function LibraryDestinationPicker({
             </div>
           ) : null}
           {!loading && !error
-            ? rows.map((row) =>
-                row.kind === "create" ? (
+            ? rows.map((row) => {
+                const library = row.kind === "Library" ? row.destination : null;
+                return (
                   <div
                     key={row.id}
                     id={optionId(row.id)}
                     role="option"
-                    aria-selected={false}
+                    aria-selected={
+                      library ? selectedIds.has(library.id) : false
+                    }
+                    aria-disabled={row.kind === "LoadMore" && loadingMore}
                     className={styles.option}
                     data-active={row.id === activeId || undefined}
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseMove={() => {
-                      if (!disabled) setActiveId(row.id);
+                      if (enabled) setActiveId(row.id);
                     }}
                     onClick={() => select(row)}
                   >
-                    <Plus size={16} aria-hidden="true" />
-                    <span className={styles.optionText}>Create “{row.name}”</span>
+                    {row.kind === "Create" ? (
+                      <>
+                        <Plus size={16} aria-hidden="true" />
+                        <span className={styles.optionText}>
+                          Create “{row.name}”
+                        </span>
+                      </>
+                    ) : row.kind === "LoadMore" ? (
+                      <>
+                        <Plus size={16} aria-hidden="true" />
+                        <span className={styles.optionText}>
+                          {loadingMore
+                            ? "Loading more libraries…"
+                            : "Load more libraries"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <LibraryColorDot
+                          color={row.destination.color}
+                          size="sm"
+                        />
+                        <span className={styles.optionText}>
+                          {row.destination.name}
+                        </span>
+                        {selectedIds.has(row.destination.id) ? (
+                          <Check size={16} aria-hidden="true" />
+                        ) : null}
+                      </>
+                    )}
                   </div>
-                ) : row.kind === "load-more" ? (
-                  <div
-                    key={row.id}
-                    id={optionId(row.id)}
-                    role="option"
-                    aria-selected={false}
-                    aria-disabled={loadingMore}
-                    className={styles.option}
-                    data-active={row.id === activeId || undefined}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onMouseMove={() => {
-                      if (!disabled) setActiveId(row.id);
-                    }}
-                    onClick={() => select(row)}
-                  >
-                    <Plus size={16} aria-hidden="true" />
-                    <span className={styles.optionText}>
-                      {loadingMore ? "Loading more libraries..." : "Load more libraries"}
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    key={row.id}
-                    id={optionId(row.id)}
-                    role="option"
-                    aria-selected={selectedIds.has(row.destination.id)}
-                    className={styles.option}
-                    data-active={row.id === activeId || undefined}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onMouseMove={() => {
-                      if (!disabled) setActiveId(row.id);
-                    }}
-                    onClick={() => select(row)}
-                  >
-                    <LibraryColorDot color={row.destination.color} size="sm" />
-                    <span className={styles.optionText}>{row.destination.name}</span>
-                    {selectedIds.has(row.destination.id) ? (
-                      <Check size={16} aria-hidden="true" />
-                    ) : null}
-                  </div>
-                ),
-              )
+                );
+              })
             : null}
         </div>
       ) : null}

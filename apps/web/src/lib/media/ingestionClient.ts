@@ -1,52 +1,19 @@
 "use client";
 
-import { apiFetch, isUnauthenticatedApiError } from "@/lib/api/client";
-import { createRandomId } from "@/lib/createRandomId";
 import {
-  requireDocumentProcessingStatus,
-  type DocumentProcessingStatus,
-} from "@/lib/media/documentReadiness";
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  isUnauthenticatedApiError,
+} from "@/lib/api/client";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
+import { createRandomId } from "@/lib/createRandomId";
+import { isAbortError } from "@/lib/errors";
+import { toMediaCaptureFeedback } from "@/lib/media/captureFeedback";
+import { type DocumentProcessingStatus } from "@/lib/media/documentReadiness";
+import { isRecord } from "@/lib/validation";
 
-type FileKind = "pdf" | "epub";
-
-interface UploadInitResponse {
-  data: {
-    media_id: string;
-    source_attempt_id: string;
-    source_type: string;
-    source_attempt_status: string;
-    idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
-    processing_status: string;
-    ingest_enqueued: boolean;
-    upload_url: string | null;
-    expires_at: string;
-  };
-}
-
-interface IngestResponse {
-  data: {
-    media_id: string;
-    source_attempt_id: string;
-    source_type: string;
-    source_attempt_status: string;
-    idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
-    duplicate: boolean;
-    processing_status: string;
-    ingest_enqueued: boolean;
-  };
-}
-
-interface FromUrlResponse {
-  data: {
-    media_id: string;
-    source_attempt_id: string;
-    source_type: string;
-    source_attempt_status: string;
-    idempotency_outcome: "created" | "reused" | "retrying" | "refreshed";
-    processing_status: string;
-    ingest_enqueued: boolean;
-  };
-}
+export type UploadFileKind = "Pdf" | "Epub";
 
 interface SourceActionResponse {
   data: {
@@ -78,12 +45,108 @@ export interface SourceIngestResult {
   mediaId: string;
   sourceAttemptId: string;
   sourceType: string;
-  sourceAttemptStatus: string;
+  sourceAttemptStatus: SourceAttemptStatus;
   idempotencyOutcome: "created" | "reused" | "retrying" | "refreshed";
   duplicate: boolean;
   processingStatus: DocumentProcessingStatus;
   ingestEnqueued: boolean;
 }
+
+export type SourceAttemptStatus =
+  | "accepted"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "superseded";
+
+/**
+ * A same-system media-ingest response violated the owned wire contract.
+ * Consumers must propagate this defect; it is never product-facing feedback.
+ */
+export class MediaIngestionContractDefect extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    // justify-defect: malformed owned success payloads and impossible post-init
+    // confirmation outcomes are code/schema contract violations.
+    super(message, options);
+    this.name = "MediaIngestionContractDefect";
+  }
+}
+
+export function isMediaIngestionDefect(
+  error: unknown,
+): error is MediaIngestionContractDefect {
+  return (
+    error instanceof MediaIngestionContractDefect ||
+    isSameSystemApiDefect(error)
+  );
+}
+
+export type UploadIngestResult =
+  | { kind: "Accepted"; result: SourceIngestResult }
+  | {
+      kind: "AcceptedUncertain";
+      mediaId: string;
+      sourceAttemptId: string;
+      feedback: FeedbackContent;
+    };
+
+export interface UploadReferenceProjection {
+  mediaId: string;
+  warning: FeedbackContent | null;
+}
+
+export function projectUploadReference({
+  result,
+  processingFailureFeedback,
+}: {
+  result: UploadIngestResult;
+  processingFailureFeedback: FeedbackContent;
+}): UploadReferenceProjection {
+  switch (result.kind) {
+    case "Accepted":
+      return {
+        mediaId: result.result.mediaId,
+        warning: isFailedSourceIngest(result.result)
+          ? processingFailureFeedback
+          : null,
+      };
+    case "AcceptedUncertain":
+      return { mediaId: result.mediaId, warning: result.feedback };
+  }
+}
+
+export interface AcceptedUploadIdentity {
+  mediaId: string;
+  sourceAttemptId: string;
+}
+
+export function matchesAcceptedUploadIdentity(
+  result: UploadIngestResult,
+  identity: AcceptedUploadIdentity,
+): boolean {
+  switch (result.kind) {
+    case "Accepted":
+      return (
+        result.result.mediaId === identity.mediaId &&
+        result.result.sourceAttemptId === identity.sourceAttemptId
+      );
+    case "AcceptedUncertain":
+      return (
+        result.mediaId === identity.mediaId &&
+        result.sourceAttemptId === identity.sourceAttemptId
+      );
+  }
+}
+
+export type UploadInitOutcome =
+  | {
+      kind: "UploadRequired";
+      mediaId: string;
+      sourceAttemptId: string;
+      uploadUrl: string;
+    }
+  | UploadIngestResult;
 
 export interface SourceActionResult extends SourceIngestResult {
   capabilities: MediaActionCapabilities;
@@ -96,28 +159,31 @@ export function isFailedSourceIngest(result: SourceIngestResult): boolean {
   );
 }
 
-function getFileKind(file: File): FileKind | null {
+export function getFileUploadKind(file: File): UploadFileKind | null {
   const name = file.name.toLowerCase();
   if (file.type === "application/pdf" || name.endsWith(".pdf")) {
-    return "pdf";
+    return "Pdf";
   }
   if (file.type === "application/epub+zip" || name.endsWith(".epub")) {
-    return "epub";
+    return "Epub";
   }
   return null;
 }
 
-function contentTypeFor(kind: FileKind): string {
-  return kind === "pdf" ? "application/pdf" : "application/epub+zip";
+function contentTypeFor(kind: UploadFileKind): string {
+  return kind === "Pdf" ? "application/pdf" : "application/epub+zip";
 }
 
 export function getFileUploadError(file: File): string | null {
-  const kind = getFileKind(file);
+  const kind = getFileUploadKind(file);
   if (!kind) {
     return "Only PDF and EPUB files are supported.";
   }
+  if (file.size === 0) {
+    return `${kind.toUpperCase()} files must not be empty.`;
+  }
 
-  const maxBytes = kind === "pdf" ? 100 * 1024 * 1024 : 50 * 1024 * 1024;
+  const maxBytes = kind === "Pdf" ? 100 * 1024 * 1024 : 50 * 1024 * 1024;
   if (file.size > maxBytes) {
     return `${kind.toUpperCase()} files must be ${Math.round(maxBytes / 1024 / 1024)} MB or smaller.`;
   }
@@ -129,126 +195,332 @@ export async function uploadIngestFile({
   file,
   libraryIds,
   idempotencyKey = createRandomId("media-upload"),
+  signal,
+  onAcceptedIdentity,
 }: {
   file: File;
-  libraryIds: string[];
+  libraryIds: readonly string[];
   idempotencyKey?: string;
-}): Promise<SourceIngestResult> {
-  const kind = getFileKind(file);
-  if (!kind) {
+  signal?: AbortSignal;
+  onAcceptedIdentity?(identity: AcceptedUploadIdentity): void;
+}): Promise<UploadIngestResult> {
+  const validationError = getFileUploadError(file);
+  if (validationError) throw new Error(validationError);
+  const kind = getFileUploadKind(file);
+  if (kind === null) {
     throw new Error("Only PDF and EPUB files are supported.");
   }
 
-  const init = await apiFetch<UploadInitResponse>("/api/media/upload/init", {
-    method: "POST",
-    headers: { "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify({
-      kind,
-      filename: file.name,
-      content_type: contentTypeFor(kind),
-      size_bytes: file.size,
-      library_ids: libraryIds,
+  signal?.throwIfAborted();
+  const init = projectUploadInitResponse(
+    await apiFetch<unknown>("/api/media/upload/init", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        kind: kind.toLowerCase(),
+        filename: file.name,
+        content_type: contentTypeFor(kind),
+        size_bytes: file.size,
+        library_ids: libraryIds,
+      }),
+      signal,
     }),
-  });
+  );
+  onAcceptedIdentity?.(
+    init.kind === "Accepted"
+      ? {
+          mediaId: init.result.mediaId,
+          sourceAttemptId: init.result.sourceAttemptId,
+        }
+      : { mediaId: init.mediaId, sourceAttemptId: init.sourceAttemptId },
+  );
+  if (init.kind !== "UploadRequired") return init;
 
-  if (!init.data.upload_url) {
-    return failedUploadResult(init);
-  }
-
-  let uploadOk = false;
+  let upload: Response;
   try {
-    const upload = await fetch(init.data.upload_url, {
+    upload = await fetch(init.uploadUrl, {
       method: "PUT",
-      headers: {
-        "Content-Type": contentTypeFor(kind),
-      },
+      headers: { "Content-Type": contentTypeFor(kind) },
       body: file,
+      signal,
     });
-    uploadOk = upload.ok;
-  } catch {
-    uploadOk = false;
-  }
-
-  if (!uploadOk) {
-    try {
-      const failedIngest = await confirmUploadedMedia(
-        init.data.media_id,
-        libraryIds,
-      );
-      return mapIngestResponse(failedIngest);
-    } catch (error) {
-      if (isUnauthenticatedApiError(error)) throw error;
-      return failedUploadResult(init);
-    }
-  }
-
-  let ingest: IngestResponse;
-  try {
-    ingest = await confirmUploadedMedia(init.data.media_id, libraryIds);
   } catch (error) {
-    if (isUnauthenticatedApiError(error)) throw error;
-    return failedUploadResult(init);
+    if (
+      signal?.aborted ||
+      isAbortError(error) ||
+      isUnauthenticatedApiError(error)
+    )
+      throw error;
+    if (
+      error instanceof TypeError ||
+      (error instanceof DOMException && !isAbortError(error))
+    ) {
+      return uncertainUpload(init, error);
+    }
+    throw new MediaIngestionContractDefect(
+      "Signed upload failed outside supported transport outcomes.",
+      { cause: error },
+    );
+  }
+  if (!upload.ok) {
+    // justify-defect: the signed-upload provider returned a definitive HTTP
+    // rejection outside the accepted transport-interruption outcomes.
+    throw new MediaIngestionContractDefect(
+      `Signed upload returned unexpected status ${upload.status}.`,
+    );
   }
 
-  return mapIngestResponse(ingest);
+  let ingestResponse: unknown;
+  try {
+    ingestResponse = await confirmUploadedMedia(
+      init.mediaId,
+      libraryIds,
+      signal,
+    );
+  } catch (error) {
+    if (
+      signal?.aborted ||
+      isAbortError(error) ||
+      isUnauthenticatedApiError(error) ||
+      isSameSystemApiDefect(error)
+    ) {
+      throw error;
+    }
+    if (
+      error instanceof TypeError ||
+      error instanceof DOMException ||
+      (isApiError(error) &&
+        (error.code === "E_UPSTREAM" || error.code === "E_UPSTREAM_TIMEOUT"))
+    ) {
+      return uncertainUpload(init, error);
+    }
+    // justify-defect: decoded upload-init identity is durable; a non-transport,
+    // non-upstream confirmation rejection is not an allowed continuation outcome.
+    throw new MediaIngestionContractDefect(
+      "Upload confirmation violated the accepted-init contract.",
+      {
+        cause: error,
+      },
+    );
+  }
+  const confirmed = decodeIngestResponse(ingestResponse);
+  if (
+    confirmed.mediaId !== init.mediaId ||
+    confirmed.sourceAttemptId !== init.sourceAttemptId
+  ) {
+    throw new MediaIngestionContractDefect(
+      "Upload confirmation changed the accepted upload identity.",
+    );
+  }
+  return { kind: "Accepted", result: confirmed };
+}
+
+function uncertainUpload(
+  identity: { mediaId: string; sourceAttemptId: string },
+  error?: unknown,
+): UploadIngestResult {
+  const feedback = toMediaCaptureFeedback(
+    error,
+    "Nexus accepted this file, but its upload status could not be confirmed.",
+  );
+  return {
+    kind: "AcceptedUncertain",
+    mediaId: identity.mediaId,
+    sourceAttemptId: identity.sourceAttemptId,
+    feedback: { ...feedback, severity: "warning" },
+  };
 }
 
 async function confirmUploadedMedia(
   mediaId: string,
-  libraryIds: string[],
-): Promise<IngestResponse> {
-  return apiFetch<IngestResponse>(`/api/media/${mediaId}/ingest`, {
+  libraryIds: readonly string[],
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return apiFetch<unknown>(`/api/media/${mediaId}/ingest`, {
     method: "POST",
     body: JSON.stringify({ library_ids: libraryIds }),
+    signal,
   });
 }
 
-function mapIngestResponse(ingest: IngestResponse): SourceIngestResult {
+function dataRecord(raw: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(raw) || !isRecord(raw.data)) {
+    throw new MediaIngestionContractDefect(
+      `Invalid ${label}: expected a data object.`,
+    );
+  }
+  return raw.data;
+}
+
+function stringField(
+  data: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
+  const value = data[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new MediaIngestionContractDefect(
+      `Invalid ${label}: ${field} must be a non-empty string.`,
+    );
+  }
+  return value;
+}
+
+function booleanField(
+  data: Record<string, unknown>,
+  field: string,
+  label: string,
+): boolean {
+  const value = data[field];
+  if (typeof value !== "boolean") {
+    throw new MediaIngestionContractDefect(
+      `Invalid ${label}: ${field} must be a boolean.`,
+    );
+  }
+  return value;
+}
+
+function idempotencyOutcome(
+  data: Record<string, unknown>,
+  label: string,
+): SourceIngestResult["idempotencyOutcome"] {
+  const value = data.idempotency_outcome;
+  if (
+    value === "created" ||
+    value === "reused" ||
+    value === "retrying" ||
+    value === "refreshed"
+  ) {
+    return value;
+  }
+  throw new MediaIngestionContractDefect(
+    `Invalid ${label}: unsupported idempotency_outcome.`,
+  );
+}
+
+function sourceAttemptStatus(
+  data: Record<string, unknown>,
+  label: string,
+): SourceAttemptStatus {
+  const value = data.source_attempt_status;
+  if (
+    value === "accepted" ||
+    value === "queued" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "superseded"
+  ) {
+    return value;
+  }
+  throw new MediaIngestionContractDefect(
+    `Invalid ${label}: unsupported source_attempt_status.`,
+  );
+}
+
+function processingStatus(
+  data: Record<string, unknown>,
+  label: string,
+): DocumentProcessingStatus {
+  const value = data.processing_status;
+  if (
+    value === "pending" ||
+    value === "extracting" ||
+    value === "ready_for_reading" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  throw new MediaIngestionContractDefect(
+    `Invalid ${label}: unsupported processing_status.`,
+  );
+}
+
+function sourceIngestResult(
+  data: Record<string, unknown>,
+  label: string,
+  duplicate: boolean,
+): SourceIngestResult {
   return {
-    mediaId: ingest.data.media_id,
-    sourceAttemptId: ingest.data.source_attempt_id,
-    sourceType: ingest.data.source_type,
-    sourceAttemptStatus: ingest.data.source_attempt_status,
-    idempotencyOutcome: ingest.data.idempotency_outcome,
-    duplicate: ingest.data.duplicate,
-    processingStatus: requireDocumentProcessingStatus(
-      ingest.data.processing_status,
-    ),
-    ingestEnqueued: ingest.data.ingest_enqueued,
+    mediaId: stringField(data, "media_id", label),
+    sourceAttemptId: stringField(data, "source_attempt_id", label),
+    sourceType: stringField(data, "source_type", label),
+    sourceAttemptStatus: sourceAttemptStatus(data, label),
+    idempotencyOutcome: idempotencyOutcome(data, label),
+    duplicate,
+    processingStatus: processingStatus(data, label),
+    ingestEnqueued: booleanField(data, "ingest_enqueued", label),
   };
 }
 
-function failedUploadResult(init: UploadInitResponse): SourceIngestResult {
-  return {
-    mediaId: init.data.media_id,
-    sourceAttemptId: init.data.source_attempt_id,
-    sourceType: init.data.source_type,
-    sourceAttemptStatus: "failed",
-    idempotencyOutcome: init.data.idempotency_outcome,
-    duplicate: false,
-    processingStatus: "failed",
-    ingestEnqueued: false,
-  };
+export function decodeIngestResponse(raw: unknown): SourceIngestResult {
+  const data = dataRecord(raw, "upload ingest response");
+  return sourceIngestResult(
+    data,
+    "upload ingest response",
+    booleanField(data, "duplicate", "upload ingest response"),
+  );
+}
+
+export function decodeFromUrlResponse(raw: unknown): SourceIngestResult {
+  const data = dataRecord(raw, "URL ingest response");
+  return sourceIngestResult(
+    data,
+    "URL ingest response",
+    data.idempotency_outcome === "reused",
+  );
+}
+
+export function projectUploadInitResponse(raw: unknown): UploadInitOutcome {
+  const data = dataRecord(raw, "upload init response");
+  const result = sourceIngestResult(
+    data,
+    "upload init response",
+    data.idempotency_outcome === "reused",
+  );
+  const uploadUrl = data.upload_url;
+  if (typeof uploadUrl === "string" && uploadUrl.length > 0) {
+    return {
+      kind: "UploadRequired",
+      mediaId: result.mediaId,
+      sourceAttemptId: result.sourceAttemptId,
+      uploadUrl,
+    };
+  }
+  if (uploadUrl !== null) {
+    throw new MediaIngestionContractDefect(
+      "Invalid upload init response: upload_url must be a string or null.",
+    );
+  }
+  if (
+    result.sourceAttemptStatus === "accepted" &&
+    result.processingStatus === "pending" &&
+    !result.ingestEnqueued
+  ) {
+    return uncertainUpload(result);
+  }
+  return { kind: "Accepted", result };
 }
 
 export async function addMediaFromUrl({
   url,
   libraryIds,
   idempotencyKey = createRandomId("media-url"),
+  signal,
 }: {
   url: string;
-  libraryIds: string[];
+  libraryIds: readonly string[];
   idempotencyKey?: string;
+  signal?: AbortSignal;
 }): Promise<SourceIngestResult> {
-  const response = await apiFetch<FromUrlResponse>("/api/media/from-url", {
+  const response = await apiFetch<unknown>("/api/media/from-url", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({ url, library_ids: libraryIds }),
+    signal,
   });
 
-  return mapAcceptedSourceResponse(response, {
-    duplicate: response.data.idempotency_outcome === "reused",
-  });
+  return decodeFromUrlResponse(response);
 }
 
 export async function retryMediaSource(
@@ -291,29 +563,11 @@ export function retryMediaMetadata<T = unknown>(mediaId: string): Promise<T> {
   });
 }
 
-function mapAcceptedSourceResponse(
-  response: FromUrlResponse,
-  { duplicate = false }: { duplicate?: boolean } = {},
-): SourceIngestResult {
-  return {
-    mediaId: response.data.media_id,
-    sourceAttemptId: response.data.source_attempt_id,
-    sourceType: response.data.source_type,
-    sourceAttemptStatus: response.data.source_attempt_status,
-    idempotencyOutcome: response.data.idempotency_outcome,
-    duplicate,
-    processingStatus: requireDocumentProcessingStatus(
-      response.data.processing_status,
-    ),
-    ingestEnqueued: response.data.ingest_enqueued,
-  };
-}
-
 function mapSourceActionResponse(
   response: SourceActionResponse,
 ): SourceActionResult {
   return {
-    ...mapAcceptedSourceResponse(response),
+    ...decodeFromUrlResponse(response),
     capabilities: response.data.capabilities,
   };
 }

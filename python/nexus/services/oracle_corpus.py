@@ -183,6 +183,17 @@ def ensure_oracle_corpus_media(
         source.display_order = work.display_order
         source.updated_at = db.scalar(select(func.now()))
         if source_changed and previous_media_id != source.media_id:
+            media_ids = sorted({previous_media_id, source.media_id})
+            if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
+                # justify-service-invariant-check: both ids come from durable Oracle
+                # source acceptance/mapping rows and must still name media here.
+                # justify-defect: a retained Oracle source may not point at missing media.
+                raise AssertionError("Oracle source replacement media is missing")
+            if library_governance.lock_library_rows_in_order(db, [library_id]) != [library_id]:
+                # justify-service-invariant-check: the caller supplies the durable Oracle
+                # system library selected for this source mutation.
+                # justify-defect: replacement cannot continue without its owning library.
+                raise AssertionError("Oracle corpus library is missing")
             if library_entries.delete_entry(
                 db,
                 library_id,

@@ -2,8 +2,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Static source gates for the universal-launcher hard cutover (spec §14). These run in
-// the node unit project and grep the tree so the cutover's invariants can't silently rot:
+// Static architecture gates for the Launcher. These run in the node unit project and
+// inspect the tree so the ownership invariants cannot silently rot:
 // the palette/tray surfaces stay deleted, every open routes through the one dispatch owner,
 // the search lane keeps the full SearchQuery, and nav destinations have a single registry.
 const APP_ROOT = process.cwd();
@@ -14,7 +14,11 @@ function sourceFiles(dir: string): string[] {
     .flatMap((entry) => {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) return sourceFiles(path);
-      if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\.(ts|tsx)$/.test(entry.name)) return [];
+      if (
+        !/\.(ts|tsx)$/.test(entry.name) ||
+        /\.test\.(ts|tsx)$/.test(entry.name)
+      )
+        return [];
       return [relative(APP_ROOT, path).split(sep).join("/")];
     })
     .sort();
@@ -29,7 +33,7 @@ const appAndComponentAndLib = (): string[] =>
     .concat(sourceFiles(join(APP_ROOT, "src/components")))
     .concat(sourceFiles(join(APP_ROOT, "src/lib")));
 
-describe("universal launcher cutover source gates (§14)", () => {
+describe("launcher architecture invariants", () => {
   it("keeps the legacy palette + add-content-tray surfaces deleted", () => {
     const deleted = [
       "src/components/palette",
@@ -40,7 +44,9 @@ describe("universal launcher cutover source gates (§14)", () => {
       "src/components/commandPaletteEvents.ts",
       "src/components/addContentEvents.ts",
     ];
-    expect(deleted.filter((path) => existsSync(join(APP_ROOT, path)))).toEqual([]);
+    expect(deleted.filter((path) => existsSync(join(APP_ROOT, path)))).toEqual(
+      [],
+    );
   });
 
   it("removes every legacy palette/tray identifier from source", () => {
@@ -64,28 +70,35 @@ describe("universal launcher cutover source gates (§14)", () => {
         "dispatchOpenAddContent",
       ].join("|"),
     );
-    expect(appAndComponentAndLib().filter((path) => banned.test(sourceText(path)))).toEqual([]);
+    expect(
+      appAndComponentAndLib().filter((path) => banned.test(sourceText(path))),
+    ).toEqual([]);
   });
 
   it("uses the open-launcher keybinding id, never open-palette", () => {
-    expect(appAndComponentAndLib().filter((path) => sourceText(path).includes("open-palette"))).toEqual(
-      [],
-    );
+    expect(
+      appAndComponentAndLib().filter((path) =>
+        sourceText(path).includes("open-palette"),
+      ),
+    ).toEqual([]);
   });
 
   it("routes every launcher open through dispatch.ts — one opener (AC-9)", () => {
     // dispatch.ts lives in lib/launcher/, so NOTHING under components/launcher/ may open a pane.
-    const opensPane = /\b(?:requestOpenInAppPane|activateResource)\s*\(|window\.location\.assign\s*\(/;
-    const offenders = sourceFiles(join(APP_ROOT, "src/components/launcher")).filter((path) =>
-      opensPane.test(sourceText(path)),
-    );
+    const opensPane =
+      /\b(?:requestOpenInAppPane|activateResource)\s*\(|window\.location\.assign\s*\(/;
+    const offenders = sourceFiles(
+      join(APP_ROOT, "src/components/launcher"),
+    ).filter((path) => opensPane.test(sourceText(path)));
     expect(offenders).toEqual([]);
   });
 
   it("keeps the search lane on the full SearchQuery — no all-types limit:5 fetch", () => {
     const offenders = sourceFiles(join(APP_ROOT, "src/components/launcher"))
       .concat(sourceFiles(join(APP_ROOT, "src/lib/launcher")))
-      .filter((path) => /fetchSearchResultPage\([^)]*limit:\s*5\b/.test(sourceText(path)));
+      .filter((path) =>
+        /fetchSearchResultPage\([^)]*limit:\s*5\b/.test(sourceText(path)),
+      );
     expect(offenders).toEqual([]);
   });
 
@@ -103,15 +116,73 @@ describe("universal launcher cutover source gates (§14)", () => {
       "/search",
     ];
     const inBoth = hrefs.filter(
-      (href) => navModel.includes(`"${href}"`) && providers.includes(`"${href}"`),
+      (href) =>
+        navModel.includes(`"${href}"`) && providers.includes(`"${href}"`),
     );
     expect(inBoth).toEqual([]);
   });
 });
 
+describe("Add content intake architecture invariants", () => {
+  it("has no Add lane, mode chooser, implicit scheduler, or child-owned session", () => {
+    const launcherModel = sourceText("src/lib/launcher/model.ts");
+    const laneContract = launcherModel.slice(
+      launcherModel.indexOf("export type LauncherLane"),
+      launcherModel.indexOf("// Sigils for the common lanes"),
+    );
+    const launcherController = sourceText(
+      "src/components/launcher/useLauncherController.ts",
+    );
+    const addPanel = sourceText("src/components/launcher/AddPanel.tsx");
+    const launcherSource = sourceFiles(
+      join(APP_ROOT, "src/components/launcher"),
+    )
+      .concat(sourceFiles(join(APP_ROOT, "src/lib/launcher")))
+      .map(sourceText)
+      .join("\n");
+
+    expect(laneContract).not.toMatch(/["']add["']/);
+    expect(launcherSource).not.toMatch(
+      /AddSeed\.mode|seed\.mode|type\s+AddView/,
+    );
+    expect(addPanel).not.toMatch(
+      /TabsTrigger|autoOpen|SOURCE_INGEST_CONCURRENCY/,
+    );
+    expect(addPanel).not.toContain("useAddContentSession(");
+    expect(launcherController.match(/useAddContentSession\(\)/g)).toHaveLength(
+      1,
+    );
+  });
+
+  it("keeps destination state object-based with no legacy cache or ID-only picker", () => {
+    const picker = sourceText("src/components/LibraryDestinationPicker.tsx");
+    const libraryClient = sourceText("src/lib/libraries/client.ts");
+    const production = appAndComponentAndLib().map(sourceText).join("\n");
+
+    expect(picker).not.toContain("selectedLibraryIds");
+    expect(libraryClient).not.toMatch(
+      /destinationById|cachedLibraryDestinations|Selected library/,
+    );
+    expect(production).not.toMatch(
+      /\baddMediaToLibrary\b|\bremoveMediaFromLibrary\b/,
+    );
+  });
+
+  it("does not recognize the removed Add deep-link lane", () => {
+    const controller = sourceText(
+      "src/components/launcher/useLauncherController.ts",
+    );
+    expect(controller).not.toMatch(/validLanes[^\n]*["']add["']/);
+  });
+});
+
 describe("daily surface cutover source gates (§13)", () => {
   it("G1: DailyNotePaneBody does not exist in the working tree", () => {
-    expect(existsSync(join(APP_ROOT, "src/app/(authenticated)/daily/DailyNotePaneBody.tsx"))).toBe(false);
+    expect(
+      existsSync(
+        join(APP_ROOT, "src/app/(authenticated)/daily/DailyNotePaneBody.tsx"),
+      ),
+    ).toBe(false);
   });
 
   it("G2: no source file imports DailyNotePaneBody", () => {

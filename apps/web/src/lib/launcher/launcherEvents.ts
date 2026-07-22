@@ -1,17 +1,19 @@
 "use client";
 
-import type { LauncherLane } from "./model";
+import type { AddSeed, LauncherLane } from "./model";
 
-// One open event for every entry point (Cmd-K, the rail/mobile command buttons, the "+"
-// button). The "+" seeds the add lane.
+// One typed open event for every entry point. Add is a page intent, not a lane.
 export const OPEN_LAUNCHER_EVENT = "nexus:open-launcher";
 
-export interface OpenLauncherDetail {
-  lane?: LauncherLane; // seed a lane (the "+" button passes "add")
-  query?: string;
-}
+export type OpenLauncherDetail =
+  | { kind: "Root"; lane?: LauncherLane; query?: string }
+  | { kind: "Add"; seed: AddSeed };
 
 export function dispatchOpenLauncher(detail?: OpenLauncherDetail): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<OpenLauncherDetail>(OPEN_LAUNCHER_EVENT, { detail: detail ?? {} }));
+  window.dispatchEvent(
+    new CustomEvent<OpenLauncherDetail>(OPEN_LAUNCHER_EVENT, {
+      detail: detail ?? { kind: "Root" },
+    }),
+  );
 }

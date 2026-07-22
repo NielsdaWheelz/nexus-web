@@ -257,7 +257,7 @@ def _captured_statements():
 
 
 class _FakeSerializationError(Exception):
-    # Shape recognised by nexus.db.errors.is_serialization_failure.
+    # Shape recognised by nexus.db.errors.is_retryable_transaction_conflict.
     sqlstate = "40001"
 
     def __str__(self):

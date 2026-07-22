@@ -121,6 +121,14 @@ def use_serializable_if_available(db: Session) -> None:
         db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
 
 
+def use_read_committed_if_available(db: Session) -> None:
+    """Select READ COMMITTED before an attempt opens its transaction."""
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if not db.in_transaction() and not in_outer_transaction:
+        db.connection(execution_options={"isolation_level": "READ COMMITTED"})
+
+
 @contextmanager
 def transaction(db: Session) -> Generator[None, None, None]:
     """Context manager for database transactions.

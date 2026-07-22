@@ -75,8 +75,8 @@ def _seed_reachable_media(
     direct_db: DirectSessionManager, user_id: UUID, *, title: str = "Test Article"
 ) -> UUID:
     """Create media the given user can already reach, via a throwaway library
-    filed directly (bypassing REST) — the minimum precondition POST
-    /libraries/{id}/media now enforces (spec S4.3 rule 1, F2/F3:
+    filed directly (bypassing REST) — the minimum precondition actor-authorized
+    filing enforces (spec S4.3 rule 1, F2/F3:
     readable-or-restorable authorization). Mirrors production, where ingest
     always files new media into its creator's Default before it is ever
     addressable through this endpoint; `create_test_media` alone leaves media
@@ -560,8 +560,8 @@ class TestSystemLibraryMutationGuards:
                 headers=auth_headers(owner_id),
             ),
             auth_client.post(
-                f"/libraries/{system_id}/media",
-                json={"media_id": str(new_media_id)},
+                f"/media/{new_media_id}/libraries",
+                json={"library_ids": [str(system_id)]},
                 headers=auth_headers(owner_id),
             ),
             auth_client.patch(
@@ -756,249 +756,8 @@ class TestDeleteLibrary:
             assert result.fetchone() is None
 
 
-# =============================================================================
-# Library Media Tests
-# =============================================================================
-
-
-class TestAddMediaToLibrary:
-    """Tests for POST /libraries/{id}/media endpoint."""
-
-    def test_add_media_success(self, auth_client, direct_db: DirectSessionManager):
-        """Admin can add already-reachable media to another library."""
-        user_id = create_test_user_id()
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        media_id = _seed_reachable_media(direct_db, user_id, title="Add Success")
-
-        response = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 204
-        assert response.content == b""
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
-        assert _library_entry_media_ids(entries) == [str(media_id)]
-
-    def test_add_media_library_not_found(self, auth_client, direct_db: DirectSessionManager):
-        """Add media to non-existent library returns 404."""
-        user_id = create_test_user_id()
-        auth_client.get("/me", headers=auth_headers(user_id))
-        media_id = _seed_reachable_media(direct_db, user_id, title="Library Not Found")
-
-        response = auth_client.post(
-            f"/libraries/{uuid4()}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
-
-    def test_add_media_not_found(self, auth_client):
-        """Add non-existent media returns 404."""
-        user_id = create_test_user_id()
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        response = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(uuid4())},
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
-
-    def test_add_media_idempotent(self, auth_client, direct_db: DirectSessionManager):
-        """Adding same media twice is idempotent."""
-        user_id = create_test_user_id()
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        media_id = _seed_reachable_media(direct_db, user_id, title="Idempotent")
-
-        # Add first time
-        resp1 = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert resp1.status_code == 204
-        assert resp1.content == b""
-
-        # Add second time
-        resp2 = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert resp2.status_code == 204
-        assert resp2.content == b""
-        entries = _list_library_entries(auth_client, user_id, library_id).json()["data"]
-        assert _library_entry_media_ids(entries) == [str(media_id)]
-
-    def test_add_media_cross_user_own_default_only_returns_not_found(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """F2/F3 (spec S4.3 rule 1, privilege-escalation blocker): a media
-        filed only in user A's own libraries is not membership-reachable for
-        user B. POST /libraries/{id}/media must not let B file an EXISTING
-        media_id into B's own library merely because the row exists — that
-        would grant B read access to media they have no membership path to."""
-        owner_id = create_test_user_id()
-        other_id = create_test_user_id()
-
-        owner_default_id = auth_client.get("/me", headers=auth_headers(owner_id)).json()["data"][
-            "default_library_id"
-        ]
-        other_default_id = auth_client.get("/me", headers=auth_headers(other_id)).json()["data"][
-            "default_library_id"
-        ]
-
-        media_id = _seed_reachable_media(direct_db, owner_id, title="Owner-only private")
-
-        file_resp = auth_client.post(
-            f"/libraries/{owner_default_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(owner_id),
-        )
-        assert file_resp.status_code == 204, file_resp.text
-
-        response = auth_client.post(
-            f"/libraries/{other_default_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(other_id),
-        )
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
-
-        # No physical entry was ever created for the unauthorized filer.
-        with direct_db.session() as session:
-            leaked = session.execute(
-                text("SELECT 1 FROM library_entries WHERE library_id = :lib AND media_id = :media"),
-                {"lib": other_default_id, "media": media_id},
-            ).first()
-        assert leaked is None
-
-    def test_add_media_restores_tombstoned_membership_reachable_media(
-        self, auth_client, direct_db: DirectSessionManager
-    ):
-        """Restorable path (spec S4.3 rule 1): a media the viewer tombstoned
-        but still reaches through a membership stays filable — restorable
-        authorization ignores only the viewer's own tombstone, and a
-        successful re-file clears it (rule 6)."""
-        user_id = create_test_user_id()
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-        media_id = _seed_reachable_media(direct_db, user_id, title="Restorable")
-        direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
-
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_resp.status_code == 204, add_resp.text
-
-        with direct_db.session() as session:
-            session.execute(
-                text("INSERT INTO user_media_deletions (user_id, media_id) VALUES (:u, :m)"),
-                {"u": user_id, "m": media_id},
-            )
-            session.commit()
-
-        # Confirm the tombstone is in effect first.
-        assert str(media_id) not in _library_entry_media_ids(
-            _list_library_entries(auth_client, user_id, library_id).json()["data"]
-        )
-
-        response = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 204
-        assert response.content == b""
-
-        with direct_db.session() as session:
-            tombstone = session.execute(
-                text("SELECT 1 FROM user_media_deletions WHERE user_id = :u AND media_id = :m"),
-                {"u": user_id, "m": media_id},
-            ).first()
-        assert tombstone is None
-
-
-class TestRemoveMediaFromLibrary:
-    """Tests for DELETE /media/{media_id} endpoint."""
-
-    def test_remove_media_success(self, auth_client, direct_db: DirectSessionManager):
-        """Admin can remove media from library."""
-        user_id = create_test_user_id()
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-            add_media_to_library(session, UUID(library_id), media_id)
-            session.commit()
-
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-
-        # Remove media
-        response = auth_client.delete(
-            f"/media/{media_id}?library_id={library_id}",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 200
-
-    def test_remove_media_not_in_library(self, auth_client, direct_db: DirectSessionManager):
-        """Remove media not in library returns 404."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("media", "id", media_id)
-
-        me_resp = auth_client.get("/me", headers=auth_headers(user_id))
-        library_id = me_resp.json()["data"]["default_library_id"]
-
-        # Don't add media, just try to remove
-        response = auth_client.delete(
-            f"/media/{media_id}?library_id={library_id}",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_MEDIA_NOT_FOUND"
-
-    def test_remove_media_library_not_found(self, auth_client, direct_db: DirectSessionManager):
-        """Remove media from non-existent library returns 404."""
-        user_id = create_test_user_id()
-
-        with direct_db.session() as session:
-            media_id = create_test_media(session)
-
-        direct_db.register_cleanup("media", "id", media_id)
-
-        auth_client.get("/me", headers=auth_headers(user_id))
-
-        response = auth_client.delete(
-            f"/media/{media_id}?library_id={uuid4()}",
-            headers=auth_headers(user_id),
-        )
-
-        assert response.status_code == 404
-        assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
+class TestDeleteDocument:
+    """Tests for whole-resource DELETE /media/{media_id}."""
 
     def test_delete_default_pdf_removes_database_rows_and_storage(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
@@ -1170,7 +929,7 @@ class TestRemoveMediaFromLibrary:
             session.commit()
 
         response = auth_client.delete(
-            f"/media/{media_id}?library_id={library_id}",
+            f"/media/{media_id}/libraries/{library_id}",
             headers=auth_headers(member_id),
         )
 
@@ -2646,8 +2405,8 @@ class TestDefaultLibraryVirtualView:
         )
         assert accept_resp.status_code == 200
         add_resp = auth_client.post(
-            f"/libraries/{shared_library_id}/media",
-            json={"media_id": str(media_id)},
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(shared_library_id)]},
             headers=auth_headers(owner_id),
         )
         assert add_resp.status_code == 204
@@ -2661,12 +2420,9 @@ class TestDefaultLibraryVirtualView:
         assert _library_entry_media_ids(shared_only.json()["data"]) == [str(media_id)]
 
         # Direct: viewer also files it directly into their own Default.
-        direct_resp = auth_client.post(
-            f"/libraries/{viewer_default_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(viewer_id),
-        )
-        assert direct_resp.status_code == 204
+        with direct_db.session() as session:
+            library_entries.ensure_media_in_default_library(session, viewer_id, media_id)
+            session.commit()
 
         response = _list_library_entries(auth_client, viewer_id, viewer_default_id)
         assert response.status_code == 200
@@ -2687,12 +2443,9 @@ class TestDefaultLibraryVirtualView:
         media_id = _seed_reachable_media(direct_db, user_id, title="Tombstoned")
         direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
 
-        add_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_resp.status_code == 204
+        with direct_db.session() as session:
+            library_entries.ensure_media_in_default_library(session, user_id, media_id)
+            session.commit()
         assert str(media_id) in _library_entry_media_ids(
             _list_library_entries(auth_client, user_id, library_id).json()["data"]
         )
@@ -2756,12 +2509,9 @@ class TestDefaultLibraryVirtualView:
         assert before.status_code == 200
         assert str(media_id) not in _library_entry_media_ids(before.json()["data"])
 
-        file_resp = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert file_resp.status_code == 204
+        with direct_db.session() as session:
+            library_entries.ensure_media_in_default_library(session, user_id, media_id)
+            session.commit()
 
         after = _list_library_entries(auth_client, user_id, library_id)
         assert after.status_code == 200

@@ -70,14 +70,14 @@ Non-goals:
 
 ## Target behavior
 
-| Media/state | Canonical progression | First signal |
-|---|---:|---|
-| Ready web/EPUB, Unread or Finished | any latent value | `≈ N min read` |
-| Ready web/EPUB, InProgress | present | `≈ N min left` |
-| Ready web/EPUB, InProgress | absent | `≈ N min read` |
-| Text-ready PDF, any state | ignored | `≈ N min read` |
-| Unready/failed/zero-word document | any | no reading-time signal |
-| Podcast, podcast episode, or video | any | no reading-time signal |
+| Media/state                        | Canonical progression | First signal           |
+| ---------------------------------- | --------------------: | ---------------------- |
+| Ready web/EPUB, Unread or Finished |      any latent value | `≈ N min read`         |
+| Ready web/EPUB, InProgress         |               present | `≈ N min left`         |
+| Ready web/EPUB, InProgress         |                absent | `≈ N min read`         |
+| Text-ready PDF, any state          |               ignored | `≈ N min read`         |
+| Unready/failed/zero-word document  |                   any | no reading-time signal |
+| Podcast, podcast episode, or video |                   any | no reading-time signal |
 
 The estimate is `signals[0]`; publisher and published date follow. When the
 estimate is absent, those existing signals retain their old order, so gallery
@@ -250,11 +250,11 @@ entire descriptor subtree is camelCase. Snake aliases are forbidden.
 
 Every current caller discards the bodies of these three commands. Hard-cut them:
 
-| Command | Final success response |
-|---|---:|
-| `POST /libraries/{id}/media` | `204 No Content` |
-| `POST /libraries/{id}/podcasts` | `204 No Content` |
-| `PATCH /libraries/{id}/entries/reorder` | `204 No Content` |
+| Command                                 | Final success response |
+| --------------------------------------- | ---------------------: |
+| `POST /media/{media_id}/libraries`      |       `204 No Content` |
+| `POST /libraries/{id}/podcasts`         |       `204 No Content` |
+| `PATCH /libraries/{id}/entries/reorder` |       `204 No Content` |
 
 Replace `LibraryFilingOutcome.entry` with an inserted-only filing result used by
 agent Undo logic. Filing commands stop reselecting/hydrating the inserted entry;

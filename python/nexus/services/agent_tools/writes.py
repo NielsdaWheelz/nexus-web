@@ -377,7 +377,7 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     inserted-only outcome for Undo correctness (AC4).
 
     Media readable-or-restorable authorization (rule 1) is the shared filing
-    command's own gate (`library_entries.add_media_to_library`) — NOT
+    command's own gate (`library_entries.ensure_media_in_library`) — NOT
     `assert_ref_visible`, which uses full readable visibility and would 404 a
     tombstoned media the viewer is trying to restore by re-filing it. Podcasts
     have no restorable lane, so that branch still asserts visibility here."""
@@ -388,7 +388,7 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     library_id = _resolve_library_id(db, viewer_id, args)
 
     if ref.scheme == "media":
-        outcome = library_entries.add_media_to_library(db, viewer_id, library_id, ref.id)
+        outcome = library_entries.ensure_media_in_library(db, viewer_id, library_id, ref.id)
     else:
         outcome = library_entries.add_podcast_to_library(db, viewer_id, library_id, ref.id)
 
@@ -668,12 +668,25 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
             delete_edge(db, viewer_id=viewer_id, edge_id=UUID(ref["id"]))
             db.commit()
         elif kind == "entry":
-            library_entries.delete_entry(
-                db,
-                UUID(ref["library_id"]),
-                library_entries.EntryTarget(kind=ref["target_scheme"], id=UUID(ref["target_id"])),
-            )
-            db.commit()
+            target_scheme = ref["target_scheme"]
+            if target_scheme == "media":
+                library_entries.undo_media_filing_for_viewer(
+                    db,
+                    viewer_id,
+                    UUID(ref["target_id"]),
+                    UUID(ref["library_id"]),
+                )
+            elif target_scheme == "podcast":
+                library_entries.remove_podcast_from_library(
+                    db,
+                    viewer_id,
+                    UUID(ref["library_id"]),
+                    UUID(ref["target_id"]),
+                )
+            else:
+                # justify-defect: add_to_library records only the closed media/podcast
+                # ResourceRef union in its own result_refs payload.
+                raise AssertionError(f"unknown entry target scheme: {target_scheme!r}")
         elif kind == "highlight":
             highlights.delete_highlight(db, viewer_id, UUID(ref["id"]))
         elif kind == "note_block":
@@ -681,7 +694,12 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "queue":
             # Tolerates an already-removed Lectern item (manual removal, R-5).
             consumption_service.remove_lectern_item(viewer_id, UUID(ref["id"]))
-    except ApiError:
-        # R-5: the target is already gone (manual delete). The revert still
-        # succeeds and the row is stamped reverted.
+    except ApiError as exc:
+        if exc.code not in {
+            ApiErrorCode.E_NOT_FOUND,
+            ApiErrorCode.E_MEDIA_NOT_FOUND,
+            ApiErrorCode.E_LIBRARY_NOT_FOUND,
+        }:
+            raise
+        # justify-ignore-error: R-5 defines an already-removed Undo target as success.
         db.rollback()

@@ -8,6 +8,12 @@ import {
   stubFetch,
 } from "@/__tests__/helpers/fetch";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
+import {
+  OPEN_LAUNCHER_EVENT,
+  type OpenLauncherDetail,
+} from "@/lib/launcher/launcherEvents";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
@@ -30,6 +36,7 @@ function seededLibrary() {
   return {
     id: LIBRARY_ID,
     name: LIBRARY_NAME,
+    color: "#0ea5e9",
     is_default: false,
     role: "admin",
     owner_user_id: "user-1",
@@ -45,6 +52,7 @@ function seededSystemLibraryWithMutableMedia() {
     library: {
       id: LIBRARY_ID,
       name: "Oracle Corpus",
+      color: null,
       is_default: false,
       role: "admin",
       owner_user_id: "user-1",
@@ -231,6 +239,74 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(libraryCalls).toHaveLength(0);
   });
 
+  it("seeds editable library context into direct Add intent", async () => {
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      return Response.json({});
+    });
+    const publish =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+    const details: OpenLauncherDetail[] = [];
+    const onOpen = (event: Event) => {
+      details.push((event as CustomEvent<OpenLauncherDetail>).detail);
+    };
+    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+
+    try {
+      renderHydratedPane({
+        href: `/libraries/${LIBRARY_ID}`,
+        resources: {
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        },
+        children: (
+          <PanePrimaryChromeProvider publish={publish}>
+            {paneWithLectern}
+          </PanePrimaryChromeProvider>
+        ),
+      });
+
+      let update: PanePrimaryChromePublicationUpdate | undefined;
+      await waitFor(() => {
+        update = publish.mock.calls
+          .map(([value]) => value)
+          .find((value) =>
+            value.publication?.options?.some(
+              (option) => option.id === "add-content",
+            ),
+          );
+        expect(update).toBeDefined();
+      });
+      const add = update?.publication?.options?.find(
+        (option) => option.id === "add-content",
+      );
+      expect(add?.kind).toBe("command");
+      if (add?.kind !== "command")
+        throw new Error("Add content command was not published");
+
+      add.onSelect({ triggerEl: null });
+
+      expect(details).toEqual([
+        {
+          kind: "Add",
+          seed: {
+            kind: "Content",
+            initialFocus: "Url",
+            initialDestinations: [
+              { id: LIBRARY_ID, name: LIBRARY_NAME, color: "#0ea5e9" },
+            ],
+          },
+        },
+      ]);
+    } finally {
+      window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    }
+  });
+
   it("does not expose media mutation actions for system-library entries", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
@@ -328,7 +404,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const path = fetchInputPathWithSearch(input);
       if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
         return Response.json({
-          data: [seededMediaEntry("entry-r1", "media-r1", "First Resonance Work")],
+          data: [
+            seededMediaEntry("entry-r1", "media-r1", "First Resonance Work"),
+          ],
           page: { has_more: true, next_cursor: "cursor-r2" },
         });
       }
@@ -337,7 +415,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`
       ) {
         return Response.json({
-          data: [seededMediaEntry("entry-r2", "media-r2", "Second Resonance Work")],
+          data: [
+            seededMediaEntry("entry-r2", "media-r2", "Second Resonance Work"),
+          ],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -362,7 +442,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(await screen.findByText("First Resonance Work")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more entries" }));
 
-    expect(await screen.findByText("Second Resonance Work")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Second Resonance Work"),
+    ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/libraries/${LIBRARY_ID}/entries?sort=resonance&cursor=cursor-r2`,
       expect.objectContaining({ method: "GET" }),
@@ -378,11 +460,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
       ) {
-        const invalid = seededMediaEntry(
-          "entry-2",
-          "media-2",
-          "Invalid Work",
-        );
+        const invalid = seededMediaEntry("entry-2", "media-2", "Invalid Work");
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
           data: [invalid],
@@ -409,7 +487,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
 
     expect(await screen.findByText("Valid Work")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more entries" }));
-    expect(await screen.findByText("Failed to load more entries")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Failed to load more entries"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Invalid Work")).not.toBeInTheDocument();
   });
 
@@ -450,8 +530,12 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("Failed to rank library entries")).toBeInTheDocument();
-    expect(screen.queryByText("Invalid Resonance Work")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("Failed to rank library entries"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Invalid Resonance Work"),
+    ).not.toBeInTheDocument();
   });
 
   it("optimistically shows total time and restores remaining without losing a concurrent page", async () => {
@@ -467,9 +551,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === "/api/consumption/commands") {
         return pendingConsumption;
       }
-      if (
-        path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
-      ) {
+      if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
         return Response.json({
           data: [seededMediaEntry("entry-2", "media-2", "Concurrent Work")],
           page: { has_more: false, next_cursor: null },
@@ -537,7 +619,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (lectern) return lectern;
       if (fetchInputPath(input) === "/api/consumption/commands") {
         commandCount += 1;
-        return commandCount === 1 ? firstResponse : consumptionSuccessResponse();
+        return commandCount === 1
+          ? firstResponse
+          : consumptionSuccessResponse();
       }
       return new Response("{}", {
         status: 200,
@@ -591,7 +675,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
 
     await waitFor(() =>
-      expect(fetchCallsForPath(fetchMock, "/api/consumption/commands")).toHaveLength(2),
+      expect(
+        fetchCallsForPath(fetchMock, "/api/consumption/commands"),
+      ).toHaveLength(2),
     );
     expect(screen.getByText("Unread")).toBeInTheDocument();
     await user.click(
@@ -683,7 +769,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     );
     expect(screen.getByText("Processing")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sort" }), "manual");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Sort" }),
+      "manual",
+    );
     expect(await screen.findByText("Processing")).toBeInTheDocument();
     expect(screen.queryByText("≈ 5 min left")).not.toBeInTheDocument();
   });

@@ -19,11 +19,12 @@ The domain is split into three owned modules, each owning its own tables:
   (`{kind: "media"|"podcast", id}` — a faithful model of the
   exactly-one-target check) and the `media_target`/`podcast_target` constructors,
   the single entry ordering constant (`_ENTRY_ORDER = "position ASC, created_at
-  DESC, id DESC"`), the locked `ensure_entry` append, deletes and
+DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `normalize_positions`, all read accessors, hydration, and the item-in-library
-  commands (`list_item_libraries`, `add_media_to_library`,
+  commands (`list_item_libraries`, `ensure_media_in_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
-  `add_media_to_libraries_for_viewer`, `assign_libraries_for_media`,
+  `ensure_media_in_libraries_for_viewer`,
+  `ensure_media_absent_from_library_for_viewer`, `assign_libraries_for_media`,
   `set_subscription_libraries`, `remove_user_podcast_subscription_libraries`, …).
 - **`services/library_invitations.py`** owns the `library_invitations` table:
   create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
@@ -37,9 +38,10 @@ Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
 
 Library entry mutations are commands, not refreshed read models. Successful
-add-media, add-podcast, and reorder requests return `204 No Content`; callers
-refresh or retain their existing local state deliberately. Agent filing receives
-only inserted/already-present truth for Undo and never hydrates an entry payload.
+media-membership add/remove, add-podcast, and reorder requests return `204 No
+Content`; callers refresh or retain their existing local state deliberately.
+Agent filing receives only inserted/already-present truth for Undo and never
+hydrates an entry payload.
 
 ## System libraries
 
@@ -64,17 +66,21 @@ the default library, and the viewer is an admin.
 Every INSERT/UPDATE/DELETE on `library_entries` goes through
 `library_entries.py`; no other module issues DML against the table.
 
-- **Append serialization.** `ensure_entry` locks the target `libraries` row
-  (`FOR UPDATE`) as the single per-library append point, so two concurrent
-  appends can't both read the same `MAX(position)+1` and collide. It is the only
-  inserter.
+- **Reference-mutation order.** Media-entry adds/removals lock affected media
+  UUIDs in ascending order before affected library UUIDs in ascending order.
+  `ensure_entry` remains the only inserter and the locked library row is the
+  per-library append point, so concurrent appends cannot both derive the same
+  `MAX(position)+1`. Library teardown snapshots its media lock set before taking
+  those locks and restarts the whole bounded transaction if revalidation finds
+  that the set changed; it never acquire-expands while holding a library lock.
 - **Position invariant.** Migration `0131` makes the per-library position a DB
   invariant: `UNIQUE (library_id, position) DEFERRABLE INITIALLY DEFERRED`. The
   set-based `reorder_entries` (one `unnest(...) WITH ORDINALITY` UPDATE) and the
   renormalizer rely on deferral to swap positions within a transaction.
 - **Explicit cleanup.** `0131` also drops the `media_id`/`podcast_id`
   `ON DELETE CASCADE` FKs — entry cleanup on media/podcast deletion is now
-  explicit in app code, not the database.
+  explicit in app code, not the database. Zero-reference document cleanup runs
+  while the media lock is held; object-store deletion happens only after commit.
 - **One read tier (Tier-R).** Writes have one owner; visibility/search readers
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search.py`, `services/contributors.py`,
@@ -89,16 +95,16 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
 The default library holds no provenance, closure, or backfill machinery. Its
 read surface — "personal All" — is a live query, computed on every read, over
 `library_entries` + `memberships`: the distinct media reachable through any of
-the viewer's *current* non-system memberships, deduplicated by `media_id` (a
+the viewer's _current_ non-system memberships, deduplicated by `media_id` (a
 direct entry in the viewer's own default library wins the tie over an
 indirect one reached through a shared library; ties within a kind resolve by
-earliest entry). There is no separate table recording *why* a work is
+earliest entry). There is no separate table recording _why_ a work is
 visible there and nothing to keep in sync — losing a membership (leaving,
 being removed, or a shared library being deleted) removes that library's
 contribution the moment it is gone, on the very next read.
 
 - **The one actor-authorized filing command.**
-  `library_entries.add_media_to_library` is the sole path that files media
+  `library_entries.ensure_media_in_library` is the sole path that files media
   into any library, including the default one. Filing into the default
   library always inserts (or idempotently keeps) a direct, physical
   `library_entries` row there — there is no separate "intrinsic" bookkeeping
@@ -121,6 +127,13 @@ contribution the moment it is gone, on the very next read.
   reconcile against it. `services/media_deletion.py` is a pure orchestrator
   over the public `library_entries` API; it issues zero direct
   `library_entries` DML of its own.
+- **Membership removal is convergent and non-destructive.**
+  `ensure_media_absent_from_library_for_viewer` authorizes a mutable target
+  library, returns `204` when the entry is already absent without exposing media
+  existence, and removes exactly one present membership. It supports every
+  media kind and refuses the final lifetime reference with
+  `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
+  Whole-resource `DELETE /media/{id}` accepts no query string.
 
 ## Reading-time projection
 
@@ -159,9 +172,14 @@ library the viewer can read.
   transaction-owning command for attaching media to the viewer's default library
   plus selected destinations. Media creation workflows that already own a
   transaction call `assign_libraries_for_media_in_current_transaction` before
-  committing the created media. `add_media_to_libraries_for_viewer` adds
-  post-hoc destinations atomically and returns only IDs that were actually
-  inserted.
+  committing the created media. `ensure_media_in_libraries_for_viewer` adds
+  post-hoc destinations atomically as a bodyless command.
+
+The canonical HTTP membership surface is
+`GET/POST /media/{media_id}/libraries` plus
+`DELETE /media/{media_id}/libraries/{library_id}`. There is no inverse
+library-to-media write route and no scoped resource-delete query mode.
+Both POST and DELETE mutations return `204 No Content`.
 
 ## Composition Rules
 

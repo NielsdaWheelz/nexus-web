@@ -179,17 +179,9 @@ class TestBasicSearch:
                 fragments=[fragment],
                 reason="test",
             )
-            # The generic filing endpoint below only re-files media already
-            # reachable through a membership (readable-or-restorable, spec
-            # S4.3 rule 1) — establish the direct entry first.
+            # Establish the direct entry that production ingest creates.
             seed_media_in_library(session, default_library_id, media_id)
             session.commit()
-
-        auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
 
         with direct_db.session() as session:
             highlight_id, note_block_id = create_test_highlight_note(

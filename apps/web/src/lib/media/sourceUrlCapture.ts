@@ -1,5 +1,6 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { isUnauthenticatedApiError } from "@/lib/api/client";
+import { isApiError, isUnauthenticatedApiError } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import {
   mediaCaptureStatus,
   toMediaCaptureFeedback,
@@ -7,10 +8,18 @@ import {
 import {
   addMediaFromUrl,
   isFailedSourceIngest,
+  isMediaIngestionDefect,
   type SourceIngestResult,
 } from "@/lib/media/ingestionClient";
 
-export const SOURCE_INGEST_CONCURRENCY = 2;
+export function isSourceUrlCaptureDefect(error: unknown): boolean {
+  return (
+    isMediaIngestionDefect(error) ||
+    (!isApiError(error) &&
+      !(error instanceof TypeError) &&
+      !isAbortError(error))
+  );
+}
 
 export type SourceUrlCaptureResult =
   | {
@@ -35,17 +44,20 @@ export async function captureSourceUrl({
   libraryIds,
   idempotencyKey,
   fallback,
+  signal,
 }: {
   url: string;
-  libraryIds: string[];
+  libraryIds: readonly string[];
   idempotencyKey?: string;
   fallback?: string;
+  signal?: AbortSignal;
 }): Promise<SourceUrlCaptureResult> {
   try {
     const result = await addMediaFromUrl({
       url,
       libraryIds,
       idempotencyKey,
+      signal,
     });
     const sourceFailed = isFailedSourceIngest(result);
     return {
@@ -60,32 +72,20 @@ export async function captureSourceUrl({
       result,
     };
   } catch (error) {
-    if (isUnauthenticatedApiError(error)) throw error;
+    if (
+      isUnauthenticatedApiError(error) ||
+      signal?.aborted ||
+      isAbortError(error)
+    ) {
+      throw error;
+    }
+    if (isSourceUrlCaptureDefect(error)) {
+      throw error;
+    }
     return {
       label: url,
       ok: false,
       feedback: toMediaCaptureFeedback(error, fallback),
     };
   }
-}
-
-export async function runBoundedSourceUrlCaptures<T>(
-  urls: string[],
-  capture: (url: string) => Promise<T>,
-  concurrency = SOURCE_INGEST_CONCURRENCY,
-): Promise<T[]> {
-  const settled: T[] = new Array(urls.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, urls.length) },
-    async () => {
-      while (nextIndex < urls.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        settled[index] = await capture(urls[index]);
-      }
-    },
-  );
-  await Promise.all(workers);
-  return settled;
 }

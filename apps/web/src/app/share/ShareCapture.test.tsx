@@ -1,6 +1,30 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Component, type ReactNode } from "react";
 import ShareCapture from "./ShareCapture";
+
+class DefectBoundary extends Component<
+  { children: ReactNode; onDefect: (error: unknown) => void },
+  { error: unknown | null }
+> {
+  state: { error: unknown | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown) {
+    this.props.onDefect(error);
+  }
+
+  render() {
+    return this.state.error ? (
+      <p>Share defect boundary</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
 
 function renderShareCapture(text: string, isShell = false) {
   return render(<ShareCapture text={text} isShell={isShell} />);
@@ -46,70 +70,74 @@ function installShareFetch({
   createLibrary,
 }: {
   fromUrl?: (body: Record<string, unknown>) => Response | Promise<Response>;
-  createLibrary?: (body: Record<string, unknown>) => Response | Promise<Response>;
+  createLibrary?: (
+    body: Record<string, unknown>,
+  ) => Response | Promise<Response>;
 } = {}) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = pathFor(input);
-    const url = new URL(path, "http://localhost");
-    const method = init?.method ?? "GET";
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathFor(input);
+      const url = new URL(path, "http://localhost");
+      const method = init?.method ?? "GET";
 
-    if (url.pathname === "/api/libraries/writable-destinations") {
-      const query = (url.searchParams.get("q") ?? "").trim();
-      return jsonResponse({
-        data: query
-          ? []
-          : [
-              {
-                id: "lib-research",
-                name: "Research",
-                color: "#0ea5e9",
-                created_at: "",
-                updated_at: "",
-              },
-            ],
-        page: { next_cursor: null },
-      });
-    }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        const query = (url.searchParams.get("q") ?? "").trim();
+        return jsonResponse({
+          data: query
+            ? []
+            : [
+                {
+                  id: "lib-research",
+                  name: "Research",
+                  color: "#0ea5e9",
+                  created_at: "2026-01-01T00:00:00Z",
+                  updated_at: "2026-01-01T00:00:00Z",
+                },
+              ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
 
-    if (url.pathname === "/api/libraries" && method === "POST") {
-      const body = parseJsonBody(init);
-      if (createLibrary) return createLibrary(body);
-      return jsonResponse(
-        {
-          data: {
-            id: "lib-created",
-            name: String(body.name),
-            color: null,
-            created_at: "",
-            updated_at: "",
+      if (url.pathname === "/api/libraries" && method === "POST") {
+        const body = parseJsonBody(init);
+        if (createLibrary) return createLibrary(body);
+        return jsonResponse(
+          {
+            data: {
+              id: "lib-created",
+              name: String(body.name),
+              color: null,
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:00:00Z",
+            },
           },
-        },
-        201,
-      );
-    }
+          201,
+        );
+      }
 
-    if (url.pathname === "/api/media/from-url" && method === "POST") {
-      const body = parseJsonBody(init);
-      if (fromUrl) return fromUrl(body);
-      return jsonResponse({
-        data: {
-          media_id: "media-1",
-          source_attempt_id: "attempt-1",
-          source_type: "generic_web_url",
-          source_attempt_status: "queued",
-          idempotency_outcome: "created",
-          processing_status: "pending",
-          ingest_enqueued: true,
-        },
-      });
-    }
+      if (url.pathname === "/api/media/from-url" && method === "POST") {
+        const body = parseJsonBody(init);
+        if (fromUrl) return fromUrl(body);
+        return jsonResponse({
+          data: {
+            media_id: "media-1",
+            source_attempt_id: "attempt-1",
+            source_type: "generic_web_url",
+            source_attempt_status: "queued",
+            idempotency_outcome: "created",
+            processing_status: "pending",
+            ingest_enqueued: true,
+          },
+        });
+      }
 
-    if (url.pathname === "/api/notes/quick-capture" && method === "POST") {
-      return jsonResponse({ data: noteBlock() }, 201);
-    }
+      if (url.pathname === "/api/notes/quick-capture" && method === "POST") {
+        return jsonResponse({ data: noteBlock() }, 201);
+      }
 
-    throw new Error(`Unexpected request: ${method} ${path}`);
-  });
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    },
+  );
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -118,8 +146,8 @@ function fromUrlBodies(fetchMock: ReturnType<typeof installShareFetch>) {
   return fetchMock.mock.calls
     .filter(
       ([input, init]) =>
-        new URL(pathFor(input), "http://localhost").pathname === "/api/media/from-url" &&
-        init?.method === "POST",
+        new URL(pathFor(input), "http://localhost").pathname ===
+          "/api/media/from-url" && init?.method === "POST",
     )
     .map(([, init]) => parseJsonBody(init));
 }
@@ -128,8 +156,9 @@ function quickCaptureBodies(fetchMock: ReturnType<typeof installShareFetch>) {
   return fetchMock.mock.calls
     .filter(
       ([input, init]) =>
-        new URL(pathFor(input), "http://localhost").pathname.endsWith("/quick-capture") &&
-        init?.method === "POST",
+        new URL(pathFor(input), "http://localhost").pathname.endsWith(
+          "/quick-capture",
+        ) && init?.method === "POST",
     )
     .map(([, init]) => parseJsonBody(init));
 }
@@ -144,7 +173,9 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    expect(screen.getByRole("heading", { name: "Save to Nexus" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Save to Nexus" }),
+    ).toBeInTheDocument();
     expect(fromUrlBodies(fetchMock)).toEqual([]);
   });
 
@@ -165,7 +196,9 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    fireEvent.focus(screen.getByRole("combobox", { name: "Library destinations" }));
+    fireEvent.focus(
+      screen.getByRole("combobox", { name: "Library destinations" }),
+    );
     const option = await screen.findByRole("option", { name: "Research" });
     fireEvent.click(option);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -182,10 +215,14 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    const input = screen.getByRole("combobox", { name: "Library destinations" });
+    const input = screen.getByRole("combobox", {
+      name: "Library destinations",
+    });
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "Created" } });
-    fireEvent.click(await screen.findByRole("option", { name: "Create “Created”" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Create “Created”" }),
+    );
     await screen.findByRole("button", { name: "Remove Created" });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -204,10 +241,14 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    const input = screen.getByRole("combobox", { name: "Library destinations" });
+    const input = screen.getByRole("combobox", {
+      name: "Library destinations",
+    });
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "Created" } });
-    fireEvent.click(await screen.findByRole("option", { name: "Create “Created”" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Create “Created”" }),
+    );
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -221,7 +262,9 @@ describe("ShareCapture", () => {
       fromUrl: (body) =>
         jsonResponse({
           data: {
-            media_id: String(body.url).includes("one") ? "media-one" : "media-two",
+            media_id: String(body.url).includes("one")
+              ? "media-one"
+              : "media-two",
             source_attempt_id: String(body.url).includes("one")
               ? "attempt-one"
               : "attempt-two",
@@ -236,7 +279,9 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/one https://example.com/two");
 
-    fireEvent.focus(screen.getByRole("combobox", { name: "Library destinations" }));
+    fireEvent.focus(
+      screen.getByRole("combobox", { name: "Library destinations" }),
+    );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -278,7 +323,9 @@ describe("ShareCapture", () => {
 
     renderShareCapture("https://example.com/article");
 
-    fireEvent.focus(screen.getByRole("combobox", { name: "Library destinations" }));
+    fireEvent.focus(
+      screen.getByRole("combobox", { name: "Library destinations" }),
+    );
     fireEvent.click(await screen.findByRole("option", { name: "Research" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -313,8 +360,112 @@ describe("ShareCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByRole("heading", { name: "Couldn’t save" });
-    expect(screen.getByText("X imports are temporarily unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText("X imports are temporarily unavailable"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Nexus request ID: req-x-1")).toBeInTheDocument();
+  });
+
+  it("renders expired-session capture as the share-owned sign-in outcome", async () => {
+    installShareFetch({
+      fromUrl: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "E_UNAUTHENTICATED",
+              message: "Session expired",
+            },
+          },
+          401,
+        ),
+    });
+
+    renderShareCapture("https://example.com/expired");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("heading", { name: "Sign in to save this" });
+    expect(
+      screen.getByText("Open Nexus, sign in, then share again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Done" })).toHaveAttribute(
+      "href",
+      "/lectern",
+    );
+  });
+
+  it("retains fulfilled peers when another URL finds an expired session", async () => {
+    const fetchMock = installShareFetch({
+      fromUrl: (body) =>
+        String(body.url).endsWith("/one")
+          ? jsonResponse({
+              data: {
+                media_id: "media-one",
+                source_attempt_id: "attempt-one",
+                source_type: "generic_web_url",
+                source_attempt_status: "queued",
+                idempotency_outcome: "created",
+                processing_status: "pending",
+                ingest_enqueued: true,
+              },
+            })
+          : jsonResponse(
+              {
+                error: {
+                  code: "E_UNAUTHENTICATED",
+                  message: "Session expired",
+                },
+              },
+              401,
+            ),
+    });
+
+    renderShareCapture("https://example.com/one https://example.com/two");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("heading", { name: "Saved to Nexus" });
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to save this")).toBeInTheDocument();
+    expect(fromUrlBodies(fetchMock)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("propagates same-system URL capture defects to the owner boundary", async () => {
+    const onDefect = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    installShareFetch({
+      fromUrl: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "E_INTERNAL",
+              message: "Malformed source state",
+              request_id: "req-share-defect",
+            },
+          },
+          500,
+        ),
+    });
+
+    try {
+      render(
+        <DefectBoundary onDefect={onDefect}>
+          <ShareCapture text="https://example.com/defect" isShell={false} />
+        </DefectBoundary>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(
+        await screen.findByText("Share defect boundary"),
+      ).toBeInTheDocument();
+      expect(onDefect).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "E_INTERNAL" }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("treats accepted failed source ingestion as a saved item", async () => {
@@ -397,7 +548,9 @@ describe("ShareCapture", () => {
         },
       }),
     );
-    expect(screen.queryByRole("combobox", { name: "Library destinations" })).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: "Library destinations" }),
+    ).toBeNull();
   });
 
   it("does not render the old post-save add-libraries modal", async () => {
@@ -407,7 +560,9 @@ describe("ShareCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText("Saved to Nexus");
-    expect(screen.queryByRole("dialog", { name: "Add to libraries?" })).toBeNull();
+    expect(
+      screen.queryByRole("dialog", { name: "Add to libraries?" }),
+    ).toBeNull();
   });
 
   it("uses Android shell callbacks for open and completion links", async () => {

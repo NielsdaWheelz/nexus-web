@@ -9,6 +9,7 @@ invitations are owned by their own modules.
 import base64
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.errors import TransactionRestart
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -129,6 +132,18 @@ def lock_library_for_member(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def lock_library_rows_in_order(db: Session, library_ids: Sequence[UUID]) -> list[UUID]:
+    """Lock existing library rows in UUID order for reference mutations."""
+    ordered_ids = sorted(set(library_ids))
+    if not ordered_ids:
+        return []
+    rows = db.execute(
+        text("SELECT id FROM libraries WHERE id = ANY(:library_ids) ORDER BY id FOR UPDATE"),
+        {"library_ids": ordered_ids},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def require_admin(role: LibraryRole) -> None:
@@ -316,37 +331,56 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
-    storage_paths: list[str] = []
-    with transaction(db):
-        ctx = lock_library_for_member(db, viewer_id, library_id)
-        require_non_default(ctx.is_default)
-        require_not_system(ctx.system_key)
-        if ctx.owner_user_id != viewer_id:
-            raise ForbiddenError(
-                ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
+    def attempt() -> list[str]:
+        with transaction(db):
+            ctx = lock_library_for_member(db, viewer_id, library_id, lock=False)
+            require_non_default(ctx.is_default)
+            require_not_system(ctx.system_key)
+            if ctx.owner_user_id != viewer_id:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
+                )
+
+            media_ids = sorted(set(library_entries.list_media_ids_in_library(db, library_id)))
+            if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
+                raise TransactionRestart("library media lock set contained a missing media row")
+
+            ctx = lock_library_for_member(db, viewer_id, library_id)
+            require_non_default(ctx.is_default)
+            require_not_system(ctx.system_key)
+            if ctx.owner_user_id != viewer_id:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
+                )
+            locked_media_ids = sorted(
+                set(library_entries.list_media_ids_in_library(db, library_id))
+            )
+            if locked_media_ids != media_ids:
+                raise TransactionRestart("library media lock set changed before deletion")
+
+            artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
+
+            # The library itself is a graph resource: context refs and app_search
+            # scopes point at ``library:<id>`` (§9.6 rule 2). Clean them with the
+            # row, mirroring conversation/media delete, or they dangle as phantom
+            # scopes. Cited edges sourced by the library (rule 1) — none today — die
+            # the same way.
+            delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
+
+            library_entries.delete_library_entries(db, library_id)
+            db.execute(
+                text("DELETE FROM libraries WHERE id = :library_id"),
+                {"library_id": library_id},
             )
 
-        media_ids = library_entries.list_media_ids_in_library(db, library_id)
+            storage_paths: list[str] = []
+            for media_id in media_ids:
+                paths = media_deletion.delete_document_media_if_unreferenced(db, media_id)
+                if paths:
+                    storage_paths.extend(paths)
+            return storage_paths
 
-        artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
-
-        # The library itself is a graph resource: context refs and app_search
-        # scopes point at ``library:<id>`` (§9.6 rule 2). Clean them with the
-        # row, mirroring conversation/media delete, or they dangle as phantom
-        # scopes. Cited edges sourced by the library (rule 1) — none today — die
-        # the same way.
-        delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
-
-        library_entries.delete_library_entries(db, library_id)
-        db.execute(
-            text("DELETE FROM libraries WHERE id = :library_id"),
-            {"library_id": library_id},
-        )
-
-        for media_id in media_ids:
-            paths = media_deletion.delete_document_media_if_unreferenced(db, media_id)
-            if paths:
-                storage_paths.extend(paths)
+    storage_paths = retry_read_committed(db, "delete_library", attempt)
 
     if storage_paths:
         storage_client = get_storage_client()

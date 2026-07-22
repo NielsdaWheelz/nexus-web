@@ -1,4 +1,10 @@
-import { test, expect, type APIResponse, type Locator, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIResponse,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { openAddContentPanel } from "./add-content";
@@ -54,10 +60,16 @@ function readSeededPdfMedia(): SeededPdfMedia {
   if (!parsed.media_id || typeof parsed.media_id !== "string") {
     throw new Error(`Invalid seeded PDF metadata at ${seedPath}`);
   }
-  if (!parsed.upload_fixture_path || typeof parsed.upload_fixture_path !== "string") {
+  if (
+    !parsed.upload_fixture_path ||
+    typeof parsed.upload_fixture_path !== "string"
+  ) {
     throw new Error(`Seed metadata missing upload_fixture_path at ${seedPath}`);
   }
-  if (!parsed.password_media_id || typeof parsed.password_media_id !== "string") {
+  if (
+    !parsed.password_media_id ||
+    typeof parsed.password_media_id !== "string"
+  ) {
     throw new Error(`Seed metadata missing password_media_id at ${seedPath}`);
   }
   return parsed;
@@ -82,7 +94,10 @@ async function readResponseText(response: APIResponse): Promise<string> {
   }
 }
 
-async function waitForPdfMediaReady(page: Page, mediaId: string): Promise<void> {
+async function waitForPdfMediaReady(
+  page: Page,
+  mediaId: string,
+): Promise<void> {
   const deadline = Date.now() + 60_000;
   let lastState = "not checked";
   let workerIterations = 0;
@@ -115,7 +130,9 @@ async function waitForPdfMediaReady(page: Page, mediaId: string): Promise<void> 
       return;
     }
     if (media.processing_status === "failed") {
-      throw new Error(`PDF media ${mediaId} failed before highlight creation: ${lastState}`);
+      throw new Error(
+        `PDF media ${mediaId} failed before highlight creation: ${lastState}`,
+      );
     }
 
     const workerResult = runE2eWorkerOnce({
@@ -139,7 +156,10 @@ async function waitForPdfMediaReady(page: Page, mediaId: string): Promise<void> 
   );
 }
 
-async function fetchReaderState(page: Page, mediaId: string): Promise<ReaderCursorSnapshot> {
+async function fetchReaderState(
+  page: Page,
+  mediaId: string,
+): Promise<ReaderCursorSnapshot> {
   const response = await page.request.get(`/api/media/${mediaId}/reader-state`);
   if (!response.ok()) {
     const responseBody = await readResponseText(response);
@@ -162,10 +182,13 @@ async function putReaderState(
 ): Promise<ReaderCursorSnapshot> {
   const current = await fetchReaderState(page, mediaId);
   const baseRevision = current.state === "Empty" ? 0 : current.revision;
-  const response = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: { cursor: { locator, base_revision: baseRevision } },
-    headers: stateChangingApiHeaders(),
-  });
+  const response = await page.request.put(
+    `/api/media/${mediaId}/reader-state`,
+    {
+      data: { cursor: { locator, base_revision: baseRevision } },
+      headers: stateChangingApiHeaders(),
+    },
+  );
   if (response.ok()) {
     return (JSON.parse(await response.text()) as ReaderStateResponse).data;
   }
@@ -178,15 +201,22 @@ async function putReaderState(
 
 function activeTextLayer(page: Page) {
   return activeWorkspacePane(page)
-    .locator('.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]')
+    .locator(
+      '.pdfViewer .page .textLayer, [class*="pageLayer"] [class*="textLayer"]',
+    )
     .last();
 }
 
 function pdfControlsToolbar(page: Page) {
-  return activeWorkspacePane(page).getByRole("toolbar", { name: "PDF controls" }).first();
+  return activeWorkspacePane(page)
+    .getByRole("toolbar", { name: "PDF controls" })
+    .first();
 }
 
-async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Promise<void> {
+async function clickToolbarButtonByAriaLabel(
+  page: Page,
+  ariaLabel: string,
+): Promise<void> {
   const toolbar = pdfControlsToolbar(page);
   await expect(toolbar).toBeVisible();
 
@@ -200,7 +230,9 @@ async function clickToolbarButtonByAriaLabel(page: Page, ariaLabel: string): Pro
     return;
   }
 
-  const overflowToggle = toolbar.getByRole("button", { name: "More actions" }).first();
+  const overflowToggle = toolbar
+    .getByRole("button", { name: "More actions" })
+    .first();
   if (
     (await overflowToggle.count()) > 0 &&
     (await overflowToggle.isVisible().catch(() => false))
@@ -222,7 +254,9 @@ async function quoteRowToNewChat(row: Locator): Promise<void> {
   await expect(actionsTrigger).toBeVisible();
   await expect(actionsTrigger).toBeEnabled();
   await actionsTrigger.click();
-  const quoteItem = row.page().getByRole("menuitem", { name: "Quote to new chat" });
+  const quoteItem = row
+    .page()
+    .getByRole("menuitem", { name: "Quote to new chat" });
   await expect(quoteItem).toBeVisible();
   await expect(quoteItem).toBeEnabled();
   await quoteItem.click();
@@ -250,7 +284,10 @@ function pageIndicator(page: Page, pageNumber: number, pageCount: number) {
     .first();
 }
 
-async function readCurrentPageNumber(page: Page, pageCount: number): Promise<number | null> {
+async function readCurrentPageNumber(
+  page: Page,
+  pageCount: number,
+): Promise<number | null> {
   const indicator = pdfControlsToolbar(page)
     .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
@@ -263,7 +300,11 @@ async function readCurrentPageNumber(page: Page, pageCount: number): Promise<num
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function ensureOnPage(page: Page, targetPage: number, pageCount: number): Promise<void> {
+async function ensureOnPage(
+  page: Page,
+  targetPage: number,
+  pageCount: number,
+): Promise<void> {
   const anyIndicator = pdfControlsToolbar(page)
     .locator(`[aria-label^="Page "][aria-label$=" of ${pageCount}"]`)
     .first();
@@ -339,10 +380,15 @@ async function resetPdfReaderState(page: Page, mediaId: string): Promise<void> {
 test.describe("pdf reader", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("upload -> viewer -> persistent highlight -> send to chat", async ({ page }, testInfo) => {
+  test("upload -> viewer -> persistent highlight -> send to chat", async ({
+    page,
+  }, testInfo) => {
     test.slow();
     const seeded = readSeededPdfMedia();
-    const uploadFixturePath = path.join(process.cwd(), seeded.upload_fixture_path);
+    const uploadFixturePath = path.join(
+      process.cwd(),
+      seeded.upload_fixture_path,
+    );
     const expectedPageCount = seeded.page_count;
     const deviceId = workspaceE2eDeviceId(testInfo, "e2e-pdf-reader");
     let createdHighlightId: string | null = null;
@@ -350,10 +396,28 @@ test.describe("pdf reader", () => {
     let productError: unknown = null;
     try {
       await gotoSinglePaneWorkspace(page, deviceId, "/libraries");
-      const addContentPanel = await openAddContentPanel(page, "file");
+      const addContentPanel = await openAddContentPanel(page);
       const fileInput = addContentPanel.locator("input[type='file']");
       await expect(fileInput).toBeAttached();
       await fileInput.setInputFiles(uploadFixturePath);
+
+      await expect(
+        addContentPanel.getByRole("button", { name: "Add 1 item" }),
+      ).toBeEnabled();
+      const ingestResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          /\/api\/media\/[^/]+\/ingest$/.test(new URL(response.url()).pathname),
+      );
+      await addContentPanel.getByRole("button", { name: "Add 1 item" }).click();
+      expect((await ingestResponse).ok()).toBeTruthy();
+      await expect(addContentPanel).toBeVisible();
+      await expect(
+        addContentPanel.getByText(
+          /^(Saved|Already in Nexus) · (processing|ready|processing failed)$/,
+        ),
+      ).toBeVisible({ timeout: 30_000 });
+      await addContentPanel.getByRole("button", { name: "Open" }).click();
 
       await expect(page).toHaveURL(/\/media\/[0-9a-f-]{36}$/i, {
         timeout: 30_000,
@@ -363,9 +427,13 @@ test.describe("pdf reader", () => {
       await waitForPdfMediaReady(page, uploadedMediaId);
       await expect(pdfControlsToolbar(page)).toBeVisible({ timeout: 20_000 });
       await expect(activeTextLayer(page)).toBeVisible();
-      // Normalize route after upload redirect to avoid pane-runtime churn.
+      // Normalize route after the explicit Open to avoid pane-runtime churn.
       // affecting subsequent viewer assertions under parallel workers.
-      await gotoSinglePaneWorkspace(page, deviceId, `/media/${uploadedMediaId}`);
+      await gotoSinglePaneWorkspace(
+        page,
+        deviceId,
+        `/media/${uploadedMediaId}`,
+      );
 
       await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
         timeout: 20_000,
@@ -380,26 +448,29 @@ test.describe("pdf reader", () => {
       // Use the API to keep this focused on persistence and quote-to-chat behavior.
       const nonce = Date.now() % 100_000;
       const exact = `e2e-persist-chat-${nonce}`;
-      const createHighlight = await page.request.post(`/api/media/${uploadedMediaId}/pdf-highlights`, {
-        data: {
-          page_number: 2,
-          exact,
-          color: "yellow",
-          quads: [
-            {
-              x1: 72,
-              y1: 120 + (nonce % 20),
-              x2: 190,
-              y2: 120 + (nonce % 20),
-              x3: 190,
-              y3: 136 + (nonce % 20),
-              x4: 72,
-              y4: 136 + (nonce % 20),
-            },
-          ],
+      const createHighlight = await page.request.post(
+        `/api/media/${uploadedMediaId}/pdf-highlights`,
+        {
+          data: {
+            page_number: 2,
+            exact,
+            color: "yellow",
+            quads: [
+              {
+                x1: 72,
+                y1: 120 + (nonce % 20),
+                x2: 190,
+                y2: 120 + (nonce % 20),
+                x3: 190,
+                y3: 136 + (nonce % 20),
+                x4: 72,
+                y4: 136 + (nonce % 20),
+              },
+            ],
+          },
+          headers: stateChangingApiHeaders(),
         },
-        headers: stateChangingApiHeaders(),
-      });
+      );
       const createHighlightBody = await readResponseText(createHighlight);
       expect(
         createHighlight.ok(),
@@ -413,11 +484,15 @@ test.describe("pdf reader", () => {
       ).data.id;
 
       await page.reload();
-      const persistedHighlight = await page.request.get(`/api/highlights/${createdHighlightId}`);
+      const persistedHighlight = await page.request.get(
+        `/api/highlights/${createdHighlightId}`,
+      );
       expect(persistedHighlight.ok()).toBe(true);
       // Reader-state persistence can resume on page 1 or 2 depending on save timing.
       // Normalize deterministically so this test validates highlight persistence only.
-      const overviewTick = activeWorkspacePane(page).getByRole("button", { name: exact }).first();
+      const overviewTick = activeWorkspacePane(page)
+        .getByRole("button", { name: exact })
+        .first();
       await expect(overviewTick).toBeVisible({ timeout: 20_000 });
       await overviewTick.click();
       await page.mouse.move(16, 16);
@@ -432,14 +507,23 @@ test.describe("pdf reader", () => {
       await expect(linkedRow).toBeVisible({ timeout: 20_000 });
       await linkedRow.click();
       await expectHighlightRowToBeExpanded(linkedRow);
-      await expect(page.getByRole("dialog", { name: /highlight details/i })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: /show in document/i })).toHaveCount(0);
-      const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
+      await expect(
+        page.getByRole("dialog", { name: /highlight details/i }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: /show in document/i }),
+      ).toHaveCount(0);
+      const chatPaneCountBefore = await workspacePaneButton(
+        page,
+        /^chat\b/i,
+      ).count();
       await quoteRowToNewChat(linkedRow);
       await expectConversationPaneOpened(page);
       // Quote-to-chat opens a new conversation pane (AC-7), so the pane count grows.
       await expect
-        .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+        .poll(() => workspacePaneButton(page, /^chat\b/i).count(), {
+          timeout: 10_000,
+        })
         .toBeGreaterThan(chatPaneCountBefore);
     } catch (error) {
       productError = error;
@@ -468,7 +552,11 @@ test.describe("pdf reader", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("PDF highlight chat flow", productError, cleanupErrors);
+      throwE2eCleanupFailures(
+        "PDF highlight chat flow",
+        productError,
+        cleanupErrors,
+      );
     }
   });
 
@@ -494,57 +582,67 @@ test.describe("pdf reader", () => {
     let productError: unknown = null;
 
     try {
-      const createPageOne = await page.request.post(`/api/media/${mediaId}/pdf-highlights`, {
-        data: {
-          page_number: 1,
-          exact: pageOneExact,
-          color: "yellow",
-          quads: [
-            {
-              x1: 72,
-              y1: 120 + (nonce % 20),
-              x2: 180,
-              y2: 120 + (nonce % 20),
-              x3: 180,
-              y3: 136 + (nonce % 20),
-              x4: 72,
-              y4: 136 + (nonce % 20),
-            },
-          ],
+      const createPageOne = await page.request.post(
+        `/api/media/${mediaId}/pdf-highlights`,
+        {
+          data: {
+            page_number: 1,
+            exact: pageOneExact,
+            color: "yellow",
+            quads: [
+              {
+                x1: 72,
+                y1: 120 + (nonce % 20),
+                x2: 180,
+                y2: 120 + (nonce % 20),
+                x3: 180,
+                y3: 136 + (nonce % 20),
+                x4: 72,
+                y4: 136 + (nonce % 20),
+              },
+            ],
+          },
+          headers: stateChangingApiHeaders(),
         },
-        headers: stateChangingApiHeaders(),
-      });
+      );
       expect(createPageOne.ok()).toBe(true);
       pageOneHighlightId = (await createPageOne.json()).data.id as string;
 
-      const createPageTwo = await page.request.post(`/api/media/${mediaId}/pdf-highlights`, {
-        data: {
-          page_number: 2,
-          exact: pageTwoExact,
-          color: "green",
-          quads: [
-            {
-              x1: 72,
-              y1: 220 + (nonce % 30),
-              x2: 200,
-              y2: 220 + (nonce % 30),
-              x3: 200,
-              y3: 236 + (nonce % 30),
-              x4: 72,
-              y4: 236 + (nonce % 30),
-            },
-          ],
+      const createPageTwo = await page.request.post(
+        `/api/media/${mediaId}/pdf-highlights`,
+        {
+          data: {
+            page_number: 2,
+            exact: pageTwoExact,
+            color: "green",
+            quads: [
+              {
+                x1: 72,
+                y1: 220 + (nonce % 30),
+                x2: 200,
+                y2: 220 + (nonce % 30),
+                x3: 200,
+                y3: 236 + (nonce % 30),
+                x4: 72,
+                y4: 236 + (nonce % 30),
+              },
+            ],
+          },
+          headers: stateChangingApiHeaders(),
         },
-        headers: stateChangingApiHeaders(),
-      });
+      );
       expect(createPageTwo.ok()).toBe(true);
       pageTwoHighlightId = (await createPageTwo.json()).data.id as string;
       if (!pageOneHighlightId || !pageTwoHighlightId) {
-        throw new Error("Expected created PDF highlight ids for active-page scoping coverage");
+        throw new Error(
+          "Expected created PDF highlight ids for active-page scoping coverage",
+        );
       }
 
       await gotoSinglePaneWorkspace(page, deviceId, `/media/${mediaId}`);
-      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+      await expect(pageIndicator(page, 1, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
       const evidencePane = await openEvidencePane(page);
 
       const onPageRow = evidencePane.getByTestId(
@@ -557,14 +655,19 @@ test.describe("pdf reader", () => {
       await expect(offPageRow).toHaveCount(0);
 
       await clickToolbarButtonByAriaLabel(page, "Next page");
-      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({ timeout: 20_000 });
+      await expect(pageIndicator(page, 2, expectedPageCount)).toBeVisible({
+        timeout: 20_000,
+      });
       await expect(onPageRow).toHaveCount(0);
       await expect(offPageRow).toBeVisible({ timeout: 10_000 });
       await offPageRow.click();
 
       await expect
         .poll(
-          async () => page.locator(`[data-testid^="pdf-highlight-${pageTwoHighlightId}-"]`).count(),
+          async () =>
+            page
+              .locator(`[data-testid^="pdf-highlight-${pageTwoHighlightId}-"]`)
+              .count(),
           { timeout: 10_000 },
         )
         .toBeGreaterThan(0);
@@ -595,7 +698,11 @@ test.describe("pdf reader", () => {
           cleanupErrors.push(error);
         }
       }
-      throwE2eCleanupFailures("PDF active-page highlight flow", productError, cleanupErrors);
+      throwE2eCleanupFailures(
+        "PDF active-page highlight flow",
+        productError,
+        cleanupErrors,
+      );
     }
   });
 
@@ -608,7 +715,9 @@ test.describe("pdf reader", () => {
       workspaceE2eDeviceId(testInfo, "e2e-pdf-reader"),
       `/media/${seeded.password_media_id}`,
     );
-    await expect(page.getByText("This PDF is password-protected")).toBeVisible();
+    await expect(
+      page.getByText("This PDF is password-protected"),
+    ).toBeVisible();
     await expect(page.getByRole("img", { name: "PDF page" })).toHaveCount(0);
   });
 
@@ -665,7 +774,9 @@ test.describe("pdf reader", () => {
     const maxProbePage = Math.min(expectedPageCount, 30);
     for (let targetPage = 2; targetPage <= maxProbePage; targetPage += 1) {
       await page.getByRole("button", { name: /next page/i }).click();
-      await expect(pageIndicator(page, targetPage, expectedPageCount)).toBeVisible({
+      await expect(
+        pageIndicator(page, targetPage, expectedPageCount),
+      ).toBeVisible({
         timeout: 20_000,
       });
       if (fileEndpointRequests > requestsBeforeNavigation) {
@@ -674,7 +785,9 @@ test.describe("pdf reader", () => {
     }
     // Cache/proxy behavior can satisfy later page fetches without another direct
     // `/file` request, so treat request growth as optional and assert reader health.
-    expect(fileEndpointRequests).toBeGreaterThanOrEqual(requestsBeforeNavigation);
+    expect(fileEndpointRequests).toBeGreaterThanOrEqual(
+      requestsBeforeNavigation,
+    );
     await expect(page.getByRole("img", { name: "PDF page" })).toBeVisible();
   });
 
@@ -700,9 +813,15 @@ test.describe("pdf reader", () => {
       name: "PDF pages keep their source colors",
     });
     await expect(sourceColorsRow).toBeVisible();
-    await expect(sourceColorsRow).toHaveText("PDF pages keep their source colors");
+    await expect(sourceColorsRow).toHaveText(
+      "PDF pages keep their source colors",
+    );
 
-    await expect(page.getByRole("menuitem", { name: /light theme/i })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: /dark theme/i })).toHaveCount(0);
+    await expect(
+      page.getByRole("menuitem", { name: /light theme/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("menuitem", { name: /dark theme/i }),
+    ).toHaveCount(0);
   });
 });

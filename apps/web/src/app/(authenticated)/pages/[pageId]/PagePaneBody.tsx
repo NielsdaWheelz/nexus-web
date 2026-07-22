@@ -668,13 +668,15 @@ export default function PagePaneBody({
               kind: "command" as const,
               id: "daily-open-yesterday",
               label: "Open yesterday",
-              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
+              onSelect: () =>
+                void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
             },
             {
               kind: "command" as const,
               id: "daily-open-tomorrow",
               label: "Open tomorrow",
-              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
+              onSelect: () =>
+                void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
             },
           ]
         : []),
@@ -687,7 +689,8 @@ export default function PagePaneBody({
   // cacheKey is null until the page loads and confirms a dailyNote — the fetch
   // never blocks the editor or the early-return loading path.
   const dawnWriteResource = useResource<DawnWrite | null>({
-    cacheKey: dailyLocalDate && !focusBlockId ? `dawn-write:${dailyLocalDate}` : null,
+    cacheKey:
+      dailyLocalDate && !focusBlockId ? `dawn-write:${dailyLocalDate}` : null,
     load: () => fetchDawnWrite(dailyLocalDate!),
   });
   const dawnWrite =
@@ -708,40 +711,44 @@ export default function PagePaneBody({
     <>
       {dawnWrite && <DawnWriteBlock write={dawnWrite} />}
       <div className={styles.editorShell} ref={shellRef}>
-      <input
-        ref={titleInputRef}
-        className={styles.titleInput}
-        value={titleDraft}
-        onChange={onTitleChange}
-        onBlur={flushTitle}
-        aria-label="Page title"
-      />
-      <NoteDraftRecovery
-        status={saveStatus}
-        hasRecoveredDraft={hasRecoveredDraft}
-        onRetry={retrySession}
-        onDiscard={discardRecoveredDraft}
-      />
-      {feedback ? <FeedbackNotice {...feedback} /> : null}
-      <ProseMirrorOutlineEditor
-        resourceKey={renderedEditorResourceKey}
-        initialDoc={initialDoc}
-        createBlockId={createRandomId}
-        onDocChange={onEditorDocChange}
-        onBlurFlush={onEditorBlurFlush}
-        onOpenBlock={openBlock}
-        onOpenObject={openObject}
-        notePulseTarget={notePulseTarget}
-        focusRequest={bodyFocusRequest}
-        onError={(error) => {
-          if (handleUnauthenticatedApiError(error)) return;
-          setFeedback(
-            toFeedback(error, { fallback: "Attachment could not be added." }),
-          );
-        }}
-      />
-      <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />
-    </div>
+        <input
+          ref={titleInputRef}
+          className={styles.titleInput}
+          value={titleDraft}
+          onChange={onTitleChange}
+          onBlur={flushTitle}
+          aria-label="Page title"
+        />
+        <NoteDraftRecovery
+          status={saveStatus}
+          hasRecoveredDraft={hasRecoveredDraft}
+          onRetry={retrySession}
+          onDiscard={discardRecoveredDraft}
+        />
+        {feedback ? <FeedbackNotice {...feedback} /> : null}
+        <ProseMirrorOutlineEditor
+          resourceKey={renderedEditorResourceKey}
+          initialDoc={initialDoc}
+          createBlockId={createRandomId}
+          onDocChange={onEditorDocChange}
+          onBlurFlush={onEditorBlurFlush}
+          onOpenBlock={openBlock}
+          onOpenObject={openObject}
+          notePulseTarget={notePulseTarget}
+          focusRequest={bodyFocusRequest}
+          onFeedback={setFeedback}
+          onError={(error) => {
+            if (handleUnauthenticatedApiError(error)) return;
+            setFeedback(
+              toFeedback(error, { fallback: "Attachment could not be added." }),
+            );
+          }}
+        />
+        <ConnectionsSurface
+          objectRef={backlinkObjectRef}
+          onOpenRoute={openRoute}
+        />
+      </div>
     </>
   );
 }

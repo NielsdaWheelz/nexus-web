@@ -495,7 +495,9 @@ inside sanitization, storage, or extraction are recorded against media.
 
 `POST /media/upload/init` remains the durable acceptance boundary for uploaded
 file sources. It creates media and media_source_attempt intent rows before
-returning an upload URL.
+returning an upload URL. An idempotent replay may sign only the canonical upload
+staging path; once confirmation promotes the file to its media-owned path, replay
+returns current attempt/media truth with no upload URL.
 
 `POST /media/{media_id}/ingest` confirms bytes and starts the same source
 lifecycle. Confirm-time failures update the existing attempt/media instead of
@@ -634,11 +636,12 @@ Terminal failures:
 
 ## Frontend Contract
 
-### Add Content Tray
+### Add Content workbench
 
-`AddContentTray` remains a transient local queue only until backend acceptance.
-After `POST /media/from_url` returns a media ID, the durable media item is the
-source of truth.
+`useAddContentSession` owns transient source intent and outcomes; `AddPanel` is
+its presentation. After `POST /media/from_url` or upload init returns a media
+identity, the durable media item is the source of truth. The controlled
+`LibraryDestinationDisclosure` changes filing intent; it does not own ingest.
 
 Final behavior:
 
@@ -660,9 +663,9 @@ fails.
 Retry and refresh buttons call the single source retry/refresh API clients. The
 panes do not reconstruct source policy from kind-specific checks.
 
-Duplicate frontend logic to consolidate:
+Frontend ownership to keep consolidated:
 
-- `AddContentTray` URL result handling,
+- `useAddContentSession` Add acceptance/result handling,
 - `ShareCapture` URL result handling,
 - `useDocumentActions` retry/refresh mutation handling,
 - `LibraryPaneBody` retry/refresh mutation handling,
@@ -672,8 +675,9 @@ Duplicate frontend logic to consolidate:
 Final frontend owner:
 
 - one media ingest client module for from-url/capture/upload/retry/refresh,
-- one typed result formatter for source-ingest failures,
-- one bounded URL capture runner shared by Add Content and Share Capture,
+- shared typed feedback primitives with exhaustive surface-owned outcome mapping,
+- one generic bounded-task primitive used by Add; Share Capture uses its focused
+  capture helper over the same ingest client,
 - one retry/refresh action helper used by media, library, and podcast surfaces.
 
 ## Composition With Other Systems
@@ -830,8 +834,7 @@ a silent non-enqueued success.
 - `apps/web/src/lib/media/ingestionClient.ts`
   - either remains canonical or delegates to `sourceIngestClient.ts`.
 - `apps/web/src/lib/media/sourceUrlCapture.ts`
-  - shared bounded URL capture runner and saved-failed source formatter for Add
-    Content and Share Capture.
+  - Share Capture's focused source runner over the canonical ingest client.
 - `apps/web/src/lib/media/sourceActionProjection.ts`
   - shared retry/refresh result projection for media, library, and podcast
     surfaces.
@@ -839,8 +842,13 @@ a silent non-enqueued success.
   - delete; move meaningful commands into the canonical media client.
 - `apps/web/src/lib/media/useDocumentActions.ts`
   - use shared retry/refresh helper.
-- `apps/web/src/components/AddContentTray.tsx`
-  - use shared URL capture runner and source failure formatter.
+- `apps/web/src/components/launcher/AddPanel.tsx`
+  - present the lifted session; no transport or acceptance lifecycle ownership.
+- `apps/web/src/components/launcher/useAddContentSession.ts`
+  - own Add acceptance/result orchestration over the canonical ingest client and
+    generic bounded-task primitive.
+- `apps/web/src/components/LibraryDestinationDisclosure.tsx`
+  - controlled progressive disclosure for filing only.
 - `apps/web/src/app/share/ShareCapture.tsx`
   - use same runner and formatter.
 - `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`
@@ -862,7 +870,8 @@ a silent non-enqueued success.
 - `python/tests/test_media.py`
 - `python/tests/test_reconcile_stale_ingest_media.py`
 - `python/tests/test_capabilities.py`
-- `apps/web/src/__tests__/components/AddContentTray.test.tsx`
+- `apps/web/src/components/launcher/AddPanel.test.tsx`
+- `apps/web/src/components/launcher/useAddContentSession.test.tsx`
 - `apps/web/src/app/share/ShareCapture.test.tsx`
 - `apps/web/src/lib/media/ingestionClient.test.ts`
 - `apps/web/src/lib/media/retryClient.test.ts` must be deleted with
@@ -919,7 +928,7 @@ Canonical owner:
 
 ### Frontend Capture and Retry
 
-Current repeated pattern:
+Pre-cutover repeated pattern:
 
 - Add Content and Share Capture run parallel URL saves independently,
 - media/library/podcast panes each perform retry/refresh API calls and local
@@ -929,8 +938,9 @@ Current repeated pattern:
 Canonical owner:
 
 - one source ingest client,
-- one source failure formatter,
-- one bounded URL runner,
+- shared typed feedback primitives with exhaustive surface-owned outcome mapping,
+- one generic bounded-task primitive for the Add session; one focused Share
+  capture runner over the same ingest client,
 - one retry/refresh action helper.
 
 ## Implementation Phases
@@ -1027,7 +1037,9 @@ no-op test adapter end to end.
 
 ### Frontend
 
-- Add Content and Share Capture use one URL capture runner.
+- Add Content and Share Capture use the same ingest client and acceptance truth;
+  Add orchestration lives in `useAddContentSession`, while Share uses its focused
+  capture runner.
 - Backend-accepted failed ingest is not shown as "lost"; the media item can be
   opened later.
 - Retry buttons call the shared source retry client.
@@ -1082,13 +1094,15 @@ Targeted frontend:
 ```sh
 cd apps/web
 bun run test:unit -- \
-  src/__tests__/components/AddContentTray.test.tsx \
+  src/components/launcher/addContentSessionModel.test.ts \
+  src/components/launcher/useAddContentSession.test.tsx \
   src/app/share/ShareCapture.test.tsx \
   src/lib/media/ingestionClient.test.ts \
   src/lib/media/sourceActionProjection.test.ts \
   src/lib/actions/resourceActions.test.ts
 bun run test:browser -- \
-  src/__tests__/components/AddContentTray.test.tsx \
+  src/components/launcher/AddPanel.test.tsx \
+  src/components/launcher/useAddContentSession.test.tsx \
   src/app/share/ShareCapture.test.tsx
 bun run typecheck
 ```

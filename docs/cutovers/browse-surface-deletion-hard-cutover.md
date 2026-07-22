@@ -37,17 +37,17 @@ Selecting it **closes the Launcher and opens a second surface** for the same que
 
 ### 1.3 Concrete dependents (grep-verified)
 
-| Area | File / symbol | Browse ref |
-|---|---|---|
-| Pane route model | `lib/panes/paneRouteModel.ts:36,146-152` | `"browse"` in `PaneRouteId`; route entry |
-| Pane route table | `lib/panes/paneRouteTable.ts:95-101` | `browse` chrome entry |
-| Pane render registry | `lib/panes/paneRenderRegistry.tsx:21` | lazy `BrowsePaneBody` loader |
-| Destination registry | `lib/navigation/destinations.ts:43-47` | `{ id: "browse", href: "/browse", slot: "primary" }` |
-| Launcher providers | `lib/launcher/providers.ts:391` | `browseWebItem` href target `/browse?q=...` |
-| Podcasts pane | `app/(authenticated)/podcasts/PodcastsPaneBody.tsx:610,650` | `openInNewPane?.("/browse?types=podcasts")` |
-| Keybindings UI | `app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx:30` | `{ id: "browse", label: "Go to Browse" }` |
-| Config validator | `python/nexus/config.py:655-663` | dead `x_api_bearer_token` browse-provider check |
-| Tests | Multiple (§9 below) | |
+| Area                 | File / symbol                                                         | Browse ref                                           |
+| -------------------- | --------------------------------------------------------------------- | ---------------------------------------------------- |
+| Pane route model     | `lib/panes/paneRouteModel.ts:36,146-152`                              | `"browse"` in `PaneRouteId`; route entry             |
+| Pane route table     | `lib/panes/paneRouteTable.ts:95-101`                                  | `browse` chrome entry                                |
+| Pane render registry | `lib/panes/paneRenderRegistry.tsx:21`                                 | lazy `BrowsePaneBody` loader                         |
+| Destination registry | `lib/navigation/destinations.ts:43-47`                                | `{ id: "browse", href: "/browse", slot: "primary" }` |
+| Launcher providers   | `lib/launcher/providers.ts:391`                                       | `browseWebItem` href target `/browse?q=...`          |
+| Podcasts pane        | `app/(authenticated)/podcasts/PodcastsPaneBody.tsx:610,650`           | `openInNewPane?.("/browse?types=podcasts")`          |
+| Keybindings UI       | `app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx:30` | `{ id: "browse", label: "Go to Browse" }`            |
+| Config validator     | `python/nexus/config.py:655-663`                                      | dead `x_api_bearer_token` browse-provider check      |
+| Tests                | Multiple (§9 below)                                                   |                                                      |
 
 ---
 
@@ -87,17 +87,17 @@ Selecting it **closes the Launcher and opens a second surface** for the same que
 
 ### 4.1 Browse capability ownership after cutover
 
-| Capability | Before | After |
-|---|---|---|
-| External document search (Gutenberg + Nexus) | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only |
-| Video search (YouTube) | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only |
-| Podcast / episode search | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only |
-| Web search | Launcher `browse` lane only | Launcher `browse` lane only (unchanged) |
-| Backend provider (`services/browse.py`) | Serves page + Launcher | Serves Launcher only |
-| BFF proxy (`/api/browse`) | Serves page + Launcher | Serves Launcher only |
-| Nav rail entry | `BROWSE` slot | Removed |
-| Keybinding `browse` | "Go to Browse" (opens pane) | Removed |
-| `/browse` URL | Pane render | 308 → `/?launcher=1&lane=browse` |
+| Capability                                   | Before                                  | After                                   |
+| -------------------------------------------- | --------------------------------------- | --------------------------------------- |
+| External document search (Gutenberg + Nexus) | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only             |
+| Video search (YouTube)                       | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only             |
+| Podcast / episode search                     | `/browse` pane + Launcher `browse` lane | Launcher `browse` lane only             |
+| Web search                                   | Launcher `browse` lane only             | Launcher `browse` lane only (unchanged) |
+| Backend provider (`services/browse.py`)      | Serves page + Launcher                  | Serves Launcher only                    |
+| BFF proxy (`/api/browse`)                    | Serves page + Launcher                  | Serves Launcher only                    |
+| Nav rail entry                               | `BROWSE` slot                           | Removed                                 |
+| Keybinding `browse`                          | "Go to Browse" (opens pane)             | Removed                                 |
+| `/browse` URL                                | Pane render                             | 308 → `/?launcher=1&lane=browse`        |
 
 ### 4.2 New `set-lane` target
 
@@ -137,10 +137,19 @@ Extend `useLauncherController`'s URL-param trigger:
 
 ```ts
 const laneParam = params.get("lane");
-const validLanes: LauncherLane[] = ["all", "open", "search", "browse", "add", "create", "ask", "go"];
-const seedLane = laneParam && (validLanes as string[]).includes(laneParam)
-  ? (laneParam as LauncherLane)
-  : null;
+const validLanes: LauncherLane[] = [
+  "all",
+  "open",
+  "search",
+  "browse",
+  "create",
+  "ask",
+  "go",
+];
+const seedLane =
+  laneParam && (validLanes as string[]).includes(laneParam)
+    ? (laneParam as LauncherLane)
+    : null;
 if (seedLane && seedLane !== "all") setLaneOverride(seedLane);
 params.delete("lane");
 ```
@@ -160,9 +169,8 @@ export default async function BrowsePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const q = typeof params.q === "string" && params.q.trim()
-    ? params.q.trim()
-    : null;
+  const q =
+    typeof params.q === "string" && params.q.trim() ? params.q.trim() : null;
   const dest = q
     ? `/?launcher=1&lane=browse&q=${encodeURIComponent(q)}`
     : "/?launcher=1&lane=browse";
@@ -207,42 +215,42 @@ None. No schema change, no migration file.
 
 ### 7.3 Files modified
 
-| File | Change |
-|---|---|
-| `app/(authenticated)/browse/page.tsx` | Replace stub `return null` with `permanentRedirect` (§4.5) |
-| `lib/navigation/destinations.ts` | Remove the `browse` entry (id/href/slot/keywords); NAV_MODEL auto-updates |
-| `lib/panes/paneRouteModel.ts` | Remove `"browse"` from `PaneRouteId` union; remove from `PANE_ROUTE_MODELS` |
-| `lib/panes/paneRouteTable.ts` | Remove `browse` entry from the table |
-| `lib/panes/paneRenderRegistry.tsx` | Remove `browse` from `PANE_LOADERS` |
-| `lib/panes/paneResourceLoaders.ts` | Remove `"browse /"` from the comment on line 40 listing query-driven pane routes excluded from prefetching |
-| `lib/launcher/model.ts` | Add `set-lane` target variant; update `BrowseResult` import path |
-| `lib/launcher/dispatch.ts` | Add `case "set-lane": return;` (exhaustive; never reached) |
-| `lib/launcher/providers.ts` | `browseWebItem`: change target to `set-lane`; update import path |
-| `components/launcher/useLauncherController.ts` | `select()`: handle `set-lane`; URL-param lane seed (§4.4); update import paths |
-| `app/(authenticated)/podcasts/PodcastsPaneBody.tsx` | Two `openInNewPane?.("/browse?types=podcasts")` calls → `dispatchOpenLauncher({ lane: "browse" })` |
-| `app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx` | Remove `{ id: "browse", label: "Go to Browse" }` from `BINDABLE_ACTIONS` |
-| `python/nexus/config.py` | Remove `x_api_bearer_token` check from browse validator block |
+| File                                                               | Change                                                                                                     |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `app/(authenticated)/browse/page.tsx`                              | Replace stub `return null` with `permanentRedirect` (§4.5)                                                 |
+| `lib/navigation/destinations.ts`                                   | Remove the `browse` entry (id/href/slot/keywords); NAV_MODEL auto-updates                                  |
+| `lib/panes/paneRouteModel.ts`                                      | Remove `"browse"` from `PaneRouteId` union; remove from `PANE_ROUTE_MODELS`                                |
+| `lib/panes/paneRouteTable.ts`                                      | Remove `browse` entry from the table                                                                       |
+| `lib/panes/paneRenderRegistry.tsx`                                 | Remove `browse` from `PANE_LOADERS`                                                                        |
+| `lib/panes/paneResourceLoaders.ts`                                 | Remove `"browse /"` from the comment on line 40 listing query-driven pane routes excluded from prefetching |
+| `lib/launcher/model.ts`                                            | Add `set-lane` target variant; update `BrowseResult` import path                                           |
+| `lib/launcher/dispatch.ts`                                         | Add `case "set-lane": return;` (exhaustive; never reached)                                                 |
+| `lib/launcher/providers.ts`                                        | `browseWebItem`: change target to `set-lane`; update import path                                           |
+| `components/launcher/useLauncherController.ts`                     | `select()`: handle `set-lane`; URL-param lane seed (§4.4); update import paths                             |
+| `app/(authenticated)/podcasts/PodcastsPaneBody.tsx`                | Two `openInNewPane?.("/browse?types=podcasts")` calls → `dispatchOpenLauncher({ lane: "browse" })`         |
+| `app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx` | Remove `{ id: "browse", label: "Go to Browse" }` from `BINDABLE_ACTIONS`                                   |
+| `python/nexus/config.py`                                           | Remove `x_api_bearer_token` check from browse validator block                                              |
 
 ### 7.4 Test files modified (not deleted)
 
-| File | Change |
-|---|---|
-| `lib/panes/paneRouteTable.test.tsx` | Remove `"/browse"` from the href list (line 126) |
-| `lib/panes/paneResourceLocator.test.ts` | Remove `"/browse"` from non-resource-route list (line 73) |
-| `lib/panes/paneWarmIntegration.test.tsx` | Remove `{ href: "/browse", id: "browse" }` entry (line 168) |
-| `lib/workspace/workspaceRestore.test.ts` | Replace `/browse` history fixtures with another valid pane href |
-| `e2e/tests/authenticated-shell-ac4.spec.ts` | Replace `/browse` pane history fixture (line 156) |
-| `components/appnav/navActive.test.ts` | Remove browse-exact match assertion (lines 19-21) |
-| `components/appnav/AppNav.test.tsx` | Remove browse active-pane test (around line 109) |
-| `lib/launcher/launcherCutover.guards.test.ts` | Remove `"/browse"` from the `hrefs` array (line 98) — it is no longer a destination |
-| `lib/launcher/providers.test.ts` | S0: update import from `@/app/(authenticated)/browse/browseState` to `@/lib/browse/types`; S1: update "browse-web" test to assert `set-lane` target, not an href |
-| `lib/auth/callback.test.ts` | Auth fixture uses `/browse` as a next-param URL — stays valid (auth guard fires before the redirect, middleware captures the signal) |
-| `lib/auth/client-return-target.test.ts` | Same — stays valid |
-| `app/sign-up/page.test.ts` | Same — stays valid |
-| `e2e/tests/auth.spec.ts` | Update the GitHub OAuth round-trip test (lines 115-117): replace `expect(page).toHaveURL(/\/browse/)` with `expect(page).toHaveURL(/lane=browse/)` — Playwright follows the 308 to `/?launcher=1&lane=browse` and the old pattern no longer matches. The unauthenticated-access test (lines 84-100) is unaffected (middleware redirects before routing). |
-| `e2e/tests/workspace-tabs.spec.ts` | Replace `/browse` pane history fixture (line 156) with a valid pane href (e.g. `"/notes"`) |
-| `e2e/tests/workspace.ts` | Update `EXPLICIT_FALLBACK_HISTORY` (line 19): replace `"/browse"` with a valid pane href (e.g. `"/notes"`) — this constant seeds the back-stack for every `gotoSinglePaneWorkspace("/libraries", …)` call across multiple e2e suites |
-| `lib/ui/paneSurfaceCutover.guards.test.ts` | Remove the browse pane-body assertions (source file path + specific function checks at lines 15 and 99-110) |
+| File                                          | Change                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/panes/paneRouteTable.test.tsx`           | Remove `"/browse"` from the href list (line 126)                                                                                                                                                                                                                                                                                                         |
+| `lib/panes/paneResourceLocator.test.ts`       | Remove `"/browse"` from non-resource-route list (line 73)                                                                                                                                                                                                                                                                                                |
+| `lib/panes/paneWarmIntegration.test.tsx`      | Remove `{ href: "/browse", id: "browse" }` entry (line 168)                                                                                                                                                                                                                                                                                              |
+| `lib/workspace/workspaceRestore.test.ts`      | Replace `/browse` history fixtures with another valid pane href                                                                                                                                                                                                                                                                                          |
+| `e2e/tests/authenticated-shell-ac4.spec.ts`   | Replace `/browse` pane history fixture (line 156)                                                                                                                                                                                                                                                                                                        |
+| `components/appnav/navActive.test.ts`         | Remove browse-exact match assertion (lines 19-21)                                                                                                                                                                                                                                                                                                        |
+| `components/appnav/AppNav.test.tsx`           | Remove browse active-pane test (around line 109)                                                                                                                                                                                                                                                                                                         |
+| `lib/launcher/launcherCutover.guards.test.ts` | Remove `"/browse"` from the `hrefs` array (line 98) — it is no longer a destination                                                                                                                                                                                                                                                                      |
+| `lib/launcher/providers.test.ts`              | S0: update import from `@/app/(authenticated)/browse/browseState` to `@/lib/browse/types`; S1: update "browse-web" test to assert `set-lane` target, not an href                                                                                                                                                                                         |
+| `lib/auth/callback.test.ts`                   | Auth fixture uses `/browse` as a next-param URL — stays valid (auth guard fires before the redirect, middleware captures the signal)                                                                                                                                                                                                                     |
+| `lib/auth/client-return-target.test.ts`       | Same — stays valid                                                                                                                                                                                                                                                                                                                                       |
+| `app/sign-up/page.test.ts`                    | Same — stays valid                                                                                                                                                                                                                                                                                                                                       |
+| `e2e/tests/auth.spec.ts`                      | Update the GitHub OAuth round-trip test (lines 115-117): replace `expect(page).toHaveURL(/\/browse/)` with `expect(page).toHaveURL(/lane=browse/)` — Playwright follows the 308 to `/?launcher=1&lane=browse` and the old pattern no longer matches. The unauthenticated-access test (lines 84-100) is unaffected (middleware redirects before routing). |
+| `e2e/tests/workspace-tabs.spec.ts`            | Replace `/browse` pane history fixture (line 156) with a valid pane href (e.g. `"/notes"`)                                                                                                                                                                                                                                                               |
+| `e2e/tests/workspace.ts`                      | Update `EXPLICIT_FALLBACK_HISTORY` (line 19): replace `"/browse"` with a valid pane href (e.g. `"/notes"`) — this constant seeds the back-stack for every `gotoSinglePaneWorkspace("/libraries", …)` call across multiple e2e suites                                                                                                                     |
+| `lib/ui/paneSurfaceCutover.guards.test.ts`    | Remove the browse pane-body assertions (source file path + specific function checks at lines 15 and 99-110)                                                                                                                                                                                                                                              |
 
 ---
 
@@ -388,9 +396,11 @@ if grep -n "x_api_bearer_token" python/nexus/config.py | grep -i "browse"; then
 ## 15. Files touched/created/deleted
 
 **Created:**
+
 - `apps/web/src/lib/browse/types.ts`
 
 **Modified:**
+
 - `apps/web/src/app/(authenticated)/browse/page.tsx` (redirect)
 - `apps/web/src/lib/navigation/destinations.ts`
 - `apps/web/src/lib/panes/paneRouteModel.ts`
@@ -408,6 +418,7 @@ if grep -n "x_api_bearer_token" python/nexus/config.py | grep -i "browse"; then
 - Multiple test files (§7.4)
 
 **Deleted:**
+
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.test.tsx`
 - `apps/web/src/app/(authenticated)/browse/browseState.ts`

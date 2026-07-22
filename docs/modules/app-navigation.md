@@ -24,21 +24,27 @@ destination list. Search, Authors, settings subpages, and other valid
 destinations remain available through the Launcher and keybindings without
 becoming permanent rail items.
 
+Add is a direct Launcher detail, not a Launcher lane or mode chooser. The `+`
+opens the source-first Add workbench immediately; an editable non-default
+Library may seed its full destination object, while general Add/My Library seed
+no non-default destination.
+
 ## Ownership
 
-| Concern | Owner |
-|---|---|
-| Authenticated home href | `apps/web/src/lib/routes/defaults.ts` |
-| Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts` |
-| Fixed-nav membership, order, and decoration | `apps/web/src/components/appnav/navModel.ts` |
-| Route-to-semantic-section ownership | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
-| Rail/sheet projection and pane dispatch | `apps/web/src/components/appnav/AppNav.tsx` |
-| Plain-click interception policy | `apps/web/src/components/appnav/navActivation.ts` |
-| Pane reuse, restoration, and activation | `openPane` in `apps/web/src/lib/workspace/store.tsx` |
-| Server-restored deep-link merge | `apps/web/src/lib/workspace/workspaceRestore.ts` |
-| Launcher projection | `apps/web/src/lib/launcher/providers.ts` |
-| Keybinding projection | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx` |
-| Palette-history href allowlist | `python/nexus/services/command_palette.py` |
+| Concern                                                           | Owner                                                                                                             |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
+| Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
+| Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
+| Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
+| Rail/sheet projection and pane dispatch                           | `apps/web/src/components/appnav/AppNav.tsx`                                                                       |
+| Plain-click interception policy                                   | `apps/web/src/components/appnav/navActivation.ts`                                                                 |
+| Pane reuse, restoration, and activation                           | `openPane` in `apps/web/src/lib/workspace/store.tsx`                                                              |
+| Server-restored deep-link merge                                   | `apps/web/src/lib/workspace/workspaceRestore.ts`                                                                  |
+| Launcher projection                                               | `apps/web/src/lib/launcher/providers.ts`                                                                          |
+| Direct Add intent/session                                         | `apps/web/src/lib/launcher/launcherEvents.ts` and `apps/web/src/components/launcher/useAddContentSession.ts`      |
+| Keybinding projection                                             | `apps/web/src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx`                                   |
+| Palette-history href allowlist                                    | `python/nexus/services/command_palette.py`                                                                        |
 
 The separations are deliberate. A destination can exist without occupying
 fixed navigation; a pane route can identify its owning section without

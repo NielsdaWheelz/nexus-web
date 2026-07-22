@@ -90,8 +90,8 @@ Scrim is a two-value semantic choice:
 
 - `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
   secondary surfaces, model settings
-- `default` (`--overlay-scrim`): app-level modals — Add Content tray, expanded
-  player, palette
+- `default` (`--overlay-scrim`): app-level modals — Launcher (including its Add
+  workbench), expanded player
 
 ## Out Of Family
 

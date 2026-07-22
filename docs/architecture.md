@@ -127,15 +127,15 @@ the BFF. See [`rules/layers.md`](rules/layers.md) and
 
 There are **four runtime processes** plus managed dependencies.
 
-| Process | Code | Hosted | Role |
-|---|---|---|---|
-| Next.js frontend + BFF | `apps/web` | **Vercel** (Git-triggered) | React UI + `/api/*` proxy to FastAPI |
-| FastAPI API | `apps/api/main.py` → `python/nexus` | **Hetzner VPS** (Docker Compose) | product API, SSE streaming |
-| Worker | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS** | background jobs from `background_jobs` |
-| PostgreSQL (pgvector) | — | **same Hetzner VPS** | the single source of truth |
+| Process                | Code                                                  | Hosted                           | Role                                   |
+| ---------------------- | ----------------------------------------------------- | -------------------------------- | -------------------------------------- |
+| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (Git-triggered)       | React UI + `/api/*` proxy to FastAPI   |
+| FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming             |
+| Worker                 | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | background jobs from `background_jobs` |
+| PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth             |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
-(hosted Auth only — JWT issuance/JWKS/OAuth; *no* Supabase Database or Storage),
+(hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
 and the LLM/search/podcast/billing providers above. **Caddy** terminates TLS in
 front of the API; the frontend is served by Vercel.
 
@@ -170,14 +170,14 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 
 ## 4. Architectural principles (the constitution)
 
-These are the load-bearing rules that explain *why* the code looks the way it
+These are the load-bearing rules that explain _why_ the code looks the way it
 does. Full normative text lives in [`rules/`](rules/index.md); this is the
 orientation summary.
 
 **Layering & ownership** ([`rules/layers.md`](rules/layers.md),
 [`rules/codebase.md`](rules/codebase.md), [`rules/cleanliness.md`](rules/cleanliness.md)).
 Top to bottom: Next middleware (network-free session classification + CSP) →
-Data Access Layer (`apps/web/src/lib/auth/dal.ts`, the *only* verified-session
+Data Access Layer (`apps/web/src/lib/auth/dal.ts`, the _only_ verified-session
 authorization boundary) → Next `/api/*` routes (dumb proxy, no business logic) →
 FastAPI middleware (JWT verify, request-id, viewer injection) → FastAPI route
 handlers (validate input, call one service, shape the response) → **services**
@@ -187,8 +187,8 @@ dependencies passed as explicit parameters never globals) → models
 side effects only in entrypoints.
 
 **Error vs defect** ([`rules/errors.md`](rules/errors.md),
-[`rules/correctness.md`](rules/correctness.md)). *Errors* are expected, modelled
-failures with typed codes. *Defects* are broken invariants ("should never
+[`rules/correctness.md`](rules/correctness.md)). _Errors_ are expected, modelled
+failures with typed codes. _Defects_ are broken invariants ("should never
 happen") — they are **never** turned into UI states, retryable branches, or
 persisted status fields; observing one in production triggers a code change. No
 `T | null`/`Optional` in service APIs to represent classifiable absence — classify
@@ -199,7 +199,7 @@ Branch exhaustively on finite value sets (`assert_never`); no bare
 **Transport is a dumb pipe** ([`rules/modules/transport.md`](rules/modules/transport.md)).
 Application work that must survive a disconnect is decoupled from the transport —
 which is exactly why a chat answer is a durable `ChatRun` executed by the worker
-and merely *tailed* over SSE, not driven by the HTTP connection.
+and merely _tailed_ over SSE, not driven by the HTTP connection.
 
 **Database** ([`rules/database.md`](rules/database.md)). UUID `id` PKs (never
 exposed to users), `timestamptz` with `now()` defaults, right-open `[start, end)`
@@ -240,8 +240,8 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    product reads/writes go to **same-origin** `/api/*`; GETs are de-duplicated
    in-flight; a `401 E_UNAUTHENTICATED` hard-redirects to `/login`.
 2. **Next middleware** (`middleware.ts` → `lib/supabase/middleware.ts`) attaches a
-   per-request CSP nonce and classifies the Supabase session cookie *without any
-   network I/O* into `active | refreshable | ended | anonymous`. `/api/*` is
+   per-request CSP nonce and classifies the Supabase session cookie _without any
+   network I/O_ into `active | refreshable | ended | anonymous`. `/api/*` is
    passed straight through — the proxy owns its own auth.
 3. The `/api/*` **route handler** is a one-liner: `return proxyToFastAPI(req, "<path>")`.
 4. **`proxyToFastAPI`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
@@ -488,12 +488,12 @@ timeouts) and wakes the SSE tail. The committed row — not the notification —
 the source of truth; a missed/coalesced NOTIFY only delays an update by the idle
 keepalive, never drops it.
 
-| Channel | Producer | Consumer |
-|---|---|---|
-| `chat_run_events` | insert on `chat_run_events` | chat SSE tail |
-| `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail |
-| `media_events` | update on `media` | media-status SSE |
-| `nexus_background_jobs` | enqueue in `jobs/queue.py` | worker wake-up |
+| Channel                 | Producer                          | Consumer         |
+| ----------------------- | --------------------------------- | ---------------- |
+| `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
+| `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
+| `media_events`          | update on `media`                 | media-status SSE |
+| `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
 ### 7.3 Background jobs & the worker
 
@@ -503,13 +503,13 @@ inserting a `background_jobs` row + `pg_notify` **in the caller's transaction**
 runs two loops:
 
 - **Job loop**: `claim_next_job` atomically picks one due row with
-  `FOR UPDATE SKIP LOCKED` (new work *or* a crashed job whose lease expired),
+  `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
   flips it to `running` with a lease, dispatches to the registered handler under a
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
   dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
-	  writes an errored assistant message, and `note_reindex_job` marks the note's
-	  content index `failed`.
+  writes an errored assistant message, and `note_reindex_job` marks the note's
+  content index `failed`.
 - **Scheduler loop**: enqueues periodic jobs into fixed time slots with
   deterministic dedupe keys, so exactly one job per slot survives across workers.
 
@@ -526,7 +526,7 @@ startup in CI and a user-facing kind can never be stranded unallowlisted (the
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `library_intelligence_artifact_generate`,
-	`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
+`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
@@ -541,7 +541,7 @@ lane's observed role slice, so duplicate identity is prevented at write time
 rather than proposed and reconciled after the fact.
 
 > Gotcha: only `enrich_metadata` and `media_unit_build` declare
-> `failed_result_statuses`. Other ingest tasks that *return* `{"status":"failed"}`
+> `failed_result_statuses`. Other ingest tasks that _return_ `{"status":"failed"}`
 > still mark the **queue** row succeeded — the failure is recorded on the domain
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
@@ -573,6 +573,7 @@ Visibility is enforced by boolean predicates (`auth/permissions.py`) that take a
 explicit session and never leak existence (not-found == not-visible).
 
 Other identity surfaces:
+
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
   HS256, ~60s, single-use, for SSE.
 - **Extension sessions** (`services/extension_sessions.py`): opaque
@@ -589,7 +590,7 @@ Other identity surfaces:
   (PyNaCl `SecretBox`) under `NEXUS_KEY_ENCRYPTION_KEY`; only a 4-char fingerprint
   is exposed. Status lifecycle `untested → valid → invalid → revoked` (revoke
   wipes ciphertext, keeps fingerprint for audit). `key_mode ∈ {auto, byok_only,
-  platform_only}` chooses BYOK-first vs platform; platform use is gated by
+platform_only}` chooses BYOK-first vs platform; platform use is gated by
   entitlements.
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
@@ -624,8 +625,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `content_index_states(owner_kind, owner_id)` with the active embedding
   provider/model; rebuilds replace current blocks, chunks, spans, and embeddings
   for the owner.
-- **Retrieval** is hybrid — and hybrid is an *invariant*, not a per-request toggle:
-  a vector ANN arm (cosine over pgvector, joined on the *active* embedding config)
+- **Retrieval** is hybrid — and hybrid is an _invariant_, not a per-request toggle:
+  a vector ANN arm (cosine over pgvector, joined on the _active_ embedding config)
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
@@ -834,12 +835,12 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 `services/chat_runs.py` + the `chat_run_*` modules + `context_assembler.py`.
 
 - **Conversation = message tree.** Each "send" creates a user message plus a
-  *pending assistant* message; replying under an existing assistant forks a
+  _pending assistant_ message; replying under an existing assistant forks a
   **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
   history assembly only includes messages on the current path, so sibling branches
   never leak into context.
 - **One send = one durable `ChatRun`.** HTTP never calls the provider. `POST
-  /chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
+/chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
   hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
   executes: assemble context → stream provider tokens + run tools (up to 8 tool
   iterations) → append events → finalize. The client merely tails `chat_run_events`
@@ -929,13 +930,13 @@ predicates in `auth/permissions.py`; the search/object readers read
   "All" query**, not a materialized or backfilled set. It has no closure,
   intrinsic, or snapshot table and no backfill worker: `GET` against the
   default library computes, at read time, the distinct media reachable
-  through any of the viewer's *current* non-system memberships (their own
+  through any of the viewer's _current_ non-system memberships (their own
   default-library entries plus every non-system library they belong to),
   deduplicated by `media_id` — a direct default entry wins the tie, else the
   earliest entry. Losing a membership (leave, be removed, library deleted)
   removes that library's contribution on the next read with no separate
   cleanup step. Filing media into the default library directly — the one
-  actor-authorized filing command in `library_entries.add_media_to_library`
+  actor-authorized filing command in `library_entries.ensure_media_in_library`
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
@@ -1004,8 +1005,8 @@ item body/title/version/mutation and ordered-adjacency services. Inline
 `object_ref`/`object_embed` nodes sync into `resource_edges` with
 `origin='note_body'` (`replace_edges_for_origin` keeps the block's edge set in
 step with its body); a note attached to a highlight is itself a `note_block`
-	linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
-	`note_block` content owners via `note_indexing.enqueue_note_reindex`.
+linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
+`note_block` content owners via `note_indexing.enqueue_note_reindex`.
 Frontend: `components/notes/ProseMirrorOutlineEditor.tsx` +
 `lib/notes/prosemirror/*`.
 
@@ -1089,12 +1090,12 @@ The web app (`apps/web`, Next.js 15 App Router) has one structural idea you must
 internalize first:
 
 **Routing is a client-side pane system, not Next.js `children`.** The
-`(authenticated)` layout renders a fixed `AuthenticatedShell` and *ignores*
+`(authenticated)` layout renders a fixed `AuthenticatedShell` and _ignores_
 `children`. Each route's `page.tsx` exists only so Next resolves the URL; the
 actual body is a `*PaneBody` component that the **pane route registry**
 (`lib/panes/paneRouteModel.ts`, `lib/panes/paneRouteTable.ts`, and
 `lib/panes/paneRenderRegistry.tsx`) resolves and renders inside a pane. The URL
-is a *projection* of the active pane (mirrored via `history.replaceState`), not
+is a _projection_ of the active pane (mirrored via `history.replaceState`), not
 the driver. New devs frequently look in `page.tsx` for behavior that lives in
 `*PaneBody.tsx`.
 
@@ -1285,21 +1286,21 @@ raw SQL. Every backend test is marked (`unit`/`integration`/`slow`/`supabase`).
 
 Tiers:
 
-| Tier | Scope | Real vs mocked | Command |
-|---|---|---|---|
-| Static | ruff/pyright/eslint/tsc/actionlint | — | `make check` |
-| Backend unit | pure logic | no I/O, no mocks | `make test-back-unit` |
-| Frontend unit | pure TS | Node env | `make test-front-unit` |
-| Component | React in real Chromium | only `next/image` shim | `make test-front-browser` |
-| Backend integration | FastAPI + real Postgres | external boundaries mockable | `make test-back-integration` |
-| Migrations | Alembic up/down | dedicated DB | `make test-migrations` |
-| E2E env preflight | Supabase env resolver contract | no services | `make test-e2e-env` |
-| E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
-| Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
-| Live-providers | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |
+| Tier                | Scope                                                                                                                 | Real vs mocked                                                   | Command                      |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------- |
+| Static              | ruff/pyright/eslint/tsc/actionlint                                                                                    | —                                                                | `make check`                 |
+| Backend unit        | pure logic                                                                                                            | no I/O, no mocks                                                 | `make test-back-unit`        |
+| Frontend unit       | pure TS                                                                                                               | Node env                                                         | `make test-front-unit`       |
+| Component           | React in real Chromium                                                                                                | only `next/image` shim                                           | `make test-front-browser`    |
+| Backend integration | FastAPI + real Postgres                                                                                               | external boundaries mockable                                     | `make test-back-integration` |
+| Migrations          | Alembic up/down                                                                                                       | dedicated DB                                                     | `make test-migrations`       |
+| E2E env preflight   | Supabase env resolver contract                                                                                        | no services                                                      | `make test-e2e-env`          |
+| E2E (default)       | user journeys, prod-built web, no-reload API                                                                          | full real stack, fixture providers                               | `make test-e2e`              |
+| Real-media          | ingest/search/chat acceptance                                                                                         | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media`       |
+| Live-providers      | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external                                                    | `make test-live-providers`   |
 
 The **real-media vs live-providers** split is the determinism boundary:
-real-media runs real product code but swaps the *external provider edge* for
+real-media runs real product code but swaps the _external provider edge_ for
 deterministic fixtures (`services/real_media_fixture_llm.py`); an AST scan
 (`tests/real_media/test_no_internal_mocks.py`) mechanically forbids internal mocks
 in that tier. Backend harness: `python/tests/conftest.py` (two DB-isolation models),
@@ -1325,7 +1326,7 @@ The things most likely to bite you, distilled:
    ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
    and processing transitions have named owners.
 5. **`ready_for_reading` is the document success terminal**; search/embedding
-   readiness is a *separate* state machine. Source-attempt retry and metadata
+   readiness is a _separate_ state machine. Source-attempt retry and metadata
    retry are user-visible retry capabilities; `source` is not a `failure_stage`.
 6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
@@ -1335,17 +1336,17 @@ The things most likely to bite you, distilled:
 8. **Active conversation path is per-viewer**; only path messages enter context.
 9. **Citation `[N]` is a dense, turn-global ordinal carried on an
    `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
-`message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
-attached-reference citation regression came from breaking this density.
+   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+   attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
-   when assistant messages are read from chat runs, prompt assemblies, tool calls,
-   retrieval ledgers, citation edges, and context-ref-added events. Message
-   documents remain text-only.
+    when assistant messages are read from chat runs, prompt assemblies, tool calls,
+    retrieval ledgers, citation edges, and context-ref-added events. Message
+    documents remain text-only.
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
-   `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the
-   reconciler + manual retry.
+    `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
+    reconciler + manual retry.
 12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
-   (storage) effects after the DB commit.
+    (storage) effects after the DB commit.
 13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
     provider/model rows. A model change requires rebuilding current embeddings
     before semantic search should depend on them.
@@ -1358,34 +1359,34 @@ attached-reference citation regression came from breaking this density.
 
 ## 14. Where to look (file index)
 
-| You want… | Start at |
-|---|---|
-| Repository rules / boundaries | [`rules/index.md`](rules/index.md) |
-| Reader behavior contract | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md) |
-| FastAPI bootstrap / middleware / lifecycle | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/` |
-| DB layer / sessions / LISTEN-NOTIFY | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`) |
-| The schema | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`) |
-| Background jobs / worker | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/` |
-| Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
-| Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
-| Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
-| Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py` |
-| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
-| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
-| Agent tools | `python/nexus/services/agent_tools/` |
-| Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py` |
-| Podcasts / playback | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py` |
-| Auth / billing / keys / rate limit | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/` |
-| Frontend BFF / auth / SSE | `apps/web/src/lib/{api,auth,supabase}/` |
-| Workspace / panes | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/` |
-| Reader / chat / player UI | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/` |
-| Android shell | `apps/android/app/src/main/` |
-| Browser extension | `apps/extension/` |
-| Build / run / deploy | `Makefile`, `deployment.md`, `deploy/` |
-| Tests | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts` |
+| You want…                                            | Start at                                                                                                                                                                                               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository rules / boundaries                        | [`rules/index.md`](rules/index.md)                                                                                                                                                                     |
+| Reader behavior contract                             | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
+| FastAPI bootstrap / middleware / lifecycle           | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
+| DB layer / sessions / LISTEN-NOTIFY                  | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
+| The schema                                           | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
+| Background jobs / worker                             | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
+| Media catalog and ingest owners                      | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Reader/highlights backend                            | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py`                                                                                                                            |
+| Chat / conversations                                 | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
+| Oracle                                               | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
+| Search / retrieval / indexing                        | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`                                                                                                                |
+| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`)                                                                                 |
+| Agent tools                                          | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
+| Libraries / contributors / notes                     | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
+| Podcasts / playback                                  | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
+| Auth / billing / keys / rate limit                   | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
+| Frontend BFF / auth / SSE                            | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
+| Workspace / panes                                    | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/`                                                                                                                            |
+| Reader / chat / player UI                            | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
+| Android shell                                        | `apps/android/app/src/main/`                                                                                                                                                                           |
+| Browser extension                                    | `apps/extension/`                                                                                                                                                                                      |
+| Build / run / deploy                                 | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
+| Tests                                                | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts`                                                                                                          |
 
 ---
 
-*This document is an overview maintained alongside the code. When a slice's
+_This document is an overview maintained alongside the code. When a slice's
 behavior changes materially, update the relevant section here and the canonical
-rule/module doc it links to.*
+rule/module doc it links to._

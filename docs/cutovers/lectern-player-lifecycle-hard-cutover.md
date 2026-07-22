@@ -47,18 +47,18 @@ PUT rather than by any session/dwell derivation (see
 - Only explicit terminal commands may remove for completion. Progress/dwell
   derivation never prunes Lectern.
 
-| Event | Consumption | Lectern | Player/navigation |
-|---|---|---|---|
-| Lectern-origin audio ends | `Finished` | remove exact origin | play selected next `FooterAudio` |
-| Direct audio ends | `Finished` | unchanged | paused at end |
-| Single Mark finished / Done | `Finished` | remove exact observed item, if supplied | active origin becomes Direct |
-| Done & open next | `Finished` | remove exact item | open returned next `Readable` |
-| Batch Mark played | `Finished` | unchanged | unchanged |
-| Early Next | unchanged | retain item in place | next audio; no wrap |
-| Remove | unchanged | remove only | active origin becomes Direct |
-| Mark unread / unplayed | `Unread` | never add | active same-media session seeks to zero; play/pause retained |
-| Re-add finished media | preserve consumption state | move existing row or add new row | explicit audio Play starts at zero |
-| Activate video | unchanged | retain | open media pane; never bind to `<audio>` |
+| Event                       | Consumption                | Lectern                                 | Player/navigation                                            |
+| --------------------------- | -------------------------- | --------------------------------------- | ------------------------------------------------------------ |
+| Lectern-origin audio ends   | `Finished`                 | remove exact origin                     | play selected next `FooterAudio`                             |
+| Direct audio ends           | `Finished`                 | unchanged                               | paused at end                                                |
+| Single Mark finished / Done | `Finished`                 | remove exact observed item, if supplied | active origin becomes Direct                                 |
+| Done & open next            | `Finished`                 | remove exact item                       | open returned next `Readable`                                |
+| Batch Mark played           | `Finished`                 | unchanged                               | unchanged                                                    |
+| Early Next                  | unchanged                  | retain item in place                    | next audio; no wrap                                          |
+| Remove                      | unchanged                  | remove only                             | active origin becomes Direct                                 |
+| Mark unread / unplayed      | `Unread`                   | never add                               | active same-media session seeks to zero; play/pause retained |
+| Re-add finished media       | preserve consumption state | move existing row or add new row        | explicit audio Play starts at zero                           |
+| Activate video              | unchanged                  | retain                                  | open media pane; never bind to `<audio>`                     |
 
 Previous restarts current audio after three seconds; before three seconds it
 uses device-session history. Stop means **paused at end with the session, dock,
@@ -140,8 +140,8 @@ removes all child state.
 
 ### 3.1 Media teardown
 
-The existing `DELETE /media/{mediaId}` remains document-only (`WebArticle`,
-`Epub`, `Pdf`) and returns exactly one `MediaDeleteResult` variant:
+The existing `DELETE /media/{mediaId}` remains whole-resource, document-only
+(`WebArticle`, `Epub`, `Pdf`) and returns exactly one `MediaDeleteResult` variant:
 
 ```text
 { kind: "Removed", removedFromLibraryIds, remainingReferenceCount }
@@ -149,12 +149,22 @@ The existing `DELETE /media/{mediaId}` remains document-only (`WebArticle`,
 | { kind: "Deleting" }
 ```
 
-Removing a scoped library reference returns `Removed` only when at least one
-lifetime reference remains. Whole-workspace removal records the viewer hide
-marker and returns `Hidden` while references remain. Removing the last reference
-atomically installs the intent + job and returns `Deleting` only after commit. A
-later void preserves the initiating viewer's hide; explicit re-add can restore
-it. Episode/video physical deletion is not added here.
+Scoped membership removal is a separate canonical command:
+
+```text
+DELETE /media/{mediaId}/libraries/{libraryId} -> 204 No Content
+```
+
+It removes exactly one non-default library membership, never returns a
+`MediaDeleteResult`, never hides or deletes the media resource, and refuses the
+final lifetime reference with `409 E_MEDIA_LAST_REFERENCE`. Whole-resource
+deletion owns teardown intent/job creation and may return `Hidden` or `Deleting`
+according to the variants above. A later void preserves the initiating viewer's
+hide; explicit re-add can restore it. Episode/video physical deletion is not
+added here. Whole-library teardown is the existing administrative lifecycle
+boundary: after locking its complete media set, it deletes a zero-reference
+document and child state in the same database transaction, then deletes storage
+objects after commit. It does not use the member-removal command.
 
 One migration adds:
 
@@ -590,42 +600,82 @@ interface LecternCapability {
   resource: AsyncResource<LecternSnapshot>;
   mutation:
     | { kind: "Idle" }
-    | { kind: "Pending"; attempt: MutationAttempt; presentedSnapshot: LecternSnapshot }
-    | { kind: "RetryableFailure"; attempt: MutationAttempt; error: ApiError; retry: () => void }
-    | { kind: "ReconciliationFailed"; attempt: MutationAttempt;
-        error: ApiError; retryGet: () => void };
-  placeItems(input: { mediaIds: MediaId[]; placement: Placement }): Promise<LecternResult>;
+    | {
+        kind: "Pending";
+        attempt: MutationAttempt;
+        presentedSnapshot: LecternSnapshot;
+      }
+    | {
+        kind: "RetryableFailure";
+        attempt: MutationAttempt;
+        error: ApiError;
+        retry: () => void;
+      }
+    | {
+        kind: "ReconciliationFailed";
+        attempt: MutationAttempt;
+        error: ApiError;
+        retryGet: () => void;
+      };
+  placeItems(input: {
+    mediaIds: MediaId[];
+    placement: Placement;
+  }): Promise<LecternResult>;
   removeItem(itemId: LecternItemId): Promise<LecternResult>;
   setOrder(itemIds: LecternItemId[]): Promise<LecternResult>;
   ensureMediaFinished(mediaId: MediaId): Promise<ConsumptionResult>;
-  finishLecternItem(input: { mediaId: MediaId; itemId: LecternItemId;
-                            nextCapability: NextCapability }): Promise<ConsumptionResult>;
+  finishLecternItem(input: {
+    mediaId: MediaId;
+    itemId: LecternItemId;
+    nextCapability: NextCapability;
+  }): Promise<ConsumptionResult>;
   setUnread(mediaId: MediaId): Promise<ConsumptionResult>;
-  setBatchState(input: { mediaIds: MediaId[];
-                         state: "Finished" | "Unread" }): Promise<ConsumptionResult>;
+  setBatchState(input: {
+    mediaIds: MediaId[];
+    state: "Finished" | "Unread";
+  }): Promise<ConsumptionResult>;
 }
 
 type PlayerSessionState =
   | { kind: "Absent" }
   | { kind: "Active"; session: AudioSession; phase: PlaybackPhase }
   | { kind: "Completing"; session: AudioSession; attempt: CompletionAttempt }
-  | { kind: "CompletionFailed"; session: AudioSession; attempt: CompletionAttempt;
-      error: ApiError; retry: () => void }
-  | { kind: "PlaybackFailed"; session: AudioSession; error: PlayerError;
-      retry: () => void }
+  | {
+      kind: "CompletionFailed";
+      session: AudioSession;
+      attempt: CompletionAttempt;
+      error: ApiError;
+      retry: () => void;
+    }
+  | {
+      kind: "PlaybackFailed";
+      session: AudioSession;
+      error: PlayerError;
+      retry: () => void;
+    }
   | { kind: "PausedAtEnd"; session: AudioSession };
 
 interface GlobalPlayerCapability {
   state: PlayerSessionState;
   persistence:
     | { kind: "Ready" }
-    | { kind: "Suspended"; mediaId: MediaId; error: ApiError;
-        retryGet: () => void };
+    | {
+        kind: "Suspended";
+        mediaId: MediaId;
+        error: ApiError;
+        retryGet: () => void;
+      };
   presentation: {
-    positionMs: number; durationMs: number; bufferedMs: number;
-    volume: number; playbackRate: number; currentChapter: Presence<ChapterOut>;
-    audioEffects: AudioEffectsState; audioEffectsAvailable: boolean;
-    isSilenceTrimming: boolean; silenceTimeSavedMs: number;
+    positionMs: number;
+    durationMs: number;
+    bufferedMs: number;
+    volume: number;
+    playbackRate: number;
+    currentChapter: Presence<ChapterOut>;
+    audioEffects: AudioEffectsState;
+    audioEffectsAvailable: boolean;
+    isSilenceTrimming: boolean;
+    silenceTimeSavedMs: number;
   };
   playAudio(input: PlayAudioInput): void;
   resume(): void;

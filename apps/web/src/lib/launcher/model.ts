@@ -7,6 +7,7 @@
 
 import type { ComponentType } from "react";
 import type { BrowseResult } from "@/lib/browse/types";
+import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
 export type LauncherLane =
@@ -14,7 +15,6 @@ export type LauncherLane =
   | "open" // existing resources: context, open tabs, recents, folios
   | "search" // in-library search (shared SearchQuery)
   | "browse" // external discovery (/api/browse + /api/web/search)
-  | "add" // add URL / upload file / import OPML
   | "create" // create note / page
   | "ask" // ask AI
   | "go"; // commands: navigate + settings
@@ -27,7 +27,6 @@ export const LANE_SIGIL: Partial<Record<LauncherLane, string>> = {
   go: ">",
   open: "@",
   ask: "?",
-  add: "+",
 };
 
 // The selectable lanes in chip-row order; the blended `all` is the cleared (no-chip)
@@ -36,7 +35,6 @@ export const SELECTABLE_LANES: Exclude<LauncherLane, "all">[] = [
   "open",
   "search",
   "browse",
-  "add",
   "create",
   "ask",
   "go",
@@ -46,7 +44,6 @@ export const LANE_LABEL: Record<Exclude<LauncherLane, "all">, string> = {
   open: "Open",
   search: "Search",
   browse: "Browse",
-  add: "Add",
   create: "Create",
   ask: "Ask",
   go: "Go to",
@@ -86,9 +83,16 @@ export type LauncherIcon = ComponentType<{
 export const LAUNCHER_LISTBOX_ID = "launcher-listbox";
 export const LAUNCHER_OPTION_ID_PREFIX = "launcher-option-";
 
-export interface AddSeed {
-  mode: "url" | "file" | "opml";
-}
+export type AddSeed =
+  | {
+      kind: "Content";
+      initialFocus: "Url" | "File";
+      initialDestinations: readonly LibraryDestinationSelection[];
+    }
+  | {
+      kind: "Opml";
+      initialDestinations: readonly LibraryDestinationSelection[];
+    };
 
 // Terminal targets: dispatchTarget executes exactly one of these (one open seam, AC-9).
 export type LauncherActionTarget =
@@ -179,7 +183,7 @@ export type LauncherView =
 export type LauncherPage =
   | { kind: "root" }
   | { kind: "actions"; item: LauncherItem; actions: LauncherAction[] }
-  | { kind: "add"; seed: AddSeed }
+  | { kind: "add" }
   | { kind: "create" };
 
 // Ordered ids of the selectable rows in a view — items at root, actions when drilled.

@@ -17,7 +17,10 @@ import {
   targetNavigates,
   type LauncherDispatchCtx,
 } from "@/lib/launcher/dispatch";
-import { OPEN_LAUNCHER_EVENT, type OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
+import {
+  OPEN_LAUNCHER_EVENT,
+  type OpenLauncherDetail,
+} from "@/lib/launcher/launcherEvents";
 import {
   LANE_SIGIL,
   launcherRowIds,
@@ -28,7 +31,10 @@ import {
   type LauncherPage,
   type LauncherView,
 } from "@/lib/launcher/model";
-import { parseLauncherInput, type LauncherInput } from "@/lib/launcher/parseLauncherInput";
+import {
+  parseLauncherInput,
+  type LauncherInput,
+} from "@/lib/launcher/parseLauncherInput";
 import {
   buildLauncherItems,
   type LauncherContext,
@@ -38,17 +44,31 @@ import {
 } from "@/lib/launcher/providers";
 import { rankLauncher } from "@/lib/launcher/ranking";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
-import { openTodayPage } from "@/lib/notes/openToday";
 import { fetchSearchResultPage } from "@/lib/search/searchApi";
 import { searchHref } from "@/lib/search/searchParams";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
+import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
-import { resolveWorkspacePaneLabel, useWorkspaceStore } from "@/lib/workspace/store";
+import {
+  resolveWorkspacePaneLabel,
+  useWorkspaceStore,
+} from "@/lib/workspace/store";
 import type { BrowseResponse, BrowseResult } from "@/lib/browse/types";
+import {
+  resolveAddPanelInitialFocus,
+  type AddDismissalConfirmation,
+} from "./AddPanel";
+import {
+  useAddContentSession,
+  type AddContentSessionController,
+} from "./useAddContentSession";
 
 interface LauncherHistoryResponse {
-  data: { recent: LauncherRecentRow[]; frecency_boosts: Record<string, number> };
+  data: {
+    recent: LauncherRecentRow[];
+    frecency_boosts: Record<string, number>;
+  };
 }
 interface OracleReadingsResponse {
   data: LauncherOracleRow[];
@@ -64,13 +84,24 @@ const EMPTY_WEB: LauncherWebResult[] = [];
 // Quick add-url / browse-acquire ingest into "My Library only"; the AddPanel offers a picker.
 const DEFAULT_LIBRARY_IDS: string[] = [];
 
-async function fetchBrowse(query: string, signal: AbortSignal): Promise<BrowseResult[]> {
+async function fetchBrowse(
+  query: string,
+  signal: AbortSignal,
+): Promise<BrowseResult[]> {
   const params = new URLSearchParams({ q: query, limit: "4" });
-  const response = await apiFetch<BrowseResponse>(`/api/browse?${params.toString()}`, { signal });
-  return Object.values(response.data.sections).flatMap((section) => section?.results ?? []);
+  const response = await apiFetch<BrowseResponse>(
+    `/api/browse?${params.toString()}`,
+    { signal },
+  );
+  return Object.values(response.data.sections).flatMap(
+    (section) => section?.results ?? [],
+  );
 }
 
-async function fetchWeb(query: string, signal: AbortSignal): Promise<LauncherWebResult[]> {
+async function fetchWeb(
+  query: string,
+  signal: AbortSignal,
+): Promise<LauncherWebResult[]> {
   const params = new URLSearchParams({ q: query });
   const response = await apiFetch<{ data: { results: LauncherWebResult[] } }>(
     `/api/web/search?${params.toString()}`,
@@ -85,6 +116,10 @@ export interface LauncherController {
   input: LauncherInput;
   lane: LauncherLane;
   page: LauncherPage;
+  addSession: AddContentSessionController;
+  dialogLabel: string;
+  focusKey: string;
+  dismissalConfirmation: AddDismissalConfirmation;
   view: LauncherView;
   searchLoading: boolean;
   browseLoading: boolean;
@@ -94,15 +129,34 @@ export interface LauncherController {
   clearLane(): void;
   setActiveId(id: string): void;
   select(item: LauncherItem): void;
-  openTarget(target: LauncherActionTarget): void; // panels open their post-action pane through dispatch
+  openTarget(target: LauncherActionTarget): void;
+  openAddTarget(target: LauncherActionTarget): void;
   drill(item: LauncherItem): void;
   back(): void;
   runAction(action: LauncherAction): void;
   trailing(item: LauncherItem): void;
   askCurrent(): void;
   close(): void;
+  dismissAccepted(): void;
+  guardClose(): DismissDecision;
+  escape(): void;
+  initialFocus(container: HTMLElement, isMobile: boolean): HTMLElement | null;
+  keepWorking(): void;
+  confirmDismissal(): void;
   shouldSuppressReturnFocusOnClose(): boolean; // read at close: true after a navigating dispatch
 }
+
+type ExitIntent =
+  | { kind: "Close" }
+  | { kind: "Root" }
+  | { kind: "Content" }
+  | { kind: "Navigate"; target: LauncherActionTarget }
+  | { kind: "Replace"; detail: OpenLauncherDetail };
+
+type PendingDismissal = {
+  confirmation: Exclude<AddDismissalConfirmation, null>["kind"];
+  intent: ExitIntent;
+};
 
 export function useLauncherController(): LauncherController {
   const { androidShell, platform } = useRenderEnvironment();
@@ -112,11 +166,20 @@ export function useLauncherController(): LauncherController {
   // The one Lectern capability (append is stable across renders); dispatch's queue-add
   // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
   const { placeItems } = useLectern();
+  const addSession = useAddContentSession();
+  const {
+    start: startAddSession,
+    backToContent: backToAddContent,
+    discard: discardAddSession,
+    stop: stopAddSession,
+  } = addSession;
   const [open, setOpen] = useState(false);
   const [query, setQueryState] = useState("");
   const [laneOverride, setLaneOverride] = useState<LauncherLane | null>(null);
   const [page, setPage] = useState<LauncherPage>({ kind: "root" });
   const [activeId, setActiveIdState] = useState<string | null>(null);
+  const [pendingDismissal, setPendingDismissal] =
+    useState<PendingDismissal | null>(null);
   const userMovedRef = useRef(false); // true once the user arrows/hovers; else active follows the top
   const [historyPath, setHistoryPath] = useState<ApiPath | null>(null);
   const [oracleKey, setOracleKey] = useState<string | null>(null);
@@ -128,7 +191,8 @@ export function useLauncherController(): LauncherController {
   // the surface's useReturnFocus doesn't yank focus back from the destination.
   const suppressReturnFocusRef = useRef(false);
 
-  const { state, runtimeLabelByPaneId, activatePane, closePane, restorePane } = useWorkspaceStore();
+  const { state, runtimeLabelByPaneId, activatePane, closePane, restorePane } =
+    useWorkspaceStore();
 
   useEffect(() => {
     if (open) suppressReturnFocusRef.current = false;
@@ -151,7 +215,10 @@ export function useLauncherController(): LauncherController {
       setHistoryPath(null);
       return;
     }
-    const timer = window.setTimeout(() => setHistoryPath(requestedHistoryPath), HISTORY_DEBOUNCE_MS);
+    const timer = window.setTimeout(
+      () => setHistoryPath(requestedHistoryPath),
+      HISTORY_DEBOUNCE_MS,
+    );
     return () => window.clearTimeout(timer);
   }, [requestedHistoryPath]);
 
@@ -160,7 +227,9 @@ export function useLauncherController(): LauncherController {
     path: (path) => path as ApiPath,
   });
   const historyRows =
-    historyResource.status === "ready" ? historyResource.data.data.recent : EMPTY_RECENT;
+    historyResource.status === "ready"
+      ? historyResource.data.data.recent
+      : EMPTY_RECENT;
   const frecencyBoosts = useMemo(
     () =>
       historyResource.status === "ready"
@@ -198,7 +267,12 @@ export function useLauncherController(): LauncherController {
     open && (lane === "all" || lane === "search") && input.text.length >= 2
       ? searchHref(input.searchQuery)
       : null,
-    (signal) => fetchSearchResultPage(input.searchQuery, { limit: 6, cursor: null, signal }),
+    (signal) =>
+      fetchSearchResultPage(input.searchQuery, {
+        limit: 6,
+        cursor: null,
+        signal,
+      }),
     { debounceMs: 200 },
   );
   const searchResults = searchFetch.data?.rows ?? EMPTY_SEARCH;
@@ -231,7 +305,8 @@ export function useLauncherController(): LauncherController {
       })),
     [state, runtimeLabelByPaneId],
   );
-  const currentHref = panes.find((pane) => pane.id === state.activePrimaryPaneId)?.href ?? null;
+  const currentHref =
+    panes.find((pane) => pane.id === state.activePrimaryPaneId)?.href ?? null;
 
   const ctx = useMemo<LauncherContext>(
     () => ({
@@ -265,17 +340,24 @@ export function useLauncherController(): LauncherController {
       platform,
     ],
   );
-  const rootView = useMemo(() => rankLauncher(ctx, buildLauncherItems(ctx)), [ctx]);
+  const rootView = useMemo(
+    () => rankLauncher(ctx, buildLauncherItems(ctx)),
+    [ctx],
+  );
   const view = useMemo<LauncherView>(
     () =>
-      page.kind === "actions" ? { state: "actions", item: page.item, actions: page.actions } : rootView,
+      page.kind === "actions"
+        ? { state: "actions", item: page.item, actions: page.actions }
+        : rootView,
     [page, rootView],
   );
 
   useEffect(() => {
     const ids = launcherRowIds(view);
     setActiveIdState((current) =>
-      userMovedRef.current && current && ids.includes(current) ? current : (ids[0] ?? null),
+      userMovedRef.current && current && ids.includes(current)
+        ? current
+        : (ids[0] ?? null),
     );
   }, [view]);
 
@@ -323,7 +405,15 @@ export function useLauncherController(): LauncherController {
       restorePane,
       closePane,
     }),
-    [androidShell, feedback, placeItems, panes, activatePane, restorePane, closePane],
+    [
+      androidShell,
+      feedback,
+      placeItems,
+      panes,
+      activatePane,
+      restorePane,
+      closePane,
+    ],
   );
 
   const logSelection = useCallback(
@@ -338,7 +428,10 @@ export function useLauncherController(): LauncherController {
           : target.kind === "resource" &&
               target.activation.kind === "route" &&
               target.activation.href
-            ? { key: target.activation.resourceRef, href: target.activation.href }
+            ? {
+                key: target.activation.resourceRef,
+                href: target.activation.href,
+              }
             : null;
       if (!wire) return;
       // Don't record a target the viewer can't actually open (Android-restricted route):
@@ -356,7 +449,9 @@ export function useLauncherController(): LauncherController {
         }),
       }).catch((error) => {
         if (handleUnauthenticatedApiError(error)) return;
-        feedback.show(toFeedback(error, { fallback: "Command history was not saved" }));
+        feedback.show(
+          toFeedback(error, { fallback: "Command history was not saved" }),
+        );
       });
     },
     [input.text, feedback, androidShell],
@@ -374,7 +469,8 @@ export function useLauncherController(): LauncherController {
     (item: LauncherItem) => {
       const target = item.target;
       if (target.kind === "open-add") {
-        setPage({ kind: "add", seed: target.seed });
+        startAddSession(target.seed);
+        setPage({ kind: "add" });
         return;
       }
       if (target.kind === "open-create") {
@@ -400,12 +496,12 @@ export function useLauncherController(): LauncherController {
       logSelection(item);
       void dispatchTarget(target, dispatchCtx).catch(fail);
     },
-    [dispatchCtx, logSelection, fail, input.text],
+    [dispatchCtx, logSelection, fail, input.text, startAddSession],
   );
 
-  // Panels (AddPanel/CreatePanel) open their post-action pane through the one dispatch
-  // owner (AC-9) instead of calling requestOpenInAppPane directly. They own their own
-  // dismissal (the upload queue stays open behind a row "Open"), so this never closes.
+  // CreatePanel opens its post-action pane through the one dispatch owner (AC-9)
+  // instead of calling requestOpenInAppPane directly. AddPanel uses openAddTarget,
+  // whose guarded Navigate intent closes Add after the destination accepts focus.
   const openTarget = useCallback(
     (target: LauncherActionTarget) => {
       void dispatchTarget(target, dispatchCtx).catch(fail);
@@ -430,7 +526,10 @@ export function useLauncherController(): LauncherController {
 
   const trailing = useCallback(
     (item: LauncherItem) => {
-      if (item.trailingAction) void dispatchTarget(item.trailingAction.target, dispatchCtx).catch(fail);
+      if (item.trailingAction)
+        void dispatchTarget(item.trailingAction.target, dispatchCtx).catch(
+          fail,
+        );
     },
     [dispatchCtx, fail],
   );
@@ -446,7 +545,9 @@ export function useLauncherController(): LauncherController {
     if (!input.text) return;
     suppressReturnFocusRef.current = true; // ask opens a new chat pane
     setOpen(false);
-    void dispatchTarget({ kind: "ask", text: input.text }, dispatchCtx).catch(fail);
+    void dispatchTarget({ kind: "ask", text: input.text }, dispatchCtx).catch(
+      fail,
+    );
   }, [input.text, dispatchCtx, fail]);
 
   const setQuery = useCallback((next: string) => {
@@ -477,8 +578,175 @@ export function useLauncherController(): LauncherController {
     setQueryState(input.text); // peel any leading sigil
   }, [input.text]);
 
-  const back = useCallback(() => setPage({ kind: "root" }), []);
-  const close = useCallback(() => setOpen(false), []);
+  const performExit = useCallback(
+    (intent: ExitIntent) => {
+      setPendingDismissal(null);
+      switch (intent.kind) {
+        case "Content":
+          backToAddContent();
+          return;
+        case "Root":
+          discardAddSession();
+          setPage({ kind: "root" });
+          return;
+        case "Close":
+          discardAddSession();
+          setOpen(false);
+          return;
+        case "Navigate":
+          suppressReturnFocusRef.current = targetNavigates(intent.target);
+          discardAddSession();
+          setOpen(false);
+          void dispatchTarget(intent.target, dispatchCtx).catch(fail);
+          return;
+        case "Replace": {
+          const { detail } = intent;
+          userMovedRef.current = false;
+          suppressReturnFocusRef.current = false;
+          if (detail.kind === "Add") {
+            startAddSession(detail.seed);
+            setPage({ kind: "add" });
+            setLaneOverride(null);
+            setQueryState("");
+          } else {
+            discardAddSession();
+            setPage({ kind: "root" });
+            const seedQuery = detail.query ?? "";
+            const sigil = detail.lane ? LANE_SIGIL[detail.lane] : undefined;
+            if (sigil) {
+              setLaneOverride(null);
+              setQueryState(sigil + seedQuery);
+            } else {
+              setLaneOverride(
+                detail.lane && detail.lane !== "all" ? detail.lane : null,
+              );
+              setQueryState(seedQuery);
+            }
+          }
+          setOpen(true);
+          return;
+        }
+      }
+    },
+    [backToAddContent, discardAddSession, dispatchCtx, fail, startAddSession],
+  );
+
+  const guardExit = useCallback(
+    (intent: ExitIntent): DismissDecision => {
+      if (pendingDismissal) return "blocked";
+      if (page.kind !== "add") return "accepted";
+      if (addSession.state.mutation.kind === "Running") {
+        setPendingDismissal({ confirmation: "Stop", intent });
+        return "blocked";
+      }
+      // OPML Back is an explicit branch-local discard, not a request to throw
+      // away the parent Content session.
+      if (intent.kind === "Content") return "accepted";
+      if (addSession.dirty) {
+        setPendingDismissal({ confirmation: "Discard", intent });
+        return "blocked";
+      }
+      return "accepted";
+    },
+    [
+      addSession.dirty,
+      addSession.state.mutation.kind,
+      page.kind,
+      pendingDismissal,
+    ],
+  );
+
+  const requestExit = useCallback(
+    (intent: ExitIntent) => {
+      if (guardExit(intent) === "accepted") performExit(intent);
+    },
+    [guardExit, performExit],
+  );
+
+  const back = useCallback(() => {
+    if (page.kind === "add" && addSession.state.branch === "Opml") {
+      requestExit({ kind: "Content" });
+      return;
+    }
+    requestExit({ kind: "Root" });
+  }, [addSession.state.branch, page.kind, requestExit]);
+
+  const close = useCallback(
+    () => requestExit({ kind: "Close" }),
+    [requestExit],
+  );
+  const dismissAccepted = useCallback(
+    () => performExit({ kind: "Close" }),
+    [performExit],
+  );
+  const guardClose = useCallback(
+    () => guardExit({ kind: "Close" }),
+    [guardExit],
+  );
+  const escape = useCallback(() => {
+    if (page.kind === "root") {
+      requestExit({ kind: "Close" });
+      return;
+    }
+    back();
+  }, [back, page.kind, requestExit]);
+
+  const openAddTarget = useCallback(
+    (target: LauncherActionTarget) => requestExit({ kind: "Navigate", target }),
+    [requestExit],
+  );
+
+  const keepWorking = useCallback(() => setPendingDismissal(null), []);
+  const confirmDismissal = useCallback(() => {
+    if (!pendingDismissal) return;
+    const pending = pendingDismissal;
+    setPendingDismissal(null);
+    if (pending.confirmation === "Stop") stopAddSession();
+    performExit(pending.intent);
+  }, [pendingDismissal, performExit, stopAddSession]);
+
+  const initialFocus = useCallback(
+    (container: HTMLElement, isMobile: boolean): HTMLElement | null => {
+      if (page.kind !== "add") {
+        return container.querySelector<HTMLElement>('[role="combobox"]');
+      }
+      return resolveAddPanelInitialFocus(container, isMobile, {
+        branch: addSession.state.branch,
+        initialFocus: addSession.state.initialFocus,
+      });
+    },
+    [addSession.state.branch, addSession.state.initialFocus, page.kind],
+  );
+
+  const dialogLabel =
+    page.kind === "add"
+      ? addSession.state.branch === "Opml"
+        ? "Import OPML"
+        : "Add content"
+      : "Launcher";
+  const focusKey =
+    page.kind === "add"
+      ? `${addSession.state.sessionId}:${addSession.state.branch}:${
+          addSession.state.branch === "Content" &&
+          addSession.state.initialFocus === "Opml"
+            ? "Url"
+            : addSession.state.initialFocus
+        }`
+      : page.kind;
+  const dismissalConfirmation: AddDismissalConfirmation = pendingDismissal
+    ? {
+        kind: pendingDismissal.confirmation,
+        actionLabel:
+          pendingDismissal.confirmation === "Discard"
+            ? "Discard"
+            : pendingDismissal.intent.kind === "Close" ||
+                pendingDismissal.intent.kind === "Navigate"
+              ? "Stop and close"
+              : pendingDismissal.intent.kind === "Replace"
+                ? "Stop and continue"
+                : "Stop and go back",
+      }
+    : null;
   const shouldSuppressReturnFocusOnClose = useCallback(
     () => suppressReturnFocusRef.current,
     [],
@@ -487,23 +755,14 @@ export function useLauncherController(): LauncherController {
   // --- Triggers: open event, deep link, global hotkeys ---
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<OpenLauncherDetail>).detail ?? {};
-      userMovedRef.current = false;
-      setPage({ kind: "root" });
-      const seedQuery = detail.query ?? "";
-      const sigil = detail.lane ? LANE_SIGIL[detail.lane] : undefined;
-      if (sigil) {
-        setLaneOverride(null);
-        setQueryState(sigil + seedQuery);
-      } else {
-        setLaneOverride(detail.lane && detail.lane !== "all" ? detail.lane : null);
-        setQueryState(seedQuery);
-      }
-      setOpen(true);
+      const detail =
+        (event as CustomEvent<OpenLauncherDetail>).detail ??
+        ({ kind: "Root" } as const);
+      requestExit({ kind: "Replace", detail });
     };
     window.addEventListener(OPEN_LAUNCHER_EVENT, handler);
     return () => window.removeEventListener(OPEN_LAUNCHER_EVENT, handler);
-  }, []);
+  }, [requestExit]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -515,10 +774,19 @@ export function useLauncherController(): LauncherController {
       setActiveIdState(cmd);
     }
     const laneParam = params.get("lane");
-    const validLanes: LauncherLane[] = ["all", "open", "search", "browse", "add", "create", "ask", "go"];
-    const seedLane = laneParam && (validLanes as string[]).includes(laneParam)
-      ? (laneParam as LauncherLane)
-      : null;
+    const validLanes: LauncherLane[] = [
+      "all",
+      "open",
+      "search",
+      "browse",
+      "create",
+      "ask",
+      "go",
+    ];
+    const seedLane =
+      laneParam && (validLanes as string[]).includes(laneParam)
+        ? (laneParam as LauncherLane)
+        : null;
     if (seedLane && seedLane !== "all") setLaneOverride(seedLane);
     params.delete("launcher");
     params.delete("q");
@@ -538,34 +806,33 @@ export function useLauncherController(): LauncherController {
       const launcherCombo = keybindings["open-launcher"];
       if (launcherCombo && matchesKeyEvent(launcherCombo, event)) {
         event.preventDefault();
+        if (open) {
+          requestExit({ kind: "Close" });
+          return;
+        }
         userMovedRef.current = false;
-        setLaneOverride(null);
-        setQueryState("");
-        setPage({ kind: "root" });
-        setOpen((value) => !value);
+        requestExit({ kind: "Replace", detail: { kind: "Root" } });
         return;
       }
       for (const [actionId, combo] of Object.entries(keybindings)) {
         if (actionId === "open-launcher") continue;
         if (!matchesKeyEvent(combo, event)) continue;
         const destination = DESTINATIONS.find((entry) => entry.id === actionId);
-        if (actionId === "today") {
-          event.preventDefault();
-          void openTodayPage().catch(fail);
-          return;
-        }
-        if (!destination) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
+        const target: LauncherActionTarget | null =
+          actionId === "today"
+            ? { kind: "open-today" }
+            : destination
+              ? { kind: "href", href: destination.href, externalShell: false }
+              : null;
+        if (!target) continue; // a bound non-destination combo (e.g. pane-nav) is owned elsewhere
         event.preventDefault();
-        void dispatchTarget(
-          { kind: "href", href: destination.href, externalShell: false },
-          dispatchCtx,
-        ).catch(fail);
+        requestExit({ kind: "Navigate", target });
         return;
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [keybindings, dispatchCtx, fail]);
+  }, [keybindings, open, requestExit]);
 
   return {
     open,
@@ -573,6 +840,10 @@ export function useLauncherController(): LauncherController {
     input,
     lane,
     page,
+    addSession,
+    dialogLabel,
+    focusKey,
+    dismissalConfirmation,
     view,
     searchLoading: searchFetch.loading,
     browseLoading: browseFetch.loading,
@@ -583,12 +854,19 @@ export function useLauncherController(): LauncherController {
     setActiveId,
     select,
     openTarget,
+    openAddTarget,
     drill,
     back,
     runAction,
     trailing,
     askCurrent,
     close,
+    dismissAccepted,
+    guardClose,
+    escape,
+    initialFocus,
+    keepWorking,
+    confirmDismissal,
     shouldSuppressReturnFocusOnClose,
   };
 }

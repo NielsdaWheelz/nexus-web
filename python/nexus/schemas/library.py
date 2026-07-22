@@ -33,10 +33,6 @@ class UpdateLibraryRequest(BaseModel):
     )
 
 
-class AddMediaRequest(BaseModel):
-    media_id: UUID = Field(..., description="ID of the media to add")
-
-
 class AddPodcastRequest(BaseModel):
     podcast_id: UUID = Field(..., description="ID of the podcast to add")
 

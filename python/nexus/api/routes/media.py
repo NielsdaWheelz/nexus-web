@@ -10,11 +10,12 @@ registered before this one so the literals are not parsed as `/media/{media_id}`
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.media import MediaLibrariesRequest
@@ -118,16 +119,16 @@ def put_media_authors(
 @router.delete("/media/{media_id}")
 def remove_media(
     media_id: UUID,
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    library_id: Annotated[UUID | None, Query()] = None,
 ) -> dict:
-    if library_id is None:
-        result = media_deletion_service.delete_document_for_viewer(db, viewer.user_id, media_id)
-    else:
-        result = media_deletion_service.remove_document_from_library(
-            db, viewer.user_id, media_id, library_id
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Whole-resource media deletion does not accept query parameters",
         )
+    result = media_deletion_service.delete_document_for_viewer(db, viewer.user_id, media_id)
     return ok(result, by_alias=True)
 
 
@@ -175,23 +176,36 @@ def get_related_media(
     return ok(RelatedMediaOut(peers=[_endpoint_out(peer) for peer in peers]))
 
 
-@router.post("/media/{media_id}/libraries")
+@router.post("/media/{media_id}/libraries", status_code=204)
 def add_media_libraries(
     media_id: UUID,
     body: MediaLibrariesRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict:
+) -> Response:
     """Additively attach the media to one or more libraries.
 
     Idempotent: ids already present are not reinserted. The viewer's default
     library id is rejected because destination writes are writable non-default
-    libraries only. Returns the subset of ids actually inserted.
+    libraries only. Success is a bodyless command response.
     """
-    result = library_entries.add_media_to_libraries_for_viewer(
+    library_entries.ensure_media_in_libraries_for_viewer(
         db, viewer.user_id, media_id, body.library_ids
     )
-    return ok(result)
+    return Response(status_code=204)
+
+
+@router.delete("/media/{media_id}/libraries/{library_id}", status_code=204)
+def remove_media_library(
+    media_id: UUID,
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    library_entries.ensure_media_absent_from_library_for_viewer(
+        db, viewer.user_id, media_id, library_id
+    )
+    return Response(status_code=204)
 
 
 @router.post("/media/{media_id}/refresh", status_code=202)

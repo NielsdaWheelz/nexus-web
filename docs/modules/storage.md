@@ -5,13 +5,13 @@ does not authorize access and must not encode user identity.
 
 ## Owners
 
-| Object family | DB owner | Key shape | Access lane |
-|---|---|---|---|
-| Original PDF/EPUB uploads | `media_file` | `media/{media_id}/original.{pdf|epub}` | viewer-authenticated media/file services |
-| Direct-upload staging | transient upload flow | `uploads/media/{media_id}/original.{pdf|epub}` | private upload lifecycle only |
-| Media source artifacts | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html|tar}` | private source lifecycle only |
-| Extracted EPUB resources | `epub_resources` | `media/{media_id}/assets/{asset_key}` | viewer-authenticated EPUB asset route |
-| Oracle plates | `oracle_plates` | `oracle/plates/{slug}.{jpg|png|webp}` | public owned-asset route, internal-header protected |
+| Object family             | DB owner                               | Key shape                                   | Access lane                           |
+| ------------------------- | -------------------------------------- | ------------------------------------------- | ------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
+| Original PDF/EPUB uploads | `media_file`                           | `media/{media_id}/original.{pdf             | epub}`                                | viewer-authenticated media/file services |
+| Direct-upload staging     | transient upload flow                  | `uploads/media/{media_id}/original.{pdf     | epub}`                                | private upload lifecycle only            |
+| Media source artifacts    | `media_source_attempts.source_payload` | `media/{media_id}/source/{attempt_id}.{html | tar}`                                 | private source lifecycle only            |
+| Extracted EPUB resources  | `epub_resources`                       | `media/{media_id}/assets/{asset_key}`       | viewer-authenticated EPUB asset route |
+| Oracle plates             | `oracle_plates`                        | `oracle/plates/{slug}.{jpg                  | png                                   | webp}`                                   | public owned-asset route, internal-header protected |
 
 All storage path construction goes through `python/nexus/storage/paths.py`.
 Extension-taking builders accept only bare extensions: no leading dot, dot,
@@ -39,19 +39,21 @@ the storage client only for `200` responses.
 
 Full contract: `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1.
 
-Removing the last lifetime reference to a document media (`WebArticle`, `Epub`,
-`Pdf`) never deletes storage or child state inline. `media_deletion.py`'s
-`claim_media_teardown` locks only the media row, checks zero committed
-references, inserts a `media_teardown_intents` row (application-generated
-UUIDv7 via `nexus.ids.new_uuid7`, not a database default — Python 3.12 has no
-standard UUIDv7 generator), and enqueues one addressable `media_teardown` job
-in that same transaction. Intent presence excludes the media from every public
+Canonical member removal never deletes the final lifetime reference: it returns
+`409 E_MEDIA_LAST_REFERENCE`. Whole-resource deletion of document media
+(`WebArticle`, `Epub`, `Pdf`) uses `media_deletion.claim_media_teardown`, which
+locks the media row, checks zero committed references, inserts a
+`media_teardown_intents` row (application-generated UUIDv7 via
+`nexus.ids.new_uuid7`, not a database default — Python 3.12 has no standard
+UUIDv7 generator), and enqueues one addressable `media_teardown` job in that
+same transaction. Intent presence excludes the media from every public
 visibility query and makes new references fail with `E_MEDIA_DELETING` (409).
-The one actual reference owner (`library_entries.py`) — and the nine ingest
-callers that create references — enforce the barrier via
-`SELECT ... FOR UPDATE` on the media row before insert. Whether any reference
-remains is a count of physical `library_entries` rows for that media, and
-nothing else.
+The administrative whole-library teardown is the narrow exception: while its
+complete media lock set is held, it deletes a newly zero-reference document and
+child state transactionally, then deletes storage objects after commit. The one
+actual reference owner (`library_entries.py`) enforces the media-before-library
+barrier for reference writes. Whether any reference remains is a count of
+physical `library_entries` rows for that media, and nothing else.
 
 Three durable task modules own all teardown/lifecycle storage deletion
 (`python/nexus/tasks/`):

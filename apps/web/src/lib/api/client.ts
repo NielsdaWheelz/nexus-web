@@ -43,6 +43,15 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+export function isSameSystemApiDefect(error: unknown): error is ApiError {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_RESPONSE" ||
+      error.code === "E_UNKNOWN" ||
+      error.code === "E_INTERNAL")
+  );
+}
+
 export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   return (
     isApiError(error) &&
@@ -72,19 +81,26 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
     isRecord(body.error) &&
     typeof body.error.code === "string" &&
     typeof body.error.message === "string" &&
-    (body.error.request_id === undefined || typeof body.error.request_id === "string") &&
+    (body.error.request_id === undefined ||
+      typeof body.error.request_id === "string") &&
     (body.error.details === undefined || isRecord(body.error.details))
   );
 }
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
-const PLAIN_GET_COALESCING_OPTION_KEYS = new Set(["cache", "headers", "method"]);
+const PLAIN_GET_COALESCING_OPTION_KEYS = new Set([
+  "cache",
+  "headers",
+  "method",
+]);
 
 function normalizeMethod(method: string | undefined): string {
   return method?.toUpperCase() ?? "GET";
 }
 
-function sortedHeaderEntries(headers: HeadersInit | undefined): [string, string][] {
+function sortedHeaderEntries(
+  headers: HeadersInit | undefined,
+): [string, string][] {
   if (!headers) {
     return [];
   }
@@ -93,7 +109,10 @@ function sortedHeaderEntries(headers: HeadersInit | undefined): [string, string]
   );
 }
 
-function coalescedGetKey(path: string, headers: HeadersInit | undefined): string {
+function coalescedGetKey(
+  path: string,
+  headers: HeadersInit | undefined,
+): string {
   return JSON.stringify({
     path,
     headers: sortedHeaderEntries(headers),
@@ -102,7 +121,7 @@ function coalescedGetKey(path: string, headers: HeadersInit | undefined): string
 
 function isPlainGetRequest(options: RequestInit): boolean {
   const hasOnlyPlainGetOptions = Object.keys(options).every((key) =>
-    PLAIN_GET_COALESCING_OPTION_KEYS.has(key)
+    PLAIN_GET_COALESCING_OPTION_KEYS.has(key),
   );
   return (
     hasOnlyPlainGetOptions &&
@@ -123,7 +142,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
       throw new ApiError(
         response.status,
         "E_UNKNOWN",
-        `Request failed with status ${response.status}`
+        `Request failed with status ${response.status}`,
       );
     }
     if (response.status === 204 || response.status === 205) {
@@ -132,7 +151,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
     throw new ApiError(
       response.status,
       "E_INVALID_RESPONSE",
-      "API returned a non-JSON response"
+      "API returned a non-JSON response",
     );
   }
 
@@ -143,13 +162,13 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
         body.error.code,
         body.error.message,
         body.error.request_id,
-        body.error.details
+        body.error.details,
       );
     }
     throw new ApiError(
       response.status,
       "E_UNKNOWN",
-      `Request failed with status ${response.status}`
+      `Request failed with status ${response.status}`,
     );
   }
 
@@ -166,7 +185,7 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
  */
 export async function apiFetch<T>(
   path: ApiPath,
-  options: RequestInit = {}
+  options: RequestInit = {},
 ): Promise<T> {
   const init = {
     ...options,
@@ -197,9 +216,32 @@ export async function apiFetch<T>(
   return parseApiResponse<T>(response);
 }
 
+/** Run a command whose owned wire contract is exactly HTTP 204. */
+export async function apiCommand204(
+  path: ApiPath,
+  options: RequestInit,
+): Promise<void> {
+  const response = await fetch(path, {
+    ...options,
+    method: normalizeMethod(options.method),
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+  await parseApiResponse<unknown>(response);
+  if (response.status !== 204) {
+    throw new ApiError(
+      response.status,
+      "E_INVALID_RESPONSE",
+      `API command returned status ${response.status}; expected 204`,
+    );
+  }
+}
+
 export async function apiPostFormData<T>(
   path: ApiPath,
-  formData: FormData
+  formData: FormData,
 ): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -209,7 +251,10 @@ export async function apiPostFormData<T>(
   return parseApiResponse<T>(response);
 }
 
-export async function apiKeepaliveJson(path: ApiPath, body: unknown): Promise<void> {
+export async function apiKeepaliveJson(
+  path: ApiPath,
+  body: unknown,
+): Promise<void> {
   const response = await fetch(path, {
     method: "PUT",
     keepalive: true,

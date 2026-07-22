@@ -265,8 +265,8 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
     direct_db.register_cleanup("libraries", "id", library_id)
 
     add_response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
+        f"/media/{media_id}/libraries",
+        json={"library_ids": [str(library_id)]},
         headers=headers,
     )
     assert add_response.status_code == 204, add_response.text

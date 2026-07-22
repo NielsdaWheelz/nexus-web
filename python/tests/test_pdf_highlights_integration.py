@@ -65,8 +65,8 @@ def _add_media_to_library(
     library (`ensure_media_in_default_library`), so freshly created media is
     always reachable there. Fixtures that create a bare `media` row must
     mirror that by seeding the physical entry directly rather than going
-    through the authorization-gated `POST /libraries/{id}/media` filing
-    endpoint, which requires the media to already be reachable.
+    through an actor-authorized filing command, which requires the media to
+    already be reachable.
     """
     me_resp = client.get("/me", headers=auth_headers(user_id))
     library_id = UUID(me_resp.json()["data"]["default_library_id"])

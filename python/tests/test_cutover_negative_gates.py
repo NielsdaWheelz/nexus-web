@@ -923,12 +923,88 @@ def test_no_serializable_retry_loop_outside_db_retries():
     const_hits = _filtered(r"\b_SERIALIZABLE_RETRIES\b", _PY_ROOT, exclude=_FRONTEND_TEST)
     assert not const_hits, f"_SERIALIZABLE_RETRIES constant resurrected:\n{_fmt(const_hits)}"
 
-    # is_serialization_failure is referenced only where the loop is defined
+    # The retryable-conflict predicate is referenced only where the loop is defined
     # (db/retries.py) and where the predicate itself lives (db/errors.py).
     loop_hits = _excluding(
-        _grep(r"is_serialization_failure", _PY_ROOT), "db/retries.py", "db/errors.py"
+        _grep(r"is_retryable_transaction_conflict", _PY_ROOT),
+        "db/retries.py",
+        "db/errors.py",
     )
     assert not loop_hits, f"serialization-failure loop outside db/retries.py:\n{_fmt(loop_hits)}"
+
+
+# =============================================================================
+# Add Content intake: one canonical media-membership write surface
+# =============================================================================
+
+
+def test_media_library_entry_dml_has_one_owner():
+    dml = re.compile(
+        r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+library_entries\b|"
+        r"\b(?:insert|update|delete)\(\s*LibraryEntry(?:\.__table__)?\b|"
+        r"\b(?:db|session)\.(?:add|delete)\(\s*LibraryEntry\(",
+        re.IGNORECASE,
+    )
+    hits: list[_Hit] = []
+    for path in _iter_scan_files(_PY_ROOT):
+        if path.as_posix().endswith("/services/library_entries.py"):
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        lines = source.splitlines()
+        for match in dml.finditer(source):
+            line_no = source.count("\n", 0, match.start()) + 1
+            hits.append(_Hit(path=path.as_posix(), line=line_no, text=lines[line_no - 1].strip()))
+    assert not hits, f"library-entry DML escaped its canonical owner:\n{_fmt(hits)}"
+
+
+def test_add_content_membership_contract_spans_backend_bff_client_and_normative_docs():
+    legacy_pattern = (
+        r"\b(?:AddMediaRequest|add_media_to_library|add_media_to_libraries_for_viewer|"
+        r"remove_document_from_library|addMediaToLibrary|removeMediaFromLibrary|"
+        r"MediaLibrariesResponse|library_ids_added)\b|"
+        r"/(?:api/)?libraries/[^\s\"'`]+/media\b|"
+        r"/(?:api/)?media/[^\s\"'`?]+\?library_id\b|"
+        r"searchParams\.(?:set|append)\([\"']library_id[\"']"
+    )
+
+    production_hits = _grep(legacy_pattern, _PY_ROOT)
+    web_hits = _filtered(
+        legacy_pattern,
+        _WEB_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    normative_doc_hits = _excluding(
+        _grep(
+            legacy_pattern,
+            _REPO_ROOT / "docs" / "architecture.md",
+            _REPO_ROOT / "docs" / "modules",
+            _REPO_ROOT / "docs" / "cutovers",
+        ),
+        # The canonical cutover specification names the deleted shapes only to
+        # require and verify their removal.
+        "add-content-intake-hard-cutover.md",
+    )
+    hits = [*production_hits, *web_hits, *normative_doc_hits]
+    assert not hits, f"legacy media-membership contract residue survives:\n{_fmt(hits)}"
+
+    old_bff = _WEB_ROOT / "app" / "api" / "libraries" / "[id]" / "media" / "route.ts"
+    assert not old_bff.exists(), f"legacy inverse media-membership BFF survives: {old_bff}"
+
+    backend_route = (_PY_ROOT / "api" / "routes" / "media.py").read_text(encoding="utf-8")
+    backend_errors = (_PY_ROOT / "errors.py").read_text(encoding="utf-8")
+    bff_route = (
+        _WEB_ROOT / "app" / "api" / "media" / "[id]" / "libraries" / "[libraryId]" / "route.ts"
+    ).read_text(encoding="utf-8")
+    client = (_WEB_ROOT / "lib" / "media" / "mediaLibraries.ts").read_text(encoding="utf-8")
+    library_doc = (_REPO_ROOT / "docs" / "modules" / "library.md").read_text(encoding="utf-8")
+
+    assert '@router.delete("/media/{media_id}/libraries/{library_id}"' in backend_route
+    assert '@router.post("/media/{media_id}/libraries", status_code=204)' in backend_route
+    assert "E_MEDIA_LAST_REFERENCE" in backend_errors
+    assert "`409 E_MEDIA_LAST_REFERENCE`" in library_doc
+    assert "ensureMediaAbsentFromLibrary" in client
+    assert "`/api/media/${mediaId}/libraries/${libraryId}`" in client
+    assert "`/media/${id}/libraries/${libraryId}`" in bff_route
 
 
 # =============================================================================

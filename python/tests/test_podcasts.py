@@ -5545,18 +5545,12 @@ class TestPodcastSubscriptionLifecycleClosure:
             )
             session.commit()
 
-        add_owned_media = auth_client.post(
-            f"/libraries/{owned_library_id}/media",
+        add_media = auth_client.post(
+            f"/media/{media_id}/libraries",
             headers=auth_headers(user_id),
-            json={"media_id": str(media_id)},
+            json={"library_ids": [str(owned_library_id), str(shared_admin_library_id)]},
         )
-        assert add_owned_media.status_code == 204
-        add_shared_admin_media = auth_client.post(
-            f"/libraries/{shared_admin_library_id}/media",
-            headers=auth_headers(user_id),
-            json={"media_id": str(media_id)},
-        )
-        assert add_shared_admin_media.status_code == 204
+        assert add_media.status_code == 204
 
         unsubscribe = auth_client.delete(
             f"/podcasts/subscriptions/{podcast_id}",

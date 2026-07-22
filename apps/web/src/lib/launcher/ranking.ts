@@ -31,8 +31,6 @@ function inLane(sectionId: LauncherSectionId, lane: LauncherLane): boolean {
       return sectionId === "search-results";
     case "browse":
       return sectionId === "browse-results";
-    case "add":
-      return sectionId === "add";
     case "create":
       return sectionId === "create";
     case "ask":
@@ -56,7 +54,11 @@ function isOrderedSubsequence(query: string, title: string): boolean {
   return true;
 }
 
-function scoreItem(item: LauncherItem, query: string, currentHref: string | null): number {
+function scoreItem(
+  item: LauncherItem,
+  query: string,
+  currentHref: string | null,
+): number {
   const title = item.title.toLowerCase();
   let score: number;
   if (!query) {
@@ -69,7 +71,9 @@ function scoreItem(item: LauncherItem, query: string, currentHref: string | null
     score = 7000;
   } else if (item.keywords.some((keyword) => keyword.toLowerCase() === query)) {
     score = 6500;
-  } else if (item.keywords.some((keyword) => keyword.toLowerCase().includes(query))) {
+  } else if (
+    item.keywords.some((keyword) => keyword.toLowerCase().includes(query))
+  ) {
     score = 5200;
   } else if (title.includes(query)) {
     score = 5000;
@@ -78,24 +82,40 @@ function scoreItem(item: LauncherItem, query: string, currentHref: string | null
   } else {
     // Fetched rows (search/browse) and the always-relevant ask row keep a base relevance
     // so they survive even when their title doesn't fuzzy-match the raw query text.
-    score = item.source === "search" || item.source === "ai" || item.source === "browse" ? 1000 : 0;
+    score =
+      item.source === "search" ||
+      item.source === "ai" ||
+      item.source === "browse"
+        ? 1000
+        : 0;
   }
 
   score += item.rank.searchScore ? item.rank.searchScore * 1000 : 0;
   score += item.rank.frecencyBoost ?? 0;
   score += item.rank.scopeBoost ?? 0;
-  if (currentHref && item.target.kind === "href" && item.target.href === currentHref) {
+  if (
+    currentHref &&
+    item.target.kind === "href" &&
+    item.target.href === currentHref
+  ) {
     score += 250;
   }
   return score;
 }
 
-export function rankLauncher(ctx: LauncherContext, items: LauncherItem[]): LauncherView {
+export function rankLauncher(
+  ctx: LauncherContext,
+  items: LauncherItem[],
+): LauncherView {
   const lane = ctx.input.explicitLane ?? "all";
   const query = ctx.input.text.toLowerCase();
   const scored = items
     .filter((item) => inLane(item.sectionId, lane))
-    .map((item, index) => ({ item, index, score: scoreItem(item, query, ctx.currentHref) }))
+    .map((item, index) => ({
+      item,
+      index,
+      score: scoreItem(item, query, ctx.currentHref),
+    }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
   if (!query) {
@@ -106,7 +126,11 @@ export function rankLauncher(ctx: LauncherContext, items: LauncherItem[]): Launc
         .slice(0, section.cap)
         .map((entry) => entry.item);
       if (sectionItems.length > 0) {
-        groups.push({ sectionId: section.id, label: section.label, items: sectionItems });
+        groups.push({
+          sectionId: section.id,
+          label: section.label,
+          items: sectionItems,
+        });
       }
     }
     return { state: "resting", groups };

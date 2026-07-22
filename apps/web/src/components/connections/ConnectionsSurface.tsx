@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Component,
+  createRef,
   useCallback,
   useEffect,
   useId,
@@ -8,6 +10,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { Link, Paperclip, Sparkles, Trash2, X } from "lucide-react";
 import {
@@ -21,12 +24,14 @@ import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
+import { isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import {
   getFileUploadError,
-  isFailedSourceIngest,
+  isMediaIngestionDefect,
+  projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import {
@@ -270,14 +275,13 @@ export default function ConnectionsSurface({
       ) : scanVoice ? (
         <p className={styles.scanVoice}>{scanVoice}</p>
       ) : null}
-      {composerOpen ? (
-        <ConnectionComposer
-          id={composerId}
-          selfRef={selfRef}
-          onChanged={reloadConnections}
-          autoFocus
-        />
-      ) : null}
+      <ConnectionComposer
+        key={selfRef}
+        id={composerId}
+        selfRef={selfRef}
+        onChanged={reloadConnections}
+        active={composerOpen}
+      />
       {loading ? (
         <FeedbackNotice severity="info" title="Loading connections..." />
       ) : null}
@@ -360,13 +364,14 @@ function ConnectionComposer({
   id,
   selfRef,
   onChanged,
-  autoFocus = false,
+  active,
 }: {
   id: string;
   selfRef: string;
   onChanged: () => void;
-  autoFocus?: boolean;
+  active: boolean;
 }) {
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const autocompleteId = useId();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<EdgeKind>("context");
@@ -376,16 +381,17 @@ function ConnectionComposer({
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const trimmedQuery = query.trim();
   const rawRef = useMemo(() => parseResourceRef(trimmedQuery), [trimmedQuery]);
 
-  // The composer only mounts when the "＋ Connect" disclosure opens it, so focus
-  // the first field on mount to keep the keyboard on the reveal (AC-7).
   useEffect(() => {
-    if (autoFocus) searchInputRef.current?.focus();
-  }, [autoFocus]);
+    if (active) searchInputRef.current?.focus();
+  }, [active]);
 
   useEffect(() => {
     if (trimmedQuery.length < 2 || rawRef !== null || selected !== null) {
@@ -464,29 +470,102 @@ function ConnectionComposer({
     }
     setFeedback(null);
     setAttaching(true);
+    let changed = false;
     try {
       for (const file of files) {
         const uploadError = getFileUploadError(file);
         if (uploadError) {
-          throw new Error(uploadError);
+          setFeedback({ severity: "error", title: uploadError });
+          continue;
         }
-        const result = await uploadIngestFile({ file, libraryIds: [] });
-        if (isFailedSourceIngest(result)) {
-          throw new Error("Attachment could not be uploaded.");
+        const accepted: {
+          pending: PendingAttachment | null;
+          edge: Promise<AttachmentEdgeOutcome> | null;
+        } = { pending: null, edge: null };
+        let upload;
+        try {
+          upload = await uploadIngestFile({
+            file,
+            libraryIds: [],
+            onAcceptedIdentity: ({ mediaId, sourceAttemptId }) => {
+              const pending: PendingAttachment = {
+                mediaId,
+                sourceAttemptId,
+                label: file.name,
+                warning: null,
+              };
+              accepted.pending = pending;
+              setPendingAttachments((current) =>
+                upsertPending(current, pending),
+              );
+              accepted.edge = createAttachmentEdge(selfRef, pending).then(
+                () => ({ kind: "Fulfilled" as const }),
+                (error: unknown) => ({ kind: "Rejected" as const, error }),
+              );
+            },
+          });
+        } catch (error) {
+          if (accepted.edge && accepted.pending) {
+            const edge = await accepted.edge;
+            if (edge.kind === "Fulfilled") {
+              setPendingAttachments((current) =>
+                current.filter(
+                  (item) => item.mediaId !== accepted.pending?.mediaId,
+                ),
+              );
+              changed = true;
+            }
+          }
+          if (isMediaIngestionDefect(error)) {
+            setDefect({ error });
+            return;
+          }
+          if (handleUnauthenticatedApiError(error)) return;
+          setFeedback(
+            toFeedback(error, { fallback: "Attachment could not be added." }),
+          );
+          continue;
         }
-        await createUserEdge({
-          sourceRef: selfRef,
-          targetRef: `media:${result.mediaId}`,
-          kind: "context",
+        if (!accepted.pending || !accepted.edge) {
+          setDefect({
+            error: new Error(
+              "Accepted attachment did not publish its durable identity.",
+            ),
+          });
+          return;
+        }
+        const { warning } = projectUploadReference({
+          result: upload,
+          processingFailureFeedback: {
+            severity: "warning",
+            title: "Attachment was added, but source processing failed.",
+          },
         });
+        const pending = { ...accepted.pending, warning };
+        setPendingAttachments((current) => upsertPending(current, pending));
+        const edge = await accepted.edge;
+        if (edge.kind === "Rejected") {
+          if (isSameSystemApiDefect(edge.error)) {
+            setDefect({ error: edge.error });
+            return;
+          }
+          if (handleUnauthenticatedApiError(edge.error)) return;
+          setFeedback(
+            toFeedback(edge.error, {
+              fallback:
+                "File was saved, but its connection could not be created.",
+            }),
+          );
+          continue;
+        }
+        setPendingAttachments((current) =>
+          current.filter((item) => item.mediaId !== pending.mediaId),
+        );
+        changed = true;
+        if (warning) setFeedback(warning);
       }
-      onChanged();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, { fallback: "Attachment could not be added." }),
-      );
     } finally {
+      if (changed) onChanged();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -494,99 +573,265 @@ function ConnectionComposer({
     }
   }
 
+  async function retryAttachment(pending: PendingAttachment) {
+    setFeedback(null);
+    setAttaching(true);
+    try {
+      await createAttachmentEdge(selfRef, pending);
+      setPendingAttachments((current) =>
+        current.filter((item) => item.mediaId !== pending.mediaId),
+      );
+      if (pending.warning) setFeedback(pending.warning);
+      onChanged();
+    } catch (error) {
+      if (isSameSystemApiDefect(error)) {
+        setDefect({ error });
+        return;
+      }
+      if (handleUnauthenticatedApiError(error)) return;
+      setFeedback(
+        toFeedback(error, {
+          fallback: "File was saved, but its connection could not be created.",
+        }),
+      );
+    } finally {
+      setAttaching(false);
+    }
+  }
+
   return (
-    <form
-      id={id}
-      className={styles.composer}
-      onSubmit={(event) => void submitConnection(event)}
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-      }}
-      onDrop={(event) => {
-        const files = Array.from(event.dataTransfer.files);
-        if (files.length === 0) return;
-        event.preventDefault();
-        void attachFiles(files);
-      }}
+    <ConnectionComposerDefectBoundary
+      active={active}
+      activeDefect={defect !== null}
+      onContinue={() => setDefect(null)}
     >
-      <div className={styles.composerControls}>
-        <div className={styles.searchWrap}>
-          <Input
-            ref={searchInputRef}
-            size="sm"
-            value={query}
-            placeholder="Search or paste resource ref"
-            aria-label="Connection target"
-            onChange={(event) => {
-              setSelected(null);
-              setFeedback(null);
-              setQuery(event.currentTarget.value);
-            }}
-          />
-          <div className={styles.autocomplete}>
-            <ObjectRefAutocomplete
-              id={autocompleteId}
-              objects={results}
-              activeObjectKey={activeResultKey}
-              optionIdForObject={(object) =>
-                `${autocompleteId}-option-${objectRefKey(object)}`
+      <ConnectionComposerProjection defect={defect}>
+        <form
+          id={id}
+          hidden={!active}
+          className={styles.composer}
+          onSubmit={(event) => void submitConnection(event)}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files"))
+              event.preventDefault();
+          }}
+          onDrop={(event) => {
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length === 0) return;
+            event.preventDefault();
+            void attachFiles(files);
+          }}
+        >
+          <div className={styles.composerControls}>
+            <div className={styles.searchWrap}>
+              <Input
+                ref={searchInputRef}
+                size="sm"
+                value={query}
+                placeholder="Search or paste resource ref"
+                aria-label="Connection target"
+                onChange={(event) => {
+                  setSelected(null);
+                  setFeedback(null);
+                  setQuery(event.currentTarget.value);
+                }}
+              />
+              <div className={styles.autocomplete}>
+                <ObjectRefAutocomplete
+                  id={autocompleteId}
+                  objects={results}
+                  activeObjectKey={activeResultKey}
+                  optionIdForObject={(object) =>
+                    `${autocompleteId}-option-${objectRefKey(object)}`
+                  }
+                  onActiveChange={setActiveResultKey}
+                  onPick={(object) => {
+                    setSelected(object);
+                    setQuery(object.label);
+                    setResults([]);
+                    setActiveResultKey(null);
+                    setFeedback(null);
+                  }}
+                />
+              </div>
+            </div>
+            <Select
+              size="sm"
+              value={kind}
+              aria-label="Connection kind"
+              onChange={(event) =>
+                setKind(event.currentTarget.value as EdgeKind)
               }
-              onActiveChange={setActiveResultKey}
-              onPick={(object) => {
-                setSelected(object);
-                setQuery(object.label);
-                setResults([]);
-                setActiveResultKey(null);
-                setFeedback(null);
-              }}
+            >
+              <option value="context">context</option>
+              <option value="supports">supports</option>
+              <option value="contradicts">contradicts</option>
+            </Select>
+            <Button
+              type="submit"
+              size="sm"
+              variant="secondary"
+              loading={submitting}
+              leadingIcon={<Link size={14} />}
+            >
+              Connect
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              leadingIcon={<Paperclip size={14} />}
+              loading={attaching}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Attach
+            </Button>
+            <input
+              ref={fileInputRef}
+              className={styles.fileInput}
+              type="file"
+              multiple
+              accept="application/pdf,application/epub+zip,.pdf,.epub"
+              aria-label="Attach files"
+              tabIndex={-1}
+              onChange={(event) =>
+                void attachFiles(Array.from(event.currentTarget.files ?? []))
+              }
             />
           </div>
-        </div>
-        <Select
-          size="sm"
-          value={kind}
-          aria-label="Connection kind"
-          onChange={(event) => setKind(event.currentTarget.value as EdgeKind)}
-        >
-          <option value="context">context</option>
-          <option value="supports">supports</option>
-          <option value="contradicts">contradicts</option>
-        </Select>
+          {pendingAttachments.length > 0 ? (
+            <ul
+              className={styles.pendingAttachments}
+              aria-label="Pending attachments"
+            >
+              {pendingAttachments.map((pending) => (
+                <li key={pending.mediaId} className={styles.pendingAttachment}>
+                  <span>
+                    {pending.label} was saved and still needs its connection.
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={attaching}
+                    onClick={() => void retryAttachment(pending)}
+                  >
+                    Retry attachment
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+        </form>
+      </ConnectionComposerProjection>
+    </ConnectionComposerDefectBoundary>
+  );
+}
+
+function ConnectionComposerProjection({
+  defect,
+  children,
+}: {
+  defect: { error: unknown } | null;
+  children: ReactNode;
+}) {
+  if (defect) throw defect.error;
+  return children;
+}
+
+interface ConnectionComposerDefectBoundaryProps {
+  active: boolean;
+  activeDefect: boolean;
+  onContinue(): void;
+  children: ReactNode;
+}
+
+class ConnectionComposerDefectBoundary extends Component<
+  ConnectionComposerDefectBoundaryProps,
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  private readonly actionRef = createRef<HTMLButtonElement>();
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Connection composer contract defect:", error);
+    if (this.props.active) this.actionRef.current?.focus();
+  }
+
+  componentDidUpdate(
+    previous: Readonly<ConnectionComposerDefectBoundaryProps>,
+  ) {
+    if (
+      this.state.hasError &&
+      previous.activeDefect &&
+      !this.props.activeDefect
+    ) {
+      this.setState({ hasError: false });
+      return;
+    }
+    if (this.state.hasError && !previous.active && this.props.active) {
+      this.actionRef.current?.focus();
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div hidden={!this.props.active} className={styles.composer}>
+        <FeedbackNotice
+          severity="error"
+          title="Connections need attention"
+          message="Nexus preserved any accepted file identity. Continue to review its connection."
+        />
         <Button
-          type="submit"
-          size="sm"
-          variant="secondary"
-          loading={submitting}
-          leadingIcon={<Link size={14} />}
-        >
-          Connect
-        </Button>
-        <Button
+          ref={this.actionRef}
           type="button"
           size="sm"
-          variant="ghost"
-          leadingIcon={<Paperclip size={14} />}
-          loading={attaching}
-          onClick={() => fileInputRef.current?.click()}
+          variant="secondary"
+          onClick={this.props.onContinue}
         >
-          Attach
+          Continue connections
         </Button>
-        <input
-          ref={fileInputRef}
-          className={styles.fileInput}
-          type="file"
-          multiple
-          accept="application/pdf,application/epub+zip,.pdf,.epub"
-          aria-label="Attach files"
-          tabIndex={-1}
-          onChange={(event) =>
-            void attachFiles(Array.from(event.currentTarget.files ?? []))
-          }
-        />
       </div>
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
-    </form>
-  );
+    );
+  }
+}
+
+interface PendingAttachment {
+  mediaId: string;
+  sourceAttemptId: string;
+  label: string;
+  warning: FeedbackContent | null;
+}
+
+type AttachmentEdgeOutcome =
+  | { kind: "Fulfilled" }
+  | { kind: "Rejected"; error: unknown };
+
+function upsertPending(
+  current: PendingAttachment[],
+  pending: PendingAttachment,
+): PendingAttachment[] {
+  return [
+    ...current.filter((item) => item.mediaId !== pending.mediaId),
+    pending,
+  ];
+}
+
+function createAttachmentEdge(
+  sourceRef: string,
+  pending: PendingAttachment,
+): Promise<unknown> {
+  return createUserEdge({
+    sourceRef,
+    targetRef: `media:${pending.mediaId}`,
+    kind: "context",
+  });
 }
 
 function DeleteConnectionButton({

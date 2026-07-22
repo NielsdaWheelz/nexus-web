@@ -22,6 +22,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, can_restore_media, visible_media_ids_cte_sql
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
@@ -34,7 +35,6 @@ from nexus.schemas.library import (
     LibraryPodcastSubscriptionOut,
     ReadingTimeEstimateOut,
 )
-from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_governance as governance
@@ -424,12 +424,67 @@ def raise_if_media_teardown_pending(db: Session, media_id: UUID) -> None:
     ).fetchone()
     if locked is None:
         return
+    _raise_if_locked_media_teardown_pending(db, media_id)
+
+
+def _raise_if_locked_media_teardown_pending(db: Session, media_id: UUID) -> None:
+    """Apply the teardown barrier after the caller has locked the media row."""
     intent = db.execute(
         text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     ).fetchone()
     if intent is not None:
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+
+
+def _lock_authorized_media_for_filing(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    authorization: Literal["readable", "restorable"],
+) -> None:
+    """Lock, then reauthorize an actor filing before any library lock.
+
+    The pre-lock authorization in each public command gives its normal fast-fail
+    behavior. This locked check is the linearization guard: a concurrent whole-resource
+    deletion or last-library teardown may remove the viewer's final reachability while
+    the filing waits for the media row, and must not turn that stale authorization into
+    a new reference.
+    """
+    locked = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).fetchone()
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if authorization == "restorable":
+        authorized = can_restore_media(db, viewer_id, media_id)
+    elif authorization == "readable":
+        authorized = can_read_media(
+            db,
+            viewer_id,
+            media_id,
+            include_tearing_down=True,
+        )
+    else:
+        assert_never(authorization)
+    if not authorized:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    _raise_if_locked_media_teardown_pending(db, media_id)
+
+
+def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
+    """Lock existing media rows in the repository-wide reference-mutation order."""
+    ordered_ids = sorted(set(media_ids))
+    if not ordered_ids:
+        return []
+    rows = db.execute(
+        text("SELECT id FROM media WHERE id = ANY(:media_ids) ORDER BY id FOR UPDATE"),
+        {"media_ids": ordered_ids},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
@@ -549,6 +604,17 @@ def list_media_ids_in_library(db: Session, library_id: UUID) -> list[UUID]:
             ORDER BY {_ENTRY_ORDER}
         """),
         {"library_id": library_id},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
+
+
+def library_ids_for_media(db: Session, media_id: UUID) -> list[UUID]:
+    """All physical library references for media, ordered by library UUID."""
+    rows = db.execute(
+        text(
+            "SELECT library_id FROM library_entries WHERE media_id = :media_id ORDER BY library_id"
+        ),
+        {"media_id": media_id},
     ).fetchall()
     return [UUID(str(row[0])) for row in rows]
 
@@ -975,7 +1041,7 @@ def list_item_libraries(
     ]
 
 
-def add_media_to_library(
+def ensure_media_in_library(
     db: Session, viewer_id: UUID, library_id: UUID, media_id: UUID
 ) -> LibraryFilingOutcome:
     """The one actor-authorized filing command for attaching media to a library
@@ -984,11 +1050,11 @@ def add_media_to_library(
     the physical row IS the direct intent, inserted unconditionally even when the
     media is already virtually present through another membership.
 
-    Authorizes readable-OR-restorable media (rule 1) right after the existence
-    check, before any lock is taken — REST and agent_tools both funnel through
-    this one gate, so neither surface can file a media_id the viewer has no
-    membership path to (no existence leak: unauthorized looks identical to
-    nonexistent).
+    A fast precheck authorizes readable-OR-restorable media (rule 1), then the
+    media-row lock rechecks the same authorization before any library lock.
+    REST and agent_tools both funnel through this one gate, so neither surface
+    can file a stale or unauthorized media_id (no existence leak: unauthorized
+    looks identical to nonexistent).
 
     Ordering is load-bearing: the media-teardown barrier must run before any
     library lock (spec S3/S4.3), so this locks/checks the media row FIRST and
@@ -1005,7 +1071,12 @@ def add_media_to_library(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if not can_restore_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        raise_if_media_teardown_pending(db, media_id)
+        _lock_authorized_media_for_filing(
+            db,
+            viewer_id,
+            media_id,
+            authorization="restorable",
+        )
 
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
@@ -1017,6 +1088,97 @@ def add_media_to_library(
         clear_user_media_deletion(db, viewer_id, media_id)
 
     return LibraryFilingOutcome(inserted=inserted)
+
+
+def ensure_media_absent_from_library_for_viewer(
+    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
+) -> None:
+    """Idempotently remove one media from a writable non-default library."""
+    _ensure_media_absent_from_library_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_id=library_id,
+        require_non_default_destination=True,
+        retry_label="ensure_media_absent_from_library",
+    )
+
+
+def undo_media_filing_for_viewer(
+    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
+) -> None:
+    """Undo one agent-created media filing, including a direct Default filing."""
+    _ensure_media_absent_from_library_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_id=library_id,
+        require_non_default_destination=False,
+        retry_label="undo_media_filing",
+    )
+
+
+def _ensure_media_absent_from_library_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_id: UUID,
+    require_non_default_destination: bool,
+    retry_label: str,
+) -> None:
+    def attempt() -> None:
+        with transaction(db):
+            context = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+            governance.require_admin(context.role)
+            if require_non_default_destination:
+                governance.require_non_default(context.is_default)
+            governance.require_not_system(context.system_key)
+
+            target = media_target(media_id)
+            if not entry_exists(db, library_id, target):
+                return
+
+            if lock_media_rows_in_order(db, [media_id]) != [media_id]:
+                if not entry_exists(db, library_id, target):
+                    # Concurrent whole-resource or whole-library teardown also removes
+                    # this entry. Its commit is a successful serial predecessor for this
+                    # idempotent command.
+                    return
+                # justify-service-invariant-check: the initial target entry authorized
+                # media reachability, so a missing media row is safe only after a fresh
+                # READ COMMITTED statement confirms that entry disappeared with it.
+                # justify-defect: non-cascading storage FKs forbid a live dangling entry.
+                raise AssertionError("media library entry points at missing media")
+
+            context = governance.lock_library_for_member(db, viewer_id, library_id)
+            governance.require_admin(context.role)
+            if require_non_default_destination:
+                governance.require_non_default(context.is_default)
+            governance.require_not_system(context.system_key)
+            if not entry_exists(db, library_id, target):
+                return
+
+            raise_if_media_teardown_pending(db, media_id)
+            reference_count = count_entries_for_media(db, media_id)
+            if reference_count == 1:
+                raise ConflictError(
+                    ApiErrorCode.E_MEDIA_LAST_REFERENCE,
+                    "Media must remain in at least one library",
+                )
+            if reference_count < 1:
+                # justify-service-invariant-check: the locked target entry was re-read in
+                # this transaction, so a zero count means the storage invariant is broken.
+                # justify-defect: a present entry must contribute one lifetime reference.
+                raise AssertionError("present media library entry was not counted")
+            if not delete_entry(db, library_id, target):
+                # justify-service-invariant-check: media and library row locks exclude every
+                # supported concurrent remover after the immediately preceding re-read.
+                # justify-defect: the exact entry cannot disappear while both locks are held.
+                raise AssertionError("locked media library entry disappeared before delete")
+            normalize_positions(db, library_id)
+
+    retry_read_committed(db, retry_label, attempt)
 
 
 def add_podcast_to_library(
@@ -1602,29 +1764,33 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     clear_user_media_deletion(db, user_id, media_id)
 
 
-def add_media_to_libraries_for_viewer(
+def ensure_media_in_libraries_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> MediaLibrariesResponse:
+) -> None:
     """Verify the viewer can read the media, then add selected writable destinations."""
     from nexus.services import media as media_service
 
     with transaction(db):
         media_service.get_media_for_viewer(db, viewer_id, media_id)
+        _lock_authorized_media_for_filing(
+            db,
+            viewer_id,
+            media_id,
+            authorization="readable",
+        )
         targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
-        inserted = _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
-    return MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted)
+        _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 
 
 def _add_media_to_resolved_libraries(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> list[UUID]:
+) -> None:
     if not library_ids:
-        return []
+        return
     from nexus.services.media_deletion import clear_user_media_deletion
 
-    clear_user_media_deletion(db, viewer_id, media_id)
     # The media-teardown barrier must run before any library lock (spec S4.3),
-    # so this locks/checks the media row FIRST — matching add_media_to_library's
+    # so this locks/checks the media row FIRST — matching ensure_media_in_library's
     # mandated media->library order and avoiding an AB-BA deadlock against it.
     raise_if_media_teardown_pending(db, media_id)
     locked_contexts = {
@@ -1636,11 +1802,9 @@ def _add_media_to_resolved_libraries(
         governance.require_admin(ctx.role)
         governance.require_not_system(ctx.system_key)
 
-    inserted: list[UUID] = []
     for library_id in library_ids:
-        if ensure_entry(db, library_id, media_target(media_id)):
-            inserted.append(library_id)
-    return inserted
+        ensure_entry(db, library_id, media_target(media_id))
+    clear_user_media_deletion(db, viewer_id, media_id)
 
 
 def assign_libraries_for_media(
@@ -1659,6 +1823,9 @@ def assign_libraries_for_media_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
     targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
+    default_library_id = governance.default_library_id_for_user(db, viewer_id)
+    raise_if_media_teardown_pending(db, media_id)
+    governance.lock_library_rows_in_order(db, [default_library_id, *targets])
     ensure_media_in_default_library(db, viewer_id, media_id)
     _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 

@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { apiFetch, isApiError } from "@/lib/api/client";
@@ -32,11 +27,11 @@ import { startResourceChat } from "@/lib/resources/resourceChat";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
-  addMediaToLibrary,
+  ensureMediaAbsentFromLibrary,
+  ensureMediaInLibraries,
   fetchMediaLibraryMemberships,
   deleteMedia,
   patchLibraryMembership,
-  removeMediaFromLibrary,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -87,6 +82,7 @@ import styles from "./page.module.css";
 interface Library {
   id: string;
   name: string;
+  color: string | null;
   is_default: boolean;
   role: string;
   owner_user_id: string;
@@ -213,7 +209,9 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
-  const { displayState, setDisplayState } = useCollectionDisplayState(`/libraries/${id}`);
+  const { displayState, setDisplayState } = useCollectionDisplayState(
+    `/libraries/${id}`,
+  );
   const { openInNewPane } = usePaneRuntime() ?? {};
   const feedback = useFeedback();
   const lectern = useLectern();
@@ -221,7 +219,8 @@ export default function LibraryPaneBody() {
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [entryCursor, setEntryCursor] = useState<string | null>(null);
   const [manualLoadingMore, setManualLoadingMore] = useState(false);
-  const [manualLoadMoreError, setManualLoadMoreError] = useState<FeedbackContent | null>(null);
+  const [manualLoadMoreError, setManualLoadMoreError] =
+    useState<FeedbackContent | null>(null);
   const [resonanceEntries, setResonanceEntries] = useState<LibraryEntry[]>([]);
   const [resonanceCursor, setResonanceCursor] = useState<string | null>(null);
   const [resonanceLoadingMore, setResonanceLoadingMore] = useState(false);
@@ -270,7 +269,8 @@ export default function LibraryPaneBody() {
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
   const canEditEntries =
-    currentLibrary?.role === "admin" && currentLibrary.can_edit_entries === true;
+    currentLibrary?.role === "admin" &&
+    currentLibrary.can_edit_entries === true;
   // Explicit reorder gate: Default has server-defined ordering and no reorder
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
@@ -278,10 +278,13 @@ export default function LibraryPaneBody() {
   const loading =
     libraryResource.status === "loading" && currentLibrary === null;
   useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
-  const connectionSummaryEntries = sort === "resonance" ? resonanceEntries : entries;
+  const connectionSummaryEntries =
+    sort === "resonance" ? resonanceEntries : entries;
   const connectionSummaries = useConnectionSummaries(
     connectionSummaryEntries.map((entry) =>
-      entry.kind === "podcast" ? `podcast:${entry.podcast.id}` : `media:${entry.media.id}`,
+      entry.kind === "podcast"
+        ? `podcast:${entry.podcast.id}`
+        : `media:${entry.media.id}`,
     ),
   );
   const setSort = useCallback(
@@ -299,7 +302,10 @@ export default function LibraryPaneBody() {
     },
     [id, paneSearchParams, router],
   );
-  const resonanceEntriesPath = libraryEntriesResource.clientPath({ id, sort: "resonance" });
+  const resonanceEntriesPath = libraryEntriesResource.clientPath({
+    id,
+    sort: "resonance",
+  });
   const resonanceFetch = useDebouncedFetch<LibraryEntryPage>(
     sort === "resonance" ? resonanceEntriesPath : null,
     async (signal) =>
@@ -421,9 +427,7 @@ export default function LibraryPaneBody() {
         const libraries =
           entry.kind === "podcast"
             ? await fetchPodcastLibraries(entry.podcast.id)
-            : await fetchMediaLibraryMemberships(entry.media.id, {
-                excludeDefault: true,
-              });
+            : await fetchMediaLibraryMemberships(entry.media.id);
         if (libraryPanelRequestIdRef.current !== requestId) {
           return;
         }
@@ -459,7 +463,10 @@ export default function LibraryPaneBody() {
             body: JSON.stringify({ podcast_id: libraryPanelEntry.podcast.id }),
           });
         } else {
-          await addMediaToLibrary(libraryPanelEntry.media.id, libraryId);
+          await ensureMediaInLibraries({
+            mediaId: libraryPanelEntry.media.id,
+            libraryIds: [libraryId],
+          });
         }
 
         if (libraryPanelEntryIdRef.current === libraryPanelEntry.id) {
@@ -528,7 +535,10 @@ export default function LibraryPaneBody() {
             },
           );
         } else {
-          await removeMediaFromLibrary(entry.media.id, libraryId);
+          await ensureMediaAbsentFromLibrary({
+            mediaId: entry.media.id,
+            libraryId,
+          });
         }
 
         if (removingCurrentEntry) {
@@ -647,7 +657,10 @@ export default function LibraryPaneBody() {
           ),
         );
         if (result.kind === "Deleting") {
-          feedback.show({ severity: "info", title: "Deleting from your library" });
+          feedback.show({
+            severity: "info",
+            title: "Deleting from your library",
+          });
         }
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
@@ -705,7 +718,9 @@ export default function LibraryPaneBody() {
         ) =>
           current.map((entry) => {
             const fields = previous.get(entry.id);
-            return entry.kind === "media" && entry.media.id === mediaId && fields
+            return entry.kind === "media" &&
+              entry.media.id === mediaId &&
+              fields
               ? { ...entry, media: { ...entry.media, ...fields } }
               : entry;
           });
@@ -738,7 +753,9 @@ export default function LibraryPaneBody() {
         feedback.show({ severity: "success", title: "Added to Lectern" });
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        feedback.show({ ...toFeedback(err, { fallback: "Failed to add to Lectern" }) });
+        feedback.show({
+          ...toFeedback(err, { fallback: "Failed to add to Lectern" }),
+        });
       }
     },
     [feedback, lectern],
@@ -909,7 +926,8 @@ export default function LibraryPaneBody() {
 
   const handleLoadMoreEntries = useCallback(
     (requestedSort: "manual" | "resonance") => {
-      const cursor = requestedSort === "resonance" ? resonanceCursor : entryCursor;
+      const cursor =
+        requestedSort === "resonance" ? resonanceCursor : entryCursor;
       if (cursor === null) {
         return;
       }
@@ -941,11 +959,16 @@ export default function LibraryPaneBody() {
       )
         .then(decodeLibraryEntryPage)
         .then((page) => {
-          if (controller.signal.aborted || generation !== entryLoadMoreGenerationRef.current) {
+          if (
+            controller.signal.aborted ||
+            generation !== entryLoadMoreGenerationRef.current
+          ) {
             return;
           }
           if (requestedSort === "resonance") {
-            setResonanceEntries((current) => appendUniqueEntries(current, page.data));
+            setResonanceEntries((current) =>
+              appendUniqueEntries(current, page.data),
+            );
             setResonanceCursor(page.page.next_cursor);
           } else {
             setEntries((current) =>
@@ -978,7 +1001,10 @@ export default function LibraryPaneBody() {
           }
         })
         .finally(() => {
-          if (controller.signal.aborted || generation !== entryLoadMoreGenerationRef.current) {
+          if (
+            controller.signal.aborted ||
+            generation !== entryLoadMoreGenerationRef.current
+          ) {
             return;
           }
           if (requestedSort === "resonance") {
@@ -1040,7 +1066,23 @@ export default function LibraryPaneBody() {
                 id: "add-content",
                 label: "Add content",
                 restoreFocusOnClose: false,
-                onSelect: () => dispatchOpenLauncher({ lane: "add" }),
+                onSelect: () =>
+                  dispatchOpenLauncher({
+                    kind: "Add",
+                    seed: {
+                      kind: "Content",
+                      initialFocus: "Url",
+                      initialDestinations: currentLibrary.is_default
+                        ? []
+                        : [
+                            {
+                              id: currentLibrary.id,
+                              name: currentLibrary.name,
+                              color: currentLibrary.color,
+                            },
+                          ],
+                    },
+                  }),
               },
             ]
           : []),
@@ -1091,12 +1133,17 @@ export default function LibraryPaneBody() {
   const visibleResonanceEntries = resonanceEntries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
   );
-  const surfacedEntries = visibleEntries.filter((entry) => entry.surfaced_today);
-  const canReorderVisibleEntries = canReorder && sort === "manual" && entryCursor === null;
+  const surfacedEntries = visibleEntries.filter(
+    (entry) => entry.surfaced_today,
+  );
+  const canReorderVisibleEntries =
+    canReorder && sort === "manual" && entryCursor === null;
   const entryFooter =
     sort === "resonance" ? (
       <>
-        {resonanceLoadMoreError ? <FeedbackNotice {...resonanceLoadMoreError} /> : null}
+        {resonanceLoadMoreError ? (
+          <FeedbackNotice {...resonanceLoadMoreError} />
+        ) : null}
         <LoadMoreFooter
           hasMore={resonanceCursor !== null}
           loading={resonanceLoadingMore}
@@ -1106,7 +1153,9 @@ export default function LibraryPaneBody() {
       </>
     ) : (
       <>
-        {manualLoadMoreError ? <FeedbackNotice {...manualLoadMoreError} /> : null}
+        {manualLoadMoreError ? (
+          <FeedbackNotice {...manualLoadMoreError} />
+        ) : null}
         <LoadMoreFooter
           hasMore={entryCursor !== null}
           loading={manualLoadingMore}
@@ -1137,7 +1186,9 @@ export default function LibraryPaneBody() {
         },
         {
           canUsePodcastActions: canEditEntries,
-          connectionSummary: connectionSummaries.get(`podcast:${item.podcast.id}`),
+          connectionSummary: connectionSummaries.get(
+            `podcast:${item.podcast.id}`,
+          ),
           onManageLibraries: ({ triggerEl }) => {
             void openLibraryPanel(item, triggerEl);
           },
@@ -1176,7 +1227,7 @@ export default function LibraryPaneBody() {
           ? () => {
               void handleDeleteMedia(item);
             }
-        : undefined,
+          : undefined,
       onMarkFinished: () => {
         void handleSetConsumption(item.media.id, "finished");
       },
@@ -1254,40 +1305,45 @@ export default function LibraryPaneBody() {
           ) : null
         }
       >
-          {sort === "resonance" ? (
-            <CollectionView
-              rows={visibleResonanceEntries.map(entryRowView)}
-              view={displayState.view}
-              density={displayState.density}
-              status={resonanceStatus}
-              ariaLabel="Library by resonance"
-              empty={<FeedbackNotice severity="neutral" title="No entries to rank yet." />}
-              error={
-                resonanceFetch.error ? (
-                  <FeedbackNotice
-                    feedback={toFeedback(resonanceFetch.error, {
-                      fallback: "Failed to rank library entries",
-                    })}
-                  />
-                ) : undefined
-              }
-              footer={entryFooter}
-              surface={false}
-            />
-          ) : visibleEntries.length > 0 ? (
-            <>
-          {surfacedEntries.length > 0 ? (
-            <PaneSection title="Surfaced today">
-              <CollectionView
-                rows={surfacedEntries.map(entryRowView)}
-                view={displayState.view}
-                density={displayState.density}
-                status="ready"
-                ariaLabel="Surfaced today"
-                surface={false}
+        {sort === "resonance" ? (
+          <CollectionView
+            rows={visibleResonanceEntries.map(entryRowView)}
+            view={displayState.view}
+            density={displayState.density}
+            status={resonanceStatus}
+            ariaLabel="Library by resonance"
+            empty={
+              <FeedbackNotice
+                severity="neutral"
+                title="No entries to rank yet."
               />
-            </PaneSection>
-          ) : null}
+            }
+            error={
+              resonanceFetch.error ? (
+                <FeedbackNotice
+                  feedback={toFeedback(resonanceFetch.error, {
+                    fallback: "Failed to rank library entries",
+                  })}
+                />
+              ) : undefined
+            }
+            footer={entryFooter}
+            surface={false}
+          />
+        ) : visibleEntries.length > 0 ? (
+          <>
+            {surfacedEntries.length > 0 ? (
+              <PaneSection title="Surfaced today">
+                <CollectionView
+                  rows={surfacedEntries.map(entryRowView)}
+                  view={displayState.view}
+                  density={displayState.density}
+                  status="ready"
+                  ariaLabel="Surfaced today"
+                  surface={false}
+                />
+              </PaneSection>
+            ) : null}
             {displayState.view === "gallery" ? (
               <CollectionView
                 rows={visibleEntryRows}
@@ -1318,7 +1374,10 @@ export default function LibraryPaneBody() {
                           );
                           const nextEntries = nextRows
                             .map((row) => byEntryId.get(row.id))
-                            .filter((entry): entry is LibraryEntry => entry !== undefined);
+                            .filter(
+                              (entry): entry is LibraryEntry =>
+                                entry !== undefined,
+                            );
                           if (nextEntries.length === visibleEntries.length) {
                             handleReorderEntries(nextEntries);
                           }
@@ -1341,8 +1400,8 @@ export default function LibraryPaneBody() {
                 }
               />
             )}
-            </>
-          ) : null}
+          </>
+        ) : null}
       </PaneSurface>
 
       {editOpen && (

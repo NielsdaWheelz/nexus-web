@@ -102,7 +102,7 @@ def add_media_to_library(
 ) -> None:
     """Seed media into a user's default library.
 
-    Filing (`POST /libraries/{id}/media`) requires the target media to already
+    Actor-authorized filing requires the target media to already
     be membership-reachable, which production guarantees via
     `ensure_media_in_default_library` auto-filing new media on ingest. Bare
     media rows created directly by test fixtures are never auto-filed, so seed

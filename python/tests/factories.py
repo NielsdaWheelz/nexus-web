@@ -297,11 +297,12 @@ def create_test_media(
     *,
     title: str = "Test Article",
     status: str = "ready_for_reading",
+    kind: str = MediaKind.web_article.value,
 ) -> UUID:
     """Create a bare media row (not linked to any library)."""
     media = Media(
         id=uuid4(),
-        kind=MediaKind.web_article.value,
+        kind=kind,
         title=title,
         canonical_source_url="https://example.com/test",
         processing_status=ProcessingStatus(status),

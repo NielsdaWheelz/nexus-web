@@ -32,7 +32,10 @@ import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
-import { useNotePulseHighlight, type NotePulseTarget } from "@/lib/reader/pulseEvent";
+import {
+  useNotePulseHighlight,
+  type NotePulseTarget,
+} from "@/lib/reader/pulseEvent";
 import styles from "../../notes/notes.module.css";
 
 const NOTE_PULSE_DURATION_MS = 1800;
@@ -61,7 +64,10 @@ export default function NotePaneBody() {
   useSetPaneLabel(block?.bodyText.trim() || (feedback ? "Note" : null));
 
   const saveDoc = useCallback(
-    async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {
+    async (
+      doc: ProseMirrorNode,
+      { clientMutationId }: { clientMutationId: string },
+    ) => {
       const first = firstOutlineBlockFromDoc(doc);
       if (!first) return;
       const saved = await saveNoteBody(blockId, {
@@ -122,7 +128,11 @@ export default function NotePaneBody() {
     }
     if (noteResource.status === "error") {
       if (handleUnauthenticatedApiError(noteResource.error)) return;
-      setFeedback(toFeedback(noteResource.error, { fallback: "Note could not be loaded." }));
+      setFeedback(
+        toFeedback(noteResource.error, {
+          fallback: "Note could not be loaded.",
+        }),
+      );
     }
   }, [noteResource]);
 
@@ -214,8 +224,11 @@ export default function NotePaneBody() {
         onBlurFlush={onBlurFlush}
         onOpenBlock={onOpenBlock}
         notePulseTarget={notePulseTarget}
+        onFeedback={setFeedback}
         onError={(error) =>
-          setFeedback(toFeedback(error, { fallback: "Note could not be edited." }))
+          setFeedback(
+            toFeedback(error, { fallback: "Note could not be edited." }),
+          )
         }
       />
       <ConnectionsSurface

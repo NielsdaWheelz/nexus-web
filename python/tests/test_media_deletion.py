@@ -82,9 +82,7 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     owner_id = create_test_user_id()
     member_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(owner_id))
-    member_default_id = auth_client.get("/me", headers=auth_headers(member_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(member_id))
 
     library_id = auth_client.post(
         "/libraries",
@@ -141,8 +139,8 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
 
     _seed_default_library_reachability(direct_db, owner_id, media_id)
     add_response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
+        f"/media/{media_id}/libraries",
+        json={"library_ids": [str(library_id)]},
         headers=auth_headers(owner_id),
     )
     assert add_response.status_code == 204, add_response.text
@@ -178,12 +176,9 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     assert latent is not None, "viewer-scoped hide must preserve the latent Lectern row"
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(owner_id)).status_code == 200
 
-    save_response = auth_client.post(
-        f"/libraries/{member_default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(member_id),
-    )
-    assert save_response.status_code == 204, save_response.text
+    with direct_db.session() as session:
+        library_entries.ensure_media_in_default_library(session, member_id, media_id)
+        session.commit()
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 200
 
     with direct_db.session() as session:
@@ -204,9 +199,7 @@ def test_delete_document_removes_default_and_administered_libraries(
 ):
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
     work_id = auth_client.post(
         "/libraries",
         json={"name": "Work"},
@@ -220,13 +213,12 @@ def test_delete_document_removes_default_and_administered_libraries(
     direct_db.register_cleanup("library_entries", "media_id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    for library_id in (default_id, work_id):
-        response = auth_client.post(
-            f"/libraries/{library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert response.status_code == 204, response.text
+    response = auth_client.post(
+        f"/media/{media_id}/libraries",
+        json={"library_ids": [str(work_id)]},
+        headers=auth_headers(user_id),
+    )
+    assert response.status_code == 204, response.text
 
     response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
@@ -334,9 +326,7 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
     auth_client, direct_db: DirectSessionManager, monkeypatch
 ):
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
     storage = FakeStorageClient()
     monkeypatch.setattr("nexus.services.media_deletion.get_storage_client", lambda: storage)
     install_fake_storage_for_teardown(monkeypatch, storage)
@@ -397,13 +387,6 @@ def test_delete_document_hard_deletes_source_attempt_storage_artifacts(
     direct_db.register_cleanup("media", "id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 204, add_response.text
-
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.text
@@ -421,9 +404,7 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
 ):
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
 
     with direct_db.session() as session:
         media_id = create_test_media(session)
@@ -490,13 +471,6 @@ def test_delete_document_hard_deletes_web_article_fragments_and_chunks(
     direct_db.register_cleanup("library_entries", "media_id", media_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 204, add_response.text
-
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
@@ -523,9 +497,7 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
 ):
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
     parent_id = uuid4()
     child_id = uuid4()
     fragment_id = uuid4()
@@ -610,13 +582,6 @@ def test_delete_document_hard_deletes_owned_document_embed_rows(
     direct_db.register_cleanup("media", "id", child_id)
 
     _seed_default_library_reachability(direct_db, user_id, parent_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(parent_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 204, add_response.text
-
     delete_response = auth_client.delete(f"/media/{parent_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
@@ -645,9 +610,7 @@ def test_delete_document_detaches_document_embed_target_rows(
 ):
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
     parent_id = uuid4()
     child_id = uuid4()
     fragment_id = uuid4()
@@ -720,12 +683,6 @@ def test_delete_document_detaches_document_embed_target_rows(
 
     for media_id in (parent_id, child_id):
         _seed_default_library_reachability(direct_db, user_id, media_id)
-        add_response = auth_client.post(
-            f"/libraries/{default_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
@@ -775,9 +732,7 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
 ):
     user_id = create_test_user_id()
     other_user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
     other_default_id = auth_client.get("/me", headers=auth_headers(other_user_id)).json()["data"][
         "default_library_id"
     ]
@@ -865,12 +820,6 @@ def test_delete_document_hides_shared_document_embed_target_for_owner(
 
     for media_id in (parent_id, child_id):
         _seed_default_library_reachability(direct_db, user_id, media_id)
-        add_response = auth_client.post(
-            f"/libraries/{default_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
-        assert add_response.status_code == 204, add_response.text
 
     delete_response = auth_client.delete(f"/media/{child_id}", headers=auth_headers(user_id))
 
@@ -1015,9 +964,7 @@ def test_delete_document_applies_graph_cleanup_two_rules(
     closed)."""
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
 
     with direct_db.session() as session:
         media_id = create_test_media(session, title="Doomed Document")
@@ -1138,13 +1085,6 @@ def test_delete_document_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    add_response = auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert add_response.status_code == 204, add_response.text
-
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
 
     assert delete_response.status_code == 200, delete_response.json()
@@ -1337,9 +1277,7 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
     and retains a key-owner contributor whose last credit is gone (AC 19)."""
     install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
     user_id = create_test_user_id()
-    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
-        "default_library_id"
-    ]
+    auth_client.get("/me", headers=auth_headers(user_id))
 
     with direct_db.session() as session:
         media_id = create_test_media(session)
@@ -1397,11 +1335,6 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
         session.commit()
 
     _seed_default_library_reachability(direct_db, user_id, media_id)
-    auth_client.post(
-        f"/libraries/{default_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
     delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
     assert delete_response.status_code == 200, delete_response.json()
     assert delete_response.json()["data"]["kind"] == "Deleting"

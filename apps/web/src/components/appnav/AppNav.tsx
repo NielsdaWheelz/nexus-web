@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
@@ -68,7 +74,9 @@ export default function AppNav() {
   const activeDestinationId = activePane
     ? sectionDestinationIdForHref(activePane.href)
     : null;
-  const activeId = NAV_MODEL.some((destination) => destination.id === activeDestinationId)
+  const activeId = NAV_MODEL.some(
+    (destination) => destination.id === activeDestinationId,
+  )
     ? activeDestinationId
     : null;
   const settingsActive = activeDestinationId === NAV_ACCOUNT.id;
@@ -88,7 +96,18 @@ export default function AppNav() {
   );
 
   const openCommand = useCallback(() => dispatchOpenLauncher(), []);
-  const openAdd = useCallback(() => dispatchOpenLauncher({ lane: "add" }), []);
+  const openAdd = useCallback(
+    () =>
+      dispatchOpenLauncher({
+        kind: "Add",
+        seed: {
+          kind: "Content",
+          initialFocus: "Url",
+          initialDestinations: [],
+        },
+      }),
+    [],
+  );
 
   if (isMobile) {
     return (

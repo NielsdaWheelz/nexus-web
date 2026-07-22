@@ -17,6 +17,15 @@ from nexus.schemas.presence import Presence
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
 
+MediaSourceAttemptStatus = Literal[
+    "accepted",
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "superseded",
+]
+
 MediaUnitStatus = Literal["building", "ready", "failed"]
 
 MediaReadState = Literal["unread", "in_progress", "finished"]
@@ -351,7 +360,7 @@ class ArticleCaptureResponse(BaseModel):
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
-    source_attempt_status: str
+    source_attempt_status: MediaSourceAttemptStatus
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: MediaProcessingStatus
     ingest_enqueued: bool
@@ -476,7 +485,7 @@ class FromUrlResponse(BaseModel):
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
-    source_attempt_status: str
+    source_attempt_status: MediaSourceAttemptStatus
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: MediaProcessingStatus
     ingest_enqueued: bool
@@ -486,13 +495,6 @@ class MediaLibrariesRequest(BaseModel):
     """Request schema for POST /media/{id}/libraries."""
 
     library_ids: list[UUID] = Field(default_factory=list)
-
-
-class MediaLibrariesResponse(BaseModel):
-    """Response schema for POST /media/{id}/libraries."""
-
-    media_id: UUID
-    library_ids_added: list[UUID]
 
 
 class MediaEvidenceTextQuoteOut(BaseModel):

@@ -33,6 +33,10 @@ import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import {
+  createLibrary,
+  type LibraryDestinationSelection,
+} from "@/lib/libraries/client";
 import PaneSection from "@/components/ui/PaneSection";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
@@ -130,7 +134,10 @@ export default function PodcastDetailPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
-  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+  const [creatingDestination, setCreatingDestination] = useState(false);
+  const [selectedDestinations, setSelectedDestinations] = useState<
+    readonly LibraryDestinationSelection[]
+  >([]);
   const [reloadNonce, setReloadNonce] = useState(0);
   const actions = usePodcastSubscriptionActions(setError);
   const refreshSyncBusy = podcastId
@@ -404,9 +411,9 @@ export default function PodcastDetailPaneBody() {
         website_url: detail.podcast.website_url,
         image_url: detail.podcast.image_url,
         description: detail.podcast.description,
-        library_ids: selectedLibraryIds,
+        library_ids: selectedDestinations.map((destination) => destination.id),
       });
-      setSelectedLibraryIds([]);
+      setSelectedDestinations([]);
       reload();
     } catch (subscribeError) {
       if (handleUnauthenticatedApiError(subscribeError)) return;
@@ -418,7 +425,7 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setSubscribeBusy(false);
     }
-  }, [detail, reload, selectedLibraryIds]);
+  }, [detail, reload, selectedDestinations]);
 
   const addPodcastToLibrary = useCallback(
     (libraryId: string) => {
@@ -796,7 +803,9 @@ export default function PodcastDetailPaneBody() {
       return null;
     }
     const { session } = state;
-    return session.origin.kind === "Lectern" ? session.descriptor.mediaId : null;
+    return session.origin.kind === "Lectern"
+      ? session.descriptor.mediaId
+      : null;
   }, [player.state]);
 
   // Play next: place After the exact Lectern origin item, else at the head
@@ -809,7 +818,10 @@ export default function PodcastDetailPaneBody() {
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
           : { kind: "First" };
-      void lectern.placeItems({ mediaIds: [assumeMediaId(mediaId)], placement });
+      void lectern.placeItems({
+        mediaIds: [assumeMediaId(mediaId)],
+        placement,
+      });
     },
     [lectern, player.state],
   );
@@ -927,15 +939,31 @@ export default function PodcastDetailPaneBody() {
                 {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
                     <LibraryDestinationPicker
-                      selectedLibraryIds={selectedLibraryIds}
-                      onChange={setSelectedLibraryIds}
+                      selected={selectedDestinations}
+                      onChange={setSelectedDestinations}
+                      presentation={{ kind: "Inline" }}
                       label="Libraries"
+                      interaction={
+                        creatingDestination
+                          ? { kind: "Creating" }
+                          : subscribeBusy
+                            ? { kind: "Disabled" }
+                            : { kind: "Enabled" }
+                      }
+                      onCreateDestination={async (name) => {
+                        setCreatingDestination(true);
+                        try {
+                          return await createLibrary({ name });
+                        } finally {
+                          setCreatingDestination(false);
+                        }
+                      }}
                     />
                     <Button
                       variant="primary"
                       size="sm"
                       onClick={() => void handleSubscribe()}
-                      disabled={subscribeBusy || !detail}
+                      disabled={subscribeBusy || creatingDestination || !detail}
                     >
                       {subscribeBusy ? "Subscribing..." : "Subscribe"}
                     </Button>

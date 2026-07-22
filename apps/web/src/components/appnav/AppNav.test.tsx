@@ -10,14 +10,20 @@ import {
 } from "@testing-library/react";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import AppNav from "./AppNav";
-import { OPEN_LAUNCHER_EVENT, type OpenLauncherDetail } from "@/lib/launcher/launcherEvents";
+import {
+  OPEN_LAUNCHER_EVENT,
+  type OpenLauncherDetail,
+} from "@/lib/launcher/launcherEvents";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import {
   createDefaultWorkspaceState,
   getWorkspacePrimaryPanes,
 } from "@/lib/workspace/schema";
-import { useWorkspaceStore, WorkspaceStoreProvider } from "@/lib/workspace/store";
+import {
+  useWorkspaceStore,
+  WorkspaceStoreProvider,
+} from "@/lib/workspace/store";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
@@ -69,7 +75,10 @@ function renderNav(
         <MobileChromeProvider>
           <WorkspaceStoreProvider
             workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialState={createDefaultWorkspaceState(initialHref, workspacePrimaryMetrics)}
+            initialState={createDefaultWorkspaceState(
+              initialHref,
+              workspacePrimaryMetrics,
+            )}
           >
             <AppNav />
             <WorkspaceProbe />
@@ -120,7 +129,10 @@ describe("AppNav (desktop rail)", () => {
       "/lectern",
     );
 
-    expect(screen.getByRole("link", { name: "Libraries" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Libraries" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(screen.getByRole("link", { name: "Oracle" })).toHaveAttribute(
       "data-presentation",
       "accent",
@@ -141,7 +153,9 @@ describe("AppNav (desktop rail)", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Podcasts" }));
     await waitFor(() => {
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent("/podcasts");
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        "/podcasts",
+      );
     });
     expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
       "data-pane-count",
@@ -150,7 +164,9 @@ describe("AppNav (desktop rail)", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Libraries" }));
     await waitFor(() => {
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent("/libraries");
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        "/libraries",
+      );
     });
     expect(screen.getByTestId("workspace-probe")).toHaveAttribute(
       "data-pane-count",
@@ -161,7 +177,9 @@ describe("AppNav (desktop rail)", () => {
   it("keeps Home and Expand as distinct targets while collapsed", async () => {
     renderNav();
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse navigation" }),
+    );
 
     expect(localStorage.getItem(COLLAPSE_KEY)).toBe("1");
     const expand = screen.getByRole("button", { name: "Expand navigation" });
@@ -179,7 +197,9 @@ describe("AppNav (desktop rail)", () => {
 
     fireEvent.click(home);
     await waitFor(() => {
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent("/lectern");
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        "/lectern",
+      );
     });
   });
 
@@ -188,16 +208,18 @@ describe("AppNav (desktop rail)", () => {
     window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
     renderNav();
 
-    fireEvent.click(screen.getByRole("button", { name: "Search or ask anything" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Search or ask anything" }),
+    );
 
     expect(onOpen).toHaveBeenCalledTimes(1);
-    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>).detail;
-    // The plain command button opens the blended launcher — it must not seed a lane.
-    expect(detail?.lane).toBeUndefined();
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>)
+      .detail;
+    expect(detail).toEqual({ kind: "Root" });
     window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
   });
 
-  it("opens the launcher on the add lane from the + button", () => {
+  it("opens source-first Add from the + button", () => {
     const onOpen = vi.fn();
     window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
     renderNav();
@@ -205,8 +227,16 @@ describe("AppNav (desktop rail)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add content" }));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
-    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>).detail;
-    expect(detail?.lane).toBe("add");
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>)
+      .detail;
+    expect(detail).toEqual({
+      kind: "Add",
+      seed: {
+        kind: "Content",
+        initialFocus: "Url",
+        initialDestinations: [],
+      },
+    });
     window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
   });
 
@@ -215,8 +245,12 @@ describe("AppNav (desktop rail)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
 
-    expect(await screen.findByRole("menuitem", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Sign Out" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("menuitem", { name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Sign Out" }),
+    ).toBeInTheDocument();
   });
 
   it("restores the Account trigger after selecting already-active Settings", async () => {
@@ -229,7 +263,9 @@ describe("AppNav (desktop rail)", () => {
     fireEvent.click(settings);
 
     await waitFor(() => {
-      expect(screen.queryByRole("menuitem", { name: "Settings" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("menuitem", { name: "Settings" }),
+      ).not.toBeInTheDocument();
     });
     await waitFor(() => expect(account).toHaveFocus());
   });
@@ -245,7 +281,9 @@ describe("AppNav (desktop rail)", () => {
     fireEvent.click(settings);
 
     await waitFor(() => {
-      expect(screen.getByTestId("workspace-probe")).toHaveTextContent("/settings");
+      expect(screen.getByTestId("workspace-probe")).toHaveTextContent(
+        "/settings",
+      );
     });
     expect(account).not.toHaveFocus();
   });
@@ -272,6 +310,30 @@ describe("AppNav (mobile sheet)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("opens source-first Add directly from the mobile + button", () => {
+    const onOpen = vi.fn();
+    window.addEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+    renderNav({ initialViewport: "mobile" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add content" }));
+
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    const detail = (onOpen.mock.calls[0]![0] as CustomEvent<OpenLauncherDetail>)
+      .detail;
+    expect(detail).toEqual({
+      kind: "Add",
+      seed: {
+        kind: "Content",
+        initialFocus: "Url",
+        initialDestinations: [],
+      },
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Navigation" }),
+    ).not.toBeInTheDocument();
+    window.removeEventListener(OPEN_LAUNCHER_EVENT, onOpen);
+  });
+
   it("hands focus to the launcher when its event closes an open NavSheet", async () => {
     renderNav({ initialViewport: "mobile" });
 
@@ -279,7 +341,9 @@ describe("AppNav (mobile sheet)", () => {
     const opener = screen.getByRole("button", { name: "Open navigation" });
     opener.focus();
     fireEvent.click(opener);
-    expect(screen.getByRole("dialog", { name: "Navigation" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Navigation" }),
+    ).toBeInTheDocument();
 
     const launcherFocusTarget = document.createElement("button");
     document.body.append(launcherFocusTarget);
@@ -292,7 +356,9 @@ describe("AppNav (mobile sheet)", () => {
     });
 
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", { name: "Navigation" }),
+      ).not.toBeInTheDocument(),
     );
     expect(launcherFocusTarget).toHaveFocus();
     launcherFocusTarget.remove();
@@ -335,7 +401,9 @@ describe("AppNav (mobile sheet)", () => {
     fireEvent.click(activeDestination);
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("dialog", { name: "Navigation" }),
+      ).not.toBeInTheDocument();
     });
     await waitFor(() => expect(opener).toHaveFocus());
   });

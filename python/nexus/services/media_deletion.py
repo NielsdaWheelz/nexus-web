@@ -1,15 +1,14 @@
 """Document deletion service.
 
-Media teardown (spec ``lectern-player-lifecycle-hard-cutover.md`` §3.1): removing
-the last lifetime reference no longer deletes storage or child state inline. The
-claim (:func:`claim_media_teardown`) locks only the media row, checks zero
-committed references, inserts a UUIDv7 teardown intent, and enqueues one
-addressable ``media_teardown`` job in that same transaction. The job
-(:mod:`nexus.tasks.media_teardown`) owns the checkpointed physical deletion and
-storage sweep. Child-state deletion composes through the consumption owner
-(never direct consumption/listening/engagement DML here). Viewer-scoped
-removal/hide preserves consumption and latent Lectern rows; the visibility
-projection hides them.
+Media teardown (spec ``lectern-player-lifecycle-hard-cutover.md`` §3.1):
+whole-resource deletion claims a UUIDv7 teardown intent and enqueues one
+addressable ``media_teardown`` job. The job owns checkpointed physical deletion
+and storage sweep. Administrative whole-library teardown is the narrow existing
+exception: it deletes a zero-reference document while holding the complete
+media lock set, then removes storage after commit. Child-state deletion composes
+through the consumption owner (never direct consumption/listening/engagement
+DML here). Viewer-scoped removal/hide preserves consumption and latent Lectern
+rows; the visibility projection hides them.
 """
 
 from __future__ import annotations
@@ -178,22 +177,32 @@ def delete_document_for_viewer(
                 FROM libraries
                 WHERE owner_user_id = :viewer_id
                   AND is_default = true
-                FOR UPDATE
             """),
             {"viewer_id": viewer_id},
         ).fetchone()
-        if default_library is not None:
-            default_library_id = default_library[0]
+        controlled_libraries = library_entries.admin_non_default_library_ids_for_media(
+            db, viewer_id=viewer_id, media_id=media_id
+        )
+        library_ids = sorted(
+            {
+                *(UUID(str(library_id)) for library_id in controlled_libraries),
+                *([UUID(str(default_library[0]))] if default_library is not None else []),
+            }
+        )
+        library_governance.lock_library_rows_in_order(db, library_ids)
+
+        default_library_id = UUID(str(default_library[0])) if default_library is not None else None
+        if default_library_id is not None:
             if library_entries.delete_entry(
                 db, default_library_id, library_entries.media_target(media_id)
             ):
-                removed_from_library_ids.append(UUID(str(default_library_id)))
+                removed_from_library_ids.append(default_library_id)
                 library_entries.normalize_positions(db, default_library_id)
 
         controlled_libraries = library_entries.admin_non_default_library_ids_for_media(
             db, viewer_id=viewer_id, media_id=media_id
         )
-        for library_id in controlled_libraries:
+        for library_id in sorted(controlled_libraries):
             library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
             library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
@@ -251,67 +260,6 @@ def delete_document_for_viewer(
         )
 
 
-def remove_document_from_library(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    library_id: UUID,
-    storage_client: StorageClientBase | None = None,
-) -> MediaDeleteResult:
-    """Remove a document from one viewer-administered library (spec §3.1).
-
-    Scoped removal returns ``Removed`` while any lifetime reference remains, and
-    ``Deleting`` (claim: intent + job) when it removes the last one. It never records a
-    viewer hide marker.
-    """
-    with transaction(db):
-        media = db.execute(
-            text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
-            {"media_id": media_id},
-        ).fetchone()
-        if media is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if media[0] not in _DOCUMENT_KINDS:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_KIND,
-                "Delete document only supports document media",
-            )
-
-        library = db.execute(
-            text("""
-                SELECT m.role, l.system_key
-                FROM libraries l
-                JOIN memberships m
-                  ON m.library_id = l.id
-                 AND m.user_id = :viewer_id
-                WHERE l.id = :library_id
-                FOR UPDATE OF l
-            """),
-            {"library_id": library_id, "viewer_id": viewer_id},
-        ).fetchone()
-        if library is None:
-            raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-        if library[0] != "admin":
-            raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
-        library_governance.require_not_system(library[1])
-
-        if not library_entries.entry_exists(db, library_id, library_entries.media_target(media_id)):
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found in library")
-        library_entries.delete_entry(db, library_id, library_entries.media_target(media_id))
-
-        library_entries.normalize_positions(db, library_id)
-
-        remaining_reference_count = _total_reference_count(db, media_id)
-        if remaining_reference_count == 0:
-            claim_media_teardown(db, media_id)
-            return MediaDeletingResult()
-
-        return MediaRemovedResult(
-            removed_from_library_ids=[library_id],
-            remaining_reference_count=remaining_reference_count,
-        )
-
-
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
     db.execute(
         text("""
@@ -351,6 +299,8 @@ def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     if media is None or media[0] not in _DOCUMENT_KINDS:
         return []
 
+    affected_library_ids = library_entries.library_ids_for_media(db, media_id)
+    library_governance.lock_library_rows_in_order(db, affected_library_ids)
     affected_library_ids = library_entries.delete_all_entries_for_media(db, media_id)
     for library_id in affected_library_ids:
         library_entries.normalize_positions(db, library_id)
@@ -365,9 +315,9 @@ def delete_document_storage_objects(
 ) -> None:
     """Best-effort delete of already-unreachable storage objects.
 
-    Legacy synchronous helper kept for non-teardown cleanup (extraction-artifact GC on
-    source requeue). Media teardown no longer produces paths here — its callers now
-    claim + enqueue and pass an empty list — so this is a no-op on the teardown paths.
+    Extraction requeue, supersession, and administrative library teardown use this
+    post-commit cleanup for paths their database transaction made unreachable. The
+    media-teardown job owns primary whole-resource storage deletion.
     """
     _delete_storage_objects(storage_paths, storage_client)
 
@@ -421,7 +371,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     nothing) when the media is missing, non-document, or still referenced.
     """
     media = db.execute(
-        text("SELECT kind FROM media WHERE id = :media_id"),
+        text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
         {"media_id": media_id},
     ).fetchone()
     if media is None or media[0] not in _DOCUMENT_KINDS:

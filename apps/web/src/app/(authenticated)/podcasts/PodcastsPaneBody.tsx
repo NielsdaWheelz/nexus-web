@@ -108,13 +108,16 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const { displayState, setDisplayState } = useCollectionDisplayState("/podcasts");
+  const { displayState, setDisplayState } =
+    useCollectionDisplayState("/podcasts");
   const podcastListCodec = useMemo(
     () => ({
       basePath: "/podcasts",
       decode: decodePodcastListState,
       encode: encodePodcastListState,
-      replaceOptions: { viewTransition: { kind: "collection-reflow" } as const },
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" } as const,
+      },
     }),
     [],
   );
@@ -139,10 +142,11 @@ export default function PodcastsPaneBody() {
   >({});
   const loadingLibraryPodcastIds = useStringIdSet();
   const busyLibraryMembershipKeys = actions.busyLibraryMembershipKeys;
-  const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<string | null>(null);
-  const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
-    null
-  );
+  const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<
+    string | null
+  >(null);
+  const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] =
+    useState<HTMLElement | null>(null);
   const subscriptionRequestIdRef = useRef(0);
   const subscriptionAbortRef = useRef<AbortController | null>(null);
   const settingsModal = usePodcastSubscriptionSettingsModal({
@@ -167,9 +171,7 @@ export default function PodcastsPaneBody() {
     setSearchText(appliedSearch);
   }, [appliedSearch]);
 
-  const subscriptionListResource = useResource<
-    PodcastSubscriptionListItem[]
-  >({
+  const subscriptionListResource = useResource<PodcastSubscriptionListItem[]>({
     cacheKey: [
       "podcast-subscriptions",
       subscriptionSort,
@@ -251,69 +253,71 @@ export default function PodcastsPaneBody() {
     };
   }, []);
 
-  const loadMoreSubscriptions = useCallback(
-    async () => {
-      if (loadingMore || !hasMore) {
+  const loadMoreSubscriptions = useCallback(async () => {
+    if (loadingMore || !hasMore) {
+      return;
+    }
+    const offset = nextOffset;
+    const requestId = subscriptionRequestIdRef.current + 1;
+    const controller = new AbortController();
+    subscriptionAbortRef.current?.abort();
+    subscriptionRequestIdRef.current = requestId;
+    subscriptionAbortRef.current = controller;
+
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        sort: subscriptionSort,
+        filter: subscriptionFilter,
+      });
+      if (appliedSearch) {
+        params.set("q", appliedSearch);
+      }
+      if (selectedLibraryId) {
+        params.set("library_id", selectedLibraryId);
+      }
+      const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
+        `/api/podcasts/subscriptions?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (subscriptionRequestIdRef.current !== requestId) {
         return;
       }
-      const offset = nextOffset;
-      const requestId = subscriptionRequestIdRef.current + 1;
-      const controller = new AbortController();
-      subscriptionAbortRef.current?.abort();
-      subscriptionRequestIdRef.current = requestId;
-      subscriptionAbortRef.current = controller;
-
-      setLoadingMore(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: String(offset),
-          sort: subscriptionSort,
-          filter: subscriptionFilter,
-        });
-        if (appliedSearch) {
-          params.set("q", appliedSearch);
-        }
-        if (selectedLibraryId) {
-          params.set("library_id", selectedLibraryId);
-        }
-        const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
-          `/api/podcasts/subscriptions?${params.toString()}`,
-          { signal: controller.signal }
-        );
-        if (subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        setRows((prev) => [...prev, ...response.data]);
-        setHasMore(response.data.length === PAGE_SIZE);
-        setNextOffset(offset + response.data.length);
-      } catch (loadError) {
-        if (controller.signal.aborted || subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (handleUnauthenticatedApiError(loadError)) return;
-        setError(toFeedback(loadError, { fallback: "Failed to load followed podcasts" }));
-      } finally {
-        if (subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (subscriptionAbortRef.current === controller) {
-          subscriptionAbortRef.current = null;
-        }
-        setLoadingMore(false);
+      setRows((prev) => [...prev, ...response.data]);
+      setHasMore(response.data.length === PAGE_SIZE);
+      setNextOffset(offset + response.data.length);
+    } catch (loadError) {
+      if (
+        controller.signal.aborted ||
+        subscriptionRequestIdRef.current !== requestId
+      ) {
+        return;
       }
-    },
-    [
-      appliedSearch,
-      hasMore,
-      loadingMore,
-      nextOffset,
-      selectedLibraryId,
-      subscriptionFilter,
-      subscriptionSort,
-    ],
-  );
+      if (handleUnauthenticatedApiError(loadError)) return;
+      setError(
+        toFeedback(loadError, { fallback: "Failed to load followed podcasts" }),
+      );
+    } finally {
+      if (subscriptionRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (subscriptionAbortRef.current === controller) {
+        subscriptionAbortRef.current = null;
+      }
+      setLoadingMore(false);
+    }
+  }, [
+    appliedSearch,
+    hasMore,
+    loadingMore,
+    nextOffset,
+    selectedLibraryId,
+    subscriptionFilter,
+    subscriptionSort,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -354,7 +358,11 @@ export default function PodcastsPaneBody() {
       actions.addToLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, true),
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
+            libraryId,
+            true,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) => {
@@ -364,7 +372,9 @@ export default function PodcastsPaneBody() {
             ) {
               return row;
             }
-            const summary = libraries.find((library) => library.id === libraryId);
+            const summary = libraries.find(
+              (library) => library.id === libraryId,
+            );
             if (!summary) {
               return row;
             }
@@ -372,7 +382,11 @@ export default function PodcastsPaneBody() {
               ...row,
               visible_libraries: [
                 ...row.visible_libraries,
-                { id: summary.id, name: summary.name, color: summary.color ?? null },
+                {
+                  id: summary.id,
+                  name: summary.name,
+                  color: summary.color ?? null,
+                },
               ],
             };
           }),
@@ -386,7 +400,11 @@ export default function PodcastsPaneBody() {
       actions.removeFromLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, false),
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
+            libraryId,
+            false,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) =>
@@ -448,10 +466,12 @@ export default function PodcastsPaneBody() {
       ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
       : null;
   const hasActiveFilters =
-    appliedSearch.length > 0 || subscriptionFilter !== "all" || selectedLibraryId.length > 0;
+    appliedSearch.length > 0 ||
+    subscriptionFilter !== "all" ||
+    selectedLibraryId.length > 0;
   const membershipPanelBusy = membershipPanelPodcastId
     ? Array.from(busyLibraryMembershipKeys.ids).some((key) =>
-        key.endsWith(`:${membershipPanelPodcastId}`)
+        key.endsWith(`:${membershipPanelPodcastId}`),
       )
     : false;
   const membershipPanelLibraries = membershipPanelPodcastId
@@ -615,7 +635,9 @@ export default function PodcastsPaneBody() {
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
+                  onClick={() =>
+                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                  }
                 >
                   Browse
                 </Button>
@@ -656,7 +678,9 @@ export default function PodcastsPaneBody() {
                   variant="ghost"
                   size="sm"
                   className={styles.inlineButton}
-                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
+                  onClick={() =>
+                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                  }
                 >
                   Browse podcasts
                 </Button>

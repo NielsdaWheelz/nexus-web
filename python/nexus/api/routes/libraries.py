@@ -22,7 +22,6 @@ from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, ok_page
 from nexus.schemas.library import (
-    AddMediaRequest,
     AddPodcastRequest,
     CreateLibraryInviteRequest,
     CreateLibraryRequest,
@@ -375,22 +374,6 @@ def patch_library_entry_order(
 ) -> Response:
     """Replace full entry ordering for a library."""
     library_entries.reorder_entries(db, viewer.user_id, library_id, body)
-    return Response(status_code=204)
-
-
-@router.post("/libraries/{library_id}/media", status_code=204)
-def add_media_to_library(
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    body: AddMediaRequest,
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Add media to a library.
-
-    Only admins can add media. A Default target always creates/keeps a direct
-    physical entry.
-    """
-    library_entries.add_media_to_library(db, viewer.user_id, library_id, body.media_id)
     return Response(status_code=204)
 
 
