@@ -6,6 +6,7 @@ describe("RunningHead", () => {
   it("renders the standing head flush-left and a count folio flush-right", () => {
     render(
       <RunningHead
+        id="section-identity"
         standingHead="Libraries"
         folio={{ kind: "count", value: 37, unit: "source" }}
       />,
@@ -17,6 +18,7 @@ describe("RunningHead", () => {
   it("renders a title folio for the reader", () => {
     render(
       <RunningHead
+        id="section-identity"
         standingHead="Libraries"
         folio={{ kind: "title", value: "The Pragmatic Programmer" }}
       />,
@@ -26,13 +28,19 @@ describe("RunningHead", () => {
 
   it("renders a formatted date folio", () => {
     render(
-      <RunningHead standingHead="Notes" folio={{ kind: "date", iso: "2026-07-07" }} />,
+      <RunningHead
+        id="section-identity"
+        standingHead="Notes"
+        folio={{ kind: "date", iso: "2026-07-07" }}
+      />,
     );
     expect(screen.getByText(/Jul/)).toBeInTheDocument();
   });
 
   it("renders no folio text for a none folio", () => {
-    render(<RunningHead standingHead="Search" folio={{ kind: "none" }} />);
+    render(
+      <RunningHead id="section-identity" standingHead="Search" folio={{ kind: "none" }} />,
+    );
     expect(screen.getByText("Search")).toBeInTheDocument();
     expect(screen.queryByText("Loading…")).toBeNull();
   });
@@ -40,6 +48,7 @@ describe("RunningHead", () => {
   it("exposes accessible loading text while the folio is pending", () => {
     render(
       <RunningHead
+        id="section-identity"
         standingHead="Libraries"
         folio={{ kind: "count", value: 0, unit: "source" }}
         folioPending
@@ -50,12 +59,12 @@ describe("RunningHead", () => {
   });
 
   it("keeps the standing head text natural-case in the DOM (CSS uppercases it)", () => {
-    render(<RunningHead standingHead="Podcasts" />);
+    render(<RunningHead id="section-identity" standingHead="Podcasts" />);
     expect(screen.getByText("Podcasts").textContent).toBe("Podcasts");
   });
 
   it("renders the standing head as a label, not a heading", () => {
-    render(<RunningHead standingHead="Chats" />);
+    render(<RunningHead id="section-identity" standingHead="Chats" />);
     expect(screen.queryByRole("heading")).toBeNull();
   });
 });

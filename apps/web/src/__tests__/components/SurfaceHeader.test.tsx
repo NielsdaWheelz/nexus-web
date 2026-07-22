@@ -5,7 +5,7 @@ import type { ComponentProps } from "react";
 import SurfaceHeader from "@/components/ui/SurfaceHeader";
 
 function navigation(
-  overrides: Partial<ComponentProps<typeof SurfaceHeader>["navigation"]> = {}
+  overrides: Partial<ComponentProps<typeof SurfaceHeader>["navigation"]> = {},
 ) {
   return {
     canGoBack: false,
@@ -16,32 +16,59 @@ function navigation(
   };
 }
 
+const sectionHeader = {
+  kind: "section",
+  standingHead: "Libraries",
+  folio: { kind: "none" },
+  pending: false,
+} as const;
+
 describe("SurfaceHeader", () => {
-  it("renders the running head standing head + folio and the options menu", async () => {
+  it("renders section identity and the options menu", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
 
     render(
       <SurfaceHeader
-        standingHead="Libraries"
-        folio={{ kind: "count", value: 37, unit: "source" }}
+        header={{
+          ...sectionHeader,
+          folio: { kind: "count", value: 37, unit: "source" },
+        }}
+        identityId="pane-identity"
         navigation={navigation()}
-        options={[{ id: "delete", label: "Delete", onSelect: onDelete, tone: "danger" }]}
-      />
+        options={[
+          {
+            kind: "command",
+            id: "delete",
+            label: "Delete",
+            onSelect: onDelete,
+            tone: "danger",
+          },
+        ]}
+      />,
     );
 
     expect(screen.getByText("Libraries")).toBeInTheDocument();
     expect(screen.getByText("37 sources")).toBeInTheDocument();
-    // The standing head is a supplementary label, not the page heading.
     expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.getByRole("banner")).toHaveAttribute(
+      "data-header-kind",
+      "section",
+    );
 
     await user.click(screen.getByRole("button", { name: "Options" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("exposes an accessible loading label while the folio resolves", () => {
-    render(<SurfaceHeader standingHead="Libraries" folioPending navigation={navigation()} />);
+  it("exposes an accessible loading label while a section folio resolves", () => {
+    render(
+      <SurfaceHeader
+        header={{ ...sectionHeader, pending: true }}
+        identityId="pane-identity"
+        navigation={navigation()}
+      />,
+    );
 
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
@@ -51,13 +78,20 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        standingHead="Libraries"
+        header={sectionHeader}
+        identityId="pane-identity"
         navigation={navigation()}
         options={[
-          { id: "open", label: "Open source", onSelect: vi.fn() },
-          { id: "delete", label: "Delete", onSelect: vi.fn(), tone: "danger" },
+          { kind: "command", id: "open", label: "Open source", onSelect: vi.fn() },
+          {
+            kind: "command",
+            id: "delete",
+            label: "Delete",
+            onSelect: vi.fn(),
+            tone: "danger",
+          },
         ]}
-      />
+      />,
     );
 
     const optionsToggle = screen.getByRole("button", { name: "Options" });
@@ -65,20 +99,14 @@ describe("SurfaceHeader", () => {
 
     const openSourceOption = screen.getByRole("menuitem", { name: "Open source" });
     const deleteOption = screen.getByRole("menuitem", { name: "Delete" });
-    await waitFor(() => {
-      expect(openSourceOption).toHaveFocus();
-    });
+    await waitFor(() => expect(openSourceOption).toHaveFocus());
 
     await user.tab();
     expect(deleteOption).toHaveFocus();
-
     await user.tab();
     expect(openSourceOption).toHaveFocus();
-
     await user.keyboard("{Escape}");
-    await waitFor(() => {
-      expect(optionsToggle).toHaveFocus();
-    });
+    await waitFor(() => expect(optionsToggle).toHaveFocus());
   });
 
   it("keeps disabled link options non-interactive", async () => {
@@ -87,10 +115,12 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        standingHead="Libraries"
+        header={sectionHeader}
+        identityId="pane-identity"
         navigation={navigation()}
         options={[
           {
+            kind: "link",
             id: "open-source",
             label: "Open source",
             href: "https://example.com",
@@ -98,7 +128,7 @@ describe("SurfaceHeader", () => {
             onSelect,
           },
         ]}
-      />
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Options" }));
@@ -116,27 +146,74 @@ describe("SurfaceHeader", () => {
 
     render(
       <SurfaceHeader
-        standingHead="Libraries"
+        header={sectionHeader}
+        identityId="pane-identity"
         navigation={navigation({
           canGoBack: true,
           canGoForward: false,
           onBack,
           onForward,
         })}
-      />
+      />,
     );
 
     const back = screen.getByRole("button", { name: "Go back in this pane" });
-    const forward = screen.getByRole("button", {
-      name: "Go forward in this pane",
-    });
+    const forward = screen.getByRole("button", { name: "Go forward in this pane" });
     expect(back).toBeEnabled();
     expect(forward).toBeDisabled();
 
     await user.click(back);
     fireEvent.click(forward);
-
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(onForward).not.toHaveBeenCalled();
+  });
+
+  it("renders resource identity and typed header actions", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    render(
+      <SurfaceHeader
+        header={{
+          kind: "resource",
+          resource: {
+            status: "ready",
+            title: "The Dispossessed",
+            creditGroups: [
+              { kind: "authors", credits: [{ label: "Ursula K. Le Guin" }] },
+            ],
+          },
+        }}
+        identityId="resource-identity"
+        navigation={navigation()}
+        actions={[
+          {
+            kind: "command",
+            id: "document-map",
+            label: "Document Map",
+            icon: <span aria-hidden="true">m</span>,
+            onSelect: onToggle,
+            state: {
+              kind: "disclosure",
+              expanded: false,
+              menuLabels: {
+                collapsed: "Show Document Map",
+                expanded: "Hide Document Map",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "The Dispossessed" })).toHaveAttribute(
+      "id",
+      "resource-identity",
+    );
+    expect(screen.getByRole("banner")).toHaveAttribute(
+      "data-header-kind",
+      "resource",
+    );
+    await user.click(screen.getByRole("button", { name: "Document Map" }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

@@ -510,7 +510,7 @@ export default function OracleReadingPaneBody() {
     (activation: ResourceActivation, target: ReaderSourceTarget | null) => {
       if (target) dispatchReaderSourceActivation(target);
       activateResource(activation, {
-        label: target?.label,
+        labelHint: target?.label,
         navigate: (href) => requestOpenInAppPane(href),
       });
     },

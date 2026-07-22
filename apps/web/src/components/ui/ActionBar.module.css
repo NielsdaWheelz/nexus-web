@@ -4,6 +4,16 @@
   gap: var(--space-1);
 }
 
+/* Pane chrome uses the 32px control contract independently of Button's
+   general-purpose small (28px) size. The two-class selector deliberately wins
+   over Button.module.css's single size class without changing global buttons. */
+.bar .chromeAction {
+  width: var(--size-md);
+  min-width: var(--size-md);
+  height: var(--size-md);
+  min-height: var(--size-md);
+}
+
 .separator {
   align-self: stretch;
   width: var(--stroke-hairline);

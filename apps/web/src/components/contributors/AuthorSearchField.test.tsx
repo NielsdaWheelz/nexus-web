@@ -49,13 +49,8 @@ function renderField(overrides: Partial<AuthorSearchFieldProps> = {}) {
     onDismiss: vi.fn(),
     ...overrides,
   };
-  const parentKeyDown = vi.fn();
-  const utils = render(
-    <div role="presentation" onKeyDown={parentKeyDown}>
-      <AuthorSearchField {...props} />
-    </div>,
-  );
-  return { ...utils, props, parentKeyDown };
+  const utils = render(<AuthorSearchField {...props} />);
+  return { ...utils, props };
 }
 
 function type(value: string) {
@@ -282,10 +277,10 @@ describe("AuthorSearchField", () => {
     expect(onCreateNew).toHaveBeenCalledWith("Brand New");
   });
 
-  it("owns Escape: first closes the listbox, second abandons — never bubbling", async () => {
+  it("owns Escape: first closes the listbox, second abandons", async () => {
     const onDismiss = vi.fn();
     stubSearch([{ contributors: [item()] }]);
-    const { parentKeyDown } = renderField({ onDismiss });
+    renderField({ onDismiss });
     type("le");
     await screen.findByRole("option", { name: /Ursula/ });
     const input = screen.getByRole("combobox");
@@ -293,11 +288,9 @@ describe("AuthorSearchField", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(onDismiss).not.toHaveBeenCalled();
-    expect(parentKeyDown).not.toHaveBeenCalled();
 
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onDismiss).toHaveBeenCalledTimes(1);
-    expect(parentKeyDown).not.toHaveBeenCalled();
   });
 
   it("abandons immediately for an untouched empty (Add) field on Escape", () => {
@@ -306,6 +299,31 @@ describe("AuthorSearchField", () => {
     renderField({ onDismiss });
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes Escape to the focused field when multiple searches are mounted", () => {
+    const dismissFirst = vi.fn();
+    const dismissSecond = vi.fn();
+    const shared = {
+      initialQuery: "",
+      takenHandles: new Set<string>(),
+      takenNewNameKeys: new Set<string>(),
+      onSelectExisting: vi.fn(),
+      onCreateNew: vi.fn(),
+    };
+    render(
+      <>
+        <AuthorSearchField {...shared} onDismiss={dismissFirst} />
+        <AuthorSearchField {...shared} onDismiss={dismissSecond} />
+      </>,
+    );
+    const inputs = screen.getAllByRole("combobox");
+    inputs[0]!.focus();
+    expect(inputs[0]).toHaveFocus();
+
+    fireEvent.keyDown(inputs[0]!, { key: "Escape" });
+    expect(dismissFirst).toHaveBeenCalledTimes(1);
+    expect(dismissSecond).not.toHaveBeenCalled();
   });
 
   it("does not select while an IME composition is active", async () => {

@@ -36,6 +36,11 @@ The domain is split into three owned modules, each owning its own tables:
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
 
+Library entry mutations are commands, not refreshed read models. Successful
+add-media, add-podcast, and reorder requests return `204 No Content`; callers
+refresh or retain their existing local state deliberately. Agent filing receives
+only inserted/already-present truth for Undo and never hydrates an entry payload.
+
 ## System libraries
 
 `libraries.system_key` (nullable, unique where present) is the policy handle for
@@ -116,6 +121,25 @@ contribution the moment it is gone, on the very next read.
   reconcile against it. `services/media_deletion.py` is a pure orchestrator
   over the public `library_entries` API; it issues zero direct
   `library_entries` DML of its own.
+
+## Reading-time projection
+
+Reading time is owned by the Library list read model, not `MediaOut` and not an
+ingestion writer. Migration `0186` stores same-row word-count derivatives beside
+canonical fragment text and PDF plain text. `services/media_document_metrics.py`
+is the sole media-level aggregate owner: it sums stored integers for a bounded
+batch and never reads document text on a request. Shared PDF quote readiness
+likewise uses the stored positive word count instead of scanning `plain_text`.
+
+`services/library_entries.py` applies the one product policy (240 words/minute,
+coarse half-up 1/5/15-minute rounding) while hydrating entries. Only ready,
+quotable web articles, EPUBs, and text PDFs with a positive count receive a
+value. Every `LibraryEntryOut` has a required
+`readingTimeEstimate: Presence<ReadingTimeEstimateOut>`: total is always present
+inside a present estimate; remaining is present only for in-progress web/EPUB
+media with the consumption projection's monotonic whole-document progression.
+PDF is total-only. Nested `media` is the sole entry consumption owner; root entry
+read-state/progress fields do not exist.
 
 ## Writable library destinations
 

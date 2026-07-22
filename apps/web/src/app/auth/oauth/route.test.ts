@@ -98,7 +98,7 @@ describe("GET /auth/oauth", () => {
   it("initiates sign-in server-side and redirects the browser to the provider URL", async () => {
     const { GET } = await import("./route");
     const response = await GET(
-      request("/auth/oauth?provider=github&next=%2Flibraries")
+      request("/auth/oauth?provider=github&next=%2Flectern")
     );
 
     expect(response.status).toBe(307);
@@ -138,7 +138,7 @@ describe("GET /auth/oauth", () => {
 
     const { GET } = await import("./route");
     const response = await GET(
-      request("/auth/oauth?provider=github&next=%2Flibraries")
+      request("/auth/oauth?provider=github&next=%2Flectern")
     );
 
     expect(response.status).toBe(307);
@@ -186,7 +186,7 @@ describe("GET /auth/oauth", () => {
     const { GET } = await import("./route");
     await GET(
       request(
-        `/auth/oauth?provider=github&flow=handoff&hc=${challenge}&next=%2Flibraries`
+        `/auth/oauth?provider=github&flow=handoff&hc=${challenge}&next=%2Flectern`
       )
     );
 
@@ -203,7 +203,7 @@ describe("GET /auth/oauth", () => {
 
   it("uses the plain web callback when flow is not handoff", async () => {
     const { GET } = await import("./route");
-    await GET(request("/auth/oauth?provider=github&next=%2Flibraries"));
+    await GET(request("/auth/oauth?provider=github&next=%2Flectern"));
 
     expect(signInWithOAuthSpy).toHaveBeenCalledTimes(1);
     const redirectTo = new URL(

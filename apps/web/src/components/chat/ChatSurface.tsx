@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   type ReactNode,
 } from "react";
@@ -33,6 +34,7 @@ interface ChatSurfaceProps {
   /** Forwarded to each MessageRow for the Walk-the-sources entry verb. */
   onStartWalk?: (citations: CitationOut[], text: string) => void;
   historyLoading?: boolean;
+  initialTargetMessageId?: string | null;
   olderCursor?: string | null;
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
@@ -59,6 +61,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       docentOverlay,
       onStartWalk,
       historyLoading = false,
+      initialTargetMessageId = null,
       olderCursor,
       onLoadOlder,
       emptyState,
@@ -86,12 +89,40 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       captureAnchor,
       scrollToMessage,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
+    const requestedTargetMessageIdRef = useRef<string | null>(null);
+    const activatedTargetMessageIdRef = useRef<string | null>(null);
 
-    useImperativeHandle(
-      ref,
-      () => ({ captureAnchor, scrollToMessage }),
-      [captureAnchor, scrollToMessage],
-    );
+    useLayoutEffect(() => {
+      if (requestedTargetMessageIdRef.current !== initialTargetMessageId) {
+        requestedTargetMessageIdRef.current = initialTargetMessageId;
+        activatedTargetMessageIdRef.current = null;
+      }
+      if (initialTargetMessageId === null) {
+        return;
+      }
+      const targetExists = messages.some(
+        (message) => message.id === initialTargetMessageId,
+      );
+      if (!targetExists) {
+        // An active-path mutation is optimistic. If it rolls back, forget the
+        // prior activation so a later successful retry can scroll again.
+        activatedTargetMessageIdRef.current = null;
+        return;
+      }
+      if (
+        historyLoading ||
+        activatedTargetMessageIdRef.current === initialTargetMessageId
+      ) {
+        return;
+      }
+      scrollToMessage(initialTargetMessageId);
+      activatedTargetMessageIdRef.current = initialTargetMessageId;
+    }, [historyLoading, initialTargetMessageId, messages, scrollToMessage]);
+
+    useImperativeHandle(ref, () => ({ captureAnchor, scrollToMessage }), [
+      captureAnchor,
+      scrollToMessage,
+    ]);
 
     return (
       <div className={styles.surface}>

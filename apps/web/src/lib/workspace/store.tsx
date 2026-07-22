@@ -18,7 +18,7 @@ import {
   createPaneId,
   getWorkspacePrimaryPane,
   getWorkspacePrimaryPanes,
-  normalizePaneTitle,
+  normalizePaneLabel,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -55,7 +55,6 @@ import {
 } from "@/lib/panes/paneIdentity";
 import {
   resolvePaneRoute,
-  type PaneChromeDescriptor,
   type ResolvedPaneRoute,
 } from "@/lib/panes/paneRouteTable";
 import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
@@ -595,14 +594,14 @@ export function resolvePaneRouteKey(href: string): string {
   return resolvePaneRouteIdentity(href).routeKey;
 }
 
-function upsertPaneTitleRecord(
-  current: Map<string, WorkspacePaneTitleRecord>,
+function upsertPaneLabelRecord(
+  current: Map<string, WorkspacePaneLabelRecord>,
   paneId: string,
-  record: WorkspacePaneTitleRecord
-): Map<string, WorkspacePaneTitleRecord> {
+  record: WorkspacePaneLabelRecord
+): Map<string, WorkspacePaneLabelRecord> {
   const existing = current.get(paneId);
   if (
-    existing?.title === record.title &&
+    existing?.label === record.label &&
     existing.source === record.source &&
     existing.routeKey === record.routeKey
   ) {
@@ -613,61 +612,52 @@ function upsertPaneTitleRecord(
   return next;
 }
 
-interface WorkspacePaneTitleInput {
+interface WorkspacePaneLabelInput {
   id: string;
   href: string;
 }
 
-export type WorkspacePaneTitleSource = "hint" | "runtime";
+export type WorkspacePaneLabelSource = "hint" | "runtime";
 
-export interface WorkspacePaneTitleRecord {
-  title: string;
-  source: WorkspacePaneTitleSource;
+export interface WorkspacePaneLabelRecord {
+  label: string;
+  source: WorkspacePaneLabelSource;
   routeKey: string;
 }
 
-export interface WorkspacePaneTitleDescriptor {
-  chrome: PaneChromeDescriptor | undefined;
+export interface WorkspacePaneLabelDescriptor {
   routeKey: string;
   route: ResolvedPaneRoute;
-  title: string;
-  titleState: "resolved" | "pending";
-  titleSource: WorkspacePaneTitleSource | "static" | "fallback";
+  label: string;
+  labelState: "resolved" | "pending";
+  labelSource: WorkspacePaneLabelSource | "static" | "fallback";
 }
 
-export function resolveWorkspacePaneTitle(
-  pane: WorkspacePaneTitleInput,
-  runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>,
-  androidShell = false,
-): WorkspacePaneTitleDescriptor {
+export function resolveWorkspacePaneLabel(
+  pane: WorkspacePaneLabelInput,
+  runtimeLabelByPaneId: ReadonlyMap<string, WorkspacePaneLabelRecord>,
+): WorkspacePaneLabelDescriptor {
   const route = resolvePaneRoute(pane.href);
   const routeKey = resolvePaneRouteKey(pane.href);
-  const chrome = route.definition?.getChrome?.({
-    href: pane.href,
-    params: route.params,
-    androidShell,
-  });
-  const titleRecord = runtimeTitleByPaneId.get(pane.id);
-  if (titleRecord?.routeKey === routeKey) {
-    const title = normalizePaneTitle(titleRecord.title);
-    if (title) {
+  const labelRecord = runtimeLabelByPaneId.get(pane.id);
+  if (labelRecord?.routeKey === routeKey) {
+    const label = normalizePaneLabel(labelRecord.label);
+    if (label) {
       return {
-        chrome,
         routeKey,
         route,
-        title,
-        titleState: "resolved",
-        titleSource: titleRecord.source,
+        label,
+        labelState: "resolved",
+        labelSource: labelRecord.source,
       };
     }
   }
   return {
-    chrome,
     routeKey,
     route,
-    title: normalizePaneTitle(chrome?.title) ?? normalizePaneTitle(route.staticTitle) ?? "Pane",
-    titleState: route.titleMode === "dynamic" ? "pending" : "resolved",
-    titleSource: route.titleMode === "dynamic" ? "fallback" : "static",
+    label: normalizePaneLabel(route.defaultLabel) ?? "Pane",
+    labelState: route.labelMode === "dynamic" ? "pending" : "resolved",
+    labelSource: route.labelMode === "dynamic" ? "fallback" : "static",
   };
 }
 
@@ -678,19 +668,19 @@ export function resolveWorkspacePaneTitle(
 interface WorkspaceStoreValue {
   state: WorkspaceState;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
-  runtimeTitleByPaneId: ReadonlyMap<string, WorkspacePaneTitleRecord>;
+  runtimeLabelByPaneId: ReadonlyMap<string, WorkspacePaneLabelRecord>;
   activatePane: (paneId: string) => void;
   openPane: (input: {
     href: string;
     openerPaneId?: string | null;
     activate?: boolean;
     replace?: boolean;
-    titleHint?: string;
+    labelHint?: string;
   }) => void;
   navigatePane: (
     paneId: string,
     href: string,
-    options?: { replace?: boolean; activate?: boolean; titleHint?: string },
+    options?: { replace?: boolean; activate?: boolean; labelHint?: string },
   ) => void;
   goBackPane: (paneId: string) => void;
   goForwardPane: (paneId: string) => void;
@@ -708,10 +698,10 @@ interface WorkspaceStoreValue {
   resizeSecondaryPane: (secondaryPaneId: string, widthPx: number) => void;
   minimizePane: (paneId: string) => void;
   restorePane: (paneId: string) => void;
-  publishPaneTitle: (input: {
+  publishPaneLabel: (input: {
     paneId: string;
     routeKey: string;
-    title: string | null;
+    label: string | null;
   }) => void;
 }
 
@@ -739,40 +729,40 @@ export function WorkspaceStoreProvider({
       workspaceReducer(current, action, workspacePrimaryMetrics),
     initialState
   );
-  const [runtimeTitleByPaneId, setRuntimeTitleByPaneId] = useState<
-    Map<string, WorkspacePaneTitleRecord>
+  const [runtimeLabelByPaneId, setRuntimeLabelByPaneId] = useState<
+    Map<string, WorkspacePaneLabelRecord>
   >(() => new Map());
   const readyRef = useRef(false);
   const hashFoldedRef = useRef(false);
   const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
-  const pendingTitleHintByRouteKeyRef = useRef<Map<string, string>>(new Map());
+  const pendingLabelHintByRouteKeyRef = useRef<Map<string, string>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
   const primaryPanes = useMemo(() => getWorkspacePrimaryPanes(state), [state]);
 
   useWorkspaceSession(state, mounted);
 
-  const publishPaneTitleHint = useCallback(
-    (paneId: string, href: string, titleHint: string | undefined) => {
-      if (!titleHint) {
+  const publishPaneLabelHint = useCallback(
+    (paneId: string, href: string, labelHint: string | undefined) => {
+      if (!labelHint) {
         return;
       }
-      const title = normalizePaneTitle(titleHint);
-      if (!title) {
+      const label = normalizePaneLabel(labelHint);
+      if (!label) {
         return;
       }
       const record = {
-        title,
+        label,
         source: "hint" as const,
         routeKey: resolvePaneRouteKey(href),
       };
-      pendingTitleHintByRouteKeyRef.current.set(record.routeKey, record.title);
-      setRuntimeTitleByPaneId((prev) => {
+      pendingLabelHintByRouteKeyRef.current.set(record.routeKey, record.label);
+      setRuntimeLabelByPaneId((prev) => {
         const existing = prev.get(paneId);
         if (existing?.source === "runtime" && existing.routeKey === record.routeKey) {
           return prev;
         }
-        return upsertPaneTitleRecord(prev, paneId, record);
+        return upsertPaneLabelRecord(prev, paneId, record);
       });
     },
     []
@@ -875,7 +865,7 @@ export function WorkspaceStoreProvider({
         getWorkspacePrimaryPanes(stateRef.current),
         pane,
       );
-      publishPaneTitleHint(targetPaneId, href, detail.titleHint);
+      publishPaneLabelHint(targetPaneId, href, detail.labelHint);
       dispatch({
         type: "open_pane",
         pane,
@@ -909,9 +899,9 @@ export function WorkspaceStoreProvider({
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishPaneTitleHint, workspacePrimaryMetrics]);
+  }, [publishPaneLabelHint, workspacePrimaryMetrics]);
 
-  // --- Prune stale title caches when panes change ---
+  // --- Prune stale label caches when panes change ---
   useEffect(() => {
     const currentRouteKeyByPaneId = new Map<string, string>();
     for (const pane of primaryPanes) {
@@ -921,9 +911,9 @@ export function WorkspaceStoreProvider({
       );
     }
 
-    setRuntimeTitleByPaneId((prev) => {
+    setRuntimeLabelByPaneId((prev) => {
       let changed = false;
-      const next = new Map<string, WorkspacePaneTitleRecord>();
+      const next = new Map<string, WorkspacePaneLabelRecord>();
       for (const [id, record] of prev) {
         if (record.routeKey !== currentRouteKeyByPaneId.get(id)) {
           changed = true;
@@ -936,9 +926,9 @@ export function WorkspaceStoreProvider({
 
   }, [primaryPanes]);
 
-  // --- Apply title hints to the live pane after open-pane de-duplication ---
+  // --- Apply label hints to the live pane after open-pane de-duplication ---
   useEffect(() => {
-    const pending = pendingTitleHintByRouteKeyRef.current;
+    const pending = pendingLabelHintByRouteKeyRef.current;
     if (pending.size === 0) {
       return;
     }
@@ -946,28 +936,28 @@ export function WorkspaceStoreProvider({
     const paneByRouteKey = new Map(
       primaryPanes.map((pane) => [resolvePaneRouteKey(pane.href), pane]),
     );
-    const records: Array<{ paneId: string; record: WorkspacePaneTitleRecord }> = [];
-    for (const [routeKey, title] of pending) {
+    const records: Array<{ paneId: string; record: WorkspacePaneLabelRecord }> = [];
+    for (const [routeKey, label] of pending) {
       const pane = paneByRouteKey.get(routeKey);
       pending.delete(routeKey);
       if (!pane) continue;
       records.push({
         paneId: pane.id,
-        record: { title, source: "hint", routeKey },
+        record: { label, source: "hint", routeKey },
       });
     }
     if (records.length === 0) {
       return;
     }
 
-    setRuntimeTitleByPaneId((prev) => {
+    setRuntimeLabelByPaneId((prev) => {
       let next = prev;
       for (const { paneId, record } of records) {
         const existing = next.get(paneId);
         if (existing?.source === "runtime" && existing.routeKey === record.routeKey) {
           continue;
         }
-        next = upsertPaneTitleRecord(next, paneId, record);
+        next = upsertPaneLabelRecord(next, paneId, record);
       }
       return next;
     });
@@ -999,7 +989,7 @@ export function WorkspaceStoreProvider({
       openerPaneId?: string | null;
       activate?: boolean;
       replace?: boolean;
-      titleHint?: string;
+      labelHint?: string;
     }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
@@ -1008,7 +998,7 @@ export function WorkspaceStoreProvider({
         getWorkspacePrimaryPanes(stateRef.current),
         pane,
       );
-      publishPaneTitleHint(targetPaneId, href, input.titleHint);
+      publishPaneLabelHint(targetPaneId, href, input.labelHint);
       dispatch({
         type: "open_pane",
         pane,
@@ -1017,18 +1007,18 @@ export function WorkspaceStoreProvider({
         mode: input.replace ? "replace" : "push",
       });
     },
-    [publishPaneTitleHint, workspacePrimaryMetrics]
+    [publishPaneLabelHint, workspacePrimaryMetrics]
   );
 
   const navigatePane = useCallback(
     (
       paneId: string,
       href: string,
-      options?: { replace?: boolean; activate?: boolean; titleHint?: string },
+      options?: { replace?: boolean; activate?: boolean; labelHint?: string },
     ) => {
       const normalized = normalizeWorkspaceHref(href);
       if (!normalized) return;
-      publishPaneTitleHint(paneId, normalized, options?.titleHint);
+      publishPaneLabelHint(paneId, normalized, options?.labelHint);
       dispatch({
         type: "navigate_pane",
         paneId,
@@ -1037,7 +1027,7 @@ export function WorkspaceStoreProvider({
         mode: options?.replace ? "replace" : "push",
       });
     },
-    [publishPaneTitleHint]
+    [publishPaneLabelHint]
   );
 
   const goBackPane = useCallback(
@@ -1101,15 +1091,15 @@ export function WorkspaceStoreProvider({
     []
   );
 
-  const publishPaneTitle = useCallback(
-    (input: { paneId: string; routeKey: string; title: string | null }) => {
-      const { paneId, routeKey, title } = input;
+  const publishPaneLabel = useCallback(
+    (input: { paneId: string; routeKey: string; label: string | null }) => {
+      const { paneId, routeKey, label } = input;
       const pane = getWorkspacePrimaryPane(stateRef.current, paneId);
       if (!pane) return;
       if (resolvePaneRouteKey(pane.href) !== routeKey) return;
 
-      const normalized = normalizePaneTitle(title);
-      setRuntimeTitleByPaneId((prev) => {
+      const normalized = normalizePaneLabel(label);
+      setRuntimeLabelByPaneId((prev) => {
         const existing = prev.get(paneId);
         if (!normalized) {
           if (existing?.source !== "runtime" || existing.routeKey !== routeKey) {
@@ -1119,8 +1109,8 @@ export function WorkspaceStoreProvider({
           next.delete(paneId);
           return next;
         }
-        return upsertPaneTitleRecord(prev, paneId, {
-          title: normalized,
+        return upsertPaneLabelRecord(prev, paneId, {
+          label: normalized,
           source: "runtime",
           routeKey,
         });
@@ -1134,7 +1124,7 @@ export function WorkspaceStoreProvider({
     () => ({
       state,
       workspacePrimaryMetrics,
-      runtimeTitleByPaneId,
+      runtimeLabelByPaneId,
       activatePane,
       openPane,
       navigatePane,
@@ -1149,12 +1139,12 @@ export function WorkspaceStoreProvider({
       resizeSecondaryPane,
       minimizePane,
       restorePane,
-      publishPaneTitle,
+      publishPaneLabel,
     }),
     [
       state,
       workspacePrimaryMetrics,
-      runtimeTitleByPaneId,
+      runtimeLabelByPaneId,
       activatePane,
       openPane,
       navigatePane,
@@ -1169,7 +1159,7 @@ export function WorkspaceStoreProvider({
       resizeSecondaryPane,
       minimizePane,
       restorePane,
-      publishPaneTitle,
+      publishPaneLabel,
     ]
   );
 

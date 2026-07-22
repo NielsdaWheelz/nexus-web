@@ -13,7 +13,7 @@ function row(
     resourceRef: `${type}:1`,
     activation: { resourceRef: `${type}:1`, kind: "none" } as SearchResultRowViewModel["activation"],
     citationTarget: null,
-    paneTitleHint: "",
+    paneLabelHint: "",
     type,
     mediaId: opts.mediaId ?? null,
     contextRef: {

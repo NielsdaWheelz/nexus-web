@@ -6,6 +6,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
+import { AUTHENTICATED_HOME_PATH } from "./app-routes";
 import {
   activeWorkspacePane,
   makeWorkspacePane,
@@ -47,7 +48,7 @@ function twoPaneSession(): WorkspaceState {
 function trivialSession(): WorkspaceState {
   return makeWorkspaceState(
     [
-      makeWorkspacePane("pane-session-default", "/libraries", {
+      makeWorkspacePane("pane-session-default", AUTHENTICATED_HOME_PATH, {
         primaryWidthPx: 480,
       }),
     ],

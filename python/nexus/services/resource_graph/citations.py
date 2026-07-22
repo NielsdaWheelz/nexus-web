@@ -241,6 +241,67 @@ def citation_reader_target_for_edge(
     )
 
 
+def citation_reader_targets_for_edges(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    edges: Sequence[ResourceEdge],
+    target_missing_ref_uris: set[str],
+    target_routeable_ref_uris: set[str],
+) -> dict[UUID, CitationTargetProjection]:
+    """Project each unique readable citation target once for a graph page.
+
+    Endpoint hydration already owns visibility and routeability. Locator
+    resolution remains entirely in reader_target_for_citation_target; this seam
+    only deduplicates repeated targets and avoids resolving endpoint state again.
+    """
+
+    citation_edges = [
+        edge for edge in edges if edge.origin == "citation" and edge.ordinal is not None
+    ]
+    targets = {
+        f"{edge.target_scheme}:{edge.target_id}": ResourceRef(
+            scheme=cast("ResourceScheme", edge.target_scheme),
+            id=edge.target_id,
+        )
+        for edge in citation_edges
+    }
+    reader_targets = {
+        uri: (
+            (None, None)
+            if uri in target_missing_ref_uris
+            else reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
+        )
+        for uri, target in targets.items()
+    }
+
+    out: dict[UUID, CitationTargetProjection] = {}
+    for edge in citation_edges:
+        assert edge.ordinal is not None and edge.snapshot is not None, (
+            f"citation edge {edge.id} lost its ordinal/snapshot pair"
+        )
+        uri = f"{edge.target_scheme}:{edge.target_id}"
+        media_id, locator = reader_targets[uri]
+        target_status = (
+            "missing"
+            if uri in target_missing_ref_uris
+            else (
+                "current"
+                if media_id is not None or locator is not None or uri in target_routeable_ref_uris
+                else "unanchorable"
+            )
+        )
+        out[edge.id] = CitationTargetProjection(
+            ordinal=edge.ordinal,
+            role=cast("EdgeKind", edge.kind),
+            snapshot=snapshot_from_jsonb(edge.snapshot),
+            media_id=media_id,
+            locator=locator,
+            target_status=target_status,
+        )
+    return out
+
+
 def concordant_sources(
     db: Session,
     *,

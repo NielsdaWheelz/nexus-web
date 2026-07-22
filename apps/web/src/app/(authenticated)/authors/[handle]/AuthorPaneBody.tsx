@@ -14,7 +14,7 @@ import Input from "@/components/ui/Input";
 import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   FeedbackNotice,
   FieldFeedback,
@@ -37,7 +37,7 @@ import type {
   ContributorRoleFact,
 } from "@/lib/contributors/types";
 import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
-import { usePaneParam, useSetPaneTitle } from "@/lib/panes/paneRuntime";
+import { usePaneParam, useSetPaneLabel } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 // Singular role labels (content spec §0.2 / §4.3) — a work role-fact is one
@@ -147,15 +147,20 @@ export default function AuthorPaneBody() {
     }
   }, [initialAuthor]);
 
-  useSetPaneTitle(loading ? null : (data?.detail.displayName ?? "Author"));
+  useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
   const workCount = data?.works.length ?? 0;
-  // The folio is omitted entirely when there are no works (content spec M3):
-  // passing a {kind:"count", value:0} folio would render the banned "0 works".
-  usePaneChromeOverride({
-    folio:
-      workCount > 0 ? { kind: "count", value: workCount, unit: "work" } : undefined,
-    folioPending: loading,
+  // Render no folio when there are no works (content spec M3); a zero count
+  // would render the banned "0 works".
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio:
+        workCount > 0
+          ? { kind: "count", value: workCount, unit: "work" }
+          : { kind: "none" },
+      pending: loading,
+    },
   });
 
   // After appending a Load-more page, move focus to the first newly-appended

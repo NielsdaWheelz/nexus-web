@@ -14,14 +14,18 @@ import {
   usePaneRuntime,
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { assumeMediaId, type Placement } from "@/lib/lectern/client";
+import { assumeMediaId, type Placement } from "@/lib/lectern/contract";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
@@ -38,7 +42,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
@@ -163,7 +167,7 @@ export default function PodcastDetailPaneBody() {
   const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
-  useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
+  useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   // Populate the membership panel's library list for the active podcast. The
   // hook's loadLibraries does the fetch + error reporting; this layer adds the
@@ -332,7 +336,7 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const episodesDrawerRef = useRef<HTMLElement>(null);
-  useDialogOverlay({
+  const episodesOverlay = useDialogOverlay({
     ref: episodesDrawerRef,
     active: isMobileViewport && episodesDrawerOpen,
     onDismiss: () => setEpisodesDrawerOpen(false),
@@ -835,25 +839,13 @@ export default function PodcastDetailPaneBody() {
     onUnsubscribe: unsubscribePodcast,
   });
 
-  // Podcast detail is a document-mode pane; the podcast title is the section
-  // opener's display line (the sole <h1>, §7.6) and the explicit episode-count
-  // folio wins over the auto-derived title folio (§7.5).
-  usePaneChromeOverride({
-    actions: isMobileViewport ? (
-      <Button
-        variant="secondary"
-        size="sm"
-        className={styles.paneActionButton}
-        onClick={() => setEpisodesDrawerOpen((open) => !open)}
-        aria-label="Episodes"
-        aria-expanded={episodesDrawerOpen}
-      >
-        Episodes
-      </Button>
-    ) : undefined,
+  usePanePrimaryChrome({
     options: paneOptions,
-    folio: { kind: "count", value: episodes.length, unit: "episode" },
-    folioPending: loading,
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: episodes.length, unit: "episode" },
+      pending: loading,
+    },
   });
 
   const podcastLibraryCount = podcastLibraries.filter(
@@ -1004,34 +996,36 @@ export default function PodcastDetailPaneBody() {
       />
 
       {isMobileViewport && episodesDrawerOpen ? (
-        <div
-          className={styles.episodesBackdrop}
-          data-testid="episodes-backdrop"
-          onClick={() => setEpisodesDrawerOpen(false)}
-        >
-          <aside
-            ref={episodesDrawerRef}
-            className={styles.episodesDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Episodes"
-            onClick={(event) => event.stopPropagation()}
+        <ModalLayerProvider token={episodesOverlay.layerToken}>
+          <div
+            className={styles.episodesBackdrop}
+            data-testid="episodes-backdrop"
+            {...modalBackdropProjection(episodesOverlay.isTopmost)}
+            onClick={() => setEpisodesDrawerOpen(false)}
           >
-            <header className={styles.episodesDrawerHeader}>
-              <h2>Episodes</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setEpisodesDrawerOpen(false)}
-              >
-                Close
-              </Button>
-            </header>
-            <div className={styles.episodesDrawerBody}>
-              {episodePaneContent}
-            </div>
-          </aside>
-        </div>
+            <aside
+              ref={episodesDrawerRef}
+              className={styles.episodesDrawer}
+              role="dialog"
+              aria-label="Episodes"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className={styles.episodesDrawerHeader}>
+                <h2>Episodes</h2>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setEpisodesDrawerOpen(false)}
+                >
+                  Close
+                </Button>
+              </header>
+              <div className={styles.episodesDrawerBody}>
+                {episodePaneContent}
+              </div>
+            </aside>
+          </div>
+        </ModalLayerProvider>
       ) : null}
     </>
   );

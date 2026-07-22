@@ -1,9 +1,23 @@
 # Incoming Connections + Reader Linked Items Hard Cutover
 
-Status: IMPLEMENTED
+Status: IMPLEMENTED foundation; product route and surface superseded 2026-07-20
 Author: design synthesis, 2026-06-12
 Type: hard cutover - one-user prototype, production-grade contracts, no legacy
 lanes, no compatibility shims, no fallback readers, no duplicate graph APIs.
+
+## Current state and supersession
+
+The surviving capability is the internal target-centered connection projection
+over `resource_edges`. The standalone `/reader-connections` product route and
+separate reader Connections/Citations surfaces described below were deleted;
+the reader consumes connections through `GET /media/{media_id}/document-map`
+and the single `reader-evidence` surface.
+
+The approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md)
+supersedes the anchored/unanchored response partition, source-category
+presentation, and nested-object behavior. Route, BFF, and surface instructions
+below are historical cutover context, not current implementation guidance.
 
 ## 0. North Star
 
@@ -71,8 +85,9 @@ The base graph contract is already built:
 - `resource_edges` is the single directed connection table.
 - `ResourceRef` is the one persisted endpoint vocabulary.
 - Edge `kind` is stance: `context | supports | contradicts`.
-- Edge `origin` is writer ownership: `user | citation | system | note_body |
-  highlight_note | note_containment | synapse`.
+- Edge `origin` is writer ownership. The current vocabulary is owned by
+  `python/nexus/services/resource_graph/schemas.py`; historical literals in
+  this spec do not widen that closed set.
 - Citation rows are `origin='citation'` edges with dense `ordinal` and
   `snapshot`.
 - `message_retrievals` stays chat telemetry and points back with

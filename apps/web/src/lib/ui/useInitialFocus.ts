@@ -12,20 +12,35 @@ import { getFocusableElements } from "@/lib/ui/getFocusableElements";
 export function useInitialFocus(
   containerRef: RefObject<HTMLElement | null>,
   active: boolean,
-  options?: { select?: (container: HTMLElement) => HTMLElement | null; key?: unknown },
+  options?: {
+    enabled?: boolean;
+    select?: (container: HTMLElement) => HTMLElement | null;
+    key?: unknown;
+  },
 ): void {
   const selectRef = useRef(options?.select);
   selectRef.current = options?.select;
+  const enabled = options?.enabled ?? true;
   const key = options?.key;
+  const focusedRef = useRef(false);
+  const focusedKeyRef = useRef(key);
 
   useEffect(() => {
-    if (!active || !containerRef.current) return;
+    if (!active) {
+      focusedRef.current = false;
+      focusedKeyRef.current = key;
+      return;
+    }
+    if (!enabled || !containerRef.current) return;
+    if (focusedRef.current && Object.is(focusedKeyRef.current, key)) return;
     const container = containerRef.current;
+    focusedRef.current = true;
+    focusedKeyRef.current = key;
     const frame = window.requestAnimationFrame(() => {
       const target =
         selectRef.current?.(container) ?? getFocusableElements(container)[0] ?? container;
       target.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [active, key, containerRef]);
+  }, [active, enabled, key, containerRef]);
 }

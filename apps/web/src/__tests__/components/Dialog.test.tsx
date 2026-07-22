@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import Dialog from "@/components/ui/Dialog";
 
@@ -32,6 +32,29 @@ describe("Dialog", () => {
       screen.getByRole("heading", { name: "Edit Library" })
     ).toBeInTheDocument();
     expect(screen.getByText("Dialog body")).toBeInTheDocument();
+  });
+
+  it("returns focus to an explicit target when it closes", async () => {
+    const target = document.createElement("button");
+    document.body.append(target);
+    const { rerender, unmount } = render(
+      <Dialog open onClose={vi.fn()} title="Test" returnFocusTo={() => target}>
+        <button type="button">Inside</button>
+      </Dialog>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Close dialog" })).toHaveFocus(),
+    );
+
+    rerender(
+      <Dialog open={false} onClose={vi.fn()} title="Test" returnFocusTo={() => target}>
+        <button type="button">Inside</button>
+      </Dialog>,
+    );
+    expect(target).toHaveFocus();
+
+    unmount();
+    target.remove();
   });
 
   it("calls onClose when close button is clicked", async () => {

@@ -62,13 +62,9 @@ constants. Tests should load the manifest through
   describes the proof source: independent DOM/archive/PDF/source-package
   verifier, current-extractor gold snapshot, hand-sampled gold, unsupported
   negative, or synthetic pattern.
-- Every automated fixture must be listed in `frontend_surface_contracts`. That
-  ledger distinguishes payload projection, direct Citations component rendering,
-  reader-shell publication, and reader-shell omission proof, so payload-rendered
-  fixtures cannot be mistaken for complete frontend coverage.
 - A green automated fixture proves the declared fixture contract only. It does
   not prove broader source formats, unsupported adapters, live upstream drift, or
-  frontend surfacing unless those contracts are also listed and tested.
+  UI surfacing unless a current UI contract is separately tested.
 
 ## HTML Fixtures
 
@@ -144,6 +140,5 @@ directories.
 
 - `arxiv/2606.01109-source.tar`: committed arXiv source package used for
   TeX/BibTeX source-first citation graph verification and for the remote arXiv
-  PDF ingest-to-reader-apparatus API contract. It is not a PDF geometry fixture:
-  source-package rows are expected to surface as sidecar items with missing PDF
-  locators.
+  PDF ingest contract. It is not a PDF geometry fixture: source-package apparatus
+  items retain missing PDF locators.

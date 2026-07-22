@@ -3,6 +3,7 @@ import type {
   FocusEvent,
   MouseEvent,
   PointerEvent,
+  ReactNode,
   RefObject,
 } from "react";
 import { useEffect, useRef } from "react";
@@ -35,6 +36,7 @@ export interface DocumentScrollSnapshot {
 
 export default function TextDocumentReader({
   mediaId,
+  beforeContent,
   readerRootRef,
   contentRef,
   readerSurfaceClassName,
@@ -51,6 +53,7 @@ export default function TextDocumentReader({
   onInternalLinkClick,
 }: {
   mediaId: string;
+  beforeContent?: ReactNode;
   readerRootRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
   readerSurfaceClassName: string;
@@ -126,6 +129,7 @@ export default function TextDocumentReader({
         data-testid="document-viewport"
         data-pane-content="true"
       >
+        {beforeContent}
         <div
           ref={readerRootRef}
           className={readerSurfaceClassName}
@@ -156,6 +160,7 @@ export default function TextDocumentReader({
                   htmlSanitized={contentState.renderedHtml}
                   className={styles.fragment}
                   mediaId={mediaId}
+                  headingLevelOffset={1}
                 />
               </div>
             )}

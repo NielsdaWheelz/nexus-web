@@ -25,7 +25,7 @@ import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { noteBlockResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -58,7 +58,7 @@ export default function NotePaneBody() {
   const notePulseIdRef = useRef(0);
   const resourceKey = `note:${blockId}`;
 
-  useSetPaneTitle(block?.bodyText.trim() || (feedback ? "Note" : null));
+  useSetPaneLabel(block?.bodyText.trim() || (feedback ? "Note" : null));
 
   const saveDoc = useCallback(
     async (doc: ProseMirrorNode, { clientMutationId }: { clientMutationId: string }) => {

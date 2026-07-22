@@ -19,7 +19,7 @@ import {
   useLectern,
 } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
-import { assumeMediaId } from "@/lib/lectern/client";
+import { assumeMediaId } from "@/lib/lectern/contract";
 
 const MEDIA_X = "11111111-0000-4000-8000-00000000000a";
 

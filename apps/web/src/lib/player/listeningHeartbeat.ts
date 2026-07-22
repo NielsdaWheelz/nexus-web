@@ -19,7 +19,11 @@
 import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { Presence } from "@/lib/api/presence";
-import { decodeListeningState, type ListeningStateOut, type MediaId } from "@/lib/lectern/client";
+import {
+  decodeListeningState,
+  type ListeningStateOut,
+  type MediaId,
+} from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
 import { isRecord } from "@/lib/validation";
 

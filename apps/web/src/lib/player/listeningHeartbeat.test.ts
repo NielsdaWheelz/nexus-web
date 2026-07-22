@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiError } from "@/lib/api/client";
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { assumeMediaId, type ListeningStateOut, type MediaId } from "@/lib/lectern/client";
+import {
+  assumeMediaId,
+  type ListeningStateOut,
+  type MediaId,
+} from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
 import {
   createListeningHeartbeat,

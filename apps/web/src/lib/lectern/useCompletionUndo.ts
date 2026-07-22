@@ -21,7 +21,7 @@ import type {
   LecternSnapshot,
   MediaId,
   Placement,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 
 const UNDO_DURATION_MS = 10_000;
 

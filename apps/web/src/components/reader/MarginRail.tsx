@@ -15,7 +15,11 @@ import {
   useAnchoredReaderProjection,
   type AnchoredReaderRow,
 } from "./useAnchoredReaderProjection";
-import { stackAnchoredRows, type MarginItem } from "@/lib/reader/marginItems";
+import {
+  capProjectedMarginRows,
+  stackAnchoredRows,
+  type MarginItem,
+} from "@/lib/reader/marginItems";
 import styles from "./MarginRail.module.css";
 
 const ROW_GAP = 6;
@@ -23,20 +27,17 @@ const ROW_HEIGHT = 72;
 
 export interface MarginRailProps {
   items: MarginItem[];
-  /** Items dropped by the cap; added to the geometry overflow in the "+N more" foot. */
-  hiddenByCap: number;
   contentRef: RefObject<HTMLElement | null>;
   measureKey: string | number;
   isMobile: boolean;
   onOpenSidecar: () => void;
+  onActivateItem: (itemId: string) => void;
   onDismissSynapse: (edgeId: string) => void;
-  onActivateFootnote?: (href: string) => void;
 }
 
 /**
- * The wide-viewport inline margin presenter (§4.4). A sibling of
- * AnchoredSidecarSurface that renders into the reader's gutter rather than a
- * pane, reusing the exact projection (useAnchoredReaderProjection) + the shared
+ * The wide-viewport inline margin presenter (§4.4). It renders in the reader's
+ * gutter, reusing the exact projection (useAnchoredReaderProjection) + the shared
  * stackAnchoredRows solver. Renders only when the pane is wide enough for the
  * measure + margin (AC-8); below threshold it is absent and the Evidence sheet
  * is the presenter (N-6). Nothing is a card: hairline rhythm, amber only for the
@@ -44,19 +45,20 @@ export interface MarginRailProps {
  */
 export default function MarginRail({
   items,
-  hiddenByCap,
   contentRef,
   measureKey,
   isMobile,
   onOpenSidecar,
+  onActivateItem,
   onDismissSynapse,
-  onActivateFootnote,
 }: MarginRailProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const probeRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const [wideEnough, setWideEnough] = useState(false);
-  const [alignedRows, setAlignedRows] = useState<{ id: string; top: number }[]>([]);
+  const [alignedRows, setAlignedRows] = useState<{ id: string; top: number }[]>(
+    [],
+  );
   const [overflowCount, setOverflowCount] = useState(0);
   const [rowHeights, setRowHeights] = useState(new Map<string, number>());
   const [layoutVersion, setLayoutVersion] = useState(0);
@@ -71,12 +73,13 @@ export default function MarginRail({
     [items],
   );
 
-  const { orderedRows, projections, viewportState } = useAnchoredReaderProjection({
-    contentRef,
-    rows: wideEnough && !isMobile ? anchoredRows : [],
-    measureKey,
-    missingTargetLogName: "reader_margin_target_missing",
-  });
+  const { orderedRows, projections, viewportState } =
+    useAnchoredReaderProjection({
+      contentRef,
+      rows: wideEnough && !isMobile ? anchoredRows : [],
+      measureKey,
+      missingTargetLogName: "reader_margin_target_missing",
+    });
 
   // Breakpoint: measure the pane (contentRef's scroll parent) against a hidden
   // probe sized to (--reader-measure + --reader-margin-width) — resolving the
@@ -104,7 +107,10 @@ export default function MarginRail({
       for (const row of orderedRows) {
         next.set(
           row.id,
-          Math.ceil(rowRefs.current.get(row.id)?.getBoundingClientRect().height ?? ROW_HEIGHT),
+          Math.ceil(
+            rowRefs.current.get(row.id)?.getBoundingClientRect().height ??
+              ROW_HEIGHT,
+          ),
         );
       }
       if (previous.size === next.size) {
@@ -129,38 +135,59 @@ export default function MarginRail({
     if (!wideEnough || !containerRef.current || !contentRef.current) return;
     const scrollParent = findScrollParent(contentRef.current);
     const baseline =
-      scrollParent.getBoundingClientRect().top - containerRef.current.getBoundingClientRect().top;
+      scrollParent.getBoundingClientRect().top -
+      containerRef.current.getBoundingClientRect().top;
     const orderById = new Map(orderedRows.map((row, index) => [row.id, index]));
-    const positioned = projections
+    // The cap is intentionally applied here, after projection has reduced the
+    // document inventory to facts visible in this viewport.
+    const { visible: visibleProjections } = capProjectedMarginRows(projections);
+    const positioned = visibleProjections
       .map((projection) => ({
         id: projection.row.id,
         desiredTop: projection.rect.top - viewportState.scrollTop + baseline,
       }))
-      .sort((left, right) => (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0));
-    const { alignedRows: nextAligned, overflowCount: nextOverflow } = stackAnchoredRows(positioned, {
-      rowHeights,
-      rowHeight: ROW_HEIGHT,
-      gap: ROW_GAP,
-      containerHeight: containerRef.current.clientHeight,
-    });
+      .sort(
+        (left, right) =>
+          (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0),
+      );
+    const { alignedRows: nextAligned, overflowCount: nextOverflow } =
+      stackAnchoredRows(positioned, {
+        rowHeights,
+        rowHeight: ROW_HEIGHT,
+        gap: ROW_GAP,
+        containerHeight: containerRef.current.clientHeight,
+      });
     setAlignedRows((previous) => {
       if (previous.length !== nextAligned.length) return nextAligned;
       for (let index = 0; index < previous.length; index += 1) {
-        if (previous[index]?.id !== nextAligned[index]?.id || previous[index]?.top !== nextAligned[index]?.top) {
+        if (
+          previous[index]?.id !== nextAligned[index]?.id ||
+          previous[index]?.top !== nextAligned[index]?.top
+        ) {
           return nextAligned;
         }
       }
       return previous;
     });
     setOverflowCount(nextOverflow);
-  }, [contentRef, layoutVersion, orderedRows, projections, rowHeights, viewportState.scrollTop, wideEnough]);
+  }, [
+    contentRef,
+    layoutVersion,
+    orderedRows,
+    projections,
+    rowHeights,
+    viewportState.scrollTop,
+    wideEnough,
+  ]);
 
   const probe = (
     <div
       ref={probeRef}
       aria-hidden="true"
       className={styles.probe}
-      style={{ width: "calc(var(--reader-measure) + var(--reader-margin-width))" }}
+      style={{
+        width: "calc(var(--reader-measure) + var(--reader-margin-width))",
+      }}
     />
   );
 
@@ -168,10 +195,15 @@ export default function MarginRail({
     return probe;
   }
 
+  const hiddenByCap = capProjectedMarginRows(projections).hidden;
   const remaining = overflowCount + hiddenByCap;
 
   return (
-    <aside className={styles.rail} aria-label="Margin" data-testid="margin-rail">
+    <aside
+      className={styles.rail}
+      aria-label="Margin"
+      data-testid="margin-rail"
+    >
       {probe}
       <div ref={containerRef} className={styles.container}>
         {alignedRows.map((alignedRow) => {
@@ -190,8 +222,8 @@ export default function MarginRail({
             >
               <MarginItemBody
                 item={item}
+                onActivateItem={onActivateItem}
                 onDismissSynapse={onDismissSynapse}
-                onActivateFootnote={onActivateFootnote}
               />
             </div>
           );
@@ -213,28 +245,49 @@ export default function MarginRail({
 
 export function MarginItemBody({
   item,
+  onActivateItem,
   onDismissSynapse,
-  onActivateFootnote,
 }: {
   item: MarginItem;
+  onActivateItem: (itemId: string) => void;
   onDismissSynapse: (edgeId: string) => void;
-  onActivateFootnote?: (href: string) => void;
 }) {
-  if (item.kind === "note") {
-    return <p className={styles.note}>{item.noteText}</p>;
+  if (item.kind === "stance") {
+    const conceded = item.stance === "supports";
+    return (
+      <button
+        type="button"
+        className={styles.stance}
+        aria-label={conceded ? "Conceded" : "Doubted"}
+        onClick={() => onActivateItem(item.itemId)}
+      >
+        {conceded ? "✓" : "~"}
+      </button>
+    );
   }
   if (item.kind === "synapse") {
+    const edgeId = item.edgeId;
     return (
       <div className={styles.synapse}>
-        <MachineText variant="inline" origin={{ label: "Synapse" }} className={styles.synapseText}>
-          {item.excerpt ?? ""}
-        </MachineText>
-        {item.edgeId ? (
+        <button
+          type="button"
+          className={styles.itemActivation}
+          onClick={() => onActivateItem(item.itemId)}
+        >
+          <MachineText
+            variant="inline"
+            origin={{ label: "Synapse" }}
+            className={styles.synapseText}
+          >
+            {item.excerpt ?? item.label}
+          </MachineText>
+        </button>
+        {edgeId ? (
           <button
             type="button"
             className={styles.dismiss}
             aria-label="Dismiss Synapse connection"
-            onClick={() => onDismissSynapse(item.edgeId as string)}
+            onClick={() => onDismissSynapse(edgeId)}
           >
             <X size={12} aria-hidden="true" />
           </button>
@@ -242,29 +295,23 @@ export function MarginItemBody({
       </div>
     );
   }
-  if (item.kind === "footnote") {
-    return (
-      <button
-        type="button"
-        className={styles.footnote}
-        disabled={!item.targetHref}
-        onClick={() => {
-          if (item.targetHref && onActivateFootnote) onActivateFootnote(item.targetHref);
-        }}
-      >
-        <span className={styles.footnoteKicker}>Cite</span>
-        <span className={styles.footnoteTitle}>{item.targetTitle}</span>
-      </button>
-    );
-  }
-  // stance — glyph only, in the user's own ink (never MachineText, never a pill).
   return (
-    <span
-      className={styles.stance}
-      data-stance={item.stance}
-      aria-label={item.stance === "supports" ? "Conceded" : "Doubted"}
+    <button
+      type="button"
+      className={styles.itemActivation}
+      onClick={() => onActivateItem(item.itemId)}
     >
-      {item.stance === "supports" ? "✓" : "~"}
-    </span>
+      <span className={styles.kicker}>
+        {item.kind === "highlight"
+          ? "Highlight"
+          : item.kind === "citation"
+            ? "Citation"
+            : "Link"}
+      </span>
+      <span className={styles.itemLabel}>{item.label}</span>
+      {item.excerpt ? (
+        <span className={styles.itemExcerpt}>{item.excerpt}</span>
+      ) : null}
+    </button>
   );
 }

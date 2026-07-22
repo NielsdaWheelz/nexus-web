@@ -7,17 +7,22 @@ import {
   librariesResource,
   libraryEntriesResource,
   libraryResource,
+  LECTERN_RECENT_LIMIT,
+  lecternRecentResource,
   mediaFragmentsResource,
   mediaResource,
   noteBlockResource,
   notePagesResource,
   settingsAccountResource,
 } from "@/lib/api/resource";
+import { decodeRecentConsumptionEnvelope } from "@/lib/lectern/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
+import { isAbortError } from "@/lib/errors";
 import { parseContributorHandle } from "@/lib/contributors/handle";
+import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import type {
   ContributorDetail,
   ContributorWorkItem,
@@ -85,6 +90,26 @@ export interface PaneResourceLoader {
   load: (request: ResourceFetcher, params: RouteParams) => Promise<unknown>;
 }
 
+export interface PaneSubresourceFailure {
+  readonly status: number | null;
+  readonly code: string | null;
+}
+
+export type PaneMediaFragmentsSeed<T = unknown> =
+  | { readonly status: "ready"; readonly data: readonly T[] }
+  | { readonly status: "error"; readonly error: PaneSubresourceFailure };
+
+function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
+  if (typeof error !== "object" || error === null) {
+    return { status: null, code: null };
+  }
+  const candidate = error as { status?: unknown; code?: unknown };
+  return {
+    status: typeof candidate.status === "number" ? candidate.status : null,
+    code: typeof candidate.code === "string" ? candidate.code : null,
+  };
+}
+
 // Only panes whose primary first-paint resource is FastAPI-backed AND
 // deterministically keyed by the route params appear here. Deliberately NOT
 // prefetched (client-fetch on open): page
@@ -92,11 +117,22 @@ export interface PaneResourceLoader {
 // snapshot), podcastDetail / podcasts (cacheKey embeds mutable filter/sort/search UI
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // settingsLocalVault (client-only File System data), search (query-driven,
-// no route-keyed primary), lectern (the shell-mounted LecternProvider is the one
-// snapshot owner — it issues its own initial GET /api/lectern through its FIFO
-// lane and never reads ResourceCache, so a pane loader would create a second,
-// non-canonical fetch path). Intent still warms their chunk; only the data is skipped.
+// no route-keyed primary). Lectern's canonical ordered queue remains exclusively
+// owned by the shell-mounted LecternProvider; only its independent, read-only
+// recent-consumption resource is seeded here.
 export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
+  lectern: {
+    cacheKey: () =>
+      lecternRecentResource.cacheKey({ limit: LECTERN_RECENT_LIMIT, refreshVersion: 0 }),
+    load: async (request) =>
+      decodeRecentConsumptionEnvelope(
+        await request(lecternRecentResource, {
+          limit: LECTERN_RECENT_LIMIT,
+          refreshVersion: 0,
+        }),
+      ),
+  },
+
   libraries: {
     cacheKey: () => librariesResource.cacheKey({ refreshVersion: 0 }),
     load: (request) => request(librariesResource, { refreshVersion: 0 }),
@@ -108,9 +144,13 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
       const params = { id: p.id };
       const [library, entries] = await Promise.all([
         request<{ id: string }, { data: unknown }>(libraryResource, params),
-        request<{ id: string }, { data: unknown; page: unknown }>(libraryEntriesResource, params),
+        request<{ id: string }, { data: object[]; page: unknown }>(libraryEntriesResource, params),
       ]);
-      return { library: library.data, entries: entries.data, entriesPage: entries.page };
+      return {
+        library: library.data,
+        entries: entries.data.map(decodeLibraryReadingTimeEntry),
+        entriesPage: entries.page,
+      };
     },
   },
 
@@ -124,9 +164,26 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
           { data: { kind?: string; capabilities?: { can_read?: boolean } | null } }
         >(mediaResource, params)
       ).data;
-      const fragments = shouldLoadInitialMediaFragments(media)
-        ? (await request<{ id: string }, { data: unknown[] }>(mediaFragmentsResource, params)).data
-        : [];
+      let fragments: PaneMediaFragmentsSeed = { status: "ready", data: [] };
+      if (shouldLoadInitialMediaFragments(media)) {
+        try {
+          fragments = {
+            status: "ready",
+            data: (
+              await request<{ id: string }, { data: unknown[] }>(
+                mediaFragmentsResource,
+                params,
+              )
+            ).data,
+          };
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          fragments = {
+            status: "error",
+            error: paneSubresourceFailure(error),
+          };
+        }
+      }
       return { media, fragments };
     },
   },

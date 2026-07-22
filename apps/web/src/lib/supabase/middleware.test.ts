@@ -160,7 +160,7 @@ describe("updateSession", () => {
 
     const { updateSession } = await import("./middleware");
     const response = updateSession(
-      new NextRequest("http://localhost:3000/libraries", {
+      new NextRequest("http://localhost:3000/lectern", {
         headers: { cookie: endedCookie() },
       }),
       NONCE
@@ -309,7 +309,7 @@ describe("updateSession", () => {
     );
 
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/libraries"
+      "http://localhost:3000/lectern"
     );
   });
 

@@ -6,13 +6,16 @@ import Button from "@/components/ui/Button";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
 import SecondarySurfaceTabs, {
   secondarySurfacePanelId,
-  secondarySurfaceTabId,
 } from "@/components/workspace/SecondarySurfaceTabs";
+import SecondarySurfacePanels from "@/components/workspace/SecondarySurfacePanels";
 import {
   getPublishedSecondarySurface,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
-import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
+import {
+  getSecondarySurfaceDefinition,
+  paneSecondaryRegionId,
+} from "@/lib/panes/paneSecondaryModel";
 import type {
   WorkspaceSecondarySizing,
   WorkspaceSecondaryState,
@@ -21,6 +24,7 @@ import type {
 import styles from "./SecondaryPaneShell.module.css";
 
 interface SecondaryPaneShellProps {
+  primaryPaneId: string;
   secondaryPaneId: string;
   publication: PaneSecondaryPublication;
   state: WorkspaceSecondaryState;
@@ -34,6 +38,7 @@ interface SecondaryPaneShellProps {
 }
 
 export default function SecondaryPaneShell({
+  primaryPaneId,
   secondaryPaneId,
   publication,
   state,
@@ -63,6 +68,7 @@ export default function SecondaryPaneShell({
 
   return (
     <aside
+      id={paneSecondaryRegionId(primaryPaneId, publication.groupId)}
       className={styles.secondary}
       style={{
         width: sizing.widthPx,
@@ -89,14 +95,12 @@ export default function SecondaryPaneShell({
           <X size={15} aria-hidden="true" />
         </Button>
       </header>
-      <div
-        id={secondarySurfacePanelId(baseId, activeSurface.id)}
-        role="tabpanel"
-        aria-labelledby={secondarySurfaceTabId(baseId, activeSurface.id)}
+      <SecondarySurfacePanels
+        baseId={baseId}
+        surfaces={publication.surfaces}
+        activeSurfaceId={activeSurface.id}
         className={styles.body}
-      >
-        {activeSurface.body}
-      </div>
+      />
       <div
         className={styles.resizeHandle}
         role="separator"

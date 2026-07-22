@@ -2,15 +2,90 @@ import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import {
   arePaneFixedChromePublicationsEqual,
+  arePanePrimaryChromePublicationsEqual,
   arePaneSecondaryPublicationsEqual,
   getPublishedSecondarySurface,
   normalizePaneFixedChromePublication,
   normalizePaneSecondaryPublication,
   secondaryPublicationIncludesSurface,
   type PaneSecondaryPublication,
+  type PanePrimaryChromePublication,
 } from "@/lib/panes/panePublications";
 
 describe("panePublications", () => {
+  it("compares primary chrome structurally except for React and callback identities", () => {
+    const icon = createElement("span");
+    const toolbar = createElement("div");
+    const onSelect = () => {};
+    const publication: PanePrimaryChromePublication = {
+      header: {
+        kind: "resource",
+        resource: {
+          status: "ready",
+          title: "Dune",
+          creditGroups: [{
+            kind: "authors",
+            credits: [{ label: "Frank Herbert", href: "/authors/frank-herbert" }],
+          }],
+        },
+      },
+      toolbar,
+      actions: [{
+        kind: "command",
+        id: "map",
+        label: "Document Map",
+        icon,
+        state: {
+          kind: "disclosure",
+          expanded: true,
+          controls: "map-region",
+          menuLabels: { collapsed: "Show map", expanded: "Hide map" },
+        },
+        onSelect,
+      }],
+      options: [{
+        kind: "command",
+        id: "credits",
+        label: "Credits…",
+        onSelect,
+      }],
+    };
+
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      header: {
+        kind: "resource",
+        resource: {
+          status: "ready",
+          title: "Dune",
+          creditGroups: [{
+            kind: "authors",
+            credits: [{ label: "Frank Herbert", href: "/authors/frank-herbert" }],
+          }],
+        },
+      },
+      actions: publication.actions ? [...publication.actions] : undefined,
+      options: publication.options ? [...publication.options] : undefined,
+    })).toBe(true);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      toolbar: createElement("div"),
+    })).toBe(false);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      actions: [{ ...publication.actions![0]!, icon: createElement("span") }],
+    })).toBe(false);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      ...publication,
+      options: [{
+        kind: "command",
+        id: "credits",
+        label: "Credits…",
+        onSelect: () => {},
+      }],
+    })).toBe(false);
+  });
+
   it("normalizes and clones valid secondary publications", () => {
     const body = createElement("div");
     const surface = { id: "reader-evidence" as const, body };
@@ -199,7 +274,7 @@ describe("panePublications", () => {
     }
   });
 
-  it("compares fixed chrome publications by canonical width and body identity", () => {
+  it("compares raw fixed chrome publications without validating before the route gate", () => {
     const body = createElement("div");
 
     expect(arePaneFixedChromePublicationsEqual(null, null)).toBe(true);
@@ -214,7 +289,7 @@ describe("panePublications", () => {
         { id: "reader-document-map-overview-rail", widthPx: 28.1, body },
         { id: "reader-document-map-overview-rail", widthPx: 29, body },
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       arePaneFixedChromePublicationsEqual(
         { id: "reader-document-map-overview-rail", widthPx: 28, body },
@@ -227,19 +302,19 @@ describe("panePublications", () => {
         { id: "reader-document-map-overview-rail", widthPx: 29, body },
       ),
     ).toBe(false);
-    expect(() =>
+    expect(
       arePaneFixedChromePublicationsEqual(
         { id: "reader-document-map-overview-rail", widthPx: Number.NaN, body },
         { id: "reader-document-map-overview-rail", widthPx: Number.NaN, body },
       ),
-    ).toThrow("non-negative");
+    ).toBe(false);
     const invalidPublication = {
       id: "reader-document-map-overview-rail" as const,
       widthPx: Number.NaN,
       body,
     };
-    expect(() =>
+    expect(
       arePaneFixedChromePublicationsEqual(invalidPublication, invalidPublication),
-    ).toThrow("non-negative");
+    ).toBe(true);
   });
 });

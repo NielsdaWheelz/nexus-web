@@ -6,8 +6,10 @@ import type { CollectionRowView } from "@/lib/collections/types";
 /** Derived read/listen state as a calm badge. */
 export default function ReadStateBadge({
   consumption,
+  activity,
 }: {
   consumption: NonNullable<CollectionRowView["consumption"]>;
+  activity: "reading" | "listening";
 }) {
   switch (consumption.status) {
     case "unread":
@@ -17,7 +19,9 @@ export default function ReadStateBadge({
         <Pill tone="info">
           {consumption.fraction !== undefined
             ? `${Math.round(consumption.fraction * 100)}%`
-            : "Reading"}
+            : activity === "listening"
+              ? "Listening"
+              : "Reading"}
         </Pill>
       );
     case "finished":

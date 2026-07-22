@@ -34,18 +34,20 @@ import {
   getLectern,
   postConsumptionCommand,
   postLecternCommand,
-  type ConsumptionCommand,
-  type ConsumptionResult,
-  type LecternCommand,
-  type LecternItem,
-  type LecternItemId,
-  type LecternResult,
-  type LecternSnapshot,
-  type MediaId,
-  type MediaListeningState,
-  type NextCapability,
-  type Placement,
 } from "@/lib/lectern/client";
+import type {
+  ConsumptionCommand,
+  ConsumptionResult,
+  LecternCommand,
+  LecternItem,
+  LecternItemId,
+  LecternResult,
+  LecternSnapshot,
+  MediaId,
+  MediaListeningState,
+  NextCapability,
+  Placement,
+} from "@/lib/lectern/contract";
 
 export const LECTERN_COMMAND_DEADLINE_MS = 35_000;
 export const LECTERN_REVALIDATE_MIN_INTERVAL_MS = 60_000;

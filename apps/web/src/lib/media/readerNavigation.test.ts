@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeMediaNavigation,
+  decodeMediaNavigationResponse,
   normalizeReaderNavigationToc,
   parseReaderNavigationHrefAnchorId,
   type MediaNavigationResponse,
@@ -55,9 +57,9 @@ describe("normalizeReaderNavigationToc", () => {
 
 describe("parseReaderNavigationHrefAnchorId", () => {
   it("extracts decoded anchors from reader navigation hrefs", () => {
-    expect(parseReaderNavigationHrefAnchorId("Text/intro.xhtml#deep-anchor")).toBe(
-      "deep-anchor",
-    );
+    expect(
+      parseReaderNavigationHrefAnchorId("Text/intro.xhtml#deep-anchor"),
+    ).toBe("deep-anchor");
     expect(parseReaderNavigationHrefAnchorId("#space%20anchor")).toBe(
       "space anchor",
     );
@@ -91,5 +93,92 @@ describe("MediaNavigationResponse", () => {
 
     expect(payload.data.landmarks).toEqual([]);
     expect(payload.data.page_list).toEqual([]);
+  });
+
+  it("strictly decodes the complete navigation owner DTO", () => {
+    const data = {
+      media_id: "media-1",
+      kind: "web_article",
+      sections: [
+        {
+          section_id: "introduction",
+          label: "Introduction",
+          ordinal: 0,
+          fragment_id: "fragment-1",
+          fragment_idx: 0,
+          level: 1,
+          depth: 0,
+          start_offset: 0,
+          end_offset: 120,
+          href_path: null,
+          href_fragment: null,
+          anchor_id: "introduction",
+          char_count: 120,
+        },
+      ],
+      toc_nodes: [
+        {
+          id: "toc-1",
+          label: "Introduction",
+          ordinal: 0,
+          href: "#introduction",
+          fragment_idx: 0,
+          level: 1,
+          depth: 0,
+          section_id: "introduction",
+          children: [],
+        },
+      ],
+      landmarks: [
+        {
+          id: "landmark-1",
+          label: "Start",
+          ordinal: 0,
+          href: "#introduction",
+          fragment_idx: 0,
+          section_id: "introduction",
+        },
+      ],
+      page_list: [],
+    };
+
+    expect(decodeMediaNavigation(data)).toEqual(data);
+    expect(decodeMediaNavigationResponse({ data })).toEqual({ data });
+  });
+
+  it("rejects extra and malformed nested navigation fields", () => {
+    const empty = {
+      media_id: "media-1",
+      kind: "epub",
+      sections: [],
+      toc_nodes: [],
+      landmarks: [],
+      page_list: [],
+    };
+    expect(() => decodeMediaNavigation({ ...empty, legacy_toc: [] })).toThrow(
+      /must contain exactly/,
+    );
+    expect(() =>
+      decodeMediaNavigation({
+        ...empty,
+        toc_nodes: [
+          {
+            id: "toc-1",
+            label: "Introduction",
+            ordinal: 0,
+            href: null,
+            fragment_idx: null,
+            level: null,
+            depth: null,
+            section_id: null,
+            children: [],
+            legacy_target: null,
+          },
+        ],
+      }),
+    ).toThrow(/toc_nodes\[0\] must contain exactly/);
+    expect(() =>
+      decodeMediaNavigationResponse({ data: empty, meta: {} }),
+    ).toThrow(/MediaNavigationResponse must contain exactly/);
   });
 });

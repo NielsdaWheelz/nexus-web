@@ -3502,6 +3502,7 @@ class TestGetEpubSectionReturnsPayloadAndNavigation:
         assert section0["source"] == "toc"
         assert "html_sanitized" in section0
         assert "canonical_text" in section0
+        assert section0["word_count"] == 8
         assert "source_version" not in section0
         assert "created_at" in section0
 
@@ -3883,6 +3884,36 @@ def _create_pdf_media_with_state(
 
 class TestPdfCapabilityDerivation:
     """PDF capability derivation with real readiness predicate."""
+
+    def test_pdf_quote_text_readiness_requires_positive_stored_word_count(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        from nexus.services.pdf_readiness import is_pdf_quote_text_ready
+
+        with direct_db.session() as session:
+            media_id, user_id = _create_pdf_media_with_state(
+                session,
+                processing_status="ready_for_reading",
+                plain_text=" \t\n",
+                page_count=1,
+                with_page_spans=True,
+            )
+
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("pdf_page_text_spans", "media_id", media_id)
+
+        _add_media_to_user_library(auth_client, direct_db, user_id, media_id)
+
+        with direct_db.session() as session:
+            assert is_pdf_quote_text_ready(session, media_id) is False
+
+        response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
+        assert response.status_code == 200, response.text
+        capabilities = response.json()["data"]["capabilities"]
+        assert capabilities["can_quote"] is False
+        assert capabilities["can_search"] is False
 
     def test_get_media_pdf_can_read_before_can_quote_when_plain_text_not_ready(
         self, auth_client, direct_db: DirectSessionManager
@@ -4316,7 +4347,7 @@ class TestPdfRetry:
             assert row == (None, None, 0)
 
     def test_retry_pdf_text_rebuild_path_invalidates_before_rewrite(self, db_session: Session):
-        """Text-rebuild path invalidates quote-match metadata before new artifacts."""
+        """Text rebuild clears text while preserving apparatus for reconciliation."""
         from uuid import uuid4
 
         from sqlalchemy import text
@@ -4368,7 +4399,7 @@ class TestPdfRetry:
                 text("SELECT count(*) FROM reader_apparatus_states WHERE media_id = :id"),
                 {"id": media_id},
             ).scalar_one()
-            == 0
+            == 1
         )
 
     def test_pdf_text_rebuild_invalidates_pdf_quote_match_metadata_and_prefix_suffix(

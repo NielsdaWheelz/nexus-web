@@ -31,7 +31,6 @@
   min-width: 0;
   min-height: 0;
   background: var(--surface-canvas);
-  border-bottom: 1px solid var(--edge-subtle);
   cursor: grab;
 }
 
@@ -45,7 +44,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   padding: var(--space-1) var(--space-3);
-  border-top: 1px solid var(--edge-subtle);
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .body {
@@ -81,6 +80,10 @@
 .paneShell[data-mobile="true"] {
   border-right: none;
   --mobile-pane-chrome-height: 0px;
+  --mobile-pane-content-offset: calc(
+    env(safe-area-inset-top) + var(--appnav-bar-height) +
+      var(--mobile-pane-chrome-height) + var(--space-2)
+  );
 }
 
 .paneShell[data-mobile="true"] .toolbar {
@@ -114,10 +117,7 @@
 
 .paneShell[data-mobile="true"] .body[data-body-mode="standard"],
 .paneShell[data-mobile="true"] .body[data-body-mode="contained"] {
-  padding-top: calc(
-    env(safe-area-inset-top) + var(--appnav-bar-height) + var(--mobile-pane-chrome-height) +
-      var(--space-2)
-  );
+  padding-top: var(--mobile-pane-content-offset);
 }
 
 @media (prefers-reduced-motion: reduce) {

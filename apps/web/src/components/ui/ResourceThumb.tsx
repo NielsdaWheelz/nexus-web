@@ -56,8 +56,9 @@ export default function ResourceThumb({
       className={cx(styles.iconTile, sizingClass, className)}
       style={viewTransitionName ? transitionStyle : undefined}
       data-view-transition-part="thumb"
-      role="img"
-      aria-label={alt}
+      role={alt ? "img" : undefined}
+      aria-label={alt || undefined}
+      aria-hidden={alt ? undefined : true}
     >
       <Icon className={styles.icon} aria-hidden="true" />
     </span>

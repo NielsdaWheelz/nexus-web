@@ -1,12 +1,16 @@
 "use client";
 
 import { useRef } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, Ref } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+  Ref,
+} from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import Button from "@/components/ui/Button";
 import HighlightSnippet from "@/components/ui/HighlightSnippet";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import { pluralize } from "@/lib/text/pluralize";
 import { cx } from "@/lib/ui/cx";
 import { isNestedInteractiveTarget } from "@/lib/ui/isNestedInteractiveTarget";
 import { useClampWithToggle } from "@/lib/ui/useClampWithToggle";
@@ -16,19 +20,11 @@ type ItemCardContent =
   | { kind: "highlight"; snippet: { exact: string; color: HighlightColor } }
   | { kind: "resource"; title: ReactNode; icon?: ReactNode };
 
-interface ItemCardLinkedItem {
-  id: string;
-  icon?: ReactNode;
-  label: string;
-  onActivate: () => void;
-}
-
 interface ItemCardProps {
   content: ItemCardContent;
   meta?: ReactNode;
   actions?: ReactNode;
   note?: ReactNode;
-  linkedItems?: ItemCardLinkedItem[];
   selected?: boolean;
   hovered?: boolean;
   unavailable?: boolean;
@@ -49,7 +45,6 @@ export default function ItemCard({
   meta,
   actions,
   note,
-  linkedItems,
   selected,
   hovered,
   unavailable,
@@ -68,7 +63,8 @@ export default function ItemCard({
   // (Intent — which cards are expanded — is owned by the host.) Measure only while
   // collapsed; when expanded the box is un-clamped and would read as not overflowing.
   const bodyRef = useRef<HTMLButtonElement>(null);
-  const snippetText = content.kind === "highlight" ? content.snippet.exact : null;
+  const snippetText =
+    content.kind === "highlight" ? content.snippet.exact : null;
   const { overflowing } = useClampWithToggle({
     ref: bodyRef,
     text: snippetText,
@@ -77,7 +73,11 @@ export default function ItemCard({
 
   const bodyContent =
     content.kind === "highlight" ? (
-      <HighlightSnippet exact={content.snippet.exact} color={content.snippet.color} compact />
+      <HighlightSnippet
+        exact={content.snippet.exact}
+        color={content.snippet.color}
+        compact
+      />
     ) : (
       <>
         {content.icon}
@@ -126,7 +126,9 @@ export default function ItemCard({
             {bodyContent}
           </button>
         ) : (
-          <div className={cx(styles.body, styles.staticBody)}>{bodyContent}</div>
+          <div className={cx(styles.body, styles.staticBody)}>
+            {bodyContent}
+          </div>
         )}
         {actions ? <div className={styles.actions}>{actions}</div> : null}
       </div>
@@ -150,18 +152,6 @@ export default function ItemCard({
       ) : null}
       {meta ? <div className={styles.meta}>{meta}</div> : null}
       {note ? <div className={styles.note}>{note}</div> : null}
-      {linkedItems?.length ? (
-        <ul className={styles.linkedList} aria-label={pluralize(linkedItems.length, "linked chat")}>
-          {linkedItems.map((item) => (
-            <li key={item.id}>
-              <button type="button" onClick={item.onActivate}>
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </div>
   );
 }

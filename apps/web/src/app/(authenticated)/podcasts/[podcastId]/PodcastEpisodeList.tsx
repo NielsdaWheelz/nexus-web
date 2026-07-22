@@ -227,6 +227,7 @@ export default function PodcastEpisodeList({
           label="Episode actions"
           options={[
             {
+              kind: "command",
               id: "transcribe-unplayed",
               label: transcript.batchTranscriptBusy
                 ? "Transcribing..."
@@ -237,6 +238,7 @@ export default function PodcastEpisodeList({
               onSelect: () => void transcript.handleBatchTranscriptRequest(),
             },
             {
+              kind: "command",
               id: "mark-all-played",
               label: markAllAsPlayedBusy ? "Marking..." : "Mark all as played",
               disabled:

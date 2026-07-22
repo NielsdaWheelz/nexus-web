@@ -70,6 +70,17 @@ function renderPanel(
 }
 
 describe("TranscriptContentPanel", () => {
+  it("projects imported transcript h1 beneath the route heading", () => {
+    renderPanel({ renderedHtml: '<h1 id="transcript-topic">Topic</h1>' });
+
+    expect(
+      screen.queryByRole("heading", { level: 1, name: "Topic" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Topic" }),
+    ).toHaveAttribute("id", "transcript-topic");
+  });
+
   it("renders without a ReaderProvider in the tree", () => {
     // No context read remains in this component; wrapping it in a
     // ReaderProvider here would hide a regression that reintroduces one.
@@ -91,9 +102,9 @@ describe("TranscriptContentPanel", () => {
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: same themed-root containment check for the active prose block
     expect(activeProse.closest(`.${styles.readerThemeDark}`)).toBe(root);
 
-    expect((root as HTMLElement).style.getPropertyValue("--reader-font-size-px")).toBe(
-      "18px",
-    );
+    expect(
+      (root as HTMLElement).style.getPropertyValue("--reader-font-size-px"),
+    ).toBe("18px");
     expect(
       (root as HTMLElement).style.getPropertyValue("--reader-column-width-ch"),
     ).toBe("70ch");
@@ -115,7 +126,9 @@ describe("TranscriptContentPanel", () => {
     const empty = screen.getByText("No transcript segments available.");
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting the empty state sits inside the themed reader root, a CSS-module class with no ARIA role/label
     expect(empty.closest(`.${styles.readerThemeDark}`)).not.toBeNull();
-    expect(screen.queryByText("Active fragment prose.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Active fragment prose."),
+    ).not.toBeInTheDocument();
   });
 
   it("scopes .readerContentInner to the active prose block only", () => {

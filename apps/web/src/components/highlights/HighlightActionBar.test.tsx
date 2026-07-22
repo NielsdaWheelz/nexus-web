@@ -113,7 +113,9 @@ describe("HighlightActionBar — existing (menu)", () => {
     expect(screen.getByRole("group", { name: "Highlight color" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Quote to new chat" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Quote to existing chat" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Edit bounds" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Edit bounds" }),
+    ).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("menuitem", { name: "Delete highlight" })).toBeInTheDocument();
   });
 
@@ -143,7 +145,7 @@ describe("HighlightActionBar — existing (menu)", () => {
     const handlers = setupExisting({}, "menu");
 
     await user.click(screen.getByRole("button", { name: "Highlight actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit bounds" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Edit bounds" }));
     expect(handlers.onToggleEditBounds).toHaveBeenCalledTimes(1);
   });
 

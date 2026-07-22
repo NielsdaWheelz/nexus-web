@@ -12,7 +12,7 @@
 import type { useFeedback } from "@/components/feedback/Feedback";
 import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import { createRandomId } from "@/lib/createRandomId";
-import { parseMediaId } from "@/lib/lectern/client";
+import { parseMediaId } from "@/lib/lectern/contract";
 import type { LecternCapability } from "@/lib/lectern/LecternProvider";
 import { addMediaFromUrl } from "@/lib/media/ingestionClient";
 import { createNotePage, quickCaptureDailyNote } from "@/lib/notes/api";
@@ -26,6 +26,7 @@ import { requestSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import { copyText } from "@/lib/ui/copyText";
 import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { LauncherActionTarget } from "./model";
+import type { LauncherPane } from "./providers";
 
 // True when `href` resolves to an in-app route the Android shell can't open (Local
 // Vault). Shared by dispatch (block + toast) and the controller (skip logging a
@@ -70,12 +71,7 @@ export interface LauncherDispatchCtx {
   // The one Lectern capability, threaded from the controller (which holds the React
   // context) so this plain-function owner appends media without its own hook access.
   placeItems: LecternCapability["placeItems"];
-  panes: {
-    id: string;
-    href: string;
-    visibility: "visible" | "minimized";
-    title: string;
-  }[];
+  panes: LauncherPane[];
   activatePane(paneId: string): void;
   restorePane(paneId: string): void;
   closePane(paneId: string): void;
@@ -111,7 +107,7 @@ export async function dispatchTarget(
       // type: ask that pane to focus its box on arrival. SearchPaneBody enforces the
       // blank-query gate, so a search href carrying a query never grabs focus.
       if (resolvePaneRoute(target.href).id === "search") requestSearchInputFocus();
-      requestOpenInAppPane(target.href, target.titleHint ? { titleHint: target.titleHint } : undefined);
+      requestOpenInAppPane(target.href, target.labelHint ? { labelHint: target.labelHint } : undefined);
       return;
     case "resource":
       // activateResource owns the external-redirect path; we only pre-guard in-app routes
@@ -124,15 +120,15 @@ export async function dispatchTarget(
         return;
       }
       activateResource(target.activation, {
-        label: target.titleHint,
-        navigate: (href) => requestOpenInAppPane(href, { titleHint: target.titleHint }),
-        openInNewPane: (href, title) =>
-          requestOpenInAppPane(href, { titleHint: title ?? target.titleHint }),
+        labelHint: target.labelHint,
+        navigate: (href) => requestOpenInAppPane(href, { labelHint: target.labelHint }),
+        openInNewPane: (href, labelHint) =>
+          requestOpenInAppPane(href, { labelHint: labelHint ?? target.labelHint }),
       });
       return;
     case "ask":
       requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(target.text)}`, {
-        titleHint: "New chat",
+        labelHint: "New chat",
       });
       return;
     case "queue-add":
@@ -165,19 +161,19 @@ export async function dispatchTarget(
         case "documents":
         case "videos": {
           if (result.media_id) {
-            requestOpenInAppPane(`/media/${result.media_id}`, { titleHint: result.title });
+            requestOpenInAppPane(`/media/${result.media_id}`, { labelHint: result.title });
             return;
           }
           const added = await addMediaFromUrl({
             url: result.type === "documents" ? result.url : result.watch_url,
             libraryIds: ctx.defaultLibraryIds,
           });
-          requestOpenInAppPane(`/media/${added.mediaId}`, { titleHint: result.title });
+          requestOpenInAppPane(`/media/${added.mediaId}`, { labelHint: result.title });
           return;
         }
         case "podcasts": {
           if (result.podcast_id) {
-            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { titleHint: result.title });
+            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { labelHint: result.title });
             return;
           }
           const subscribed = await subscribeToPodcast({
@@ -190,12 +186,12 @@ export async function dispatchTarget(
             description: result.description,
             library_ids: ctx.defaultLibraryIds,
           });
-          requestOpenInAppPane(`/podcasts/${subscribed.podcast_id}`, { titleHint: result.title });
+          requestOpenInAppPane(`/podcasts/${subscribed.podcast_id}`, { labelHint: result.title });
           return;
         }
         case "podcast_episodes": {
           if (result.podcast_id) {
-            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { titleHint: result.podcast_title });
+            requestOpenInAppPane(`/podcasts/${result.podcast_id}`, { labelHint: result.podcast_title });
             return;
           }
           const subscribed = await subscribeToPodcast({
@@ -209,7 +205,7 @@ export async function dispatchTarget(
             library_ids: ctx.defaultLibraryIds,
           });
           requestOpenInAppPane(`/podcasts/${subscribed.podcast_id}`, {
-            titleHint: result.podcast_title,
+            labelHint: result.podcast_title,
           });
           return;
         }
@@ -220,12 +216,12 @@ export async function dispatchTarget(
       }
     }
     case "new-conversation":
-      requestOpenInAppPane("/conversations/new", { titleHint: "New chat" });
+      requestOpenInAppPane("/conversations/new", { labelHint: "New chat" });
       return;
     case "create-page": {
       const created = await createNotePage({ title: "Untitled" });
       setPendingNoteFocus({ pageId: created.id, target: "title" });
-      requestOpenInAppPane(`/pages/${created.id}`, { titleHint: created.title });
+      requestOpenInAppPane(`/pages/${created.id}`, { labelHint: created.title });
       return;
     }
     case "copy-link":

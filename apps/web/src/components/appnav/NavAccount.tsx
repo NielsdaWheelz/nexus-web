@@ -4,6 +4,7 @@ import { type MouseEvent } from "react";
 import { CircleUser, LogOut } from "lucide-react";
 import Link from "next/link";
 import ActionMenu from "@/components/ui/ActionMenu";
+import type { AppNavActivationResult } from "./navActivation";
 import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
@@ -17,7 +18,7 @@ export default function NavAccount({
   settings: NavItem;
   active: boolean;
   collapsed: boolean;
-  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => void;
+  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
 }) {
   const SettingsIcon = settings.icon;
   return (
@@ -42,17 +43,20 @@ export default function NavAccount({
       )}
       options={[
         {
+          kind: "custom",
           id: "settings",
           label: settings.label,
-          render: ({ closeMenu }) => (
+          render: ({ closeMenu, closeMenuWithoutFocus }) => (
             <Link
               href={settings.href}
               role="menuitem"
               className={styles.menuItem}
               aria-current={active ? "page" : undefined}
               onClick={(event) => {
-                onNavigate(event, settings.href);
-                closeMenu();
+                const result = onNavigate(event, settings.href);
+                if (result === "unhandled") return;
+                if (result === "handled-source-focus") closeMenu();
+                else closeMenuWithoutFocus();
               }}
             >
               <SettingsIcon size={16} aria-hidden="true" />
@@ -61,6 +65,7 @@ export default function NavAccount({
           ),
         },
         {
+          kind: "custom",
           id: "signout",
           label: "Sign Out",
           render: () => (

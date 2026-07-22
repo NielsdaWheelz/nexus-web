@@ -69,10 +69,6 @@
   margin-bottom: 12px;
 }
 
-.paneActionButton {
-  border-radius: var(--radius-full);
-}
-
 .headerActions {
   display: flex;
   align-items: center;

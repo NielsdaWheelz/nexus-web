@@ -426,7 +426,7 @@ function renderPane(
     onReplacePane?: (
       paneId: string,
       href: string,
-      navOptions?: { titleHint?: string },
+      options?: { labelHint?: string },
     ) => void;
   } = {},
 ) {
@@ -448,7 +448,7 @@ function renderPane(
       onNavigatePane={vi.fn()}
       onReplacePane={onReplacePane}
       onOpenInNewPane={vi.fn()}
-      onSetPaneTitle={vi.fn()}
+      onSetPaneLabel={vi.fn()}
     >
       <Conversation />
     </PaneRuntimeProvider>,
@@ -700,6 +700,226 @@ describe("Conversation", () => {
     });
     expect(screen.queryByText("Answer B")).not.toBeInTheDocument();
     expect(scrollport.scrollTop).toBe(60);
+  });
+
+  it("keeps an exact-message reveal single-flight and retries after active-path rollback", async () => {
+    const user = userEvent.setup();
+    let resolveFirstActivePath: (response: Response) => void = () => undefined;
+    const firstActivePath = new Promise<Response>((resolve) => {
+      resolveFirstActivePath = resolve;
+    });
+    let treeCalls = 0;
+    let activePathCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          activePathCalls += 1;
+          return activePathCalls === 1
+            ? firstActivePath
+            : jsonResponse({ data: treeResponse({ selected: "b" }) });
+        }
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=branch-b-user",
+    });
+
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    expect(activePathCalls).toBe(1);
+
+    resolveFirstActivePath(
+      jsonResponse(
+        {
+          error: {
+            code: "E_BRANCH_PATH_INVALID",
+            message: "Could not switch active path",
+          },
+        },
+        500,
+      ),
+    );
+
+    expect(await screen.findByText("Answer A")).toBeVisible();
+    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(activePathCalls).toBe(2));
+    expect(treeCalls).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    expect(screen.queryByText("Failed to switch fork")).toBeNull();
+  });
+
+  it("recovers an exact-message reveal when refresh observes the committed active path", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    let activePathCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({
+            data: treeResponse({ selected: treeCalls === 1 ? "a" : "b" }),
+          });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        if (
+          path === "/api/conversations/conversation-1/active-path" &&
+          init?.method === "POST"
+        ) {
+          activePathCalls += 1;
+          // Model a committed server mutation whose response was lost or errored.
+          return jsonResponse(
+            {
+              error: {
+                code: "E_BRANCH_PATH_RESPONSE_LOST",
+                message: "Active-path response unavailable",
+              },
+            },
+            500,
+          );
+        }
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=branch-b-user",
+    });
+
+    expect(await screen.findByText("Failed to switch fork")).toBeVisible();
+    expect(screen.getByText("Answer A")).toBeVisible();
+    expect(activePathCalls).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(treeCalls).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByText("Answer B")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.queryByText("Failed to switch fork")).toBeNull(),
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(activePathCalls).toBe(1);
+  });
+
+  it("surfaces a missing exact-message target with a refresh-backed Retry action", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return jsonResponse({ data: treeResponse() });
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        throw new Error(
+          `Unexpected fetch call: ${init?.method ?? "GET"} ${path}`,
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/conversation-1?message=missing-message",
+    });
+
+    expect(
+      await screen.findByText(
+        "This message is not available in this conversation.",
+      ),
+    ).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(treeCalls).toBeGreaterThanOrEqual(2));
+    await waitFor(() =>
+      expect(
+        screen.getByText("This message is not available in this conversation."),
+      ).toBeVisible(),
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          pathOf(input) === "/api/conversations/conversation-1/active-path",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps exact-message Retry available when the refresh itself fails", async () => {
+    const user = userEvent.setup();
+    let treeCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathOf(input);
+        if (path === "/api/conversations/conversation-1/tree") {
+          treeCalls += 1;
+          return treeCalls === 1
+            ? jsonResponse({ data: treeResponse() })
+            : jsonResponse(
+                {
+                  error: {
+                    code: "E_TREE_REFRESH_FAILED",
+                    message: "Tree refresh unavailable",
+                  },
+                },
+                500,
+              );
+        }
+        if (path === "/api/conversations/conversation-1/context-refs") {
+          return jsonResponse({ data: [] });
+        }
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
+        }
+        if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+        throw new Error(`Unexpected fetch call: ${path}`);
+      }),
+    );
+
+    renderPane({
+      href: "/conversations/conversation-1?message=missing-message",
+    });
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Failed to refresh forks")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
   it("tails an active sibling run as soon as that cached path becomes visible", async () => {
@@ -1132,14 +1352,22 @@ describe("Conversation", () => {
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
-        onSetPaneTitle={vi.fn()}
+        onSetPaneLabel={vi.fn()}
         secondaryPane={secondaryPane}
         onRequestSecondarySurface={onRequestSecondarySurface}
         onCloseSecondaryPane={onCloseSecondaryPane}
       >
         <PaneShell
           paneId="pane-1"
-          title="Chat"
+          routeKey={
+            resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
+          }
+          routeHeader={{
+            kind: "section",
+            destinationId: "chats",
+            defaultFolio: "none",
+          }}
+          label="Chat"
           navigation={{
             canGoBack: false,
             canGoForward: false,
@@ -1167,6 +1395,7 @@ describe("Conversation", () => {
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
       "conversation-context-refs",
+      undefined,
     );
 
     // With the context-ref surface open, the same button collapses it.

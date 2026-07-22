@@ -455,12 +455,12 @@ export default function GlobalPlayerFooter() {
   const openLecternFromMobileExpanded = () => {
     miniExpandButtonRef.current?.focus();
     setMobileExpanded(false);
-    requestOpenInAppPane("/lectern", { titleHint: "Lectern" });
+    requestOpenInAppPane("/lectern", { labelHint: "Lectern" });
   };
   const openLecternFromDesktopMore = () => {
     moreButtonRef.current?.focus();
     setMoreOpen(false);
-    requestOpenInAppPane("/lectern", { titleHint: "Lectern" });
+    requestOpenInAppPane("/lectern", { labelHint: "Lectern" });
   };
   const getWalknoteReviewReturnFocusTarget = () =>
     isMobile ? markButtonMobileRef.current : markButtonDesktopRef.current;

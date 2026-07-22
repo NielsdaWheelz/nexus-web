@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError
+from nexus.schemas.presence import Absent, Present
 from nexus.services.capabilities import is_text_document_ready
+from nexus.services.media_document_metrics import load_media_summary_metrics
 from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 from nexus.services.reader_navigation import get_media_navigation_for_viewer
 
@@ -113,6 +115,9 @@ def get_media_read_map_for_viewer(
     elif kind in ("podcast_episode", "video"):
         sections = _transcript_sections(db, media_id)
     else:
+        # justify-service-invariant-check: the persisted media-kind discriminant
+        # is broader than this readable-map branch union.
+        # justify-defect: every readable kind must have an explicit map policy.
         raise AssertionError(f"Unhandled media kind for media read map: {kind}")
     numbered_sections = [
         replace(section, ordinal=ordinal) for ordinal, section in enumerate(sections, start=1)
@@ -159,76 +164,42 @@ def load_media_document_summary(
     if kind == "pdf":
         if not is_pdf_quote_text_ready(db, media_id):
             return None
-        metrics = db.execute(
-            text(
-                """
-                SELECT
-                    COALESCE(NULLIF(m.page_count, 0), page_spans.page_count, 0) AS section_count,
-                    CASE
-                        WHEN btrim(COALESCE(m.plain_text, '')) = '' THEN 0
-                        ELSE cardinality(regexp_split_to_array(btrim(m.plain_text), '\\s+'))
-                    END AS word_count
-                FROM media m
-                LEFT JOIN LATERAL (
-                    SELECT COUNT(DISTINCT page_number) AS page_count
-                    FROM pdf_page_text_spans
-                    WHERE media_id = m.id
-                ) page_spans ON true
-                WHERE m.id = :id
-                """
-            ),
-            {"id": media_id},
-        ).fetchone()
-        if metrics is None:
-            return None
+        metrics = load_media_summary_metrics(db, media_id)
+        if isinstance(metrics.source_section_count, Absent):
+            # justify-service-invariant-check: generic Presence cannot encode its
+            # correlation with the already-discriminated media kind.
+            # justify-defect: the metrics owner promises a PDF section count.
+            raise AssertionError(f"Missing PDF section count for media {media_id}")
         return MediaDocumentSummary(
-            section_count=int(metrics[0] or 0),
-            word_count=int(metrics[1] or 0),
+            section_count=metrics.source_section_count.value,
+            word_count=metrics.word_count,
         )
     if kind in ("web_article", "epub"):
         sections = _heading_sections(db, viewer_id, media_id)
-        metrics = db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(
-                    CASE
-                        WHEN btrim(COALESCE(canonical_text, '')) = '' THEN 0
-                        ELSE cardinality(regexp_split_to_array(btrim(canonical_text), '\\s+'))
-                    END
-                ), 0) AS word_count
-                FROM fragments
-                WHERE media_id = :id
-                """
-            ),
-            {"id": media_id},
-        ).fetchone()
+        metrics = load_media_summary_metrics(db, media_id)
+        if isinstance(metrics.source_section_count, Present):
+            # justify-service-invariant-check: generic Presence cannot encode its
+            # correlation with the already-discriminated media kind.
+            # justify-defect: navigation, not source metrics, owns document sections.
+            raise AssertionError(f"Unexpected source section count for media {media_id}")
         return MediaDocumentSummary(
             section_count=len(sections) if sections is not None else None,
-            word_count=int(metrics[0] or 0) if metrics is not None else None,
+            word_count=metrics.word_count,
         )
     if kind in ("podcast_episode", "video"):
-        metrics = db.execute(
-            text(
-                """
-                SELECT COUNT(*) AS section_count,
-                       COALESCE(SUM(
-                           CASE
-                               WHEN btrim(COALESCE(canonical_text, '')) = '' THEN 0
-                               ELSE cardinality(regexp_split_to_array(btrim(canonical_text), '\\s+'))
-                           END
-                       ), 0) AS word_count
-                FROM fragments
-                WHERE media_id = :id
-                """
-            ),
-            {"id": media_id},
-        ).fetchone()
-        if metrics is None:
-            return None
+        metrics = load_media_summary_metrics(db, media_id)
+        if isinstance(metrics.source_section_count, Absent):
+            # justify-service-invariant-check: generic Presence cannot encode its
+            # correlation with the already-discriminated media kind.
+            # justify-defect: the metrics owner promises timed-media fragment count.
+            raise AssertionError(f"Missing transcript section count for media {media_id}")
         return MediaDocumentSummary(
-            section_count=int(metrics[0] or 0),
-            word_count=int(metrics[1] or 0),
+            section_count=metrics.source_section_count.value,
+            word_count=metrics.word_count,
         )
+    # justify-service-invariant-check: the persisted media-kind discriminant is
+    # broader than this summary function's finite runtime branches.
+    # justify-defect: every supported readable kind must be handled above.
     raise AssertionError(f"Unhandled media kind for document summary: {kind}")
 
 
@@ -265,6 +236,9 @@ def load_media_document(db: Session, viewer_id: UUID, media_id: UUID) -> Documen
     elif kind in ("podcast_episode", "video"):
         body = _join_fragments(db, media_id)
     else:
+        # justify-service-invariant-check: the persisted media-kind discriminant
+        # is broader than this readable-document branch union.
+        # justify-defect: every readable kind must have an explicit body policy.
         raise AssertionError(f"Unhandled media kind for full read: {kind}")
     return DocumentRead(media_id=media_id, kind=kind, title=title, body=body, char_count=len(body))
 

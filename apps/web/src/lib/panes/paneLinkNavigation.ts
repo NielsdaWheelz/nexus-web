@@ -8,7 +8,7 @@ import { beginMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 
 type PaneLinkRuntime = {
   router: PaneScopedRouter;
-  openInNewPane: (href: string, titleHint?: string) => void;
+  openInNewPane: (href: string, labelHint?: string) => void;
 };
 
 type PaneLinkMouseEvent = Pick<
@@ -39,7 +39,7 @@ export function handlePaneInternalAnchorClick(
     event,
     paneRuntime,
     anchor.getAttribute("href"),
-    anchor.dataset.paneTitleHint ||
+    anchor.dataset.paneLabelHint ||
       (anchor.getAttribute("role") === "menuitem"
         ? anchor.textContent?.trim() || undefined
         : undefined),
@@ -51,7 +51,7 @@ export function handlePaneInternalHrefClick(
   event: PaneLinkMouseEvent,
   paneRuntime: PaneLinkRuntime | null,
   href: string | null,
-  titleHint?: string,
+  labelHint?: string,
   options: { sourceAnchor?: HTMLAnchorElement } = {},
 ): void {
   const normalizedHref = href && !href.startsWith("#") ? normalizeWorkspaceHref(href) : null;
@@ -71,18 +71,18 @@ export function handlePaneInternalHrefClick(
 
   event.preventDefault();
   if (event.shiftKey) {
-    paneRuntime.openInNewPane(normalizedHref, titleHint);
+    paneRuntime.openInNewPane(normalizedHref, labelHint);
   } else {
     const viewTransition =
       resolvedRoute?.id === "media" && options.sourceAnchor
         ? beginMediaReaderViewTransition(options.sourceAnchor, normalizedHref)
         : undefined;
     const routerOptions = viewTransition
-      ? titleHint
-        ? { titleHint, viewTransition }
+      ? labelHint
+        ? { labelHint, viewTransition }
         : { viewTransition }
-      : titleHint
-        ? { titleHint }
+      : labelHint
+        ? { labelHint }
         : undefined;
     paneRuntime.router.push(normalizedHref, routerOptions);
   }

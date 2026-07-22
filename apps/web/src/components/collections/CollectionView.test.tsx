@@ -119,7 +119,7 @@ describe("CollectionView", () => {
     renderView({ status: "loading", rows: [] });
 
     // PaneLoadingState exposes an sr-only label inside a polite live region.
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading Documents…")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
   });
 
@@ -160,10 +160,53 @@ describe("CollectionView", () => {
     );
   });
 
+  it.each(["list", "gallery"] as const)(
+    "gives the %s activation one title and reading-time announcement",
+    (view) => {
+      renderView({
+        view,
+        rows: [
+          {
+            ...ROWS[0],
+            signals: [{ value: "≈ 15 min read" }],
+          },
+        ],
+      });
+
+      const activation = screen.getByRole("link");
+      expect(activation).toHaveAccessibleName("First document ≈ 15 min read");
+      expect(within(activation).queryByRole("img")).toBeNull();
+    },
+  );
+
   it("shows unread consumption state at rest", () => {
     renderView({ rows: [{ ...ROWS[0], consumption: { status: "unread" } }] });
 
     expect(screen.getByText("Unread")).toBeInTheDocument();
+  });
+
+  it("labels listening state, progress, and recency semantically", () => {
+    renderView({
+      rows: [
+        {
+          ...ROWS[0],
+          kind: "podcast_episode",
+          consumption: { status: "in_progress" },
+          recency: { at: "2026-05-25T12:00:00Z" },
+        },
+        {
+          ...ROWS[1],
+          kind: "podcast_episode",
+          consumption: { status: "in_progress", fraction: 0.42 },
+        },
+      ],
+    });
+
+    expect(screen.getByText("Listening")).toBeInTheDocument();
+    expect(screen.getByRole("time")).toHaveAttribute("datetime", "2026-05-25T12:00:00Z");
+    expect(
+      screen.getByRole("progressbar", { name: "Listening progress for Second document" }),
+    ).toHaveAttribute("aria-valuenow", "42");
   });
 
   it("keeps compact collection rows inside a 320px mobile width", async () => {
@@ -182,15 +225,22 @@ describe("CollectionView", () => {
                   text: "A compact collection row with a very long title that should clamp on mobile",
                 },
                 signals: [
+                  { value: "≈ 35791394 hr 7 min read" },
                   { value: "Very Long Publisher Name" },
                   { value: "2026" },
-                  { value: "Long secondary signal" },
                 ],
                 contributors: {
                   credits: [contributor(1), contributor(2), contributor(3)],
                   maxVisible: 3,
                 },
-                actions: [{ id: "archive", label: "Archive", onSelect: onAction }],
+                actions: [
+                  {
+                    kind: "command",
+                    id: "archive",
+                    label: "Archive",
+                    onSelect: onAction,
+                  },
+                ],
                 status: {
                   tone: "neutral",
                   label: "Extremely Long Status Label",
@@ -215,7 +265,14 @@ describe("CollectionView", () => {
     expect(horizontallyScrollableElements(host)).toEqual([]);
     expect(screen.getAllByRole("link", { name: /Contributor/ })).toHaveLength(2);
     expect(screen.getByText(", +1 more")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /compact collection row/ })).toHaveStyle({
+    // The thumbnail is intentionally absent from the accessibility tree.
+    // eslint-disable-next-line testing-library/no-node-access -- inspect decorative layout only
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-view-transition-part="thumb"]',
+    );
+    expect(thumb).not.toBeNull();
+    expect(thumb).toHaveAttribute("aria-hidden", "true");
+    expect(thumb).toHaveStyle({
       width: "32px",
       height: "32px",
     });
@@ -249,7 +306,13 @@ describe("CollectionView", () => {
     expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
 
     await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Actions" })).toHaveFocus());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Actions for A compact collection row with a very long title that should clamp on mobile",
+        }),
+      ).toHaveFocus(),
+    );
   });
 
   it("keeps gallery fallback icons inside the narrowest grid card", async () => {
@@ -260,7 +323,12 @@ describe("CollectionView", () => {
           style={{ width: "168px", maxWidth: "168px" }}
         >
           <CollectionView
-            rows={ROWS.slice(0, 1)}
+            rows={[
+              {
+                ...ROWS[0],
+                signals: [{ value: "≈ 35791394 hr 7 min read" }],
+              },
+            ]}
             view="gallery"
             density="comfortable"
             status="ready"
@@ -271,7 +339,13 @@ describe("CollectionView", () => {
     );
 
     const host = await screen.findByTestId("narrow-gallery-host");
-    const iconTile = screen.getByRole("img", { name: "First document" });
+    // The thumbnail is intentionally absent from the accessibility tree.
+    // eslint-disable-next-line testing-library/no-node-access -- inspect decorative layout only
+    const iconTile = host.querySelector<HTMLElement>(
+      '[data-view-transition-part="thumb"]',
+    );
+    expect(iconTile).not.toBeNull();
+    if (!iconTile) throw new Error("Gallery thumbnail missing");
     const iconTileStyle = getComputedStyle(iconTile);
 
     expect(host.clientWidth).toBe(168);
@@ -280,6 +354,10 @@ describe("CollectionView", () => {
       "min(50%, 8rem)",
     );
     expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(screen.getByRole("link")).toHaveAccessibleName(
+      "First document ≈ 35791394 hr 7 min read",
+    );
+    expect(screen.queryByRole("img")).toBeNull();
   });
 
   it("keeps compact sortable rows inside a 320px mobile width", async () => {
@@ -429,7 +507,14 @@ describe("CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
-          actions: [{ id: "archive", label: "Archive", onSelect: onAction }],
+          actions: [
+            {
+              kind: "command",
+              id: "archive",
+              label: "Archive",
+              onSelect: onAction,
+            },
+          ],
         },
         ROWS[1],
       ],
@@ -439,7 +524,7 @@ describe("CollectionView", () => {
     first.focus();
 
     const firstRow = within(screen.getAllByRole("listitem")[0]);
-    const trigger = screen.getByRole("button", { name: "Actions" });
+    const trigger = screen.getByRole("button", { name: "Actions for First document" });
     const related = firstRow.getByRole("button", { name: "Related" });
     await waitFor(() => expect(trigger).toHaveAttribute("tabindex", "-1"));
     expect(related).toHaveAttribute("tabindex", "-1");
@@ -463,7 +548,14 @@ describe("CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
-          actions: [{ id: "archive", label: "Archive", onSelect: vi.fn() }],
+          actions: [
+            {
+              kind: "command",
+              id: "archive",
+              label: "Archive",
+              onSelect: vi.fn(),
+            },
+          ],
         },
       ],
     });
@@ -599,7 +691,11 @@ describe("CollectionView", () => {
 
     const rowItem = screen.getAllByRole("listitem")[0];
     const row = within(rowItem);
-    const thumb = row.getByRole("img", { name: /First document/ });
+    // eslint-disable-next-line testing-library/no-node-access -- transition marker is non-semantic
+    const thumb = rowItem.querySelector<HTMLElement>(
+      '[data-view-transition-part="thumb"]',
+    );
+    if (!thumb) throw new Error("Row thumbnail missing");
     const title = row.getByText("First document");
 
     expect(rowItem).toHaveAttribute("data-collection-row-id", "a");
@@ -620,7 +716,11 @@ describe("CollectionView", () => {
     await waitFor(() =>
       expect(rowItem.style.viewTransitionName).toContain("nexus-collection-row"),
     );
-    expect(row.getByRole("img", { name: /First document/ })).toHaveAttribute(
+    // eslint-disable-next-line testing-library/no-node-access -- transition marker is non-semantic
+    const thumb = rowItem.querySelector<HTMLElement>(
+      '[data-view-transition-part="thumb"]',
+    );
+    expect(thumb).toHaveAttribute(
       "data-view-transition-part",
       "thumb",
     );

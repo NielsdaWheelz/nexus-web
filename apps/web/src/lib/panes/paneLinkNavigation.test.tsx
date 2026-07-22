@@ -102,19 +102,19 @@ describe("paneLinkNavigation", () => {
     const event = click();
     const paneRuntime = runtime();
     const element = anchor("/authors/ursula-le-guin", {
-      "data-pane-title-hint": "Ursula K. Le Guin",
+      "data-pane-label-hint": "Ursula K. Le Guin",
     });
 
     handlePaneInternalAnchorClick(event, paneRuntime, element);
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(paneRuntime.router.push).toHaveBeenCalledWith(
       "/authors/ursula-le-guin",
-      { titleHint: "Ursula K. Le Guin" },
+      { labelHint: "Ursula K. Le Guin" },
     );
     expect(paneRuntime.openInNewPane).not.toHaveBeenCalled();
   });
 
-  it("uses menuitem text as the pane title hint when no explicit hint exists", () => {
+  it("uses menuitem text as the pane label hint when no explicit hint exists", () => {
     const event = click();
     const paneRuntime = runtime();
     const element = anchor("/settings/reader", { role: "menuitem" });
@@ -125,7 +125,7 @@ describe("paneLinkNavigation", () => {
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(paneRuntime.router.push).toHaveBeenCalledWith(
       "/settings/reader",
-      { titleHint: "Reader settings" },
+      { labelHint: "Reader settings" },
     );
   });
 

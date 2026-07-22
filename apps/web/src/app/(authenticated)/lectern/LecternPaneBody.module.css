@@ -1,13 +1,3 @@
-.lecternKicker {
-  margin: 0 0 var(--space-3);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--edge);
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
 .emptyState {
   margin: 0;
   color: var(--ink-faint);
@@ -30,4 +20,12 @@
 
 .dragHandle:active {
   cursor: grabbing;
+}
+
+@media (any-pointer: coarse) {
+  .dragHandle,
+  .rowAction {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
 }

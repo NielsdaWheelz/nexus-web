@@ -24,7 +24,7 @@ import type {
   LecternSnapshot,
   MediaId,
   PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 
 // --- Session / origin model (spec §6) ---------------------------------------
 

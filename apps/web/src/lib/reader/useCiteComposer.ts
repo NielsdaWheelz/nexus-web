@@ -25,11 +25,13 @@ export function useCiteComposer({
 }: {
   /** Create a highlight from the live selection; returns its id (or null). */
   createHighlightForSelection: () => Promise<string | null>;
-  /** Refresh the reader-connections read model so the footnote appears. */
+  /** Refresh canonical Reader Evidence so the footnote appears. */
   onCited: () => void;
 }): CiteComposer {
   const [open, setOpen] = useState(false);
-  const [sourceHighlightId, setSourceHighlightId] = useState<string | null>(null);
+  const [sourceHighlightId, setSourceHighlightId] = useState<string | null>(
+    null,
+  );
 
   const openCite = useCallback(
     async (target: HighlightActionTarget) => {

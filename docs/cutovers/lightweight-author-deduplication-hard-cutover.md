@@ -9,6 +9,13 @@ This document supersedes
 author/contributor system and the adjacent code that reads or writes author
 identity. It is not a redesign of unrelated Nexus systems.
 
+The canonical resource-header and author-entry composition is defined by
+[`pane-header-identity-hard-cutover.md`](pane-header-identity-hard-cutover.md).
+This document owns author identity, persistence, authorization, and editor
+behavior. It does not own a persistent media byline or inline editor: media
+projects compact structured credits, a complete Credits overlay, and
+authorization-gated Add/Edit Authors administration in Options.
+
 ## 0. Executive decision
 
 The one-user product needs an aggressive default and a cheap escape hatch, not
@@ -250,8 +257,8 @@ list until replacement commits.
 
 The media editor loads and saves only the complete ordered `author` slice: zero
 through twenty rows. Editor, translator, host, guest, and every other role stay
-visible in the role-aware byline but are absent from this editor and remain
-machine-owned.
+visible in compact resource credits and the complete Credits overlay, but are
+absent from this editor and remain machine-owned.
 
 Each row binds explicitly to either:
 
@@ -676,29 +683,38 @@ from evidence rather than this spec.
 
 ## 7. Product, UX, and content
 
-### Media byline
+### Media credits and administration entry
 
-`ContributorRoleGroups` is the one final presentation owner for media and
-podcast credits. It groups the effective list under truthful pluralized role
-labels; media supplies an edit affordance only for its Authors group. Podcast
-cards/detail use the same role-aware rendering for host/guest/etc. The Authors
-group shows ordered literal credited names linked to author detail. Names use
-`dir="auto"`, wrap, and are never ellipsized away. An empty media author slice
-always says **No authors**, including for non-editors; editable empty lists offer
-**Add author**, and editable nonempty lists offer **Edit authors**. No confidence,
-status, provider, or canonicalization language appears.
+Media publishes the effective ordered roles through the typed resource-header
+credit model. Persistent chrome contains one compact, non-focusable text
+summary: an unprefixed Authors group followed by truthful role-labelled groups,
+with every effective role/name/order represented once. Title and credits
+ellipsize independently.
+
+Every ready resource includes **Credits…**, including zero-credit resources.
+Its read-only Dialog or MobileSheet shows the complete wrapping title, role
+groups (possibly empty), linked contributor names, and no truncation. The typed
+contributor vocabulary/grouping owner is shared with podcast credit
+presentation; there is no second vocabulary or formatter.
+
+Authorized media owners/admins get **Add author…** or **Edit authors…** in
+Options. The persistent bordered Authors row, **No authors** copy, inline
+Add/Edit control, and manual-status marker do not exist. Authorization and
+manual mode are not disclosed through a disabled command. No confidence,
+provider, canonicalization, or identity-resolution language appears.
 
 ### Edit authors
 
-Desktop uses the shared Dialog owner, upgraded once to the repository's
-`useDialogOverlay` focus/return-focus/Escape contract. Mobile keeps the
-established `MobileSheet` mounted and drives `active`; its backdrop, drag,
-history Back, and `onEscape` all pass through the same dirty guard. The shared
-history-dismiss contract gains an accepted/blocked result: when dirty Back is
-blocked, it immediately restores its synthetic history marker before showing
-the in-sheet confirmation, so a second Back cannot navigate away. The panel
-stops backdrop click propagation. This dirty-guard composition is net-new, not a
-claimed existing pattern.
+The Options command passes its exact trigger into the editor. Desktop uses the
+shared Dialog owner; mobile uses the established `MobileSheet`. Both use the
+shared explicit `returnFocusTo` contract, enter focus on open, and return to the
+same Options trigger on close. If it disconnects, shared overlay fallback owns
+recovery; the feature contains no local `.focus()` repair.
+
+Backdrop, drag, history Back, and `onEscape` all pass through the same dirty
+guard. When dirty Back is blocked, the history-dismiss owner immediately
+restores its synthetic marker before showing the in-sheet confirmation, so a
+second Back cannot navigate away. The panel stops backdrop click propagation.
 
 - Title: **Edit authors**
 - Helper: **Your changes apply to this work and will be kept when it is refreshed
@@ -718,9 +734,9 @@ claimed existing pattern.
 - Empty save is valid; unchanged Save is disabled and sends no PUT.
 - Limit copy: **A work can have up to 20 authors.**
 - Dirty dismissal: **Discard changes?** / **Keep editing** / **Discard**.
-- When pinned, show **Authors edited manually** and **Reset to automatic
-  authors**. Reset uses the same PUT in automatic mode and then says **Automatic
-  author updates will resume on the next refresh.**
+- Inside the editor, manual mode offers **Reset to automatic authors**. Reset
+  uses the same PUT in automatic mode and then says **Automatic author updates
+  will resume on the next refresh.** Manual status is not persistent chrome.
 
 `AuthorSearchField` follows the proven `LibraryDestinationPicker` interaction
 contract: explicit `idle | loading | ready | empty | error` state, aborted/stale
@@ -1002,13 +1018,18 @@ sweeps; this manifest is a floor.
   compose the canonical SQL relation and remove external-key FTS/merge-chain
   lookup
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` + CSS/tests
+- `apps/web/src/components/workspace/PanePrimaryChrome.tsx` and typed resource
+  header publication tests
+- `apps/web/src/components/ui/ActionMenu.tsx`: Options-only Credits and author
+  administration entry with explicit trigger handoff
 - `apps/web/src/app/(authenticated)/authors/[handle]/AuthorPaneBody.tsx` + tests
 - `apps/web/src/components/ui/Dialog.tsx`, `MobileSheet.tsx`,
   `useDialogOverlay.ts`, `useHistoryDismiss.ts`, and focused tests/consumers for
   the single dismissal/focus contract and blocked-Back history re-arm
 - `ContributorCreditList.tsx`, `ContributorChip.tsx`, contributor formatting,
-  `PodcastSummaryCard.tsx`, and media `mediaFormatting.ts`: move all media/podcast
-  role grouping to `ContributorRoleGroups` and remove reads of deleted credit
+  `PodcastSummaryCard.tsx`, and media `mediaFormatting.ts`: share one role
+  grouping/formatting owner across compact media credits, the complete Credits
+  overlay, and podcast presentation; remove reads of deleted credit
   `id`/`resolution_status` fields
 - `ContributorPicker.tsx`, `useContributorSearch.ts`, and
   `ContributorFilter.tsx`: remove the old picker with merge UI and either upgrade
@@ -1016,7 +1037,7 @@ sweeps; this manifest is a floor.
   a separately cleaned controller; do not turn errors into empty results
 - contributor/search/media TypeScript types, APIs, presenters, feedback titles,
   and resource loaders
-- `apps/web/src/lib/navigation/destinations.ts`, `standingHead.ts`, Launcher,
+- `apps/web/src/lib/navigation/destinations.ts`, `paneRouteModel.ts`, Launcher,
   keybinding, nav-model, and tests for the slot-less Authors destination
 - `paneRouteModel.ts`, `paneRouteTable.ts`, and `paneRenderRegistry.tsx`: remove
   only the root `authors` pane route while retaining author detail
@@ -1120,13 +1141,16 @@ all `__pycache__`/`.pyc` artifacts—including stale
 25. A same-name picker shows only visible credited work context, supports explicit
     distinct creation, disables duplicate selection, and never leaks private or
     zero-work context.
-26. Empty media author groups say **No authors** for editors and non-editors;
-    other media/podcast role labels remain truthful; controls depend only on
-    capability and manual mode is visible/resettable.
+26. Persistent media chrome shows compact structured credits only; complete
+    linked credits remain inspectable through **Credits…**. No bordered Authors
+    row, **No authors**, inline Add/Edit control, or manual marker survives.
+    Authorized Add/Edit Authors administration exists only in Options; manual
+    reset remains inside the editor.
 27. Full ARIA combobox state, nested Escape, MobileSheet Back/backdrop/drag,
-    blocked-Back history re-arm, desktop dirty guard, return focus, reorder
-    announcements, focus-after-Remove, pending/error feedback, and same-key retry
-    component tests pass.
+    blocked-Back history re-arm, desktop dirty guard, exact Options-trigger
+    return with shared disconnected-trigger fallback, reorder announcements,
+    focus-after-Remove, pending/error feedback, and same-key retry component
+    tests pass.
 28. API errors flow through `toFeedback`; replay mismatch says **That author
     change changed. Reload and try again.**; transport uncertainty says
     **Couldn't confirm the change. Try again.** and preserves the same key/draft.
@@ -1180,8 +1204,9 @@ all `__pycache__`/`.pyc` artifacts—including stale
    contributor facade.
 4. Adapt every automatic producer to the durable fresh-session step and every
    consumer to the canonical composable credit relation.
-5. Add media capability/mode, PUT/reset, role-aware byline, editor, rename,
-   slot-less search destination, and lightweight detail.
+5. Add media capability/mode, PUT/reset, compact resource credits, Credits
+   overlay, Options-only author editor, rename, slot-less search destination,
+   and lightweight detail.
 6. Delete directory/reconciliation/merge/split/tombstone/authority runtime and UI.
 7. Implement 0179 rewrite, destructive cleanup, and postconditions.
 8. Update docs/config/route and worker contracts.

@@ -6,10 +6,10 @@ import {
   TextSelect,
   Trash2,
 } from "lucide-react";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import styles from "./highlightActions.module.css";
 
@@ -53,16 +53,17 @@ export function buildHighlightActions({
     onToggleEditBounds: () => void;
     onDelete: () => void;
   };
-}): ActionMenuOption[] {
+}): PaneHeaderAction[] {
   const isExisting = target.kind === "existing";
   const color = isExisting ? target.highlight.color : target.color;
   const canEdit = isExisting ? target.highlight.is_owner !== false : true;
   const hasQuoteText = isExisting ? target.highlight.exact.trim().length > 0 : true;
 
-  const options: ActionMenuOption[] = [];
+  const options: PaneHeaderAction[] = [];
 
   if (canEdit) {
     options.push({
+      kind: "custom",
       id: "color",
       label: "Highlight color",
       icon: <ColorDot color={color} />,
@@ -83,6 +84,7 @@ export function buildHighlightActions({
 
   if (canAddNote && handlers.onAddNote) {
     options.push({
+      kind: "command",
       id: "note",
       label: isExisting && target.highlight.linked_note_blocks?.length ? "Edit note" : "Add note",
       icon: <NotebookPen size={14} aria-hidden="true" />,
@@ -95,6 +97,7 @@ export function buildHighlightActions({
     // Cite mints a cross-document footnote (§4.5); available on both an existing
     // highlight and a bare selection (create-then-annotate, like the note verb).
     options.push({
+      kind: "command",
       id: "cite",
       label: "Cite a passage…",
       icon: <Quote size={14} aria-hidden="true" />,
@@ -105,6 +108,7 @@ export function buildHighlightActions({
 
   if (canQuoteToChat && hasQuoteText) {
     options.push({
+      kind: "command",
       id: "quote-new",
       label: "Quote to new chat",
       icon: <MessageSquarePlus size={14} aria-hidden="true" />,
@@ -112,6 +116,7 @@ export function buildHighlightActions({
       onSelect: handlers.onQuoteToNewChat,
     });
     options.push({
+      kind: "command",
       id: "quote-existing",
       label: "Quote to existing chat",
       icon: <MessagesSquare size={14} aria-hidden="true" />,
@@ -122,16 +127,18 @@ export function buildHighlightActions({
 
   if (isExisting && canEdit && isReflowable) {
     options.push({
+      kind: "command",
       id: "edit-bounds",
       label: state.isEditingBounds ? "Cancel edit bounds" : "Edit bounds",
       icon: <TextSelect size={14} aria-hidden="true" />,
-      pressed: state.isEditingBounds,
+      state: { kind: "toggle", pressed: state.isEditingBounds },
       onSelect: handlers.onToggleEditBounds,
     });
   }
 
   if (isExisting && canEdit) {
     options.push({
+      kind: "command",
       id: "delete",
       label: "Delete highlight",
       icon: <Trash2 size={14} aria-hidden="true" />,

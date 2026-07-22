@@ -270,6 +270,18 @@ describe("PdfReader selection chat destinations", () => {
     vi.mocked(apiFetch).mockClear();
   });
 
+  it("renders reader banners inside the PDF scroll owner", async () => {
+    render(
+      <PdfReader
+        mediaId="media-1"
+        beforeContent={<div>Reader readiness</div>}
+      />,
+    );
+
+    const viewport = await screen.findByLabelText("PDF document");
+    expect(viewport).toContainElement(screen.getByText("Reader readiness"));
+  });
+
   it("creates a PDF highlight and quotes it to a new chat", async () => {
     pdfRuntimeState.createdHighlightId = "created-highlight-42";
     const onQuoteToNewChat =
@@ -462,6 +474,79 @@ describe("PdfReader selection chat destinations", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(highlightCalls()).toHaveLength(1);
+  });
+
+  it("keeps PDF highlight hover and focus reciprocal without activating it", async () => {
+    pdfRuntimeState.pageHighlights = [
+      {
+        id: "hovered-highlight",
+        anchor: {
+          type: "pdf_page_geometry",
+          media_id: "media-1",
+          page_number: 1,
+          quads: [
+            {
+              x1: 70,
+              y1: 60,
+              x2: 230,
+              y2: 60,
+              x3: 230,
+              y3: 80,
+              x4: 70,
+              y4: 80,
+            },
+          ],
+        },
+        color: "yellow",
+        exact: "Hovered quote",
+        prefix: "",
+        suffix: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        author_user_id: "user-1",
+        is_owner: true,
+      },
+    ];
+
+    const onHighlightHover = vi.fn();
+    const onHighlightTap = vi.fn();
+    const { rerender } = render(
+      <PdfReader
+        mediaId="media-1"
+        onHighlightHover={onHighlightHover}
+        onHighlightTap={onHighlightTap}
+      />,
+    );
+    const overlay = await screen.findByTestId(
+      "pdf-highlight-hovered-highlight-0",
+    );
+    expect(overlay.className).not.toContain("highlightOverlayRectHovered");
+
+    fireEvent.pointerEnter(overlay);
+    expect(onHighlightHover).toHaveBeenLastCalledWith("hovered-highlight");
+    fireEvent.pointerLeave(overlay);
+    expect(onHighlightHover).toHaveBeenLastCalledWith(null);
+    act(() => overlay.focus());
+    expect(onHighlightHover).toHaveBeenLastCalledWith("hovered-highlight");
+    fireEvent.pointerLeave(overlay);
+    expect(onHighlightHover).toHaveBeenLastCalledWith("hovered-highlight");
+    act(() => overlay.blur());
+    expect(onHighlightHover).toHaveBeenLastCalledWith(null);
+    expect(onHighlightTap).not.toHaveBeenCalled();
+
+    rerender(
+      <PdfReader
+        mediaId="media-1"
+        hoveredHighlightId="hovered-highlight"
+        onHighlightHover={onHighlightHover}
+        onHighlightTap={onHighlightTap}
+      />,
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("pdf-highlight-hovered-highlight-0").className,
+      ).toContain("highlightOverlayRectHovered");
+    });
   });
 
   it("pulses only the requested PDF highlight", async () => {

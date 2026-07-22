@@ -2,87 +2,101 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
-import MarginRail, { MarginItemBody } from "./MarginRail";
 import type { MarginItem } from "@/lib/reader/marginItems";
+import MarginRail, { MarginItemBody } from "./MarginRail";
 import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 const anchor: AnchoredReaderRow = {
-  id: "a",
-  exact: "x",
+  id: "highlight:h1",
+  exact: "Quote",
   color: "yellow",
-  anchor: { fragment_id: "frag", start_offset: 0, end_offset: 4 },
+  anchor: { fragment_id: "fragment-1", start_offset: 0, end_offset: 4 },
   stable_order_key: "document:0001",
 };
 
-function item(kind: MarginItem["kind"], extra: Partial<MarginItem> = {}): MarginItem {
-  return { id: `${kind}:1`, kind, orderKey: "document:0001", anchor, ...extra };
+function item(
+  kind: MarginItem["kind"],
+  extra: Partial<MarginItem> = {},
+): MarginItem {
+  return {
+    id: `margin:${kind}:1`,
+    itemId: `${kind}:1`,
+    kind,
+    anchor,
+    label: `${kind} label`,
+    ...extra,
+  };
 }
 
 describe("MarginItemBody", () => {
-  it("renders a user note in the user register (plain text)", () => {
-    render(<MarginItemBody item={item("note", { noteText: "my note" })} onDismissSynapse={vi.fn()} />);
-    expect(screen.getByText("my note")).toBeInTheDocument();
-  });
-
-  it("renders a synapse rationale through MachineText inline with a dismiss control", async () => {
-    const onDismiss = vi.fn();
+  it("activates the canonical Evidence item", async () => {
+    const onActivateItem = vi.fn();
     render(
       <MarginItemBody
-        item={item("synapse", { excerpt: "these resonate", edgeId: "e1" })}
-        onDismissSynapse={onDismiss}
-      />,
-    );
-    // MachineText inline stamps the Synapse origin label onto data-machine-origin.
-    expect(screen.getByText("these resonate")).toHaveAttribute("data-machine-origin", "Synapse");
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss Synapse connection" }));
-    expect(onDismiss).toHaveBeenCalledWith("e1");
-  });
-
-  it("renders a footnote with a small-caps kicker and the target title", () => {
-    render(
-      <MarginItemBody
-        item={item("footnote", { targetTitle: "The Other Work", targetHref: "/media/x#p" })}
+        item={item("citation", { itemId: "source-reference:ref-1" })}
+        onActivateItem={onActivateItem}
         onDismissSynapse={vi.fn()}
       />,
     );
-    expect(screen.getByText("Cite")).toBeInTheDocument();
-    expect(screen.getByText("The Other Work")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /citation label/i }),
+    );
+    expect(onActivateItem).toHaveBeenCalledWith("source-reference:ref-1");
   });
 
-  it("renders a doubt stance as user-register text (tilde), never a MachineText or pill", () => {
+  it("renders Synapse rationale as machine text with an independent dismiss action", async () => {
+    const onActivateItem = vi.fn();
+    const onDismiss = vi.fn();
     render(
-      <MarginItemBody item={item("stance", { stance: "contradicts" })} onDismissSynapse={vi.fn()} />,
+      <MarginItemBody
+        item={item("synapse", { excerpt: "These resonate", edgeId: "edge-1" })}
+        onActivateItem={onActivateItem}
+        onDismissSynapse={onDismiss}
+      />,
     );
-    const glyph = screen.getByLabelText("Doubted");
-    expect(glyph).toHaveTextContent("~");
-    // The stance glyph is the user's own ink, not a MachineText origin-labelled element.
-    expect(glyph).not.toHaveAttribute("data-machine-origin");
+    expect(screen.getByText("These resonate")).toHaveAttribute(
+      "data-machine-origin",
+      "Synapse",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Dismiss Synapse connection" }),
+    );
+    expect(onDismiss).toHaveBeenCalledWith("edge-1");
+    expect(onActivateItem).not.toHaveBeenCalled();
   });
 
-  it("renders a concede stance as user-register text (tick), never an icon", () => {
-    render(
-      <MarginItemBody item={item("stance", { stance: "supports" })} onDismissSynapse={vi.fn()} />,
-    );
-    const glyph = screen.getByLabelText("Conceded");
-    expect(glyph).toHaveTextContent("✓");
-    expect(glyph).not.toHaveAttribute("data-machine-origin");
-  });
+  it.each([
+    ["supports", "Conceded", "✓"],
+    ["contradicts", "Doubted", "~"],
+  ] as const)(
+    "renders %s stance in the user register",
+    (stance, label, glyph) => {
+      render(
+        <MarginItemBody
+          item={item("stance", { stance })}
+          onActivateItem={vi.fn()}
+          onDismissSynapse={vi.fn()}
+        />,
+      );
+      const mark = screen.getByRole("button", { name: label });
+      expect(mark).toHaveTextContent(glyph);
+      expect(mark).not.toHaveAttribute("data-machine-origin");
+    },
+  );
 });
 
-function MarginRailHarness({ isMobile }: { isMobile: boolean }) {
+function MarginRailHarness() {
   const contentRef = useRef<HTMLDivElement>(null);
   return (
     <>
-      <div ref={contentRef} style={{ height: 400 }}>
-        <p>Reader content</p>
-      </div>
+      <div ref={contentRef}>Reader content</div>
       <MarginRail
-        items={[item("note", { noteText: "note" })]}
-        hiddenByCap={0}
+        items={[item("highlight")]}
         contentRef={contentRef}
-        measureKey="k"
-        isMobile={isMobile}
+        measureKey="test"
+        isMobile
         onOpenSidecar={vi.fn()}
+        onActivateItem={vi.fn()}
         onDismissSynapse={vi.fn()}
       />
     </>
@@ -90,8 +104,8 @@ function MarginRailHarness({ isMobile }: { isMobile: boolean }) {
 }
 
 describe("MarginRail breakpoint", () => {
-  it("renders no rail on mobile (the Evidence sheet is the presenter, N-6)", () => {
-    render(<MarginRailHarness isMobile />);
+  it("does not present an inline rail on mobile", () => {
+    render(<MarginRailHarness />);
     expect(screen.queryByTestId("margin-rail")).not.toBeInTheDocument();
   });
 });

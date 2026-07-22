@@ -1,11 +1,25 @@
-import { formatContributorCreditSummary } from "@/lib/contributors/formatting";
+import { groupContributorCredits } from "@/lib/contributors/formatting";
 import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import type { ContributorCredit, MediaAuthorCredit } from "@/lib/contributors/types";
+import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
+import { isApiError } from "@/lib/api/client";
 
 export interface Media {
   title: string;
   contributors: ContributorCredit[];
+}
+
+type CanonicalMediaRefetchFailure = "unavailable" | "retain-ready";
+
+export function classifyCanonicalMediaRefetchFailure(
+  error: unknown,
+): CanonicalMediaRefetchFailure {
+  if (!isApiError(error)) return "retain-ready";
+  if (error.code === "E_MEDIA_NOT_READY") return "retain-ready";
+  return error.status === 404 || error.code === "E_MEDIA_NOT_FOUND"
+    ? "unavailable"
+    : "retain-ready";
 }
 
 /**
@@ -33,24 +47,20 @@ export function mapMediaAuthorCredits(
   return rows;
 }
 
-export function buildCompactMediaPaneTitle(
-  media: Pick<Media, "title" | "contributors"> | null | undefined
-): string | null {
-  const title = media?.title?.trim();
-  if (!title) {
-    return null;
-  }
-
-  // The compact pane title carries the author byline only — never a translator,
-  // host, or other role that happens to be the first credit (D-23).
-  const authorCredits = (media?.contributors ?? []).filter(
-    (credit) => credit.role === "author",
-  );
-  const authorSummary = formatContributorCreditSummary(authorCredits, 1);
-  if (!authorSummary) {
-    return title;
-  }
-
-  const compactTitle = `${title} · ${authorSummary}`;
-  return compactTitle.length <= 56 ? compactTitle : title;
+export function buildMediaResourceHeader(
+  media: Pick<Media, "title" | "contributors">,
+): PaneResourceHeaderPublication {
+  return {
+    status: "ready",
+    title: media.title,
+    creditGroups: groupContributorCredits(media.contributors).map((group) =>
+      group.role === "author"
+        ? { kind: "authors", credits: group.credits }
+        : {
+            kind: "role",
+            label: group.label,
+            credits: group.credits,
+          },
+    ),
+  };
 }

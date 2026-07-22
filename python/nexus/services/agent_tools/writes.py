@@ -403,7 +403,7 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     command REST also uses (spec S4.3), so the agent path has full parity: system-
     library rejection, podcast-into-Default rejection, active-subscription
     requirement for podcasts, tombstone-clearing, and an idempotent
-    present/inserted outcome for Undo correctness (AC4).
+    inserted-only outcome for Undo correctness (AC4).
 
     Media readable-or-restorable authorization (rule 1) is the shared filing
     command's own gate (`library_entries.add_media_to_library`) — NOT

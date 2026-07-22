@@ -162,7 +162,7 @@ describe("fetchSearchResultPage page shape", () => {
       activation: { href: "/notes/note-1" },
       type: "note_block",
       typeLabel: "note_block",
-      paneTitleHint: "note body text",
+      paneLabelHint: "note body text",
       primaryText: "note body text",
       noteBody: "note body text",
     });

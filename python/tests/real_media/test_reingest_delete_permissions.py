@@ -265,7 +265,7 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
         json={"media_id": str(media_id)},
         headers=headers,
     )
-    assert add_response.status_code == 201, add_response.text
+    assert add_response.status_code == 204, add_response.text
 
     scoped_search = auth_client.get(
         "/search",

@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
@@ -45,6 +45,54 @@ const flushMicrotasks = async () => {
   });
 };
 
+function NestedSheets({
+  onOuterDismiss,
+  onInnerDismiss,
+}: {
+  onOuterDismiss: () => void;
+  onInnerDismiss: () => void;
+}) {
+  const [outerActive, setOuterActive] = useState(true);
+  const [innerActive, setInnerActive] = useState(false);
+  const innerTriggerRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <>
+      <MobileSheet
+        active={outerActive}
+        onDismiss={() => {
+          onOuterDismiss();
+          setOuterActive(false);
+        }}
+        ariaLabel="Outer sheet"
+        backdropTestId="outer-backdrop"
+        panelTestId="outer-sheet"
+      >
+        <button
+          ref={innerTriggerRef}
+          type="button"
+          onClick={() => setInnerActive(true)}
+        >
+          Open inner sheet
+        </button>
+      </MobileSheet>
+      <MobileSheet
+        active={innerActive}
+        onDismiss={() => {
+          onInnerDismiss();
+          setInnerActive(false);
+        }}
+        ariaLabel="Inner sheet"
+        returnFocusTo={() => innerTriggerRef.current}
+        backdropTestId="inner-backdrop"
+        panelTestId="inner-sheet"
+      >
+        <button type="button">Inner action</button>
+      </MobileSheet>
+    </>
+  );
+}
+
 describe("MobileSheet", () => {
   // history.* are browser globals (not internal modules). Model history.state
   // locally so the marker bookkeeping is observable without mutating the real
@@ -74,8 +122,9 @@ describe("MobileSheet", () => {
   });
 
   it("renders a modal dialog with the aria label and grabber while active", () => {
-    render(sheet());
+    render(sheet({ panelId: "pane-1-reader-tools" }));
     expect(dialog()).toHaveAttribute("aria-modal", "true");
+    expect(dialog()).toHaveAttribute("id", "pane-1-reader-tools");
     expect(grabber()).not.toBeNull();
     expect(first()).toBeVisible();
   });
@@ -83,6 +132,61 @@ describe("MobileSheet", () => {
   it("renders nothing while inactive", () => {
     render(sheet({ active: false }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("gives nested sheets exclusive modality, Escape, and return focus", async () => {
+    const onOuterDismiss = vi.fn();
+    const onInnerDismiss = vi.fn();
+    render(
+      withRenderEnvironment(
+        <NestedSheets
+          onOuterDismiss={onOuterDismiss}
+          onInnerDismiss={onInnerDismiss}
+        />,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const innerTrigger = screen.getByRole("button", {
+      name: "Open inner sheet",
+    });
+    await waitFor(() => expect(innerTrigger).toHaveFocus());
+    fireEvent.click(innerTrigger);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Inner action" })).toHaveFocus(),
+    );
+
+    expect(screen.getByTestId("inner-sheet")).toHaveAttribute(
+      "aria-modal",
+      "true",
+    );
+    expect(screen.getByTestId("outer-sheet")).not.toHaveAttribute("aria-modal");
+    expect(screen.getByTestId("outer-sheet")).toHaveAttribute("inert");
+    expect(screen.getByTestId("outer-backdrop")).toHaveAttribute(
+      "data-suspended",
+      "true",
+    );
+    expect(getComputedStyle(screen.getByTestId("outer-backdrop")).backgroundColor)
+      .toBe("rgba(0, 0, 0, 0)");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onInnerDismiss).toHaveBeenCalledOnce();
+    expect(onOuterDismiss).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByTestId("inner-sheet")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("outer-sheet")).toHaveAttribute(
+      "aria-modal",
+      "true",
+    );
+    expect(screen.getByTestId("outer-sheet")).not.toHaveAttribute("inert");
+    expect(screen.getByTestId("outer-backdrop")).not.toHaveAttribute(
+      "data-suspended",
+    );
+    await waitFor(() => expect(innerTrigger).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOuterDismiss).toHaveBeenCalledOnce();
   });
 
   it("locks body overflow while active and restores the prior value on deactivate", async () => {
@@ -132,6 +236,24 @@ describe("MobileSheet", () => {
 
     unmount();
     fallback.remove();
+  });
+
+  it("returns focus to an explicit target instead of ambient focus", async () => {
+    const explicitTarget = document.createElement("button");
+    const ambientTarget = document.createElement("button");
+    document.body.append(explicitTarget, ambientTarget);
+    ambientTarget.focus();
+
+    const { rerender, unmount } = render(
+      sheet({ returnFocusTo: () => explicitTarget }),
+    );
+    await waitFor(() => expect(first()).toHaveFocus());
+    rerender(sheet({ active: false, returnFocusTo: () => explicitTarget }));
+    expect(explicitTarget).toHaveFocus();
+
+    unmount();
+    explicitTarget.remove();
+    ambientTarget.remove();
   });
 
   it("Escape calls onDismiss", () => {
@@ -268,6 +390,7 @@ describe("MobileSheet", () => {
     const onDismiss = vi.fn();
     render(sheet({ onDismiss }));
 
+    fakeState = null;
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     await flushMicrotasks();
 

@@ -108,7 +108,13 @@ const rootAssistant = message(
   "Choose a branch",
   "root-user",
 );
-const branchAUser = message("branch-a-user", 3, "user", "Ask A", "root-assistant");
+const branchAUser = message(
+  "branch-a-user",
+  3,
+  "user",
+  "Ask A",
+  "root-assistant",
+);
 const branchAAssistant = message(
   "branch-a-assistant",
   4,
@@ -116,7 +122,13 @@ const branchAAssistant = message(
   "Answer A",
   "branch-a-user",
 );
-const branchBUser = message("branch-b-user", 5, "user", "Ask B", "root-assistant");
+const branchBUser = message(
+  "branch-b-user",
+  5,
+  "user",
+  "Ask B",
+  "root-assistant",
+);
 const branchBAssistant = message(
   "branch-b-assistant",
   6,
@@ -216,7 +228,14 @@ function chatRunData(): ChatRunResponse["data"] {
     },
     conversation: conversationSummary,
     user_message: message("user-new", 1, "user", "Hello there"),
-    assistant_message: message("assistant-new", 2, "assistant", "", "user-new", "pending"),
+    assistant_message: message(
+      "assistant-new",
+      2,
+      "assistant",
+      "",
+      "user-new",
+      "pending",
+    ),
     stream_state: {
       status: "running",
       last_event_seq: 0,
@@ -631,7 +650,9 @@ describe("useConversation", () => {
     expect(result.current.messages.map((m) => m.id)).toEqual(
       pathB.map((m) => m.id),
     );
-    expect(result.current.branch?.activeLeafMessageId).toBe("branch-b-assistant");
+    expect(result.current.branch?.activeLeafMessageId).toBe(
+      "branch-b-assistant",
+    );
     // The scroll owner was asked to capture the eye-line before the swap.
     expect(scroll.captureAnchor).toHaveBeenCalledWith("root-assistant");
     // active-path was persisted.
@@ -645,6 +666,177 @@ describe("useConversation", () => {
     expect(
       JSON.parse((activePathCall?.[1] as RequestInit).body as string),
     ).toEqual({ active_leaf_message_id: "branch-b-assistant" });
+  });
+
+  it("(branching) reveals a message on an inactive fork", async () => {
+    const fetchMock = stubFetch((input, init) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse("a") });
+      }
+      if (path === "/api/chat-runs") {
+        return jsonResponse({ data: [] });
+      }
+      if (
+        path === "/api/conversations/conversation-1/active-path" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ data: treeResponse("b") });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let revealed = false;
+    await act(async () => {
+      revealed =
+        (await result.current.branch?.revealMessage("branch-b-user")) ?? false;
+    });
+
+    expect(revealed).toBe(true);
+    expect(result.current.messages.map((message) => message.id)).toEqual(
+      pathB.map((message) => message.id),
+    );
+    expect(result.current.branch?.activeLeafMessageId).toBe(
+      "branch-b-assistant",
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          pathOf(input as RequestInfo | URL) ===
+            "/api/conversations/conversation-1/active-path" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it("(branching) single-flights an exact-message reveal and permits a retry after rollback", async () => {
+    let resolveFirstActivePath: (response: Response) => void = () => undefined;
+    const firstActivePath = new Promise<Response>((resolve) => {
+      resolveFirstActivePath = resolve;
+    });
+    let activePathCalls = 0;
+    const fetchMock = stubFetch((input, init) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse("a") });
+      }
+      if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+      if (
+        path === "/api/conversations/conversation-1/active-path" &&
+        init?.method === "POST"
+      ) {
+        activePathCalls += 1;
+        return activePathCalls === 1
+          ? firstActivePath
+          : jsonResponse({ data: treeResponse("b") });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let firstReveal: Promise<boolean> | undefined;
+    act(() => {
+      firstReveal = result.current.branch?.revealMessage("branch-b-user");
+    });
+    await waitFor(() =>
+      expect(result.current.messages.map((message) => message.id)).toEqual(
+        pathB.map((message) => message.id),
+      ),
+    );
+
+    let concurrentReveal: Promise<boolean> | undefined;
+    act(() => {
+      concurrentReveal = result.current.branch?.revealMessage("branch-b-user");
+    });
+    expect(activePathCalls).toBe(1);
+
+    let firstResult = true;
+    let concurrentResult = true;
+    await act(async () => {
+      resolveFirstActivePath(
+        jsonResponse(
+          {
+            error: {
+              code: "E_BRANCH_PATH_INVALID",
+              message: "Could not switch active path",
+            },
+          },
+          500,
+        ),
+      );
+      [firstResult, concurrentResult] = await Promise.all([
+        firstReveal!,
+        concurrentReveal!,
+      ]);
+    });
+    expect(firstResult).toBe(false);
+    expect(concurrentResult).toBe(false);
+    expect(result.current.messages.map((message) => message.id)).toEqual(
+      pathA.map((message) => message.id),
+    );
+
+    let retryResult = false;
+    await act(async () => {
+      retryResult =
+        (await result.current.branch?.revealMessage("branch-b-user")) ?? false;
+    });
+    expect(retryResult).toBe(true);
+    expect(activePathCalls).toBe(2);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          pathOf(input as RequestInfo | URL) ===
+            "/api/conversations/conversation-1/active-path" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("(branching) reports an unavailable exact message without mutating the active path", async () => {
+    const fetchMock = stubFetch((input) => {
+      const path = pathOf(input);
+      if (path === "/api/conversations/conversation-1/tree") {
+        return jsonResponse({ data: treeResponse("a") });
+      }
+      if (path === "/api/chat-runs") return jsonResponse({ data: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+
+    const { result } = renderHook(() =>
+      useConversation({ conversationId: "conversation-1", branching: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let revealed = true;
+    await act(async () => {
+      revealed =
+        (await result.current.branch?.revealMessage("missing-message")) ?? true;
+    });
+
+    expect(revealed).toBe(false);
+    expect(result.current.error).toMatchObject({
+      severity: "error",
+      title: "This message is not available in this conversation.",
+    });
+    expect(result.current.messages.map((message) => message.id)).toEqual(
+      pathA.map((message) => message.id),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          pathOf(input as RequestInfo | URL) ===
+          "/api/conversations/conversation-1/active-path",
+      ),
+    ).toHaveLength(0);
   });
 
   it("(branching) onChatRunCreated tails the run without aborting concurrent branch runs", async () => {

@@ -21,7 +21,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import CollectionView from "@/components/collections/CollectionView";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import KindChips from "@/components/search/KindChips";
 import AppliedFilters, {
@@ -342,12 +342,15 @@ export default function SearchPaneBody() {
 
   const rows = useMemo(() => results.map(presentSearchResult), [results]);
 
-  usePaneChromeOverride({
-    folio:
-      rows.length > 0
-        ? { kind: "count", value: rows.length, unit: "result" }
-        : { kind: "none" },
-    folioPending: searching,
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio:
+        rows.length > 0
+          ? { kind: "count", value: rows.length, unit: "result" }
+          : { kind: "none" },
+      pending: searching,
+    },
   });
 
   const notice =
@@ -417,6 +420,7 @@ export default function SearchPaneBody() {
             <ActionMenu
               label="+ Format"
               options={MEDIA_FORMATS.map((format) => ({
+                kind: "command" as const,
                 id: format,
                 label: MEDIA_FORMAT_LABELS[format],
                 onSelect: () => toggleFormat(format),

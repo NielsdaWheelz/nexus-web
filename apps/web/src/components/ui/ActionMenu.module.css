@@ -61,6 +61,11 @@
   background: var(--surface-2);
 }
 
+.menuItem:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .menuItem:disabled,
 .menuItem[aria-disabled="true"] {
   opacity: 0.6;
@@ -80,4 +85,17 @@
   height: 1px;
   margin: var(--space-1) 0;
   background: var(--edge-subtle);
+}
+
+@media (any-pointer: coarse) {
+  .trigger {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+
+  .menuItem {
+    display: flex;
+    min-height: var(--size-xl);
+    align-items: center;
+  }
 }

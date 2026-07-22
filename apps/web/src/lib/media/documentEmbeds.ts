@@ -1,20 +1,20 @@
 import type { MediaPlaybackSource } from "@/lib/media/playback";
+import {
+  expectArray,
+  expectBoolean,
+  expectExactRecord,
+  expectInteger,
+  expectNullableNonnegativeInteger,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 
 export type DocumentEmbedProvider =
-  | "youtube"
-  | "x"
-  | "substack"
-  | "vimeo"
-  | "spotify"
-  | "generic"
-  | "unknown";
+  "youtube" | "x" | "substack" | "vimeo" | "spotify" | "generic" | "unknown";
 
 export type DocumentEmbedKind =
-  | "video"
-  | "post"
-  | "audio"
-  | "link_preview"
-  | "unknown";
+  "video" | "post" | "audio" | "link_preview" | "unknown";
 
 export type DocumentEmbedUrlStatus = "present" | "absent" | "malformed";
 
@@ -29,16 +29,10 @@ export interface DocumentEmbedLocator {
 }
 
 export type DocumentEmbedDisplayMode =
-  | "resolved"
-  | "pending"
-  | "unsupported"
-  | "failed";
+  "resolved" | "pending" | "unsupported" | "failed";
 
 export type DocumentEmbedActionKind =
-  | "open_child_media"
-  | "open_original"
-  | "retry_child"
-  | "refresh_parent";
+  "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
 
 export interface DocumentEmbedDisplayAction {
   kind: DocumentEmbedActionKind;
@@ -62,10 +56,7 @@ export type DocumentEmbedTargetStatus =
   | "unanchorable"
   | "stale"
   | "unsupported"
-  | "partial"
-  | "pending"
-  | "resolved"
-  | "failed";
+  | "partial";
 
 export interface DocumentEmbedTarget {
   status: DocumentEmbedTargetStatus;
@@ -79,7 +70,7 @@ export interface DocumentEmbedTarget {
 export interface DocumentEmbed {
   id: string;
   media_id: string;
-  fragment_id: string;
+  fragment_id: string | null;
   ordinal: number;
   occurrence_key: string;
   provider: DocumentEmbedProvider;
@@ -92,12 +83,7 @@ export interface DocumentEmbed {
 }
 
 export type DocumentEmbedAggregateStatus =
-  | "unsupported"
-  | "empty"
-  | "resolving"
-  | "ready"
-  | "partial"
-  | "failed";
+  "unsupported" | "empty" | "resolving" | "ready" | "partial" | "failed";
 
 export interface DocumentEmbedSummary {
   status: DocumentEmbedAggregateStatus;
@@ -116,6 +102,314 @@ interface DocumentEmbedClassNames {
   actions: string;
   action: string;
   actionDisabled: string;
+}
+
+export function decodeDocumentEmbeds(
+  raw: unknown,
+  name = "DocumentEmbeds",
+): DocumentEmbed[] {
+  return expectArray(
+    raw,
+    (embed, index) => decodeDocumentEmbed(embed, `${name}[${index}]`),
+    name,
+  );
+}
+
+export function decodeDocumentEmbed(
+  raw: unknown,
+  name = "DocumentEmbed",
+): DocumentEmbed {
+  const value = expectExactRecord(
+    raw,
+    [
+      "id",
+      "media_id",
+      "fragment_id",
+      "occurrence_key",
+      "ordinal",
+      "provider",
+      "kind",
+      "source_shape",
+      "resolution_status",
+      "source_url",
+      "canonical_url",
+      "provider_target_ref",
+      "title",
+      "description",
+      "thumbnail_url",
+      "authored_text",
+      "locator",
+      "target",
+      "error_code",
+      "display",
+    ],
+    name,
+  );
+  const sourceUrl = decodeUrl(value.source_url, `${name}.source_url`);
+  const canonicalUrl = decodeUrl(value.canonical_url, `${name}.canonical_url`);
+  decodeProviderRef(value.provider_target_ref, `${name}.provider_target_ref`);
+  decodeText(value.title, `${name}.title`);
+  decodeText(value.description, `${name}.description`);
+  decodeUrl(value.thumbnail_url, `${name}.thumbnail_url`);
+  decodeText(value.authored_text, `${name}.authored_text`);
+  decodeText(value.error_code, `${name}.error_code`);
+  expectOneOf(
+    value.source_shape,
+    [
+      "iframe",
+      "blockquote",
+      "anchor",
+      "video_tag",
+      "provider_json",
+      "unknown",
+    ] as const,
+    `${name}.source_shape`,
+  );
+  expectOneOf(
+    value.resolution_status,
+    ["pending", "resolving", "resolved", "unsupported", "failed"] as const,
+    `${name}.resolution_status`,
+  );
+
+  return {
+    id: expectString(value.id, `${name}.id`),
+    media_id: expectString(value.media_id, `${name}.media_id`),
+    fragment_id: expectNullableString(value.fragment_id, `${name}.fragment_id`),
+    ordinal: expectInteger(value.ordinal, `${name}.ordinal`),
+    occurrence_key: expectString(
+      value.occurrence_key,
+      `${name}.occurrence_key`,
+    ),
+    provider: expectOneOf(
+      value.provider,
+      [
+        "youtube",
+        "x",
+        "substack",
+        "vimeo",
+        "spotify",
+        "generic",
+        "unknown",
+      ] as const,
+      `${name}.provider`,
+    ),
+    kind: expectOneOf(
+      value.kind,
+      ["video", "post", "audio", "link_preview", "unknown"] as const,
+      `${name}.kind`,
+    ),
+    source_url: sourceUrl,
+    canonical_url: canonicalUrl,
+    locator: decodeLocator(value.locator, `${name}.locator`),
+    display: decodeDisplay(value.display, `${name}.display`),
+    target: decodeTarget(value.target, `${name}.target`),
+  };
+}
+
+function decodeUrl(raw: unknown, name: string): DocumentEmbedUrl {
+  const value = expectExactRecord(
+    raw,
+    ["status", "value", "error_code", "reason"],
+    name,
+  );
+  expectNullableString(value.error_code, `${name}.error_code`);
+  if (value.reason !== null) {
+    expectOneOf(
+      value.reason,
+      ["not_in_source", "not_applicable"] as const,
+      `${name}.reason`,
+    );
+  }
+  return {
+    status: expectOneOf(
+      value.status,
+      ["present", "malformed", "absent"] as const,
+      `${name}.status`,
+    ),
+    value: expectNullableString(value.value, `${name}.value`),
+  };
+}
+
+function decodeProviderRef(raw: unknown, name: string): void {
+  const value = expectExactRecord(raw, ["kind", "value", "reason"], name);
+  expectOneOf(value.kind, ["present", "absent"] as const, `${name}.kind`);
+  expectNullableString(value.value, `${name}.value`);
+  if (value.reason !== null) {
+    expectOneOf(
+      value.reason,
+      ["unsupported_provider", "unparseable", "not_applicable"] as const,
+      `${name}.reason`,
+    );
+  }
+}
+
+function decodeText(raw: unknown, name: string): void {
+  const value = expectExactRecord(raw, ["kind", "value", "reason"], name);
+  expectOneOf(value.kind, ["present", "absent"] as const, `${name}.kind`);
+  expectNullableString(value.value, `${name}.value`);
+  if (value.reason !== null) {
+    expectOneOf(
+      value.reason,
+      ["not_in_source", "redacted", "not_applicable"] as const,
+      `${name}.reason`,
+    );
+  }
+}
+
+function decodeLocator(raw: unknown, name: string): DocumentEmbedLocator {
+  const value = expectExactRecord(
+    raw,
+    [
+      "kind",
+      "fragment_id",
+      "canonical_start_offset",
+      "canonical_end_offset",
+      "document_order_key",
+      "placeholder_text",
+    ],
+    name,
+  );
+  expectOneOf(value.kind, ["anchored", "unanchored"] as const, `${name}.kind`);
+  expectNullableString(value.fragment_id, `${name}.fragment_id`);
+  expectString(value.document_order_key, `${name}.document_order_key`);
+  expectString(value.placeholder_text, `${name}.placeholder_text`);
+  return {
+    canonical_start_offset: expectNullableNonnegativeInteger(
+      value.canonical_start_offset,
+      `${name}.canonical_start_offset`,
+    ),
+    canonical_end_offset: expectNullableNonnegativeInteger(
+      value.canonical_end_offset,
+      `${name}.canonical_end_offset`,
+    ),
+  };
+}
+
+function decodeDisplay(raw: unknown, name: string): DocumentEmbedDisplay {
+  const value = expectExactRecord(
+    raw,
+    ["mode", "label", "description", "actions"],
+    name,
+  );
+  return {
+    mode: expectOneOf(
+      value.mode,
+      ["resolved", "pending", "unsupported", "failed"] as const,
+      `${name}.mode`,
+    ),
+    label: expectString(value.label, `${name}.label`),
+    description: expectString(value.description, `${name}.description`),
+    actions: expectArray(
+      value.actions,
+      (action, index) =>
+        decodeDisplayAction(action, `${name}.actions[${index}]`),
+      `${name}.actions`,
+    ),
+  };
+}
+
+function decodeDisplayAction(
+  raw: unknown,
+  name: string,
+): DocumentEmbedDisplayAction {
+  const value = expectExactRecord(
+    raw,
+    ["kind", "label", "href", "disabled"],
+    name,
+  );
+  return {
+    kind: expectOneOf(
+      value.kind,
+      [
+        "open_child_media",
+        "open_original",
+        "retry_child",
+        "refresh_parent",
+      ] as const,
+      `${name}.kind`,
+    ),
+    label: expectString(value.label, `${name}.label`),
+    href: expectNullableString(value.href, `${name}.href`),
+    disabled: expectBoolean(value.disabled, `${name}.disabled`),
+  };
+}
+
+function decodeTarget(raw: unknown, name: string): DocumentEmbedTarget {
+  const value = expectExactRecord(
+    raw,
+    [
+      "status",
+      "media_id",
+      "resource_ref",
+      "href",
+      "kind",
+      "title",
+      "thumbnail_url",
+      "playback",
+    ],
+    name,
+  );
+  expectNullableString(value.resource_ref, `${name}.resource_ref`);
+  expectNullableString(value.href, `${name}.href`);
+  return {
+    status: expectOneOf(
+      value.status,
+      [
+        "exact",
+        "container",
+        "missing",
+        "forbidden",
+        "unanchorable",
+        "stale",
+        "unsupported",
+        "partial",
+      ] as const,
+      `${name}.status`,
+    ),
+    media_id: expectNullableString(value.media_id, `${name}.media_id`),
+    kind: expectNullableString(value.kind, `${name}.kind`),
+    title: expectNullableString(value.title, `${name}.title`),
+    thumbnail_url: expectNullableString(
+      value.thumbnail_url,
+      `${name}.thumbnail_url`,
+    ),
+    playback:
+      value.playback === null
+        ? null
+        : decodePlaybackSource(value.playback, `${name}.playback`),
+  };
+}
+
+function decodePlaybackSource(raw: unknown, name: string): MediaPlaybackSource {
+  const value = expectExactRecord(
+    raw,
+    [
+      "kind",
+      "stream_url",
+      "source_url",
+      "provider",
+      "provider_video_id",
+      "watch_url",
+      "embed_url",
+    ],
+    name,
+  );
+  return {
+    kind: expectOneOf(
+      value.kind,
+      ["external_audio", "external_video"] as const,
+      `${name}.kind`,
+    ),
+    stream_url: expectString(value.stream_url, `${name}.stream_url`),
+    source_url: expectString(value.source_url, `${name}.source_url`),
+    provider: expectNullableString(value.provider, `${name}.provider`),
+    provider_video_id: expectNullableString(
+      value.provider_video_id,
+      `${name}.provider_video_id`,
+    ),
+    watch_url: expectNullableString(value.watch_url, `${name}.watch_url`),
+    embed_url: expectNullableString(value.embed_url, `${name}.embed_url`),
+  };
 }
 
 export function normalizeDocumentEmbeds(
@@ -145,7 +439,10 @@ export function renderDocumentEmbedsInHtml(
 
   for (const embed of normalizeDocumentEmbeds(embeds)) {
     const card = buildDocumentEmbedCard(document, embed, classNames);
-    const placeholder = findDocumentEmbedPlaceholder(root, embed.occurrence_key);
+    const placeholder = findDocumentEmbedPlaceholder(
+      root,
+      embed.occurrence_key,
+    );
     if (placeholder) {
       placeholder.replaceWith(card);
     }
@@ -308,7 +605,9 @@ function normalizedHttpOrRelativeUrl(value: string | null): string | null {
   }
   try {
     const url = new URL(trimmed);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.toString()
+      : null;
   } catch {
     return null;
   }

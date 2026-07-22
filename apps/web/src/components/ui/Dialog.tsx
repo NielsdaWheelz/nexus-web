@@ -5,6 +5,11 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import styles from "./Dialog.module.css";
 
 interface DialogProps {
@@ -12,6 +17,8 @@ interface DialogProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  returnFocusTo?: ReturnFocusTarget;
+  returnFocusFallback?: ReturnFocusTarget;
   /**
    * Consulted by every dismissal affordance the dialog renders — Escape,
    * backdrop, and the close (X) button. Return "blocked" to keep the dialog open
@@ -24,10 +31,18 @@ interface DialogProps {
 /**
  * The shared modal Dialog owner, on the repository's `useDialogOverlay` contract
  * (portal, role="dialog" aria-modal, focus trap, return focus, Escape, body
- * scroll lock). Mount-gate it — render only while open (`{open && <Dialog …>}`
- * or `open ? <Dialog …/> : null`), matching all existing consumers.
+ * scroll lock). Consumers may keep the component mounted and control `open`, or
+ * mount-gate it when they do not need persistent child state.
  */
-export default function Dialog({ open, onClose, title, children, onDismissRequest }: DialogProps) {
+export default function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  returnFocusTo,
+  returnFocusFallback,
+  onDismissRequest,
+}: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const requestDismiss = useCallback(() => {
@@ -35,37 +50,49 @@ export default function Dialog({ open, onClose, title, children, onDismissReques
     onClose();
   }, [onDismissRequest, onClose]);
 
-  useDialogOverlay({ ref: panelRef, active: open, onDismiss: requestDismiss });
+  const overlay = useDialogOverlay({
+    ref: panelRef,
+    active: open,
+    onDismiss: requestDismiss,
+    returnFocusTo,
+    returnFocusFallback,
+  });
 
   if (!open) return null;
 
   return createPortal(
-    <div className={styles.backdrop} role="presentation" onClick={requestDismiss}>
+    <ModalLayerProvider token={overlay.layerToken}>
       <div
-        ref={panelRef}
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
+        className={styles.backdrop}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        role="presentation"
+        onClick={requestDismiss}
       >
-        <div className={styles.inner}>
-          <header className={styles.header}>
-            <h2 className={styles.title}>{title}</h2>
-            <button
-              type="button"
-              className={styles.closeBtn}
-              onClick={requestDismiss}
-              aria-label="Close dialog"
-            >
-              <X size={16} />
-            </button>
-          </header>
-          <div className={styles.body}>{children}</div>
+        <div
+          ref={panelRef}
+          className={styles.dialog}
+          role="dialog"
+          aria-label={title}
+          tabIndex={-1}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className={styles.inner}>
+            <header className={styles.header}>
+              <h2 className={styles.title}>{title}</h2>
+              <button
+                type="button"
+                className={styles.closeBtn}
+                onClick={requestDismiss}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className={styles.body}>{children}</div>
+          </div>
         </div>
       </div>
-    </div>,
+    </ModalLayerProvider>,
     document.body,
   );
 }

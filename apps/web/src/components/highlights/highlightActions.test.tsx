@@ -62,7 +62,7 @@ describe("buildHighlightActions — Cite verb", () => {
         onDelete: vi.fn(),
       },
     }).find((option) => option.id === "cite");
-    cite?.onSelect?.();
+    cite?.onSelect?.({ triggerEl: null });
     expect(onCite).toHaveBeenCalledOnce();
   });
 });

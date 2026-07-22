@@ -221,11 +221,12 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state. Populated post-hoc by the consumption
+    # Derived per-viewer read-state. The explicit consumption override wins;
+    # otherwise documents derive from retained reader engagement and podcast
+    # episodes from listening state. Populated post-hoc by the consumption
     # projection (`services.consumption.media_read_states`, applied in
     # `services.media`) for viewer-scoped listings; absent (None) only on contexts
-    # that never derive it (e.g. SSE snapshots). For documents, "unread" means no
-    # reading session yet.
+    # that never derive it (e.g. SSE snapshots).
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None

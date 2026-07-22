@@ -8,8 +8,8 @@ import styles from "./WorkspacePaneStrip.module.css";
 interface WorkspacePaneStripItem {
   paneId: string;
   href: string;
-  title: string;
-  titleState: "resolved" | "pending";
+  label: string;
+  labelState: "resolved" | "pending";
   isActive: boolean;
   isInView: boolean;
   visibility: "visible" | "minimized";
@@ -45,9 +45,9 @@ function PaneTab({
   onActivatorKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onActivatorFocus: () => void;
 }) {
-  const title = item.title.trim() || "Pane";
+  const label = item.label.trim() || "Pane";
   const isMinimized = item.visibility === "minimized";
-  const isPending = item.titleState === "pending";
+  const isPending = item.labelState === "pending";
   const RouteIcon = getPaneRouteIcon(item.href);
 
   return (
@@ -67,9 +67,9 @@ function PaneTab({
         className={styles.activator}
         tabIndex={isFocusable ? 0 : -1}
         aria-current={item.isActive ? "page" : undefined}
-        aria-label={isPending ? title : undefined}
+        aria-label={isPending ? label : undefined}
         aria-busy={isPending || undefined}
-        title={isPending ? undefined : title}
+        title={isPending ? undefined : label}
         onClick={onActivate}
         onFocus={onActivatorFocus}
         onKeyDown={onActivatorKeyDown}
@@ -78,7 +78,7 @@ function PaneTab({
         {isPending ? (
           <span className={styles.titleSkeleton} aria-hidden />
         ) : (
-          <span className={styles.title}>{title}</span>
+          <span className={styles.title}>{label}</span>
         )}
         {item.isActive && <span className="sr-only"> Active pane.</span>}
         {isMinimized && <span className="sr-only"> Minimized. Restore.</span>}
@@ -88,7 +88,7 @@ function PaneTab({
           type="button"
           tabIndex={-1}
           className={styles.action}
-          aria-label={`${isMinimized ? "Restore" : "Minimize"} ${title}`}
+          aria-label={`${isMinimized ? "Restore" : "Minimize"} ${label}`}
           disabled={!isMinimized && !item.canMinimize}
           onClick={isMinimized ? onRestore : onMinimize}
         >
@@ -102,7 +102,7 @@ function PaneTab({
           type="button"
           tabIndex={-1}
           className={styles.action}
-          aria-label={`Close ${title}`}
+          aria-label={`Close ${label}`}
           onClick={onClose}
         >
           <X aria-hidden size={14} strokeWidth={2} />
