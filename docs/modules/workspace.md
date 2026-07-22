@@ -138,3 +138,17 @@ is the sole owner of `push`, `replace`, Back, and Forward mechanics.
   holds at most 48 history entries across every pane combined. When a write
   would exceed either budget, the oldest entry is trimmed; non-active panes'
   history is trimmed before the active pane's own history is touched.
+
+## Reader-To-Chat Launch Intent
+
+A reader Highlight quote launches chat through a pane-local intent hash
+`#mediaId=<uuid>&highlightId=<uuid>`, read only through `paneRuntime` pane-local
+hash parameters (never ambient `window.location`). Before the send commits the
+hash is reload/navigation safe and excluded from pane identity.
+
+Reaching the destination uses canonical-pane adoption: the target chat pane is
+reused or opened without duplication — desktop shows it adjacent, mobile
+activates it while preserving the reader pane in the session — and source
+activation returns to that reader pane. On a successful run the feature
+route-`replace`s to consume the provisional history entry, so Back cannot
+rehydrate a completed intent.

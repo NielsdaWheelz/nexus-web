@@ -31,6 +31,7 @@ import {
 import { useChatMessageUpdates } from "@/components/chat/useChatMessageUpdates";
 import { PerRunStreamContext } from "@/components/chat/perRunStreamContext";
 import { upsertForkOptionForRun } from "@/lib/conversations/branching";
+import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
 
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
@@ -346,7 +347,7 @@ export function useChatRunTail({
           const response = await apiFetch<ChatRunResponse>(`/api/chat-runs/${runId}`);
           if (streamCtx.isSuperseded(runId, token)) return null;
           flushDeltas();
-          mergeRunMessagesIfVisible(response.data, [
+          mergeRunMessagesIfVisible(decodeRunDataReaderSelection(response.data), [
             originalUserId,
             originalAssistantId,
             currentUserId,
@@ -564,7 +565,7 @@ export function useChatRunTail({
         const response = await apiFetch<ChatRunResponse>(
           `/api/chat-runs/${entry.run_id}`,
         );
-        await tailChatRun(response.data);
+        await tailChatRun(decodeRunDataReaderSelection(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         console.error("Failed to reconnect chat run:", err);

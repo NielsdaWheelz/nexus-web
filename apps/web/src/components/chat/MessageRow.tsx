@@ -69,7 +69,13 @@ export const MessageRow = memo(function MessageRow({
 
   switch (message.role) {
     case "user":
-      return <UserMessage message={message} timestampLabel={timestampLabel} />;
+      return (
+        <UserMessage
+          message={message}
+          timestampLabel={timestampLabel}
+          onReaderSourceActivate={activateTarget}
+        />
+      );
     case "assistant":
       return (
         <AssistantMessage

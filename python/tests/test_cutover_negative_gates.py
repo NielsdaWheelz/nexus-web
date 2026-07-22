@@ -3086,3 +3086,71 @@ def test_universal_link_authoring_contract_parity_tests_exist():
         assert (_REPO_ROOT / rel_path).exists(), (
             f"{rel_path} must exist (scheme/capability/search parity, AC13/AC25)"
         )
+
+
+# #############################################################################
+# Reader-highlight quote-to-chat hard cutover (§Hard-Cut Deletions, AC-6/AC-20)
+#
+# The pre-cutover client-authored subject/quote contract is gone: no
+# ChatSubjectRequest, no ReaderSelectionRequest carrying client exact/prefix/
+# suffix, no chat_run_turn_contexts.reader_selection_* columns, no live-history
+# _build_reader_selection_block, and no legacy top-level chat-run request fields
+# (conversation_id/parent_message_id/branch_anchor/chat_subject). The reader
+# quote is a durable ReaderSelectionKey + revision only; subject/companion are
+# server-derived under the row lock. Same grep idiom as the sections above.
+# #############################################################################
+
+
+def _class_body(src: str, class_decl: str) -> str:
+    """The source of one class, from its `class …:` line to the next top-level
+    class (or end of file when it is the last class)."""
+    start = src.index(class_decl)
+    nxt = src.find("\nclass ", start + 1)
+    return src[start:] if nxt == -1 else src[start:nxt]
+
+
+def test_reader_selection_client_authored_symbols_absent_from_production():
+    # The client-authored subject/quote request types and the live-history block
+    # builder must not survive anywhere in production python or web code (scripts
+    # included). The canonical snapshot owner keeps its own exact/prefix/suffix
+    # (server-derived), so only the request-side symbols are banned here.
+    pattern = r"\bChatSubjectRequest\b|\bReaderSelectionRequest\b|\b_build_reader_selection_block\b"
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, _SCRIPTS_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"client-authored reader-selection symbols still present:\n{_fmt(hits)}"
+
+
+def test_dropped_turn_context_reader_selection_columns_absent_from_runtime():
+    # The chat_run_turn_contexts.reader_selection_* columns are dropped by 0189;
+    # no LIVE runtime code (models/services/routes/web) may reference them. The
+    # pre-migration remediation tool (python/scripts/remediate_reader_selection_
+    # backfill.py) and migration 0189 legitimately name them because they run
+    # against the pre-cutover schema — both live outside these runtime roots.
+    pattern = r"\breader_selection_media_id\b|\breader_selection_highlight_id\b"
+    hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"dropped turn-context reader-selection columns in runtime code:\n{_fmt(hits)}"
+
+
+def test_chat_run_create_request_has_no_legacy_top_level_fields():
+    # ChatRunCreateRequest is destination + reader_selection presence only; the old
+    # top-level conversation_id / parent_message_id / branch_anchor / chat_subject
+    # fields are gone (they moved into the tagged destination union).
+    src = (_PY_ROOT / "schemas" / "conversation.py").read_text(encoding="utf-8")
+    body = _class_body(src, "class ChatRunCreateRequest(BaseModel):")
+    banned = [
+        symbol
+        for symbol in ("conversation_id", "parent_message_id", "branch_anchor", "chat_subject")
+        if symbol in body
+    ]
+    assert not banned, f"ChatRunCreateRequest still declares legacy top-level fields: {banned}"
+
+
+def test_reader_selection_input_carries_no_client_quote_text():
+    # The request-side ReaderSelectionInput is key + revision only; client
+    # exact/prefix/suffix send fields are gone (the server derives them from the
+    # locked Highlight). The docstring may NAME them, but no field declares them.
+    src = (_PY_ROOT / "schemas" / "chat_reader_selection.py").read_text(encoding="utf-8")
+    body = _class_body(src, "class ReaderSelectionInput(BaseModel):")
+    field = re.search(r"\b(exact|prefix|suffix)\s*:", body)
+    assert field is None, (
+        f"ReaderSelectionInput declares a client quote-text field: {field and field.group(0)!r}"
+    )

@@ -4,25 +4,36 @@
  * The composer owns NO provider/model/reasoning policy: it holds a
  * `{ profileId, reasoningOptionId }` selection reported by ChatProfilePicker
  * (which renders the GET /llm-profiles catalog) and sends it verbatim.
+ *
+ * It DOES own the durable send-attempt machine (via `useChatDraft`): one
+ * idempotency key per answer-determining payload identity, replayed on an
+ * ambiguous-loss retry and on a stale-revision reconfirmation. It renders the
+ * one `PendingTurnContext` its owner (`Conversation`) hydrates — a pending
+ * `QuotedPassageCard` above the textarea — and gates send on the context kind.
  */
 
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Quote, Square, X } from "lucide-react";
-import { apiFetch } from "@/lib/api/client";
+import { Square } from "lucide-react";
+import { apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { createRandomId } from "@/lib/createRandomId";
 import { toFeedback } from "@/components/feedback/Feedback";
-import type {
-  ChatSubjectInput,
-  ReaderSelectionInput,
-} from "@/lib/api/sse/requests";
+import { absent, type Presence } from "@/lib/api/presence";
+import type { ReaderSelectionInput } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
+import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
+import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
+import {
+  decodeReaderSelectionPreview,
+  type ReaderSelectionOut,
+  type ReaderSelectionPreview,
+} from "@/lib/conversations/readerSelection";
+import { readerSelectionKeyToWire } from "@/lib/conversations/readerSelectionKey";
+import { isRecord } from "@/lib/validation";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
-import ChatProfilePicker, {
-  type ProfileSelection,
-} from "@/components/chat/ChatProfilePicker";
+import ChatProfilePicker from "@/components/chat/ChatProfilePicker";
+import QuotedPassageCard from "@/components/chat/QuotedPassageCard";
 import { useChatDraft } from "@/components/chat/useChatDraft";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
@@ -61,17 +72,21 @@ interface ChatComposerProps {
   onClearBranchDraft?: () => void;
   /** Jumps the transcript to the visible parent message for branch mode. */
   onJumpToBranchParent?: (messageId: string) => void;
-  /** Resolves (creating if needed) the conversation to send to, committing any
-   *  pending context refs. Falls back to conversationId. */
-  onResolveConversation?: () => Promise<string | null>;
-  /** Pending context refs shown as removable chips; committed by onResolveConversation on send. */
-  pendingContextRefs?: Array<{ uri: string; label: string }>;
-  /** Removes a pending context-ref chip before send. */
-  onRemovePendingContextRef?: (uri: string) => void;
-  /** Primary resource this turn asks about. */
-  chatSubject?: ChatSubjectInput | null;
-  /** The quoted passage as a bind-only turn anchor for the asking turn. */
-  readerSelection?: ReaderSelectionInput | null;
+  /** The one turn-context prop: the hydrated (or hydrating/failed) reader quote
+   *  its owner parses from the pane URL. Absent when this turn carries no quote. */
+  pendingContext?: Presence<PendingTurnContext>;
+  /** Strip the launch intent (converts the draft to an ordinary message). */
+  onRemovePendingContext?: () => void;
+  /** Re-run pending-quote hydration after a retryable load failure. */
+  onRetryHydration?: () => void;
+  /** Replace the pending preview with the fresh one a stale send returns. */
+  onReaderSelectionStale?: (preview: ReaderSelectionPreview) => void;
+  /** Consume the launch intent after a successful run so Back cannot rehydrate. */
+  onIntentConsumed?: () => void;
+  /** Refresh the conversation after an `Empty` insertion loses the race. */
+  onConversationRefresh?: () => void;
+  /** Activate the reader source for a pending or sent quote card. */
+  onActivateSource?: (selection: ReaderSelectionOut) => void;
   /** Blocks sending while caller-owned conversation state is not safe to continue. */
   disabledReason?: string;
   /** Active run that can be semantically cancelled without closing the SSE tail. */
@@ -97,11 +112,13 @@ export default function ChatComposer({
   parentMessageId = null,
   onClearBranchDraft,
   onJumpToBranchParent,
-  onResolveConversation,
-  pendingContextRefs = [],
-  onRemovePendingContextRef,
-  chatSubject = null,
-  readerSelection = null,
+  pendingContext = absent(),
+  onRemovePendingContext,
+  onRetryHydration,
+  onReaderSelectionStale,
+  onIntentConsumed,
+  onConversationRefresh,
+  onActivateSource,
   disabledReason,
   activeRunId = null,
   onCancelRun,
@@ -109,11 +126,21 @@ export default function ChatComposer({
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [profileSelection, setProfileSelection] =
-    useState<ProfileSelection | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { content, setContent, activeDraftKey, clearDraft } = useChatDraft({
+  const {
+    content,
+    setContent,
+    profile,
+    setProfile,
+    activeDraftKey,
+    reconciling,
+    beginSendAttempt,
+    resolveSuccess,
+    resolveKnownFailure,
+    resolveAmbiguous,
+    reconfirmRevision,
+  } = useChatDraft({
     draftKey,
     branchDraft,
     parentMessageId,
@@ -130,74 +157,131 @@ export default function ChatComposer({
     setError(null);
   }, [activeDraftKey]);
 
+  // The pending turn context resolves to one of four kinds; only a hydrated
+  // `ReaderHighlight` is sendable. Loading / LoadFailed / NonSendable block send.
+  const pending = pendingContext.kind === "Present" ? pendingContext.value : null;
+  const readerHighlight = pending?.kind === "ReaderHighlight" ? pending.preview : null;
+  const pendingBlocksSend = pending !== null && pending.kind !== "ReaderHighlight";
+
   // --------------------------------------------------------------------------
-  // Send handler
+  // Send handler (owns the durable idempotent send attempt)
   // --------------------------------------------------------------------------
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || disabledReason || !profileSelection) return;
+    if (!trimmed || sending || disabledReason || !profile || pendingBlocksSend) {
+      return;
+    }
 
     setSending(true);
     setError(null);
     onSendStarted?.();
 
-    const idempotencyKey = createRandomId();
-    let sent = false;
-    try {
-      const targetConversationId = onResolveConversation
-        ? await onResolveConversation()
-        : conversationId;
-      if (!targetConversationId) {
-        setError("Could not start the conversation.");
-        return;
-      }
+    // Only a hydrated ReaderHighlight rides the send; the key is identity,
+    // the revision a compare-on-send precondition (excluded from identity).
+    const readerSelection: ReaderSelectionInput | null = readerHighlight
+      ? {
+          key: readerSelectionKeyToWire(readerHighlight.key),
+          revision: readerHighlight.revision,
+        }
+      : null;
 
+    // The answer-determining payload identity — NOT the revision. A branch reply
+    // reanchors on its parent; the reader-selection identity is its key alone.
+    const payloadIdentity = JSON.stringify({
+      conversationId,
+      parentMessageId: branchDraft?.parentMessageId ?? parentMessageId,
+      branchAnchor: branchDraft?.anchor ?? null,
+      content: trimmed,
+      profile,
+      readerSelectionKey: readerHighlight?.key ?? null,
+    });
+
+    const attempt = beginSendAttempt(payloadIdentity, readerSelection?.revision ?? null);
+
+    try {
       const body = buildChatRunBody({
-        conversationId: targetConversationId,
+        conversationId,
         content: trimmed,
-        profileId: profileSelection.profileId,
-        reasoningOptionId: profileSelection.reasoningOptionId,
+        profileId: profile.profileId,
+        reasoningOptionId: profile.reasoningOptionId,
         branchDraft,
         parentMessageId,
-        chatSubject,
         readerSelection,
       });
 
       const runResponse = await apiFetch<ChatRunResponse>("/api/chat-runs", {
         method: "POST",
         body: JSON.stringify(body),
-        headers: { "Idempotency-Key": idempotencyKey },
+        headers: { "Idempotency-Key": attempt.idempotencyKey },
       });
-      onChatRunCreated?.(runResponse.data);
-      sent = true;
+
+      resolveSuccess();
+      onChatRunCreated?.(decodeRunDataReaderSelection(runResponse.data));
+      onIntentConsumed?.();
+      onMessageSent?.();
+      onClearBranchDraft?.();
     } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
+      if (handleUnauthenticatedApiError(err)) {
+        // The auth boundary owns recovery; leave a retryable (not locked) draft.
+        resolveKnownFailure();
+        return;
+      }
+      if (isApiError(err)) {
+        if (err.code === "E_READER_SELECTION_STALE") {
+          const fresh = decodeReaderSelectionPreview(
+            isRecord(err.details) ? err.details.preview : undefined,
+          );
+          if (fresh) {
+            // The precondition failed: refresh the preview and reconfirm the
+            // revision on the SAME unconsumed key (revision is not identity).
+            onReaderSelectionStale?.(fresh);
+            reconfirmRevision(fresh.revision);
+            setError("The quoted passage changed — review it and send again.");
+          } else {
+            resolveKnownFailure();
+            setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
+          }
+        } else if (err.code === "E_CONVERSATION_NO_LONGER_EMPTY") {
+          // Another tab created the first message: refresh so the next send
+          // replies to the active leaf — a new insertion mints a new key.
+          resolveKnownFailure();
+          onConversationRefresh?.();
+          setError("This chat already has messages — send again to continue it.");
+        } else {
+          resolveKnownFailure();
+          setError(toFeedback(err, { fallback: "Failed to start chat run" }).title);
+        }
+      } else {
+        // A network reject carries no status: the send may or may not have
+        // landed. Lock the draft for reconciliation — never auto-resend.
+        resolveAmbiguous();
+        setError(null);
+      }
     } finally {
       setSending(false);
-    }
-
-    if (sent) {
-      clearDraft();
-      onClearBranchDraft?.();
-      onMessageSent?.();
     }
   }, [
     content,
     sending,
-    profileSelection,
-    conversationId,
-    onResolveConversation,
-    chatSubject,
-    readerSelection,
     disabledReason,
+    profile,
+    pendingBlocksSend,
+    readerHighlight,
+    conversationId,
     branchDraft,
     parentMessageId,
-    clearDraft,
+    beginSendAttempt,
+    resolveSuccess,
+    resolveKnownFailure,
+    resolveAmbiguous,
+    reconfirmRevision,
     onChatRunCreated,
-    onClearBranchDraft,
+    onIntentConsumed,
     onMessageSent,
+    onClearBranchDraft,
+    onReaderSelectionStale,
+    onConversationRefresh,
     onSendStarted,
   ]);
 
@@ -218,7 +302,7 @@ export default function ChatComposer({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!reconciling) handleSend();
     }
   };
 
@@ -226,13 +310,25 @@ export default function ChatComposer({
   // Render
   // --------------------------------------------------------------------------
 
-  const composerDisabled = sending;
-  const sendDisabled = sending || Boolean(disabledReason);
+  // While reconciling, the composer is a LOCKED replay panel: text/profile/quote
+  // stay visible but immutable, and the only action is "Retry send".
+  const composerDisabled = sending || reconciling;
+  const sendDisabled =
+    sending ||
+    Boolean(disabledReason) ||
+    !profile ||
+    !content.trim() ||
+    pendingBlocksSend;
 
   return (
     <div className={styles.composer}>
       <div className={styles.composerShell}>
         {error && <div className={styles.composerError}>{error}</div>}
+        {reconciling && (
+          <div className={styles.composerError} role="status">
+            Send status unknown — Retry send
+          </div>
+        )}
         {disabledReason && (
           <div className={styles.composerError} role="status">
             {disabledReason}
@@ -247,24 +343,15 @@ export default function ChatComposer({
           />
         ) : null}
 
-        {pendingContextRefs.length > 0 ? (
-          <div className={styles.pendingRefs} aria-label="Attached to next message">
-            {pendingContextRefs.map((ref) => (
-              <span key={ref.uri} className={styles.pendingRef}>
-                <Quote size={12} aria-hidden="true" />
-                <span className={styles.pendingRefLabel}>{ref.label}</span>
-                {onRemovePendingContextRef ? (
-                  <button
-                    type="button"
-                    className={styles.pendingRefRemove}
-                    aria-label={`Remove ${ref.label}`}
-                    onClick={() => onRemovePendingContextRef(ref.uri)}
-                  >
-                    <X size={12} aria-hidden="true" />
-                  </button>
-                ) : null}
-              </span>
-            ))}
+        {pending ? (
+          <div className={reconciling ? styles.pendingLocked : undefined}>
+            <QuotedPassageCard
+              mode="pending"
+              context={pending}
+              onRemove={reconciling ? () => {} : () => onRemovePendingContext?.()}
+              onRetry={() => onRetryHydration?.()}
+              onActivateSource={(selection) => onActivateSource?.(selection)}
+            />
           </div>
         ) : null}
 
@@ -284,12 +371,22 @@ export default function ChatComposer({
 
         <div className={styles.composerActionRow}>
           <ChatProfilePicker
-            value={profileSelection}
-            onChange={setProfileSelection}
+            value={profile}
+            onChange={setProfile}
             disabled={composerDisabled}
           />
 
-          {activeRunId && onCancelRun ? (
+          {reconciling ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.sendButton}
+              onClick={handleSend}
+              loading={sending}
+            >
+              Retry send
+            </Button>
+          ) : activeRunId && onCancelRun ? (
             <Button
               variant="danger"
               size="md"
@@ -307,7 +404,7 @@ export default function ChatComposer({
               size="sm"
               className={styles.sendButton}
               onClick={handleSend}
-              disabled={sendDisabled || !content.trim() || !profileSelection}
+              disabled={sendDisabled}
             >
               {sending ? "SENDING" : "SEND"}
             </Button>

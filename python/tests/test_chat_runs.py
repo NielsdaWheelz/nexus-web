@@ -14,14 +14,13 @@ from sqlalchemy.engine import Engine
 from nexus.config import clear_settings_cache
 from nexus.db.models import (
     ChatRun,
-    ChatRunTurnContext,
     LLMCall,
     NoteBlock,
     ResourceEdge,
     ResourceExternalSnapshot,
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.schemas.conversation import NoBranchAnchorRequest, chat_run_event_payload_json
+from nexus.schemas.conversation import NewChatDestination, chat_run_event_payload_json
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.chat_run_citations import _citation_target_ref
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
@@ -34,8 +33,6 @@ from nexus.services.conversation_branches import persist_active_leaf
 from tests.factories import (
     create_searchable_media,
     create_test_conversation,
-    create_test_library,
-    create_test_media_in_library,
     create_test_message,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -87,19 +84,59 @@ def chat_runs_schema(engine: Engine) -> None:
     _require_chat_runs_schema(engine)
 
 
-def _create_run_payload(**overrides) -> dict:
-    """Build a /chat-runs request body.
+_UNSET = object()
 
-    Per the LLM provider-runtime cutover, ChatRunCreateRequest selects a
-    product profile (``profile_id``) plus a ``reasoning_option_id`` instead of
-    a concrete model row + reasoning/key_mode. ``conversation_id`` is still
-    required and supplied by callers via ``overrides`` (or the POST
-    /conversations bootstrap pattern these tests use).
+
+def _destination_from_overrides(conversation_id, parent_message_id, branch_anchor, insertion):
+    """Map the legacy top-level (conversation_id, parent_message_id, branch_anchor)
+    overrides onto the post-cutover ``destination`` union.
+
+    No ``conversation_id`` is an atomic ``New`` send. A ``conversation_id`` with a
+    ``parent_message_id`` is a ``Reply`` (carrying its branch anchor); without a
+    parent it is the ``Empty`` first-root insertion the generic launcher uses. An
+    explicit ``insertion`` override wins outright.
     """
+    if conversation_id is None:
+        return {"kind": "New"}
+    conversation_id = str(conversation_id)
+    if insertion is not None:
+        return {"kind": "Existing", "conversation_id": conversation_id, "insertion": insertion}
+    if parent_message_id is not None:
+        reply: dict = {"kind": "Reply", "parent_message_id": str(parent_message_id)}
+        if branch_anchor is not _UNSET:
+            reply["branch_anchor"] = branch_anchor
+        return {"kind": "Existing", "conversation_id": conversation_id, "insertion": reply}
+    return {"kind": "Existing", "conversation_id": conversation_id, "insertion": {"kind": "Empty"}}
+
+
+def _create_run_payload(**overrides) -> dict:
+    """Build a post-cutover ``POST /chat-runs`` request body.
+
+    The request is a tagged ``destination`` plus ``reader_selection`` presence;
+    the top-level ``conversation_id``/``parent_message_id``/``branch_anchor``/
+    ``chat_subject`` fields are gone. This helper still accepts those legacy
+    override names and folds them into a ``destination`` so call sites read
+    intent-first; a plain send defaults to ``New`` + ``Absent``. Unknown
+    overrides pass through verbatim so extra-field rejection tests still work.
+    """
+    content = overrides.pop("content", "Summarize the current notes.")
+    profile_id = overrides.pop("profile_id", "balanced")
+    reasoning_option_id = overrides.pop("reasoning_option_id", "medium")
+    reader_selection = overrides.pop("reader_selection", {"kind": "Absent"})
+    destination = overrides.pop("destination", _UNSET)
+    if destination is _UNSET:
+        destination = _destination_from_overrides(
+            overrides.pop("conversation_id", None),
+            overrides.pop("parent_message_id", None),
+            overrides.pop("branch_anchor", _UNSET),
+            overrides.pop("insertion", None),
+        )
     payload = {
-        "content": "Summarize the current notes.",
-        "profile_id": "balanced",
-        "reasoning_option_id": "medium",
+        "destination": destination,
+        "content": content,
+        "profile_id": profile_id,
+        "reasoning_option_id": reasoning_option_id,
+        "reader_selection": reader_selection,
     }
     payload.update(overrides)
     return payload
@@ -468,9 +505,15 @@ class TestChatRunCreate:
         assert data["user_message"]["parent_message_id"] is None
         _register_run_cleanup(direct_db, UUID(data["run"]["id"]), conversation_id)
 
-    def test_create_run_for_existing_non_empty_conversation_requires_parent(
+    def test_empty_insertion_into_populated_conversation_conflicts(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """An ``Empty`` insertion is only for a still-empty conversation. Into a
+        populated one it races a real head; the server refuses to silently reply
+        and returns ``E_CONVERSATION_NO_LONGER_EMPTY`` with the current active
+        leaf (post-cutover the old "existing requires parent" 400 is gone — a
+        populated destination is a ``Reply``, and only a raced ``Empty`` reaches
+        this path)."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
@@ -481,14 +524,17 @@ class TestChatRunCreate:
         response = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(conversation_id=str(conversation_id)),
-            idempotency_key="chat-run-existing-requires-parent",
+            _create_run_payload(
+                conversation_id=str(conversation_id), insertion={"kind": "Empty"}
+            ),
+            idempotency_key="chat-run-empty-into-populated",
         )
 
-        assert response.status_code == 400, (
-            f"Expected missing parent to fail, got {response.status_code}: {response.text}"
+        assert response.status_code == 409, (
+            f"Expected a raced Empty insertion to conflict, got "
+            f"{response.status_code}: {response.text}"
         )
-        assert response.json()["error"]["code"] == "E_BRANCH_PATH_INVALID"
+        assert response.json()["error"]["code"] == "E_CONVERSATION_NO_LONGER_EMPTY"
         direct_db.register_cleanup("conversations", "id", conversation_id)
         direct_db.register_cleanup("messages", "conversation_id", conversation_id)
 
@@ -1029,11 +1075,7 @@ class TestChatRunRequestSchema:
             validate_pre_phase(
                 db=object(),  # type: ignore[arg-type]
                 viewer_id=uuid4(),
-                conversation_id=uuid4(),
-                parent_message_id=None,
-                branch_anchor=NoBranchAnchorRequest(),
-                chat_subject=None,
-                reader_selection=None,
+                destination=NewChatDestination(),
                 content="hello",
                 profile_id="not-a-real-profile",
                 reasoning_option_id="medium",
@@ -1310,104 +1352,32 @@ class TestChatRunTooling:
                     row={"result_ref": {"citation_target": raw_target}},
                 )
 
-    def test_chat_run_subject_persists_turn_context_and_job_payload(
+    def test_chat_run_rejects_client_chat_subject_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema
     ):
+        """The client-authored ``chat_subject`` request field is gone: the turn
+        subject/companion are server-derived from ``reader_selection`` under the
+        row lock (see test_chat_run_reader_selection). Sending it is an
+        extra-field rejection, not a subject."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
         _seed_ai_plus_billing(direct_db, user_id)
-        with direct_db.session() as session:
-            library_id = create_test_library(session, user_id, "Reader Hint Library")
-            media_id = create_test_media_in_library(
-                session, user_id, library_id, title="Reader Hint Doc"
-            )
         create_resp = auth_client.post("/conversations", headers=auth_headers(user_id))
         conversation_id = UUID(create_resp.json()["data"]["id"])
         direct_db.register_cleanup("conversations", "id", conversation_id)
-        direct_db.register_cleanup("messages", "conversation_id", conversation_id)
-        direct_db.register_cleanup("library_entries", "media_id", media_id)
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("memberships", "library_id", library_id)
-        direct_db.register_cleanup("libraries", "id", library_id)
 
-        payload = _create_run_payload(
-            conversation_id=str(conversation_id),
-            chat_subject={"resource_ref": f"media:{media_id}"},
-        )
         response = _post_chat_run(
             auth_client,
             user_id,
-            payload,
-            idempotency_key="chat-run-subject-media",
+            _create_run_payload(
+                conversation_id=str(conversation_id),
+                chat_subject={"resource_ref": f"media:{uuid4()}"},
+            ),
+            idempotency_key="chat-run-chat-subject-rejected",
         )
-        assert response.status_code == 200, (
-            f"Expected chat-run with chat_subject to succeed, got "
-            f"{response.status_code}: {response.text}"
-        )
-        data = response.json()["data"]
-        run_id = UUID(data["run"]["id"])
-        _register_run_cleanup(direct_db, run_id)
 
-        with direct_db.session() as session:
-            job_payload = session.execute(
-                text(
-                    """
-                    SELECT payload FROM background_jobs
-                    WHERE kind = 'chat_run' AND payload->>'run_id' = :run_id
-                    """
-                ),
-                {"run_id": str(run_id)},
-            ).scalar_one()
-            meta_payload = session.execute(
-                text(
-                    """
-                    SELECT payload FROM chat_run_events
-                    WHERE run_id = :run_id
-                      AND event_type = 'meta'
-                    """
-                ),
-                {"run_id": run_id},
-            ).scalar_one()
-            turn_context = session.get(ChatRunTurnContext, run_id)
-            context_edge_count = session.execute(
-                text(
-                    """
-                    SELECT COUNT(*) FROM resource_edges
-                    WHERE source_scheme = 'conversation'
-                      AND source_id = :conversation_id
-                      AND target_scheme = 'media'
-                      AND target_id = :media_id
-                      AND kind = 'context'
-                      AND origin = 'user'
-                      AND ordinal IS NULL
-                    """
-                ),
-                {"conversation_id": conversation_id, "media_id": media_id},
-            ).scalar_one()
-
-        assert job_payload == {"run_id": str(run_id)}
-        assert turn_context is not None
-        _assert_chat_run_meta_payload(
-            meta_payload,
-            run_id=run_id,
-            conversation_id=conversation_id,
-            user_message_id=UUID(data["user_message"]["id"]),
-            assistant_message_id=UUID(data["assistant_message"]["id"]),
-            profile_id="balanced",
-            reasoning_option_id="medium",
-            chat_subject={
-                "requested_resource_ref": f"media:{media_id}",
-                "resource_ref": f"media:{media_id}",
-                "context_edge_id": str(turn_context.subject_context_edge_id),
-                "companions": [],
-            },
-        )
-        assert turn_context.requested_subject_scheme == "media"
-        assert turn_context.requested_subject_id == media_id
-        assert turn_context.subject_scheme == "media"
-        assert turn_context.subject_id == media_id
-        assert turn_context.subject_context_edge_id is not None
-        assert context_edge_count == 1
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_chat_run_rejects_reader_context_field(
         self, auth_client, direct_db: DirectSessionManager, chat_runs_schema

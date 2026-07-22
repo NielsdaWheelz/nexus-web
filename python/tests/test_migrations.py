@@ -21141,3 +21141,557 @@ class TestMigration0184UniversalLinkAuthoring:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0189ReaderHighlightQuoteChat:
+    """0189: adds ``messages.reader_selection_snapshot`` (+ shallow object CHECK),
+    preflights every selection-bearing turn context grouped by its run's user
+    message, backfills one immutable snapshot per valid quoted user message from
+    the current Highlight/Media/locator via the canonical snapshot owner, asserts
+    totality/exclusivity, then drops
+    ``chat_run_turn_contexts.reader_selection_media_id`` /
+    ``reader_selection_highlight_id`` + their pair CHECK and rewrites
+    ``ck_chat_run_turn_contexts_has_anchor`` to the subject-only shape. The
+    preflight aborts atomically (writing nothing, leaving the DB at 0188) for a
+    missing highlight, a role/subject mismatch, or more than one distinct
+    reader-selection key per message. Downgrade is blocked."""
+
+    def _insert_user(self, session: Session, user_id) -> None:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+    def _insert_readable_media(
+        self, session: Session, *, user_id, media_id, kind: str, title: str
+    ) -> None:
+        """Media the owner can read: a library the owner belongs to physically
+        holds it. ``can_read_highlight`` needs this membership path AND the
+        viewer/author library intersection (here viewer == author == owner)."""
+        library_id = uuid4()
+        session.execute(
+            text("INSERT INTO media (id, kind, title) VALUES (:id, :kind, :title)"),
+            {"id": media_id, "kind": kind, "title": title},
+        )
+        session.execute(
+            text(
+                "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                " VALUES (:id, :owner, 'Default', true)"
+            ),
+            {"id": library_id, "owner": user_id},
+        )
+        session.execute(
+            text("INSERT INTO memberships (user_id, library_id, role) VALUES (:u, :lib, 'admin')"),
+            {"u": user_id, "lib": library_id},
+        )
+        session.execute(
+            text(
+                "INSERT INTO library_entries (id, library_id, media_id, position)"
+                " VALUES (:id, :lib, :media, 0)"
+            ),
+            {"id": uuid4(), "lib": library_id, "media": media_id},
+        )
+
+    def _insert_fragment(self, session: Session, *, fragment_id, media_id, idx: int = 0) -> None:
+        """The real fragment the highlight anchors into. ``can_read_highlight``
+        resolves the typed anchor media through ``fragment_anchor.fragment`` and
+        requires ``fragment.media_id == highlight.anchor_media_id``, so a valid
+        quoted turn cannot be snapshotted without this row."""
+        session.execute(
+            text(
+                "INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)"
+                " VALUES (:id, :media, :idx, 'Quoted passage body', '<p>Quoted passage body</p>')"
+            ),
+            {"id": fragment_id, "media": media_id, "idx": idx},
+        )
+
+    def _insert_conversation(self, session: Session, *, conversation_id, user_id) -> None:
+        session.execute(
+            text("INSERT INTO conversations (id, owner_user_id) VALUES (:id, :owner)"),
+            {"id": conversation_id, "owner": user_id},
+        )
+
+    def _insert_user_message(
+        self, session: Session, *, message_id, conversation_id, seq: int
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO messages (id, conversation_id, seq, role, content, status)"
+                " VALUES (:id, :cid, :seq, 'user', 'What does this passage mean?', 'complete')"
+            ),
+            {"id": message_id, "cid": conversation_id, "seq": seq},
+        )
+
+    def _insert_assistant_message(
+        self, session: Session, *, message_id, conversation_id, seq: int, parent_id
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO messages"
+                " (id, conversation_id, seq, role, content, status, parent_message_id)"
+                " VALUES (:id, :cid, :seq, 'assistant', 'It means...', 'complete', :parent)"
+            ),
+            {"id": message_id, "cid": conversation_id, "seq": seq, "parent": parent_id},
+        )
+
+    def _insert_chat_run(
+        self,
+        session: Session,
+        *,
+        run_id,
+        user_id,
+        conversation_id,
+        user_message_id,
+        assistant_message_id,
+        idempotency_key: str,
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO chat_runs"
+                " (id, owner_user_id, conversation_id, user_message_id, assistant_message_id,"
+                " idempotency_key, payload_hash, status)"
+                " VALUES (:id, :owner, :cid, :umid, :amid, :idem, 'hash', 'complete')"
+            ),
+            {
+                "id": run_id,
+                "owner": user_id,
+                "cid": conversation_id,
+                "umid": user_message_id,
+                "amid": assistant_message_id,
+                "idem": idempotency_key,
+            },
+        )
+
+    def _insert_turn_context(
+        self, session: Session, *, run_id, subject_scheme, subject_id, media_id, highlight_id
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO chat_run_turn_contexts"
+                " (chat_run_id, subject_scheme, subject_id,"
+                " reader_selection_media_id, reader_selection_highlight_id)"
+                " VALUES (:rid, :ss, :si, :media, :hl)"
+            ),
+            {
+                "rid": run_id,
+                "ss": subject_scheme,
+                "si": subject_id,
+                "media": media_id,
+                "hl": highlight_id,
+            },
+        )
+
+    def _messages_snapshot_column_exists(self, session: Session) -> bool:
+        return (
+            session.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'messages'"
+                    " AND column_name = 'reader_selection_snapshot'"
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+
+    def test_0189_backfills_snapshot_for_valid_quoted_turn(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0188")
+        assert result.returncode == 0, f"upgrade 0188 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        run_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_readable_media(
+                    session,
+                    user_id=user_id,
+                    media_id=media_id,
+                    kind="web_article",
+                    title="The Quoted Work",
+                )
+                self._insert_fragment(session, fragment_id=fragment_id, media_id=media_id)
+                insert_canonical_fragment_highlight(
+                    session,
+                    highlight_id=highlight_id,
+                    user_id=user_id,
+                    media_id=media_id,
+                    fragment_id=fragment_id,
+                    start_offset=0,
+                    end_offset=14,
+                    exact="Quoted passage",
+                    prefix="the ",
+                    suffix=" here",
+                )
+                self._insert_conversation(session, conversation_id=conversation_id, user_id=user_id)
+                self._insert_user_message(
+                    session, message_id=user_message_id, conversation_id=conversation_id, seq=1
+                )
+                self._insert_assistant_message(
+                    session,
+                    message_id=assistant_message_id,
+                    conversation_id=conversation_id,
+                    seq=2,
+                    parent_id=user_message_id,
+                )
+                self._insert_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    assistant_message_id=assistant_message_id,
+                    idempotency_key="idem-happy",
+                )
+                self._insert_turn_context(
+                    session,
+                    run_id=run_id,
+                    subject_scheme="highlight",
+                    subject_id=highlight_id,
+                    media_id=media_id,
+                    highlight_id=highlight_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0189")
+            assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                snapshot = session.execute(
+                    text("SELECT reader_selection_snapshot FROM messages WHERE id = :id"),
+                    {"id": user_message_id},
+                ).scalar_one()
+                assert snapshot is not None, "the quoted user message must be backfilled"
+                assert isinstance(snapshot, dict)
+                assert snapshot["key"]["media_id"] == str(media_id)
+                assert snapshot["key"]["highlight_id"] == str(highlight_id)
+                assert snapshot["exact"] == "Quoted passage"
+                assert snapshot["source_label"], "source_label must be non-empty"
+                assert "The Quoted Work" in snapshot["source_label"]
+                assert isinstance(snapshot["locator"], dict)
+                assert snapshot["locator"]["type"], "locator must carry a type"
+                assert snapshot["locator"]["type"] == "web_text_offsets"
+                assert snapshot["locator"]["media_id"] == str(media_id)
+
+                # A selection-free message (the assistant reply) has no snapshot.
+                assistant_snapshot = session.execute(
+                    text("SELECT reader_selection_snapshot FROM messages WHERE id = :id"),
+                    {"id": assistant_message_id},
+                ).scalar_one()
+                assert assistant_snapshot is None
+
+                # The reader-selection columns are gone from the turn-context table.
+                dropped = (
+                    session.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns"
+                            " WHERE table_schema = 'public'"
+                            " AND table_name = 'chat_run_turn_contexts'"
+                            " AND column_name IN"
+                            " ('reader_selection_media_id', 'reader_selection_highlight_id')"
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert dropped == [], f"reader-selection columns survived: {dropped}"
+
+                # has_anchor is rewritten to the subject-only shape.
+                has_anchor = session.execute(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                        " WHERE conname = 'ck_chat_run_turn_contexts_has_anchor'"
+                    )
+                ).scalar_one()
+                assert "subject_id IS NOT NULL" in has_anchor
+                assert "reader_selection" not in has_anchor
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0189_preflight_aborts_on_subject_mismatch(self):
+        """A selection-bearing turn whose subject is the media (not the selection
+        highlight) is unrecoverable: preflight fails atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0188")
+        assert result.returncode == 0, f"upgrade 0188 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        fragment_id = uuid4()
+        highlight_id = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        run_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_readable_media(
+                    session,
+                    user_id=user_id,
+                    media_id=media_id,
+                    kind="web_article",
+                    title="The Quoted Work",
+                )
+                self._insert_fragment(session, fragment_id=fragment_id, media_id=media_id)
+                insert_canonical_fragment_highlight(
+                    session,
+                    highlight_id=highlight_id,
+                    user_id=user_id,
+                    media_id=media_id,
+                    fragment_id=fragment_id,
+                    start_offset=0,
+                    end_offset=14,
+                    exact="Quoted passage",
+                )
+                self._insert_conversation(session, conversation_id=conversation_id, user_id=user_id)
+                self._insert_user_message(
+                    session, message_id=user_message_id, conversation_id=conversation_id, seq=1
+                )
+                self._insert_assistant_message(
+                    session,
+                    message_id=assistant_message_id,
+                    conversation_id=conversation_id,
+                    seq=2,
+                    parent_id=user_message_id,
+                )
+                self._insert_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    assistant_message_id=assistant_message_id,
+                    idempotency_key="idem-mismatch",
+                )
+                # Subject is the media, not the selection highlight -> mismatch.
+                self._insert_turn_context(
+                    session,
+                    run_id=run_id,
+                    subject_scheme="media",
+                    subject_id=media_id,
+                    media_id=media_id,
+                    highlight_id=highlight_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0189")
+            assert result.returncode != 0, "0189 must abort on a subject mismatch"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert str(user_message_id) in combined
+            assert "subject" in combined.lower()
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0188", "a failed 0189 must leave the version at 0188"
+                assert not self._messages_snapshot_column_exists(session), (
+                    "the snapshot column addition must roll back on preflight abort"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0189_preflight_aborts_on_missing_highlight(self):
+        """A turn referencing a reader-selection highlight with no highlights row
+        cannot be snapshotted: preflight fails atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0188")
+        assert result.returncode == 0, f"upgrade 0188 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        missing_highlight_id = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        run_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_readable_media(
+                    session,
+                    user_id=user_id,
+                    media_id=media_id,
+                    kind="web_article",
+                    title="The Quoted Work",
+                )
+                self._insert_conversation(session, conversation_id=conversation_id, user_id=user_id)
+                self._insert_user_message(
+                    session, message_id=user_message_id, conversation_id=conversation_id, seq=1
+                )
+                self._insert_assistant_message(
+                    session,
+                    message_id=assistant_message_id,
+                    conversation_id=conversation_id,
+                    seq=2,
+                    parent_id=user_message_id,
+                )
+                self._insert_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    assistant_message_id=assistant_message_id,
+                    idempotency_key="idem-missing",
+                )
+                # subject_id == the (nonexistent) highlight id -> passes the subject
+                # gate but the highlight lookup finds nothing.
+                self._insert_turn_context(
+                    session,
+                    run_id=run_id,
+                    subject_scheme="highlight",
+                    subject_id=missing_highlight_id,
+                    media_id=media_id,
+                    highlight_id=missing_highlight_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0189")
+            assert result.returncode != 0, "0189 must abort on a missing highlight"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert str(user_message_id) in combined
+            assert str(missing_highlight_id) in combined
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0188", "a failed 0189 must leave the version at 0188"
+                assert not self._messages_snapshot_column_exists(session), (
+                    "the snapshot column addition must roll back on preflight abort"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0189_preflight_aborts_on_multiple_distinct_keys_per_message(self):
+        """Two runs for one user message that disagree on the reader-selection key
+        are ambiguous: preflight fails atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0188")
+        assert result.returncode == 0, f"upgrade 0188 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        highlight_a = uuid4()
+        highlight_b = uuid4()
+        conversation_id = uuid4()
+        user_message_id = uuid4()
+        assistant_a = uuid4()
+        assistant_b = uuid4()
+        run_a = uuid4()
+        run_b = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                # media/highlights need not be fully valid: the ambiguity is caught
+                # before any highlight lookup.
+                session.execute(
+                    text("INSERT INTO media (id, kind, title) VALUES (:id, 'web_article', 'Work')"),
+                    {"id": media_id},
+                )
+                self._insert_conversation(session, conversation_id=conversation_id, user_id=user_id)
+                self._insert_user_message(
+                    session, message_id=user_message_id, conversation_id=conversation_id, seq=1
+                )
+                self._insert_assistant_message(
+                    session,
+                    message_id=assistant_a,
+                    conversation_id=conversation_id,
+                    seq=2,
+                    parent_id=user_message_id,
+                )
+                self._insert_assistant_message(
+                    session,
+                    message_id=assistant_b,
+                    conversation_id=conversation_id,
+                    seq=3,
+                    parent_id=user_message_id,
+                )
+                # Two runs (a rerun shape) that reference the same user message but
+                # carry different reader-selection keys.
+                self._insert_chat_run(
+                    session,
+                    run_id=run_a,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    assistant_message_id=assistant_a,
+                    idempotency_key="idem-key-a",
+                )
+                self._insert_chat_run(
+                    session,
+                    run_id=run_b,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                    assistant_message_id=assistant_b,
+                    idempotency_key="idem-key-b",
+                )
+                self._insert_turn_context(
+                    session,
+                    run_id=run_a,
+                    subject_scheme="highlight",
+                    subject_id=highlight_a,
+                    media_id=media_id,
+                    highlight_id=highlight_a,
+                )
+                self._insert_turn_context(
+                    session,
+                    run_id=run_b,
+                    subject_scheme="highlight",
+                    subject_id=highlight_b,
+                    media_id=media_id,
+                    highlight_id=highlight_b,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0189")
+            assert result.returncode != 0, "0189 must abort on >1 distinct key per message"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert str(user_message_id) in combined
+            assert "distinct" in combined.lower()
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0188", "a failed 0189 must leave the version at 0188"
+                assert not self._messages_snapshot_column_exists(session), (
+                    "the snapshot column addition must roll back on preflight abort"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0189_downgrade_is_blocked(self):
+        """0189 is a hard cutover: downgrading off it surfaces NotImplementedError."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        try:
+            result = run_alembic_command("downgrade 0188")
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert (
+                "NotImplementedError" in combined
+                or "hard cutover migration and has no downgrade path" in combined
+            ), f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")

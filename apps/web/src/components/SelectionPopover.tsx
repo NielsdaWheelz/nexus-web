@@ -22,7 +22,7 @@ interface SelectionPopoverProps<H extends { id: string }> {
   containerRef: React.RefObject<HTMLElement | null>;
   onCreateHighlight: (color: HighlightColor) => Promise<H | null>;
   onQuoteToNewChat?: (highlight: H) => void | Promise<void>;
-  onQuoteToExtantChat?: (highlight: H) => void | Promise<void>;
+  onQuoteToExistingChat?: (highlight: H) => void | Promise<void>;
   onAddNote?: () => void;
   onLink?: () => void;
   onDismiss: () => void;
@@ -37,7 +37,7 @@ export default function SelectionPopover<H extends { id: string }>({
   containerRef,
   onCreateHighlight,
   onQuoteToNewChat,
-  onQuoteToExtantChat,
+  onQuoteToExistingChat,
   onAddNote,
   onLink,
   onDismiss,
@@ -70,14 +70,14 @@ export default function SelectionPopover<H extends { id: string }>({
       <HighlightActionBar
         variant="selection"
         selectionColor={DEFAULT_COLOR}
-        canQuoteToChat={Boolean(onQuoteToNewChat || onQuoteToExtantChat)}
+        canQuoteToChat={Boolean(onQuoteToNewChat || onQuoteToExistingChat)}
         canAddNote={Boolean(onAddNote)}
         busy={isCreating}
         onSelectColor={onCreateHighlight}
         onAddNote={onAddNote}
         onLink={onLink}
         onQuoteToNewChat={() => quoteHighlight(onQuoteToNewChat)}
-        onQuoteToExistingChat={() => quoteHighlight(onQuoteToExtantChat)}
+        onQuoteToExistingChat={() => quoteHighlight(onQuoteToExistingChat)}
       />
     </FloatingActionSurface>
   );

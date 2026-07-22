@@ -9,6 +9,7 @@ import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -580,7 +581,11 @@ describe("Conversation", () => {
     await user.click(screen.getByRole("button", { name: "Run again" }));
 
     await waitFor(() => {
-      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(rerunData);
+      // The engine decodes the run's reader-selection snapshot at the boundary
+      // before tailing it.
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(
+        decodeRunDataReaderSelection(rerunData),
+      );
     });
     const rerunCall = fetchMock.mock.calls.find(
       ([input, init]) =>
@@ -967,7 +972,9 @@ describe("Conversation", () => {
     );
 
     await waitFor(() => {
-      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(activeBranchBRun());
+      expect(tailMocks.tailChatRun).toHaveBeenCalledWith(
+        decodeRunDataReaderSelection(activeBranchBRun()),
+      );
     });
     expect(scrollport.scrollTop).toBe(60);
 
@@ -991,9 +998,6 @@ describe("Conversation", () => {
       const path = pathOf(input);
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
-      }
-      if (path === "/api/conversations" && init?.method === "POST") {
-        return jsonResponse({ data: { id: "new-conv-id" } });
       }
       if (path === "/api/conversations/new-conv-id/tree") {
         return jsonResponse({
@@ -1071,7 +1075,15 @@ describe("Conversation", () => {
         pathOf(input) === "/api/chat-runs" && init?.method === "POST",
     );
     const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
-    expect(body.conversation_id).toBe("new-conv-id");
+    // The atomic New send creates the conversation; no eager POST /conversations.
+    expect(body.destination).toEqual({ kind: "New" });
+    expect(
+      fetchMock.mock.calls.some(
+        ([callInput, callInit]) =>
+          pathOf(callInput) === "/api/conversations" &&
+          callInit?.method === "POST",
+      ),
+    ).toBe(false);
 
     await waitFor(() => {
       expect(onReplacePane).toHaveBeenCalledWith(
@@ -1101,12 +1113,22 @@ describe("Conversation", () => {
       }
       if (path === "/api/chat-runs" && method === "POST") {
         const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
+        const destination = body.destination;
+        const bodyConversationId =
+          destination.kind === "Existing"
+            ? destination.conversation_id
+            : "conversation-1";
+        const bodyParentMessageId =
+          destination.kind === "Existing" &&
+          destination.insertion.kind === "Reply"
+            ? destination.insertion.parent_message_id
+            : null;
         const followUpUser = message(
           "follow-up-user",
           7,
           "user",
           body.content,
-          body.parent_message_id ?? null,
+          bodyParentMessageId,
         );
         const followUpAssistant = message(
           "follow-up-assistant",
@@ -1121,7 +1143,7 @@ describe("Conversation", () => {
             run: {
               id: "follow-up-run",
               status: "running",
-              conversation_id: body.conversation_id,
+              conversation_id: bodyConversationId,
               user_message_id: followUpUser.id,
               assistant_message_id: followUpAssistant.id,
               profile_id: body.profile_id,
@@ -1171,13 +1193,17 @@ describe("Conversation", () => {
         callInit?.method === "POST",
     );
     const body = JSON.parse(String(chatRunCall?.[1]?.body)) as ChatRunCreateRequest;
-    expect(body).toMatchObject({
+    expect(body.content).toBe("Continue from the leaf");
+    expect(body.destination).toMatchObject({
+      kind: "Existing",
       conversation_id: "conversation-1",
-      content: "Continue from the leaf",
-      parent_message_id: "branch-a-assistant",
-      branch_anchor: {
-        kind: "assistant_message",
-        message_id: "branch-a-assistant",
+      insertion: {
+        kind: "Reply",
+        parent_message_id: "branch-a-assistant",
+        branch_anchor: {
+          kind: "assistant_message",
+          message_id: "branch-a-assistant",
+        },
       },
     });
   });
@@ -1300,6 +1326,30 @@ describe("Conversation", () => {
       await screen.findByRole("textbox", { name: "Ask anything" }),
     ).toBeVisible();
     expect(screen.queryByText("Loading conversation...")).toBeNull();
+  });
+
+  it("reports a malformed reader-Highlight intent hash as a route error, never degrading to generic chat", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/llm-profiles") {
+        return jsonResponse({ data: LLM_PROFILES });
+      }
+      // A malformed hash must NOT trigger a reader-selection hydration fetch.
+      if (path.startsWith("/api/chat-reader-selections")) {
+        throw new Error(`Unexpected hydration for a malformed hash: ${path}`);
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPane({
+      href: "/conversations/new#mediaId=not-a-uuid&highlightId=also-bad",
+      pathParams: {},
+    });
+
+    expect(await screen.findByText("This quote link is malformed")).toBeVisible();
+    // No pending quote card was fabricated from the invalid hash.
+    expect(screen.queryByRole("figure", { name: "Quoted passage" })).toBeNull();
   });
 
   it("toggles the context secondary pane from chrome toolbar buttons", async () => {

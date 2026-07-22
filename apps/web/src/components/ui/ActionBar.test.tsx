@@ -14,7 +14,7 @@ describe("ActionBar", () => {
         <ActionBar
           label="Highlight actions"
           options={[
-            { kind: "command", id: "quote-new", label: "Quote to new chat", icon: <span aria-hidden>q</span>, onSelect: onQuote },
+            { kind: "command", id: "quote-new", label: "Ask in new chat", icon: <span aria-hidden>q</span>, onSelect: onQuote },
             { kind: "command", id: "delete", label: "Delete highlight", icon: <span aria-hidden>x</span>, tone: "danger", separatorBefore: true, onSelect: vi.fn() },
           ]}
         />
@@ -22,9 +22,9 @@ describe("ActionBar", () => {
     );
 
     const group = screen.getByRole("group", { name: "Highlight actions" });
-    const quoteButton = screen.getByRole("button", { name: "Quote to new chat" });
+    const quoteButton = screen.getByRole("button", { name: "Ask in new chat" });
     expect(group).toContainElement(quoteButton);
-    expect(quoteButton).toHaveAttribute("title", "Quote to new chat");
+    expect(quoteButton).toHaveAttribute("title", "Ask in new chat");
     expect(getComputedStyle(quoteButton).width).toBe("32px");
     expect(getComputedStyle(quoteButton).height).toBe("32px");
 

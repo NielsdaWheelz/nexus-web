@@ -12,44 +12,47 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun, Message
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.conversation import BranchAnchorRequest, ReaderSelectionRequest
+from nexus.schemas.chat_reader_selection import ReaderSelectionKey
+from nexus.schemas.conversation import ChatDestination
 from nexus.services.redact import safe_kv
-from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
 
 def compute_payload_hash(
+    *,
+    destination: ChatDestination,
     content: str,
     profile_id: str,
     reasoning_option_id: str,
-    conversation_id: UUID,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-    requested_chat_subject: ResourceRef | None,
-    chat_subject: ResourceRef | None,
-    reader_selection: ReaderSelectionRequest | None,
+    reader_selection_key: ReaderSelectionKey | None,
 ) -> str:
-    payload_anchor = branch_anchor.model_dump(mode="json")
-    # reader_selection is answer-determining by durable identity, not by the
-    # client-supplied text hints. The worker canonicalizes exact/prefix/suffix
-    # from the highlight row, so hashing those fields would create false replay
-    # mismatches without changing the prompt evidence.
-    selection = (
-        {
-            "media_id": str(reader_selection.media_id),
-            "highlight_id": str(reader_selection.highlight_id),
-        }
-        if reader_selection is not None
-        else None
-    )
-    requested_subject = requested_chat_subject.uri if requested_chat_subject is not None else None
-    subject = chat_subject.uri if chat_subject is not None else None
-    payload = (
-        f"{conversation_id}|{parent_message_id}|{payload_anchor}|{content}|{profile_id}|"
-        f"{reasoning_option_id}|{requested_subject}|{subject}|{selection}|"
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
+    """Canonical send-idempotency digest over answer-determining identity only.
+
+    Uses the canonical destination/insertion, content, complete profile
+    selection, and the durable ``ReaderSelectionKey``. It never hashes the live
+    ``ReaderSelectionRevision`` or any live-resolved quote field — the server
+    re-resolves and snapshots under the Highlight row lock at send, so hashing
+    those would create false replay mismatches (breaking replay-after-source-
+    change). Tagged unions serialize as canonical JSON; keys are sorted and
+    UUIDs are lowercase-hyphenated before SHA-256.
+    """
+    payload = {
+        "destination": destination.model_dump(mode="json"),
+        "content": content,
+        "profile_id": profile_id,
+        "reasoning_option_id": reasoning_option_id,
+        "reader_selection_key": (
+            {
+                "media_id": str(reader_selection_key.media_id),
+                "highlight_id": str(reader_selection_key.highlight_id),
+            }
+            if reader_selection_key is not None
+            else None
+        ),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def compute_rerun_payload_hash(

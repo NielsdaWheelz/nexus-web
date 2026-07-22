@@ -5,6 +5,15 @@
 
 ## Current state and supersession
 
+> **Superseded (2026-07-22):** the reader quote-to-chat mechanism described here
+> — §4.5's `startResourceChat("highlight:<id>")` / the conversation pane carrying
+> quote identity via `chat_subject`, and the implied claim that a context
+> `ResourceEdge` substitutes for per-turn subject state — is replaced by the
+> immutable per-message reader-selection snapshot. See
+> [`reader-highlight-quote-chat-hard-cutover.md`](reader-highlight-quote-chat-hard-cutover.md).
+> This document's outer-surface consolidation (two reader-tools surfaces, the
+> Evidence merge) is unaffected.
+
 The surviving reader-tools surfaces are exactly `reader-contents` and
 `reader-evidence`; the five retired surface ids in this document remain dead.
 `EvidencePaneSurface` and `MarginRail` are the current presenters.

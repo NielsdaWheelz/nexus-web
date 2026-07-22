@@ -77,6 +77,11 @@ interface PaneRuntimeContextValue {
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
+  /** The pane-local URL hash (e.g. the reader-Highlight intent
+   *  `#mediaId=...&highlightId=...`). Excluded from pane identity/routeKey so a
+   *  pending intent never forks the pane. Components read it here, never from
+   *  ambient `window.location`. */
+  hash: string;
   router: PaneScopedRouter;
   openInNewPane: (
     href: string,
@@ -147,17 +152,23 @@ interface PaneRuntimeProviderProps {
   children: React.ReactNode;
 }
 
-function parsePaneHref(href: string): { pathname: string; searchParams: URLSearchParams } {
+function parsePaneHref(href: string): {
+  pathname: string;
+  searchParams: URLSearchParams;
+  hash: string;
+} {
   const parsed = parseWorkspaceHref(href);
   if (!parsed) {
     return {
       pathname: "/",
       searchParams: new URLSearchParams(),
+      hash: "",
     };
   }
   return {
     pathname: parsed.pathname,
     searchParams: new URLSearchParams(parsed.search),
+    hash: parsed.hash,
   };
 }
 
@@ -393,6 +404,7 @@ export function PaneRuntimeProvider({
       secondaryPane,
       pathParams,
       searchParams: parsed.searchParams,
+      hash: parsed.hash,
       router,
       openInNewPane,
       setPaneLabel,
@@ -454,6 +466,17 @@ export function usePaneSearchParams(): URLSearchParams {
     throw new Error("usePaneSearchParams must be used inside PaneRuntimeProvider");
   }
   return useMemo(() => new URLSearchParams(paneSearch), [paneSearch]);
+}
+
+/** The pane-local URL hash string (including the leading `#`, or `""`). The one
+ *  sanctioned read of a pane's hash — components never touch ambient
+ *  `window.location`. */
+export function usePaneHash(): string {
+  const paneRuntime = usePaneRuntime();
+  if (!paneRuntime) {
+    throw new Error("usePaneHash must be used inside PaneRuntimeProvider");
+  }
+  return paneRuntime.hash;
 }
 
 export function usePaneParam(paramName: string): string | null {

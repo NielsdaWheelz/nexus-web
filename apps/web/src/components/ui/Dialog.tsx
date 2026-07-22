@@ -17,8 +17,17 @@ interface DialogProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** Forwarded to useDialogOverlay: pick the element focused on open (e.g. a
+   * search field) instead of the default first-focusable (the close button). */
+  initialFocus?: (container: HTMLElement) => HTMLElement | null;
   returnFocusTo?: ReturnFocusTarget;
   returnFocusFallback?: ReturnFocusTarget;
+  /**
+   * Read at close time; true ⇒ skip return-focus because a navigating dispatch
+   * already claimed focus at its destination. Dismissal paths omit it and keep
+   * the default return-focus. Mirrors the `MobileSheet` handoff.
+   */
+  skipReturnFocus?: () => boolean;
   /**
    * Consulted by every dismissal affordance the dialog renders — Escape,
    * backdrop, and the close (X) button. Return "blocked" to keep the dialog open
@@ -39,8 +48,10 @@ export default function Dialog({
   onClose,
   title,
   children,
+  initialFocus,
   returnFocusTo,
   returnFocusFallback,
+  skipReturnFocus,
   onDismissRequest,
 }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -54,8 +65,10 @@ export default function Dialog({
     ref: panelRef,
     active: open,
     onDismiss: requestDismiss,
+    initialFocus,
     returnFocusTo,
     returnFocusFallback,
+    skipReturnFocus,
   });
 
   if (!open) return null;

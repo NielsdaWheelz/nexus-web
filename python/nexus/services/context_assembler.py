@@ -18,7 +18,6 @@ from nexus.db.models import (
     ChatRun,
     ChatRunTurnContext,
     Conversation,
-    Highlight,
     Message,
     MessageRetrieval,
 )
@@ -32,6 +31,12 @@ from nexus.services.chat_prompt import (
     validate_prompt_size,
 )
 from nexus.services.chat_quote import render_quote_block
+from nexus.services.chat_reader_selection import (
+    decode_reader_selection_snapshot,
+    render_historical_reader_selection_prompt_block,
+    render_reader_selection_prompt_block,
+    render_subject_metadata_block,
+)
 from nexus.services.llm_profiles import LlmProfile
 from nexus.services.prompt_budget import (
     BudgetItem,
@@ -160,29 +165,60 @@ def assemble_chat_context(
     )
     mandatory_blocks: list[tuple[str, PromptBlock, Mapping[str, object]]] = []
 
-    subject_block, subject_metadata, subject_uri = _build_subject_block(
-        db,
-        turn_context,
-        viewer_id=run.owner_user_id,
-        conversation_id=conversation.id,
+    current_snapshot = (
+        decode_reader_selection_snapshot(user_message.reader_selection_snapshot)
+        if user_message.reader_selection_snapshot is not None
+        else None
     )
-    if subject_block is not None:
-        mandatory_blocks.append(("subject", subject_block, subject_metadata))
-
-    reader_selection_block = _build_reader_selection_block(
-        db,
-        turn_context,
-        viewer_id=run.owner_user_id,
-        conversation_id=conversation.id,
-    )
-    if reader_selection_block is not None:
+    subject_uri: str | None
+    if current_snapshot is not None:
+        # Selection-backed turn: <subject> is identity/source metadata and
+        # <reader_selection> is the sole quote-text block — both rendered from
+        # the immutable snapshot, never the live Highlight. The selection
+        # Highlight is excluded (via subject_uri) from generic resource
+        # rendering so the canonical quote text appears exactly once.
+        subject_uri = ResourceRef(
+            scheme="highlight", id=current_snapshot.key.highlight_id
+        ).uri
+        subject_source_ref = {"role": "subject", "resource_uri": subject_uri}
+        mandatory_blocks.append(
+            (
+                "subject",
+                make_prompt_block(
+                    block_id=f"subject:{subject_uri}",
+                    role="system",
+                    lane="attached_context",
+                    text=render_subject_metadata_block(current_snapshot),
+                    source_refs=[subject_source_ref],
+                ),
+                subject_source_ref,
+            )
+        )
         mandatory_blocks.append(
             (
                 "reader_selection",
-                reader_selection_block,
+                make_prompt_block(
+                    block_id="reader_selection",
+                    role="system",
+                    lane="attached_context",
+                    text=render_reader_selection_prompt_block(current_snapshot),
+                    source_refs=[
+                        {"type": "media", "id": str(current_snapshot.key.media_id)},
+                        {"type": "highlight", "id": str(current_snapshot.key.highlight_id)},
+                    ],
+                ),
                 {"hint": "reader_selection"},
             )
         )
+    else:
+        subject_block, subject_metadata, subject_uri = _build_subject_block(
+            db,
+            turn_context,
+            viewer_id=run.owner_user_id,
+            conversation_id=conversation.id,
+        )
+        if subject_block is not None:
+            mandatory_blocks.append(("subject", subject_block, subject_metadata))
 
     if user_message.branch_anchor_kind == "assistant_selection":
         branch_anchor_ref = {
@@ -498,57 +534,6 @@ def _build_subject_block(
     )
 
 
-def _build_reader_selection_block(
-    db: Session,
-    turn_context: ChatRunTurnContext | None,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID | None = None,
-) -> PromptBlock | None:
-    """Render the bind-only `<reader_selection>` turn anchor — the exact passage
-    the viewer is asking "this"/"the quote" about. Never numbered, never a
-    retrieval; the passage is cited through its attached `highlight:` reference.
-    """
-    if turn_context is None or turn_context.reader_selection_highlight_id is None:
-        return None
-    assert turn_context.reader_selection_media_id is not None
-    media_id = turn_context.reader_selection_media_id
-    highlight_id = turn_context.reader_selection_highlight_id
-    highlight = db.get(Highlight, highlight_id)
-    if highlight is None or highlight.anchor_media_id != media_id:
-        return None
-    if conversation_id is not None and not admits_resource_for_conversation_read(
-        db,
-        conversation_id=conversation_id,
-        target=ResourceRef(scheme="highlight", id=highlight_id),
-    ):
-        return None
-    resource = resolve_ref(
-        db,
-        viewer_id=viewer_id,
-        ref=ResourceRef(scheme="highlight", id=highlight_id),
-    )
-    if resource.missing or resource.quote is None:
-        return None
-    quote = resource.quote
-    return make_prompt_block(
-        block_id="reader_selection",
-        role="system",
-        lane="attached_context",
-        text=render_quote_block(
-            "reader_selection",
-            exact=quote.exact,
-            prefix=quote.prefix,
-            suffix=quote.suffix,
-            source_label=quote.source_label,
-        ),
-        source_refs=[
-            {"type": "media", "id": str(media_id)},
-            {"type": "highlight", "id": str(highlight_id)},
-        ],
-    )
-
-
 def _build_resources_block(
     db: Session,
     *,
@@ -735,7 +720,7 @@ def load_recent_history_units(
     rows = db.execute(
         text(
             f"""
-            SELECT id, seq, role, content
+            SELECT id, seq, role, content, reader_selection_snapshot
             FROM messages
             WHERE {" AND ".join(filters)}
             ORDER BY seq ASC
@@ -754,7 +739,7 @@ def load_recent_history_units(
                 HistoryUnit(
                     key=f"history_pair:{row[1]}:{next_row[1]}",
                     turns=(
-                        HistoryTurn(role="user", content=row[3]),
+                        HistoryTurn(role="user", content=_history_user_content(row)),
                         HistoryTurn(role="assistant", content=next_row[3]),
                     ),
                     message_ids=(row[0], next_row[0]),
@@ -764,11 +749,16 @@ def load_recent_history_units(
             )
             index += 2
             continue
+        content = (
+            _history_user_content(row)
+            if row[2] == "user"
+            else row[3]
+        )
         units.append(
             HistoryUnit(
                 key=f"history_single:{row[1]}",
                 turns=(
-                    HistoryTurn(role=cast(Literal["user", "assistant"], row[2]), content=row[3]),
+                    HistoryTurn(role=cast(Literal["user", "assistant"], row[2]), content=content),
                 ),
                 message_ids=(row[0],),
                 first_seq=row[1],
@@ -777,6 +767,18 @@ def load_recent_history_units(
         )
         index += 1
     return units
+
+
+def _history_user_content(row: Any) -> str:
+    """A historical user turn, prefixed with its bounded
+    `<historical_reader_selection>` block when the message carries a quote
+    snapshot. The block applies only to the immediately following user text, and
+    the whole unit stays one indivisible history turn for the budget."""
+    snapshot_raw = row[4]
+    if snapshot_raw is None:
+        return row[3]
+    snapshot = decode_reader_selection_snapshot(snapshot_raw)
+    return f"{render_historical_reader_selection_prompt_block(snapshot)}\n\n{row[3]}"
 
 
 def _load_tool_events(

@@ -40,7 +40,13 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 - `docs/cutovers/sota-chat-streaming-hard-cutover.md` — streaming transport,
   event grammar, coalescing, cursor replay, cancellation. IMPLEMENTED.
 - `docs/cutovers/resource-chat-subject-hard-cutover.md` — surface/subject
-  consolidation (one `ResourceRef` chat subject). IMPLEMENTED.
+  consolidation (one `ResourceRef` chat subject). IMPLEMENTED; the client
+  `chat_subject` send path is superseded by the reader-selection snapshot cutover
+  below.
+- `docs/cutovers/reader-highlight-quote-chat-hard-cutover.md` — reader Highlight
+  quote-to-chat as an immutable per-message reader-selection snapshot; atomic
+  new/existing destination send; removes inline reader chat and the request
+  `chat_subject`. IMPLEMENTED.
 - `docs/cutovers/assistant-message-trust-trail-hard-cutover.md` — assistant
   trust-trail read model. IMPLEMENTED.
 
@@ -71,9 +77,13 @@ latch in one record per run (`abort === null` ⇔ not streaming). `createRunVisi
 `Conversation` is the full-chat pane adapter. It owns pane chrome, secondary context/forks
 surfaces, open-resource routing, and the full-chat composer target.
 
-`ResourceChatDetail` is the resource-chat adapter. It binds one
-`chat_subject.resource_ref` to the same composer/send path without becoming a
-branch-anchor owner.
+There is no inline reader-chat adapter. The deleted `ResourceChatDetail` is
+replaced by opening a full `Conversation` pane. Reader Highlight quotes launch
+through the typed intent owned by `Conversation` (see Reader Quote-To-Chat
+below); generic resource-context chats go through `startResourceContextChat`
+(`lib/resources/resourceContextChat.ts`), which creates a context-bearing
+conversation via `POST /conversations` and opens it as a `Conversation` pane.
+`startResourceChat` is deleted.
 
 ## Scrollport Contract
 
@@ -112,16 +122,24 @@ profiles, and renders the selected profile's `privacy_notice`. The browser
 owns no provider/model/reasoning enum, ordering, default, capability, key, or
 availability policy — see [modules/llms.md](llms.md).
 
-`buildChatRunBody` is the single frontend request-body assembler. It decides:
+`buildChatRunBody` is the single frontend `/api/chat-runs` body assembler. It
+produces the hard-cut request shape:
 
-- `parent_message_id`
-- `branch_anchor`
-- `chat_subject`
-- `reader_selection`
+- `destination` — `{ kind: "New" }` or
+  `{ kind: "Existing"; conversation_id; insertion }`, where `insertion` is
+  `{ kind: "Empty" }` or `{ kind: "Reply"; parent_message_id; branch_anchor }`
+- `content`
 - `profile_id` / `reasoning_option_id`
+- `reader_selection` — `Presence<{ key: ReaderSelectionKey; revision }>`
 
-Branch drafts win over plain continuation replies. Plain continuation replies become
-`assistant_message` anchors. Fresh first turns send `{ kind: "none" }`.
+The branch anchor lives inside `Existing.Reply.branch_anchor`: branch drafts win
+over plain continuation replies, and plain continuation replies become
+`assistant_message` anchors. Plain and quote-first new-chat sends use
+`destination: { kind: "New" }`, which creates the conversation atomically on
+send — there is no eager blank-conversation prefix, and a failed first send
+leaves no conversation. The request carries no top-level `conversation_id`, no
+`chat_subject`, and no client `exact`/`prefix`/`suffix`; the server rejects all
+three (`extra="forbid"`).
 
 ## Failure card and rerun
 
@@ -177,9 +195,12 @@ Frontend branch drafts only use:
 - `assistant_message`
 - `assistant_selection`
 
-Resource subjects are not branch anchors. They are sent as
-`chat_subject.resource_ref` on `/api/chat-runs` and persisted as run turn
-context.
+Resource subjects and reader Highlight quotes are not branch anchors. The
+`chat_subject` request field is removed: a reader quote travels as
+`reader_selection` (a `ReaderSelectionKey` plus revision), and a generic
+resource-context chat carries its subject as a conversation context
+`ResourceEdge` created by its separately-owned launcher, not as a per-run
+request field.
 
 `chatDraftKeyFor` is the single draft-key serializer. It produces:
 
@@ -233,21 +254,48 @@ menu roles, focus restoration, and menuitem rendering.
 keeps its own visual-viewport handling and must not migrate to `MobileSheet`
 (`docs/modules/overlays.md`).
 
-## Reader Quote-To-Chat Separation
+## Reader Quote-To-Chat: Immutable Snapshot
 
-Reader quote-to-chat is highlight-first. The reader creates or reuses a durable
-`highlight:<id>` reference, sends it as the chat subject for quote-driven first
-turns, and includes `reader_selection` with media/highlight ids.
+A reader Highlight quote is an immutable per-message snapshot, not a run
+turn-context pair and never live-reconstructed at prompt time. On send the
+server row-locks the Highlight, derives the canonical quote fields, and stores
+one `ReaderSelectionSnapshot` on `messages.reader_selection_snapshot` (JSONB).
+Every later read — transcript, reload, pagination, branch switch, rerun, and
+prompt assembly — derives from that snapshot. `services/chat_reader_selection.py`
+is the sole snapshot owner (build, encode/decode, revision, quote-subfield
+projection, and prompt-render input); the snapshot shape is
+`key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
+`locator: MediaRetrievalLocator`. Reader-selection identity no longer lives on
+`chat_run_turn_contexts` — migration `0189_reader_highlight_quote_chat` adds the
+snapshot column and drops that table's two reader-selection columns, leaving it
+subject/audit identity only.
 
-`reader_selection` is not a branch anchor. It is persisted only as run turn
-identity, not as a conversation context ref, and is not cited. Backend services
-canonicalize quote text from the highlight row before prompt assembly.
+The request sends `reader_selection: Present<{ key: ReaderSelectionKey;
+revision }>` only. The server derives the `highlight:<id>` subject and its
+`media:<id>` companion under the Highlight row lock and writes them as
+`ResourceEdge(kind="context")` rows in the same atomic commit; neither is client
+input, and client quote text is rejected. `ReaderSelectionKey{media_id,
+highlight_id}` is the durable selection identity and part of the idempotency
+hash; `ReaderSelectionRevision` (lowercase 64-char SHA-256 hex) is a
+compare-on-send precondition only and is explicitly excluded from that hash.
 
-Assistant selection and reader selection compose in the same chat run body only as separate
-fields:
+`reader_selection` is not a branch anchor and is not cited. Assistant selection
+and reader selection compose in one send only as separate fields:
 
-- assistant selection: `branch_anchor.kind === "assistant_selection"`
+- assistant selection: `Existing.Reply.branch_anchor.kind === "assistant_selection"`
 - reader selection: `reader_selection`
+
+`Conversation` is the sole reader-Highlight launch-intent owner. It parses the
+pane-local intent hash `#mediaId=<uuid>&highlightId=<uuid>` (the destination is
+the path), hydrates one canonical `ReaderSelectionPreview` through
+`GET /chat-reader-selections/highlights/{id}?media_id=`, and passes one
+`PendingTurnContext` to `ChatComposer`. `QuotedPassageCard` renders the quote
+pending (above the composer, removable) and sent (read-only, above the user
+body). `ConversationDestinationOverlay` is the "Ask in existing chat…" picker
+(title search over `GET /conversations?q=`). `useChatDraft` persists text,
+`ProfileSelection`, and the active send attempt (idempotency key, payload
+identity, revision) in `sessionStorage`; an unknown-status ambiguous failure
+locks reconciliation and replays the same key, and success clears the record.
 
 ## Citations Are Edges
 
@@ -273,13 +321,21 @@ is text-only; tool and retrieval disclosures render from `message.trust_trail`.
 
 ## Backend Validation And Prompt Rendering
 
-FastAPI schemas accept `assistant_selection` branch anchors and `reader_selection` inputs as
-separate concepts.
+FastAPI schemas accept `assistant_selection` branch anchors and `reader_selection`
+key+revision inputs as separate concepts.
 
-`validate_pre_phase` validates both before creating a run. `conversation_branches` validates
-assistant-selection offsets, exact text, prefix, and suffix against the parent assistant
-message. `context_assembler` renders assistant-selection branch context separately from
-reader-selection turn context.
+`conversation_branches` validates assistant-selection offsets, exact text,
+prefix, and suffix against the parent assistant message. For a selection-backed
+turn, `context_assembler` renders `<subject>` (Highlight identity/source
+metadata) and `<reader_selection>` (the sole quote-text block) from the immutable
+snapshot, never the live Highlight, and excludes the selection Highlight from the
+generic `<resources>` block so the quote text appears exactly once. Historical
+quoted turns insert a bounded `<historical_reader_selection>` block immediately
+before their user message; that block, the user message, and its assistant
+response are one indivisible history-budget unit. Live-highlight reconstruction
+and the silent-`None` fallback in prompt assembly are removed. Source-activation
+destination comes from the immutable locator (gated by live visibility), never
+the live Highlight.
 
 ## Contract Tests
 

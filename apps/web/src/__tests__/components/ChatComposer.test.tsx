@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ChatComposer from "@/components/chat/ChatComposer";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
+import { present } from "@/lib/api/presence";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
+import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
+import type { ReaderSelectionPreview } from "@/lib/conversations/readerSelection";
 import type { BranchDraft } from "@/lib/conversations/types";
 
 const LLM_PROFILES = {
@@ -34,6 +37,36 @@ const LLM_PROFILES = {
       privacy_notice: "Processed by Nexus AI.",
     },
   ],
+};
+
+// A canonical hydrated reader-quote preview: the one sendable pending kind.
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const HIGHLIGHT_ID = "22222222-2222-4222-8222-222222222222";
+const READER_PREVIEW: ReaderSelectionPreview = {
+  key: { mediaId: MEDIA_ID, highlightId: HIGHLIGHT_ID },
+  sourceLabel: "On the Origin of Species",
+  exact: "endless forms most beautiful",
+  prefix: "",
+  suffix: "",
+  locator: {
+    type: "web_text_offsets",
+    media_id: MEDIA_ID,
+    fragment_id: "frag-1",
+    start_offset: 0,
+    end_offset: 27,
+  },
+  activation: {
+    resourceRef: `media:${MEDIA_ID}`,
+    kind: "route",
+    href: `/media/${MEDIA_ID}`,
+    unresolvedReason: null,
+  },
+  revision: "a".repeat(64),
+};
+
+const READER_INTENT = {
+  destination: { kind: "New" as const },
+  selection: READER_PREVIEW.key,
 };
 
 const originalInnerWidth = window.innerWidth;
@@ -145,6 +178,12 @@ function chatRunCalls(fetchMock: ReturnType<typeof installChatComposerFetchMock>
   );
 }
 
+function idempotencyKeyOf(
+  call: readonly [RequestInfo | URL, (RequestInit | undefined)?],
+): string {
+  return (call[1]?.headers as Record<string, string>)["Idempotency-Key"];
+}
+
 function setViewportWidth(width: number) {
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
@@ -156,12 +195,15 @@ function setViewportWidth(width: number) {
 
 describe("ChatComposer", () => {
   beforeEach(() => {
+    // The draft + send attempt now persist in sessionStorage; isolate tests.
+    sessionStorage.clear();
     __resetChatProfilesCacheForTests();
     document.body.style.margin = "";
     setViewportWidth(1024);
   });
 
   afterEach(() => {
+    sessionStorage.clear();
     document.body.style.margin = originalBodyMargin;
     setViewportWidth(originalInnerWidth);
   });
@@ -186,7 +228,7 @@ describe("ChatComposer", () => {
     ).toBeLessThanOrEqual(1);
   });
 
-  it("selects a non-default profile and sends its profile + default reasoning", async () => {
+  it("selects a non-default profile and sends a Reply destination", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
     const onChatRunCreated = vi.fn();
@@ -214,27 +256,30 @@ describe("ChatComposer", () => {
     });
 
     const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
-      conversation_id?: string;
-    };
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
 
-    expect(body).toMatchObject({
+    expect(body.destination).toMatchObject({
+      kind: "Existing",
       conversation_id: "conversation-1",
-      parent_message_id: "assistant-current",
-      branch_anchor: {
-        kind: "assistant_message",
-        message_id: "assistant-current",
+      insertion: {
+        kind: "Reply",
+        parent_message_id: "assistant-current",
+        branch_anchor: {
+          kind: "assistant_message",
+          message_id: "assistant-current",
+        },
       },
-      content: "Explain this quote",
-      profile_id: "fast",
-      reasoning_option_id: "default",
     });
+    expect(body.content).toBe("Explain this quote");
+    expect(body.profile_id).toBe("fast");
+    expect(body.reasoning_option_id).toBe("default");
     // The browser owns no provider/model/reasoning/key policy — those raw fields
-    // are never sent.
+    // are never sent, nor any legacy flat top-level shape.
     expect(body).not.toHaveProperty("model_id");
     expect(body).not.toHaveProperty("key_mode");
     expect(body).not.toHaveProperty("web_search");
-    expect(body).not.toHaveProperty("conversation_scope");
+    expect(body).not.toHaveProperty("conversation_id");
+    expect(body).not.toHaveProperty("chat_subject");
     expect(init?.headers).toEqual(
       expect.objectContaining({
         "Content-Type": "application/json",
@@ -248,7 +293,7 @@ describe("ChatComposer", () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
-    render(<ChatComposer conversationId="conversation-1" />);
+    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
 
     await screen.findByRole("combobox", { name: "AI profile" });
     await user.selectOptions(
@@ -275,7 +320,7 @@ describe("ChatComposer", () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
-    render(<ChatComposer conversationId="conversation-1" />);
+    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
 
     expect(
       await screen.findByRole("combobox", { name: "AI profile" }),
@@ -350,15 +395,17 @@ describe("ChatComposer", () => {
     });
 
     const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest & {
-      conversation_id?: string;
-    };
+    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
 
-    expect(body).toMatchObject({
+    expect(body.content).toBe("Take this branch");
+    expect(body.destination).toMatchObject({
+      kind: "Existing",
       conversation_id: "conversation-1",
-      content: "Take this branch",
-      parent_message_id: "assistant-parent",
-      branch_anchor: branchDraft.anchor,
+      insertion: {
+        kind: "Reply",
+        parent_message_id: "assistant-parent",
+        branch_anchor: branchDraft.anchor,
+      },
     });
     expect(onClearBranchDraft).toHaveBeenCalledOnce();
   });
@@ -457,16 +504,21 @@ describe("ChatComposer", () => {
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
 
-    expect(body).toMatchObject({
-      parent_message_id: "assistant-parent",
-      branch_anchor: {
-        kind: "assistant_message",
-        message_id: "assistant-parent",
+    expect(body.destination).toMatchObject({
+      kind: "Existing",
+      conversation_id: "conversation-1",
+      insertion: {
+        kind: "Reply",
+        parent_message_id: "assistant-parent",
+        branch_anchor: {
+          kind: "assistant_message",
+          message_id: "assistant-parent",
+        },
       },
     });
   });
 
-  it("sends an explicit no-branch anchor for root continuation messages", async () => {
+  it("sends an Empty insertion for a parentless existing conversation", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
@@ -488,13 +540,16 @@ describe("ChatComposer", () => {
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
 
-    expect(body.conversation_id).toBe("conversation-1");
-    expect(body.parent_message_id).toBeUndefined();
-    expect(body.branch_anchor).toEqual({ kind: "none" });
+    expect(body.destination).toEqual({
+      kind: "Existing",
+      conversation_id: "conversation-1",
+      insertion: { kind: "Empty" },
+    });
     expect(body).not.toHaveProperty("conversation_scope");
     expect(body).not.toHaveProperty("web_search");
     expect(body).not.toHaveProperty("singleton");
     expect(body).not.toHaveProperty("chat_subject");
+    expect(body.reader_selection).toEqual({ kind: "Absent" });
   });
 
   it("keeps a stable-key draft when conversation identity changes", async () => {
@@ -519,110 +574,177 @@ describe("ChatComposer", () => {
     expect(message).toHaveValue("Draft during resolution");
   });
 
-  it("resolves the conversation on send and uses the resolved id with chat_subject for a new resource-chat first message", async () => {
+  // --------------------------------------------------------------------------
+  // Pending reader-quote turn context
+  // --------------------------------------------------------------------------
+
+  it("posts destination New + reader_selection{key,revision} with the attempt key", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
-    const onResolveConversation = vi.fn(async () => "resolved-id");
 
     render(
       <ChatComposer
         conversationId={null}
-        onResolveConversation={onResolveConversation}
-        chatSubject={{ resource_ref: "media:media-1" }}
+        pendingContext={present<PendingTurnContext>({
+          kind: "ReaderHighlight",
+          preview: READER_PREVIEW,
+        })}
       />,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toBeInTheDocument();
-
+    await screen.findByRole("combobox", { name: "AI profile" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
-    await user.keyboard("First message into the doc chat");
+    await user.keyboard("What does this passage mean?");
     await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
       expect(chatRunCalls(fetchMock)).toHaveLength(1);
     });
 
-    expect(onResolveConversation).toHaveBeenCalledOnce();
-
-    const [, init] = chatRunCalls(fetchMock)[0];
-    const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
-
-    expect(body.conversation_id).toBe("resolved-id");
-    expect(body).not.toHaveProperty("singleton");
-    expect(body.chat_subject).toEqual({ resource_ref: "media:media-1" });
-    expect(body).not.toHaveProperty("web_search");
-    expect(body).not.toHaveProperty("conversation_scope");
+    const call = chatRunCalls(fetchMock)[0];
+    const body = JSON.parse(String(call[1]?.body)) as ChatRunCreateRequest;
+    expect(body.destination).toEqual({ kind: "New" });
+    expect(body.reader_selection).toEqual({
+      kind: "Present",
+      value: {
+        key: { media_id: MEDIA_ID, highlight_id: HIGHLIGHT_ID },
+        revision: READER_PREVIEW.revision,
+      },
+    });
+    // No client-authored quote text ever rides the request.
+    expect(JSON.stringify(body)).not.toContain(READER_PREVIEW.exact);
+    expect(idempotencyKeyOf(call)).toEqual(expect.any(String));
   });
 
-  it("does not send when onResolveConversation returns null", async () => {
+  it("blocks send while the pending quote is still loading", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
-    const onResolveConversation = vi.fn(async () => null);
 
     render(
       <ChatComposer
         conversationId={null}
-        onResolveConversation={onResolveConversation}
+        pendingContext={present<PendingTurnContext>({
+          kind: "Loading",
+          intent: READER_INTENT,
+        })}
       />,
     );
 
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toBeInTheDocument();
-
+    await screen.findByRole("combobox", { name: "AI profile" });
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
-    await user.keyboard("This should not send");
-    await user.click(screen.getByRole("button", { name: "SEND" }));
+    await user.keyboard("Ask about the passage");
 
-    await waitFor(() => {
-      expect(onResolveConversation).toHaveBeenCalledOnce();
-    });
+    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    // The Enter keypath is intercepted but the send guard blocks a Loading quote.
+    await user.keyboard("{Enter}");
     expect(chatRunCalls(fetchMock)).toHaveLength(0);
   });
 
-  it("renders pending context-ref chips and removes them on click", async () => {
+  it("blocks send for a non-sendable (forbidden) quote", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installChatComposerFetchMock();
+
+    render(
+      <ChatComposer
+        conversationId={null}
+        pendingContext={present<PendingTurnContext>({
+          kind: "NonSendable",
+          intent: READER_INTENT,
+          reason: "Forbidden",
+        })}
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "AI profile" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Try to send this anyway");
+
+    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled();
+    expect(chatRunCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("removes the pending quote and preserves the typed text", async () => {
     const user = userEvent.setup();
     installChatComposerFetchMock();
-    const onRemovePendingContextRef = vi.fn();
+    const onRemovePendingContext = vi.fn();
+
+    render(
+      <ChatComposer
+        conversationId={null}
+        pendingContext={present<PendingTurnContext>({
+          kind: "ReaderHighlight",
+          preview: READER_PREVIEW,
+        })}
+        onRemovePendingContext={onRemovePendingContext}
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "AI profile" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("Keep this text after removal");
+
+    await user.click(screen.getByRole("button", { name: "Remove quoted passage" }));
+
+    expect(onRemovePendingContext).toHaveBeenCalledOnce();
+    expect(message).toHaveValue("Keep this text after removal");
+  });
+
+  it("locks the composer for reconciliation and replays the same key on Retry send", async () => {
+    const user = userEvent.setup();
+    let failNext = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = pathOf(input);
+      if (path === "/api/llm-profiles") {
+        return jsonResponse({ data: LLM_PROFILES });
+      }
+      if (path === "/api/chat-runs" && init?.method === "POST") {
+        if (failNext) {
+          failNext = false;
+          // A network reject carries no status → ambiguous loss.
+          throw new TypeError("Failed to fetch");
+        }
+        return jsonResponse(
+          chatRunResponse(JSON.parse(String(init.body)) as ChatRunCreateRequest),
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       <ChatComposer
         conversationId="conversation-1"
-        pendingContextRefs={[
-          { uri: "media:media-1#p3", label: "On the Origin of Species" },
-        ]}
-        onRemovePendingContextRef={onRemovePendingContextRef}
+        parentMessageId="assistant-1"
+        draftKey="reconcile-1"
       />,
     );
 
+    await screen.findByRole("combobox", { name: "AI profile" });
+    const message = screen.getByRole("textbox", { name: "Ask anything" });
+    await user.click(message);
+    await user.keyboard("An ambiguous send");
+    await user.click(screen.getByRole("button", { name: "SEND" }));
+
+    // Locked reconciliation panel: text disabled, only "Retry send" offered.
     expect(
-      await screen.findByText("On the Origin of Species"),
+      await screen.findByRole("button", { name: "Retry send" }),
     ).toBeVisible();
+    expect(screen.getByText("Send status unknown — Retry send")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "SEND" })).toBeNull();
 
-    await user.click(
-      screen.getByRole("button", { name: "Remove On the Origin of Species" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Retry send" }));
 
-    expect(onRemovePendingContextRef).toHaveBeenCalledWith("media:media-1#p3");
-  });
-
-  it("does not render a web-search selector or scope chip in the composer", async () => {
-    installChatComposerFetchMock();
-
-    render(<ChatComposer conversationId="conversation-1" />);
-
-    expect(
-      await screen.findByRole("combobox", { name: "AI profile" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("combobox", { name: /web search/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/web search/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(chatRunCalls(fetchMock)).toHaveLength(2);
+    });
+    const calls = chatRunCalls(fetchMock);
+    // The replay reuses the SAME idempotency key (identity unchanged).
+    expect(idempotencyKeyOf(calls[1])).toBe(idempotencyKeyOf(calls[0]));
   });
 
   it("flips the send button to SENDING while the chat run is in flight (D-3, R-6)", async () => {
@@ -648,7 +770,7 @@ describe("ChatComposer", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ChatComposer conversationId="conversation-1" />);
+    render(<ChatComposer conversationId="conversation-1" parentMessageId="assistant-1" />);
 
     // Idle: the send action is a text "SEND" button (no ArrowUp icon).
     const sendButton = await screen.findByRole("button", { name: "SEND" });
@@ -670,6 +792,21 @@ describe("ChatComposer", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "SEND" })).toBeInTheDocument();
     });
+  });
+
+  it("does not render a web-search selector or scope chip in the composer", async () => {
+    installChatComposerFetchMock();
+
+    render(<ChatComposer conversationId="conversation-1" />);
+
+    expect(
+      await screen.findByRole("combobox", { name: "AI profile" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: /web search/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/web search/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^scope/i)).not.toBeInTheDocument();
   });
 
   it("keeps the composer controls inside a 320px mobile width without horizontal scrolling", async () => {

@@ -50,7 +50,7 @@ async function quoteRowToNewChat(row: Locator): Promise<void> {
   await expect(actionsTrigger).toBeVisible();
   await expect(actionsTrigger).toBeEnabled();
   await actionsTrigger.click();
-  const quoteItem = row.page().getByRole("menuitem", { name: "Quote to new chat" });
+  const quoteItem = row.page().getByRole("menuitem", { name: "Ask in new chat" });
   await expect(quoteItem).toBeVisible();
   await expect(quoteItem).toBeEnabled();
   await quoteItem.click();
@@ -99,11 +99,21 @@ async function expectHighlightRowVisible(
 }
 
 async function expectConversationPaneOpened(page: Page): Promise<void> {
-  // Quote-to-chat now opens a full conversation pane (AC-7) instead of revealing a
-  // reader secondary Chat tab. The newly opened, active pane exposes the chat
-  // composer; the quoted passage is attached as a conversation context ref.
+  // Post reader-highlight-quote-chat cutover, "Ask in new chat" navigates the
+  // Highlight into a fresh conversation pane on the pane-local intent hash. No
+  // conversation is created yet — the composer shows a *pending* QuotedPassageCard
+  // (a <figure aria-label="Quoted passage"> with a <blockquote> of the canonical
+  // exact text) above the "ask anything" textbox.
+  const activePane = activeWorkspacePane(page);
+  const quotedPassage = activePane.getByRole("figure", {
+    name: "Quoted passage",
+  });
+  await expect(quotedPassage).toBeVisible({ timeout: 15_000 });
+  await expect(quotedPassage.locator("blockquote")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(
-    activeWorkspacePane(page).getByRole("textbox", { name: /ask anything/i }),
+    activePane.getByRole("textbox", { name: /ask anything/i }),
   ).toBeVisible({ timeout: 10_000 });
 }
 
@@ -175,13 +185,15 @@ test.describe("non-pdf linked-items", () => {
     await quoteSegment.click();
     await expectHighlightRowVisible(quoteRow, quoteNote);
 
-    // Quote-to-chat is the final reader action: it opens a full conversation pane
-    // (now the active pane) with the quote attached, so this must run last.
-    const chatPaneCountBefore = await workspacePaneButton(page, /^chat\b/i).count();
+    // "Ask in new chat" is the final reader action: it opens a fresh
+    // (not-yet-created) conversation pane with a pending quoted passage, so this
+    // must run last. The conversation is created only on the first send, so the
+    // new pane is labelled "New chat" (not "Chat: …") until then.
+    const chatPaneCountBefore = await workspacePaneButton(page, /^new chat\b/i).count();
     await quoteRowToNewChat(quoteRow);
     await expectConversationPaneOpened(page);
     await expect
-      .poll(() => workspacePaneButton(page, /^chat\b/i).count(), { timeout: 10_000 })
+      .poll(() => workspacePaneButton(page, /^new chat\b/i).count(), { timeout: 10_000 })
       .toBeGreaterThan(chatPaneCountBefore);
   });
 });

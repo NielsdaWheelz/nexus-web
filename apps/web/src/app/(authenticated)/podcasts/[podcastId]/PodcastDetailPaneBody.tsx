@@ -8,7 +8,7 @@ import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
-import { startResourceChat } from "@/lib/resources/resourceChat";
+import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import {
   usePaneParam,
   usePaneRuntime,
@@ -493,7 +493,7 @@ export default function PodcastDetailPaneBody() {
   const handleOpenEpisodeChat = useCallback(
     async (episode: PodcastEpisodeMedia) => {
       try {
-        const conversationId = await startResourceChat(`media:${episode.id}`);
+        const conversationId = await startResourceContextChat(`media:${episode.id}`);
         openInNewPane?.(`/conversations/${conversationId}`, episode.title);
       } catch (chatError) {
         if (handleUnauthenticatedApiError(chatError)) return;

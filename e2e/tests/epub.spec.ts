@@ -436,10 +436,10 @@ async function expectHighlightRowVisible(
   await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
   await trigger.click();
   await expect(
-    page.getByRole("menuitem", { name: "Quote to new chat" }),
+    page.getByRole("menuitem", { name: "Ask in new chat" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("menuitem", { name: "Quote to existing chat" }),
+    page.getByRole("menuitem", { name: "Ask in existing chat…" }),
   ).toBeVisible();
   const editBounds = page.getByRole("menuitemcheckbox", {
     name: "Edit bounds",

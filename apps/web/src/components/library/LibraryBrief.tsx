@@ -28,7 +28,7 @@ import {
   activateResource,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { startResourceChat } from "@/lib/resources/resourceChat";
+import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import { useArtifactStream } from "@/components/library/useArtifactStream";
 import type {
@@ -184,7 +184,7 @@ export default function LibraryBrief({ libraryId }: { libraryId: string }) {
     if (chatRevisionRef === null) return;
     setError(null);
     try {
-      const conversationId = await startResourceChat(chatRevisionRef);
+      const conversationId = await startResourceContextChat(chatRevisionRef);
       const href = `/conversations/${conversationId}`;
       if (openInNewPane) {
         openInNewPane(href, "Dossier chat");

@@ -11,6 +11,7 @@ from nexus.api.routes.atlas import router as atlas_router
 from nexus.api.routes.auth_handoff_codes import router as auth_handoff_codes_router
 from nexus.api.routes.billing import router as billing_router
 from nexus.api.routes.browse import router as browse_router
+from nexus.api.routes.chat_reader_selections import router as chat_reader_selections_router
 from nexus.api.routes.chat_runs import router as chat_runs_router
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
@@ -88,6 +89,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(messages_router)
     api_router.include_router(contributors_router)
     api_router.include_router(chat_runs_router)
+    api_router.include_router(chat_reader_selections_router)
     api_router.include_router(oracle_router)
     api_router.include_router(llm_profiles_router)
     api_router.include_router(browse_router)

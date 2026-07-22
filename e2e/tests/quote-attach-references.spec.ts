@@ -83,19 +83,30 @@ test.describe("quote-attach references (post-cutover)", () => {
 
     const popover = page.getByRole("group", { name: /selection actions/i });
     await expect(popover).toBeVisible({ timeout: 5_000 });
-    // Quote-to-chat creates the highlight from the live selection, then opens a
-    // full conversation pane (now the active pane) with the quote attached. The
-    // former secondary "choose an existing chat" picker is gone after the cutover.
-    await popover.getByRole("button", { name: "Quote to new chat" }).click();
+    // "Ask in new chat" creates a durable Highlight from the live selection
+    // (invariant 6), then navigates to a fresh conversation pane on the
+    // pane-local intent hash. No conversation exists yet; the composer shows a
+    // pending QuotedPassageCard, and the quote's context ResourceEdge is written
+    // only on the first successful send.
+    await popover.getByRole("button", { name: "Ask in new chat" }).click();
 
-    // The conversation pane opens as the active pane and exposes the composer.
+    // The conversation pane opens as the active pane and shows the pending quoted
+    // passage above the composer.
     const conversationPane = activeWorkspacePane(page);
+    const quotedPassage = conversationPane.getByRole("figure", {
+      name: "Quoted passage",
+    });
+    await expect(quotedPassage).toBeVisible({ timeout: 15_000 });
+    await expect(quotedPassage.locator("blockquote")).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(
       conversationPane.getByRole("textbox", { name: /ask anything/i }),
     ).toBeVisible({ timeout: 15_000 });
 
-    // The quote action persists the selection as a highlight before opening chat,
-    // and the new conversation is created with that highlight as its context ref.
+    // "Ask in new chat" persists the selection as a Highlight before navigating,
+    // so the fresh selection is already a durable Highlight even before the first
+    // send (the conversation and its context edge come later, at send time).
     const afterHighlightResponse = await page.request.get(
       `/api/fragments/${seed.fragment_id}/highlights`,
     );
@@ -139,9 +150,10 @@ test.describe("quote-attach references (post-cutover)", () => {
       timeout: 15_000,
     });
 
-    // The reference-backed conversations endpoint surfaces this new chat because
-    // it was created with the quoted highlight as its context ref. Poll because
-    // the sent message commits asynchronously through the chat-run pipeline.
+    // The successful send atomically writes the quote's subject context edge
+    // (highlight:<id>), so the reference-backed conversations endpoint now
+    // surfaces this conversation. Poll because the run commits asynchronously
+    // through the chat-run pipeline.
     await expect
       .poll(
         async () => {

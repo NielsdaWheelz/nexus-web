@@ -1,4 +1,10 @@
-"""Pre-phase validation for chat run creation: input, profile, rate limits, branch parents."""
+"""Pre-phase validation for chat run creation: input, profile, rate limits, branch parents.
+
+Reader-selection identity is not validated here: the send derives and locks the
+Highlight inside the create transaction (after the idempotency replay check), so
+a pre-phase selection check would run before replay and could reject a valid
+replay whose live source has since changed.
+"""
 
 from __future__ import annotations
 
@@ -8,31 +14,26 @@ from provider_runtime import ReasoningLevel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_highlight
-from nexus.db.models import Conversation, Highlight, Message
+from nexus.db.models import Conversation, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     MAX_MESSAGE_CONTENT_LENGTH,
-    BranchAnchorRequest,
-    ReaderSelectionRequest,
+    ChatDestination,
+    ExistingChatDestination,
+    ReplyInsertion,
 )
 from nexus.services.conversation_branches import branch_anchor_for_message
 from nexus.services.llm_profiles import LlmProfile
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.llm_profiles import reasoning_level as lookup_reasoning_level
 from nexus.services.rate_limit import get_rate_limiter
-from nexus.services.resource_graph.context import admits_resource_for_conversation_read
-from nexus.services.resource_graph.refs import ResourceRef
 
 
 def validate_pre_phase(
     db: Session,
     viewer_id: UUID,
-    conversation_id: UUID,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
-    chat_subject: ResourceRef | None,
-    reader_selection: ReaderSelectionRequest | None,
+    *,
+    destination: ChatDestination,
     content: str,
     profile_id: str,
     reasoning_option_id: str,
@@ -44,15 +45,8 @@ def validate_pre_phase(
         profile_id=profile_id,
         reasoning_option_id=reasoning_option_id,
     )
-    _validate_parent_anchor_for_existing_conversation(
-        db,
-        viewer_id,
-        conversation_id,
-        parent_message_id,
-        branch_anchor,
-    )
-    _validate_reader_selection(db, viewer_id, conversation_id, reader_selection, chat_subject)
-
+    if isinstance(destination, ExistingChatDestination):
+        _validate_existing_destination(db, viewer_id, destination)
     return resolved
 
 
@@ -116,53 +110,18 @@ def load_valid_parent_for_send(
     return parent
 
 
-def _validate_parent_anchor_for_existing_conversation(
+def _validate_existing_destination(
     db: Session,
     viewer_id: UUID,
-    conversation_id: UUID,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
+    destination: ExistingChatDestination,
 ) -> None:
-    conversation = db.get(Conversation, conversation_id)
+    conversation = db.get(Conversation, destination.conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    parent = load_valid_parent_for_send(
-        db,
-        conversation_id=conversation_id,
-        parent_message_id=parent_message_id,
-    )
-    branch_anchor_for_message(parent, branch_anchor)
-
-
-def _validate_reader_selection(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    reader_selection: ReaderSelectionRequest | None,
-    chat_subject: ResourceRef | None = None,
-) -> None:
-    """Ensure the turn selection is backed by a visible attached highlight."""
-    if reader_selection is None:
-        return
-    if not can_read_highlight(db, viewer_id, reader_selection.highlight_id):
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader selection highlight not found")
-
-    highlight = db.get(Highlight, reader_selection.highlight_id)
-    if highlight is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Reader selection highlight not found")
-    if highlight.anchor_media_id != reader_selection.media_id:
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "reader_selection media_id must match the highlight anchor media",
+    if isinstance(destination.insertion, ReplyInsertion):
+        parent = load_valid_parent_for_send(
+            db,
+            conversation_id=destination.conversation_id,
+            parent_message_id=destination.insertion.parent_message_id,
         )
-
-    highlight_ref = ResourceRef(scheme="highlight", id=reader_selection.highlight_id)
-    if chat_subject == highlight_ref:
-        return
-    if not admits_resource_for_conversation_read(
-        db, conversation_id=conversation_id, target=highlight_ref
-    ):
-        raise ApiError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "reader_selection highlight must be attached as a conversation context ref",
-        )
+        branch_anchor_for_message(parent, destination.insertion.branch_anchor)

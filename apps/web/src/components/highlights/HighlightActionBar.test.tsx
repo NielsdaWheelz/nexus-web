@@ -98,8 +98,8 @@ describe("HighlightActionBar — existing (menu)", () => {
     const trigger = screen.getByRole("button", { name: "Highlight actions" });
     expect(trigger).toHaveAttribute("aria-haspopup", "menu");
     expect(screen.queryByRole("button", { name: "Highlight color" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Quote to new chat" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Quote to existing chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask in new chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask in existing chat…" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit bounds" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete highlight" })).toBeNull();
   });
@@ -111,8 +111,8 @@ describe("HighlightActionBar — existing (menu)", () => {
     await user.click(screen.getByRole("button", { name: "Highlight actions" }));
 
     expect(screen.getByRole("group", { name: "Highlight color" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Quote to new chat" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Quote to existing chat" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ask in new chat" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ask in existing chat…" })).toBeInTheDocument();
     expect(
       screen.getByRole("menuitemcheckbox", { name: "Edit bounds" }),
     ).toHaveAttribute("aria-checked", "false");
@@ -190,7 +190,7 @@ describe("HighlightActionBar — selection", () => {
       </FeedbackProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "Quote to new chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask in new chat" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete highlight" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit bounds" })).not.toBeInTheDocument();
 
@@ -241,9 +241,9 @@ describe("HighlightActionBar — selection", () => {
     );
 
     const color = screen.getByRole("button", { name: "Highlight color" });
-    const newChat = screen.getByRole("button", { name: "Quote to new chat" });
+    const newChat = screen.getByRole("button", { name: "Ask in new chat" });
     const existingChat = screen.getByRole("button", {
-      name: "Quote to existing chat",
+      name: "Ask in existing chat…",
     });
     expect(color).toBeDisabled();
     expect(newChat).toBeDisabled();

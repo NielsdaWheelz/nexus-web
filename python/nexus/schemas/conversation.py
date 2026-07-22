@@ -19,8 +19,10 @@ from pydantic import (
     model_validator,
 )
 
+from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSelectionOut
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.llm import ExpectedChatFailure
+from nexus.schemas.presence import Absent, Presence, absent
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
@@ -131,6 +133,10 @@ class MessageOut(BaseModel):
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
     status: str  # "pending" | "complete" | "error" | "cancelled"
     can_rerun: bool = False
+    # The immutable reader-quote snapshot projection; Present only on a quoted
+    # user message, Absent everywhere else. Activation is recomputed from the
+    # immutable locator and current source visibility (may be kind="none").
+    reader_selection: Presence[ReaderSelectionOut] = Field(default_factory=absent)
     created_at: datetime
     updated_at: datetime
 
@@ -142,6 +148,8 @@ class MessageOut(BaseModel):
             raise ValueError("assistant messages require trust_trail")
         if self.role != "assistant" and self.trust_trail is not None:
             raise ValueError("only assistant messages may carry trust_trail")
+        if self.role != "user" and not isinstance(self.reader_selection, Absent):
+            raise ValueError("only user messages may carry a reader_selection")
         return self
 
 
@@ -675,48 +683,81 @@ class RenameBranchRequest(BaseModel):
         return self
 
 
-class ReaderSelectionRequest(BaseModel):
-    """The exact passage the viewer is asking about — a bind-only turn anchor.
+class NewChatDestination(BaseModel):
+    """Create a fresh conversation atomically with this send — no pre-create."""
 
-    Resolves pronouns ("this", "the quote"); the durable turn identity is stored
-    as media/highlight ids and is never itself cited. The citable attachment is
-    the `highlight:` reference.
+    kind: Literal["New"] = "New"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class EmptyInsertion(BaseModel):
+    """Insert the first root message into a still-empty conversation.
+
+    Exists only because the retained generic resource-context launcher creates a
+    context-bearing conversation before its first message; the server locks and
+    linearizes it against concurrent message creation.
     """
 
-    exact: str = Field(..., min_length=1, max_length=20000)
-    prefix: str | None = Field(default=None, max_length=1000)
-    suffix: str | None = Field(default=None, max_length=1000)
-    media_id: UUID
-    highlight_id: UUID
+    kind: Literal["Empty"] = "Empty"
 
     model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def _exact_not_blank(self) -> ReaderSelectionRequest:
-        if not self.exact.strip():
-            raise ValueError("reader_selection exact quote cannot be blank")
-        return self
 
+class ReplyInsertion(BaseModel):
+    """Reply to the active leaf of a populated conversation, applying the branch
+    contract."""
 
-class ChatSubjectRequest(BaseModel):
-    resource_ref: str = Field(..., min_length=1)
+    kind: Literal["Reply"]
+    parent_message_id: UUID
+    branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
 
     model_config = ConfigDict(extra="forbid")
+
+
+ChatInsertion = Annotated[
+    EmptyInsertion | ReplyInsertion,
+    Field(discriminator="kind"),
+]
+
+
+class ExistingChatDestination(BaseModel):
+    kind: Literal["Existing"]
+    conversation_id: UUID
+    insertion: ChatInsertion
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ChatDestination = Annotated[
+    NewChatDestination | ExistingChatDestination,
+    Field(discriminator="kind"),
+]
 
 
 class ChatRunCreateRequest(BaseModel):
-    """Request schema for creating a durable chat run."""
+    """Request schema for creating a durable chat run.
 
-    conversation_id: UUID
-    parent_message_id: UUID | None = None
-    branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
+    ``destination`` carries the target and, for an existing conversation, the
+    insertion semantics; ``New`` never represents a parent or branch anchor. The
+    reader quote is a durable ``ReaderSelectionKey`` plus a compare-on-send
+    ``revision`` only — the server derives subject/companion/exact/locator from
+    the locked Highlight and never accepts client quote text.
+    """
+
+    destination: ChatDestination
     content: str
     profile_id: str = Field(min_length=1)
     reasoning_option_id: str = Field(min_length=1)
-    chat_subject: ChatSubjectRequest | None = None
-    reader_selection: ReaderSelectionRequest | None = None
+    reader_selection: Presence[ReaderSelectionInput]
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def _content_not_blank(self) -> ChatRunCreateRequest:
+        if not self.content.strip():
+            raise ValueError("content cannot be blank")
+        return self
 
 
 class ChatRunOut(BaseModel):

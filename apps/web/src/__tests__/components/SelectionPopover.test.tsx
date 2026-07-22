@@ -135,7 +135,7 @@ describe("SelectionPopover", () => {
     const highlight = { id: "h1" };
     const onCreateHighlight = vi.fn(async () => highlight);
     const onQuoteToNewChat = vi.fn();
-    const onQuoteToExtantChat = vi.fn();
+    const onQuoteToExistingChat = vi.fn();
 
     render(
       <SelectionPopover
@@ -143,25 +143,25 @@ describe("SelectionPopover", () => {
         containerRef={createContainerRef()}
         onCreateHighlight={onCreateHighlight}
         onQuoteToNewChat={onQuoteToNewChat}
-        onQuoteToExtantChat={onQuoteToExtantChat}
+        onQuoteToExistingChat={onQuoteToExistingChat}
         onDismiss={vi.fn()}
       />
     );
 
-    const docButton = screen.getByRole("button", { name: "Quote to new chat" });
-    const libraryButton = screen.getByRole("button", { name: "Quote to existing chat" });
-    expect(docButton).not.toHaveTextContent("Quote to new chat");
-    expect(libraryButton).not.toHaveTextContent("Quote to existing chat");
+    const docButton = screen.getByRole("button", { name: "Ask in new chat" });
+    const libraryButton = screen.getByRole("button", { name: "Ask in existing chat…" });
+    expect(docButton).not.toHaveTextContent("Ask in new chat");
+    expect(libraryButton).not.toHaveTextContent("Ask in existing chat…");
 
     fireEvent.click(docButton);
     fireEvent.click(libraryButton);
 
     await waitFor(() => {
       expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
-      expect(onQuoteToExtantChat).toHaveBeenCalledTimes(1);
+      expect(onQuoteToExistingChat).toHaveBeenCalledTimes(1);
     });
     expect(onQuoteToNewChat).toHaveBeenCalledWith(highlight);
-    expect(onQuoteToExtantChat).toHaveBeenCalledWith(highlight);
+    expect(onQuoteToExistingChat).toHaveBeenCalledWith(highlight);
   });
 
   it("creates a highlight in the picked color, separate from chat actions", async () => {
@@ -184,7 +184,7 @@ describe("SelectionPopover", () => {
     expect(onCreateHighlight).toHaveBeenCalledWith("blue");
     expect(onQuoteToNewChat).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask in new chat" }));
     expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
     await waitFor(() => {
       expect(onQuoteToNewChat).toHaveBeenCalledTimes(1);
@@ -206,7 +206,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask in new chat" }));
 
     expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
     await waitFor(() => {
@@ -229,7 +229,7 @@ describe("SelectionPopover", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Quote to new chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask in new chat" }));
 
     await waitFor(() => {
       expect(onCreateHighlight).toHaveBeenCalledWith("yellow");
@@ -249,10 +249,10 @@ describe("SelectionPopover", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Quote to new chat" })
+      screen.queryByRole("button", { name: "Ask in new chat" })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Quote to existing chat" })
+      screen.queryByRole("button", { name: "Ask in existing chat…" })
     ).not.toBeInTheDocument();
   });
 

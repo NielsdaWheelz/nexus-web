@@ -38,6 +38,7 @@ def prepare_messages(
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
     content: str,
+    reader_selection_snapshot: dict[str, object] | None = None,
 ) -> PreparedMessages:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -63,6 +64,7 @@ def prepare_messages(
         role="user",
         content=content,
         message_document=message_document("user", content),
+        reader_selection_snapshot=reader_selection_snapshot,
         status="complete",
         parent_message_id=parent_message.id if parent_message is not None else None,
         branch_root_message_id=branch_root_message_id,

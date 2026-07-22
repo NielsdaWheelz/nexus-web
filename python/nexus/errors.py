@@ -93,6 +93,14 @@ class ApiErrorCode(str, Enum):
         "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH"  # 409 - Key reused with different payload
     )
 
+    # Reader-selection quote-to-chat errors (400/404/409)
+    E_READER_SELECTION_NOT_FOUND = "E_READER_SELECTION_NOT_FOUND"  # 404 - highlight/media absent
+    E_READER_SELECTION_FORBIDDEN = "E_READER_SELECTION_FORBIDDEN"  # 403 - not viewer-readable
+    E_READER_SELECTION_GEOMETRY_ONLY = "E_READER_SELECTION_GEOMETRY_ONLY"  # 400 - blank exact
+    E_READER_SELECTION_TOO_LARGE = "E_READER_SELECTION_TOO_LARGE"  # 400 - bounded field over limit
+    E_READER_SELECTION_STALE = "E_READER_SELECTION_STALE"  # 409 - revision precondition failed
+    E_CONVERSATION_NO_LONGER_EMPTY = "E_CONVERSATION_NO_LONGER_EMPTY"  # 409 - Empty insertion raced
+
     # Consumption/Lectern errors (409)
     E_MEDIA_DELETING = "E_MEDIA_DELETING"  # 409 - target media has a teardown intent
     E_STALE_LISTENING_REVISION = "E_STALE_LISTENING_REVISION"  # 409 - heartbeat CAS mismatch
@@ -234,6 +242,13 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RATE_LIMITED: 429,
     ApiErrorCode.E_TOKEN_BUDGET_EXCEEDED: 429,
     ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH: 409,
+    # Reader-selection quote-to-chat errors
+    ApiErrorCode.E_READER_SELECTION_NOT_FOUND: 404,
+    ApiErrorCode.E_READER_SELECTION_FORBIDDEN: 403,
+    ApiErrorCode.E_READER_SELECTION_GEOMETRY_ONLY: 400,
+    ApiErrorCode.E_READER_SELECTION_TOO_LARGE: 400,
+    ApiErrorCode.E_READER_SELECTION_STALE: 409,
+    ApiErrorCode.E_CONVERSATION_NO_LONGER_EMPTY: 409,
     # Consumption/Lectern errors
     ApiErrorCode.E_MEDIA_DELETING: 409,
     ApiErrorCode.E_STALE_LISTENING_REVISION: 409,

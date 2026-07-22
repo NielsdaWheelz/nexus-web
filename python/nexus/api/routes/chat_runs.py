@@ -10,6 +10,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.conversation import CHAT_RUN_STATUS_FILTER, ChatRunCreateRequest
+from nexus.schemas.presence import Present
 from nexus.services import chat_reruns
 from nexus.services import chat_runs as chat_runs_service
 
@@ -23,14 +24,14 @@ def create_chat_run(
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
+    reader_selection = (
+        body.reader_selection.value if isinstance(body.reader_selection, Present) else None
+    )
     result = chat_runs_service.create_chat_run(
         db=db,
         viewer_id=viewer.user_id,
-        conversation_id=body.conversation_id,
-        chat_subject=body.chat_subject,
-        reader_selection=body.reader_selection,
-        parent_message_id=body.parent_message_id,
-        branch_anchor=body.branch_anchor,
+        destination=body.destination,
+        reader_selection=reader_selection,
         content=body.content,
         profile_id=body.profile_id,
         reasoning_option_id=body.reasoning_option_id,

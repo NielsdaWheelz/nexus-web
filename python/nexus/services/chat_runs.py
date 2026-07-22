@@ -48,7 +48,7 @@ from provider_runtime import (
     failure_origin,
     parse_canonical_schema,
 )
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 from web_search_tool.types import WebSearchProvider
 
@@ -57,6 +57,7 @@ from nexus.db.models import (
     ChatRun,
     ChatRunTurnContext,
     Conversation,
+    ConversationActivePath,
     Message,
 )
 from nexus.errors import (
@@ -68,12 +69,16 @@ from nexus.errors import (
 )
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger, set_flow_id
+from nexus.schemas.chat_reader_selection import ReaderSelectionInput
 from nexus.schemas.conversation import (
     CHAT_RUN_STATUS_FILTER,
     BranchAnchorRequest,
+    ChatDestination,
     ChatRunResponse,
-    ChatSubjectRequest,
-    ReaderSelectionRequest,
+    EmptyInsertion,
+    ExistingChatDestination,
+    NoBranchAnchorRequest,
+    ReplyInsertion,
 )
 from nexus.services.agent_tools.app_search import (
     APP_SEARCH_TOOL_DEFINITION,
@@ -99,6 +104,12 @@ from nexus.services.agent_tools.writes import (
     WRITE_TOOL_NAMES,
     assistant_write_tool_definitions,
     execute_write_tool,
+)
+from nexus.services.chat_reader_selection import (
+    build_reader_selection_snapshot,
+    compute_reader_selection_revision,
+    encode_reader_selection_snapshot,
+    reader_selection_out,
 )
 from nexus.services.chat_run_access import get_run_for_owner
 from nexus.services.chat_run_citations import (
@@ -149,6 +160,7 @@ from nexus.services.context_assembler import (
     assemble_chat_context,
     persist_prompt_assembly,
 )
+from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE
 from nexus.services.llm_execution import (
     ExecutionRuntime,
     GenerationRequest,
@@ -164,12 +176,7 @@ from nexus.services.redact import safe_kv
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
 )
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceRefParseFailure,
-    parse_resource_ref,
-)
-from nexus.services.resource_items.chat_subjects import resolve_chat_subject
+from nexus.services.resource_graph.refs import ResourceRef
 
 logger = get_logger(__name__)
 
@@ -275,35 +282,23 @@ def create_chat_run(
     db: Session,
     *,
     viewer_id: UUID,
-    conversation_id: UUID,
-    chat_subject: ChatSubjectRequest | None,
-    reader_selection: ReaderSelectionRequest | None,
-    parent_message_id: UUID | None,
-    branch_anchor: BranchAnchorRequest,
+    destination: ChatDestination,
+    reader_selection: ReaderSelectionInput | None,
     content: str,
     profile_id: str,
     reasoning_option_id: str,
     idempotency_key: str | None,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
-    requested_subject_ref = _parse_chat_subject(chat_subject)
-    resolved_subject = (
-        resolve_chat_subject(db, viewer_id=viewer_id, requested_ref=requested_subject_ref)
-        if requested_subject_ref is not None
-        else None
-    )
-    subject_ref = resolved_subject.subject_ref if resolved_subject is not None else None
+    selection_key = reader_selection.key if reader_selection is not None else None
 
+    # 1. Hash answer-determining identity only — no live source resolution.
     payload_hash = compute_payload_hash(
-        content,
-        profile_id,
-        reasoning_option_id,
-        conversation_id,
-        parent_message_id,
-        branch_anchor,
-        requested_subject_ref,
-        subject_ref,
-        reader_selection,
+        destination=destination,
+        content=content,
+        profile_id=profile_id,
+        reasoning_option_id=reasoning_option_id,
+        reader_selection_key=selection_key,
     )
 
     existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
@@ -311,23 +306,20 @@ def create_chat_run(
         raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
         return build_chat_run_response(db, viewer_id, existing)
 
-    # Validates profile/reasoning via llm_profiles, entitlement/rate-limit
-    # preflight (fast-fail at POST) — the returned facts are re-resolved from
-    # the persisted snapshot at execution time, not threaded through here.
+    # Model/rate + destination fast-fail (no selection resolution: a replay
+    # whose live source has since changed must still return before we touch it).
     validate_pre_phase(
         db,
         viewer_id,
-        conversation_id,
-        parent_message_id,
-        branch_anchor,
-        subject_ref,
-        reader_selection,
-        content,
-        profile_id,
-        reasoning_option_id,
+        destination=destination,
+        content=content,
+        profile_id=profile_id,
+        reasoning_option_id=reasoning_option_id,
     )
 
     try:
+        # 2. Idempotency lock; a matching replay returns before source/revision
+        #    validation, while a payload mismatch fails.
         lock_idempotency_key(db, viewer_id, normalized_key)
         existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
         if existing is not None:
@@ -335,29 +327,65 @@ def create_chat_run(
             db.commit()
             return build_chat_run_response(db, viewer_id, existing)
 
-        subject_context_edge_id: UUID | None = None
-        if resolved_subject is not None:
-            for ref in resolved_subject.context_refs:
-                context_ref = add_context_ref_without_commit(
-                    db,
-                    viewer_id=viewer_id,
-                    conversation_id=conversation_id,
-                    target=ref,
-                    origin="user" if ref == resolved_subject.subject_ref else "system",
+        # 3. Resolve the destination conversation + insertion inside the tx.
+        conversation_id, parent_message_id, branch_anchor = _resolve_destination(
+            db, viewer_id, destination
+        )
+
+        # 4. Selection: lock+authorize the Highlight, snapshot, derive
+        #    subject/companion, verify the compare-on-send revision.
+        snapshot_json: dict[str, object] | None = None
+        subject_ref: ResourceRef | None = None
+        companion_ref: ResourceRef | None = None
+        if reader_selection is not None:
+            db.execute(
+                text("SELECT id FROM highlights WHERE id = :id FOR UPDATE"),
+                {"id": reader_selection.key.highlight_id},
+            )
+            snapshot = build_reader_selection_snapshot(
+                db, viewer_id=viewer_id, key=reader_selection.key
+            )
+            fresh_revision = compute_reader_selection_revision(snapshot)
+            if fresh_revision != reader_selection.revision:
+                # Stale precondition: raise before creating any run/replay row so
+                # the idempotency key remains unconsumed and the UI can refresh
+                # and explicitly resend.
+                preview = reader_selection_out(db, viewer_id=viewer_id, snapshot=snapshot)
+                raise ApiError(
+                    ApiErrorCode.E_READER_SELECTION_STALE,
+                    "Reader selection changed since it was previewed",
+                    details={
+                        "preview": {
+                            **preview.model_dump(mode="json"),
+                            "revision": fresh_revision,
+                        }
+                    },
                 )
-                if ref == resolved_subject.subject_ref:
-                    subject_context_edge_id = context_ref.edge_id
-        if reader_selection is not None and (
-            resolved_subject is None or resolved_subject.subject_ref.scheme != "highlight"
-        ):
+            snapshot_json = encode_reader_selection_snapshot(snapshot)
+            subject_ref = ResourceRef(scheme="highlight", id=reader_selection.key.highlight_id)
+            companion_ref = ResourceRef(scheme="media", id=reader_selection.key.media_id)
+
+        # 5 + 6. Derived subject/companion context edges (selection turns only).
+        subject_context_edge_id: UUID | None = None
+        if subject_ref is not None:
+            assert companion_ref is not None
+            subject_edge = add_context_ref_without_commit(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation_id,
+                target=subject_ref,
+                origin="user",
+            )
+            subject_context_edge_id = subject_edge.edge_id
             add_context_ref_without_commit(
                 db,
                 viewer_id=viewer_id,
                 conversation_id=conversation_id,
-                target=ResourceRef(scheme="highlight", id=reader_selection.highlight_id),
-                origin="user",
+                target=companion_ref,
+                origin="system",
             )
 
+        # 7. User message (with snapshot), pending assistant, run, turn context.
         prepared = prepare_messages(
             db,
             viewer_id,
@@ -365,6 +393,7 @@ def create_chat_run(
             parent_message_id,
             branch_anchor,
             content,
+            snapshot_json,
         )
         run = ChatRun(
             owner_user_id=viewer_id,
@@ -379,25 +408,15 @@ def create_chat_run(
         )
         db.add(run)
         db.flush()
-        if subject_ref is not None or reader_selection is not None:
+        if subject_ref is not None:
             db.add(
                 ChatRunTurnContext(
                     chat_run_id=run.id,
-                    requested_subject_scheme=(
-                        requested_subject_ref.scheme if requested_subject_ref else None
-                    ),
-                    requested_subject_id=requested_subject_ref.id
-                    if requested_subject_ref
-                    else None,
-                    subject_scheme=subject_ref.scheme if subject_ref else None,
-                    subject_id=subject_ref.id if subject_ref else None,
+                    requested_subject_scheme=subject_ref.scheme,
+                    requested_subject_id=subject_ref.id,
+                    subject_scheme=subject_ref.scheme,
+                    subject_id=subject_ref.id,
                     subject_context_edge_id=subject_context_edge_id,
-                    reader_selection_media_id=(
-                        reader_selection.media_id if reader_selection is not None else None
-                    ),
-                    reader_selection_highlight_id=(
-                        reader_selection.highlight_id if reader_selection is not None else None
-                    ),
                 )
             )
         ChatRunEventEmitter(db, run).meta(
@@ -410,16 +429,16 @@ def create_chat_run(
                 "reasoning_option_id": reasoning_option_id,
                 "chat_subject": (
                     {
-                        "requested_resource_ref": resolved_subject.requested_ref.uri,
-                        "resource_ref": resolved_subject.subject_ref.uri,
+                        "requested_resource_ref": subject_ref.uri,
+                        "resource_ref": subject_ref.uri,
                         "context_edge_id": (
                             str(subject_context_edge_id)
                             if subject_context_edge_id is not None
                             else None
                         ),
-                        "companions": [ref.uri for ref in resolved_subject.companion_refs],
+                        "companions": [companion_ref.uri] if companion_ref is not None else [],
                     }
-                    if resolved_subject is not None
+                    if subject_ref is not None
                     else None
                 ),
             }
@@ -440,13 +459,61 @@ def create_chat_run(
     return build_chat_run_response(db, viewer_id, run)
 
 
-def _parse_chat_subject(chat_subject: ChatSubjectRequest | None) -> ResourceRef | None:
-    if chat_subject is None:
-        return None
-    parsed = parse_resource_ref(chat_subject.resource_ref)
-    if isinstance(parsed, ResourceRefParseFailure):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "chat_subject.resource_ref is invalid")
-    return parsed
+def _resolve_destination(
+    db: Session,
+    viewer_id: UUID,
+    destination: ChatDestination,
+) -> tuple[UUID, UUID | None, BranchAnchorRequest]:
+    """Materialize the target conversation + insertion inside the create tx.
+
+    ``New`` creates an unpublished private conversation. ``Existing.Empty`` locks
+    the conversation row and linearizes against concurrent message creation,
+    returning ``E_CONVERSATION_NO_LONGER_EMPTY`` (with the current active leaf) if
+    another writer won — it never silently replies to a raced head.
+    ``Existing.Reply`` yields the parent/branch for an ordinary continuation.
+    """
+    if isinstance(destination, ExistingChatDestination):
+        conversation_id = destination.conversation_id
+        insertion = destination.insertion
+        if isinstance(insertion, ReplyInsertion):
+            return conversation_id, insertion.parent_message_id, insertion.branch_anchor
+        assert isinstance(insertion, EmptyInsertion)
+        conversation = db.execute(
+            select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+        ).scalar_one_or_none()
+        if conversation is None or conversation.owner_user_id != viewer_id:
+            raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
+        message_count = db.scalar(
+            select(func.count()).select_from(Message).where(
+                Message.conversation_id == conversation_id
+            )
+        )
+        if message_count:
+            active_leaf = db.scalar(
+                select(ConversationActivePath.active_leaf_message_id).where(
+                    ConversationActivePath.conversation_id == conversation_id,
+                    ConversationActivePath.viewer_user_id == viewer_id,
+                )
+            )
+            raise ApiError(
+                ApiErrorCode.E_CONVERSATION_NO_LONGER_EMPTY,
+                "Conversation is no longer empty; resend as a reply to its active leaf",
+                details={
+                    "conversation_id": str(conversation_id),
+                    "active_leaf_message_id": str(active_leaf) if active_leaf else None,
+                },
+            )
+        return conversation_id, None, NoBranchAnchorRequest()
+
+    conversation = Conversation(
+        owner_user_id=viewer_id,
+        title=DEFAULT_CONVERSATION_TITLE,
+        sharing="private",
+        next_seq=1,
+    )
+    db.add(conversation)
+    db.flush()
+    return conversation.id, None, NoBranchAnchorRequest()
 
 
 def get_chat_run(db: Session, *, viewer_id: UUID, run_id: UUID) -> ChatRunResponse:

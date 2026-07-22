@@ -10,6 +10,17 @@ through one capability / subject-resolution / turn-context / prompt pipeline; th
 legacy document-chat owner and the `reader_context` field are gone. See
 `docs/modules/chat.md`.
 
+> **Superseded (2026-07-22):** the client `chat_subject` send path on
+> `/chat-runs` described here is removed. A reader Highlight quote now travels as
+> an immutable per-message reader-selection snapshot, and generic
+> resource-context chats attach their subject through a separately-owned launcher
+> (`startResourceContextChat`) rather than a per-run `chat_subject` request
+> field. See
+> [`reader-highlight-quote-chat-hard-cutover.md`](reader-highlight-quote-chat-hard-cutover.md).
+> The durable subject/companion `ResourceEdge` spine, the server subject
+> resolver, and stored historical turn subjects remain; `chat_run_turn_contexts`
+> keeps its subject/audit columns but drops its two reader-selection columns.
+
 ## North Star
 
 Nexus can start, list, continue, search, cite, open, and inspect a conversation

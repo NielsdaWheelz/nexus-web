@@ -64,35 +64,48 @@ test("@real-media desktop selected quote opens new chat pane with attached conte
   );
   const chatPaneCountBefore = await workspacePaneButton(
     page,
-    /^chat\b/i,
+    /^new chat\b/i,
   ).count();
 
   const actions = page.getByRole("group", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Quote to new chat" }),
+    actions.getByRole("button", { name: "Ask in new chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Quote to new chat" }).click();
+  await actions.getByRole("button", { name: "Ask in new chat" }).click();
 
-  // After the reader-sidecar cutover, "Quote to new chat" calls startResourceChat
-  // and opens the new conversation as a full workspace pane (not a secondary
-  // surface). Wait for the chat pane button to appear in the workspace toolbar,
-  // then assert the active pane is now the conversation pane.
-  const chatPaneButton = workspacePaneButton(page, /^chat\b/i);
+  // Reader-highlight-quote-chat cutover: "Ask in new chat" creates a durable
+  // Highlight from the live selection, then navigates to a *fresh* conversation
+  // pane on the pane-local intent hash
+  // (/conversations/new#mediaId=..&highlightId=..). No conversation is created
+  // until the first send, so pre-send the new pane is labelled "New chat".
   await expect
-    .poll(() => chatPaneButton.count(), { intervals: [250], timeout: 10_000 })
+    .poll(() => workspacePaneButton(page, /^new chat\b/i).count(), {
+      intervals: [250],
+      timeout: 10_000,
+    })
     .toBeGreaterThan(chatPaneCountBefore);
 
   const conversationPane = activeWorkspacePane(page);
+  const quotedPassage = conversationPane.getByRole("figure", {
+    name: "Quoted passage",
+  });
+  await expect(quotedPassage).toBeVisible({ timeout: 15_000 });
+  // The pending card renders the canonical exact quote and a Remove control;
+  // send stays gated until the preview hydrates.
+  await expect(quotedPassage.locator("blockquote")).toContainText(selectedText, {
+    timeout: 15_000,
+  });
+  await expect(
+    conversationPane.getByRole("button", { name: "Remove quoted passage" }),
+  ).toBeVisible();
   await expect(
     conversationPane.getByRole("textbox", { name: /ask anything/i }),
   ).toBeVisible({ timeout: 10_000 });
 
-  // Post-cutover, the quoted highlight is attached as a conversation-level
-  // context ref at creation time (initial_context_refs); the composer's
-  // "Attached to next message" chips are only for refs staged onto an already
-  // open chat. Assert the attached context through the production contract:
-  // the selection persists as a highlight and the reference-backed
-  // conversations endpoint lists the new chat under that highlight.
+  // The launch's required preceding mutation is the Highlight itself: the fresh
+  // selection must be persisted as a durable Highlight before navigation. The
+  // quote's context ResourceEdge is written only on a successful send, which this
+  // pending-card test intentionally does not perform.
   const afterHighlightsResponse = await page.request.get(
     `/api/fragments/${fragmentId}/highlights`,
   );
@@ -107,25 +120,6 @@ test("@real-media desktop selected quote opens new chat pane with attached conte
     quotedHighlight,
     `Expected the quoted selection "${selectedText}" to be persisted as a highlight.`,
   ).toBeDefined();
-  const quotedHighlightUri = `highlight:${quotedHighlight!.id}`;
-
-  await expect
-    .poll(
-      async () => {
-        const response = await page.request.get(
-          `/api/conversations?has_context_ref=${encodeURIComponent(quotedHighlightUri)}&limit=100`,
-        );
-        if (!response.ok()) {
-          return 0;
-        }
-        const payload = (await response.json()) as {
-          data: Array<{ id: string }>;
-        };
-        return payload.data.length;
-      },
-      { intervals: [500], timeout: 15_000 },
-    )
-    .toBeGreaterThan(0);
 
   writeRealMediaTrace(testInfo, "real-web-quote-to-chat-desktop-trace.json", {
     fixture_id: "web-nasa-water-on-moon",
@@ -172,15 +166,22 @@ test("@real-media mobile selected quote opens new chat pane", async ({
 
   const actions = page.getByRole("group", { name: /selection actions/i });
   await expect(
-    actions.getByRole("button", { name: "Quote to existing chat" }),
+    actions.getByRole("button", { name: "Ask in new chat" }),
   ).toBeVisible({ timeout: 5_000 });
-  await actions.getByRole("button", { name: "Quote to existing chat" }).click();
+  await actions.getByRole("button", { name: "Ask in new chat" }).click();
 
-  // After the reader-sidecar cutover, "Quote to existing chat" calls
-  // startResourceChat and opens the conversation as a full workspace pane (the
-  // old "Choose a chat" dialog/chooser is gone). On mobile the new pane becomes
-  // the active (and only rendered) pane. Poll for the composer to appear.
+  // On mobile, "Ask in new chat" activates the fresh conversation pane while the
+  // reader pane stays in the session. No conversation is created until the first
+  // send; the activated pane shows the pending QuotedPassageCard above the
+  // composer.
   const conversationPane = activeWorkspacePane(page);
+  const quotedPassage = conversationPane.getByRole("figure", {
+    name: "Quoted passage",
+  });
+  await expect(quotedPassage).toBeVisible({ timeout: 15_000 });
+  await expect(quotedPassage.locator("blockquote")).toContainText(selectedText, {
+    timeout: 15_000,
+  });
   await expect(
     conversationPane.getByRole("textbox", { name: /ask anything/i }),
   ).toBeVisible({ timeout: 15_000 });

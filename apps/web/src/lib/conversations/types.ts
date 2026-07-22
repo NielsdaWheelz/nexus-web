@@ -7,6 +7,7 @@ import type {
 import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
+import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
 
@@ -346,6 +347,11 @@ export interface ConversationMessage {
    * `citation_index` SSE event. Rendered via `toReaderCitationData`.
    */
   citations?: CitationOut[];
+  /**
+   * The immutable reader-quote snapshot projection, decoded at the message
+   * boundary. Present only on a quoted user message; Absent everywhere else.
+   */
+  reader_selection?: Presence<ReaderSelectionOut>;
   status: "pending" | "complete" | "error" | "cancelled";
   can_rerun: boolean;
   created_at: string;

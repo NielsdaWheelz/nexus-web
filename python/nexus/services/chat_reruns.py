@@ -89,6 +89,11 @@ def rerun_assistant_response(
             branch_root_message_id=source_user_message.branch_root_message_id,
             branch_anchor_kind=source_user_message.branch_anchor_kind,
             branch_anchor=dict(source_user_message.branch_anchor or {}),
+            reader_selection_snapshot=(
+                dict(source_user_message.reader_selection_snapshot)
+                if source_user_message.reader_selection_snapshot is not None
+                else None
+            ),
         )
         db.add(user_message)
         db.flush()
@@ -144,8 +149,6 @@ def rerun_assistant_response(
                     subject_scheme=source_turn_context.subject_scheme,
                     subject_id=source_turn_context.subject_id,
                     subject_context_edge_id=source_turn_context.subject_context_edge_id,
-                    reader_selection_media_id=source_turn_context.reader_selection_media_id,
-                    reader_selection_highlight_id=source_turn_context.reader_selection_highlight_id,
                 )
             )
         ChatRunEventEmitter(db, run).meta(

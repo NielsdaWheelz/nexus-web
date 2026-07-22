@@ -25,7 +25,7 @@ import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId } from "@/lib/lectern/contract";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { startResourceChat } from "@/lib/resources/resourceChat";
+import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
@@ -1257,7 +1257,7 @@ export default function LibraryPaneBody() {
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
       try {
-        const conversationId = await startResourceChat(`media:${media.id}`);
+        const conversationId = await startResourceContextChat(`media:${media.id}`);
         openInNewPane?.(`/conversations/${conversationId}`, media.title);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;

@@ -180,19 +180,21 @@ sync hook would blur.
 
 ### reader-to-chat quote selection
 
-- quote-to-chat is highlight-first: the reader creates a durable highlight, adds
-  `highlight:<id>` as the conversation context ref, and sends a transient
-  `reader_selection` anchor for that chat turn
-- `reader_selection` carries `media_id` + `highlight_id`; the backend
-  canonicalizes prefix/exact/suffix/source from the highlight row before
-  rendering `<reader_selection>`
-- the selection is bind-only context for words like "this" or "the quote"; it is
-  never stored as a reference and never numbered
-- citation chips point at the attached `highlight:` reference or later
-  `read_resource` evidence, not at the transient selection block
-- pdf quote-to-chat passes the freshly created highlight payload through the
-  same path as web/epub so a just-created quote does not depend on a stale
-  highlight list refresh
+- quote-to-chat is highlight-first: a durable Highlight must exist before
+  launch, and **Ask in new chat** / **Ask in existing chat…** mutate no
+  conversation on launch
+- the request sends only `reader_selection = { key: {media_id, highlight_id},
+  revision }`; on send the server row-locks the Highlight and captures an
+  immutable per-message snapshot (exact/prefix/suffix/source/locator) that drives
+  `<reader_selection>` for every current and historical turn — never the live
+  highlight, never client quote text
+- a sent quote is fixed: editing, moving, or deleting the Highlight afterward
+  cannot change the displayed or prompted passage
+- the snapshot is not a cited conversation context ref and is never numbered;
+  citation chips point at the attached `highlight:` reference or later
+  `read_resource` evidence
+- new-chat send is atomic — there is no eager blank-conversation create, so a
+  failed first send leaves no conversation behind
 
 ### reflow-safe web resume
 
@@ -280,16 +282,16 @@ required automated coverage includes:
 - pdf in-session page persistence without file reopen
 - clean, dormant cross-device re-entry auto-applies a newer cursor without
   remount; active/dirty re-entry shows the handoff
-- reader-to-chat quote flow sends a durable `highlight:` reference and, when
-  the highlight has nonblank exact text, a transient `reader_selection`
-  carrying `media_id` + `highlight_id`
+- reader-to-chat quote flow sends `reader_selection` (highlight key + revision)
+  from a typed launch intent and captures an immutable per-message snapshot that
+  survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
 
 ## validation commands
 
 ```bash
 cd apps/web && bunx vitest run --project unit src/lib/reader/readerProgress.test.ts src/lib/reader/readerLocationHref.test.ts src/lib/reader/types.test.ts src/lib/media/readerNavigation.test.ts
 cd apps/web && bunx vitest run --project unit src/lib/conversations/chatRunBody.test.ts src/lib/api/sse/events.test.ts src/lib/conversations/citations.test.ts
-cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/EvidencePaneSurface.test.tsx src/__tests__/components/ResourceChatDetail.test.tsx
+cd apps/web && bunx vitest run --project browser 'src/app/(authenticated)/media/[id]/MediaPaneBody.test.tsx' 'src/app/(authenticated)/media/[id]/TextDocumentReader.test.tsx' src/components/reader/ReaderDocumentMapOverviewRail.test.tsx src/components/reader/document-map/EvidencePaneSurface.test.tsx src/components/chat/QuotedPassageCard.test.tsx
 make test-e2e PLAYWRIGHT_ARGS='tests/reader-progress-continuity.spec.ts --project=chromium'
 make test-e2e PLAYWRIGHT_ARGS='tests/quote-attach-references.spec.ts tests/pdf-reader.spec.ts --project=chromium'
 ```

@@ -43,9 +43,12 @@ import {
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { addContextRef } from "@/lib/resourceGraph/contextRefs";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
+import {
+  decodeMessagesReaderSelection,
+  decodeRunDataReaderSelection,
+  decodeTreeReaderSelection,
+} from "@/lib/conversations/messageWire";
 import {
   toFeedback,
   type FeedbackContent,
@@ -90,8 +93,6 @@ const EMPTY_BRANCH_GRAPH: BranchGraph = {
 interface UseConversationOptions {
   /** Existing conversation id, or null to create on first send. */
   conversationId: string | null;
-  /** Context refs attached to the conversation when it is created on first send. */
-  initialContextRefs?: string[];
   /** Enable branch state + active-path persistence. Pane: true. Reader: false. */
   branching?: boolean;
   /** Fired when a `context_ref_added` SSE event lands for this conversation. */
@@ -133,8 +134,8 @@ interface UseConversation {
   conversationId: string | null;
   title: string;
 
-  // send pipeline (passed straight into <ChatComposer/>)
-  resolveConversation: () => Promise<string>;
+  // send pipeline (passed straight into <ChatComposer/>). The atomic send
+  // (destination:New) creates the conversation; there is no eager pre-create.
   onChatRunCreated: (data: ChatRunResponse["data"]) => void;
   activeRunId: string | null;
   cancelActiveRun: () => Promise<void>;
@@ -159,7 +160,6 @@ export function useConversation(
 ): UseConversation {
   const {
     conversationId: initialConversationId,
-    initialContextRefs,
     branching = false,
     onContextRefAdded,
     onConversationCreated,
@@ -204,13 +204,6 @@ export function useConversation(
   // initial route adoption must not refetch history. Existing conversations
   // must never enter this set, or route re-entry can skip a real reload.
   const locallyCreatedIdsRef = useRef<Set<string>>(new Set());
-  // Context refs already attached to the current conversation (seeded at creation
-  // or POSTed on a prior send), so a continuation send does not redundantly
-  // re-POST permanent context refs each time. Reset when the id changes.
-  const attachedRefsRef = useRef<{ id: string | null; uris: Set<string> }>({
-    id: null,
-    uris: new Set(),
-  });
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
   const revealMessageRequestsRef = useRef<Map<string, Promise<boolean>>>(
@@ -226,8 +219,6 @@ export function useConversation(
     promise: Promise<{ data: ConversationTreeResponse }>;
   } | null>(null);
   const routeConversationIdRef = useRef(initialConversationId);
-  const initialContextRefsRef = useRef(initialContextRefs);
-  initialContextRefsRef.current = initialContextRefs;
 
   const messageIdsForPath = useCallback(
     (path: ConversationMessage[], leafMessageId: string | null = null) => {
@@ -319,12 +310,14 @@ export function useConversation(
             ).finally(() => {
               activeRunsRequestRef.current = null;
             })));
-      return activeRuns.data.filter(
-        (runData) =>
-          runData.conversation.id === id &&
-          (visibleMessageIds.has(runData.user_message.id) ||
-            visibleMessageIds.has(runData.assistant_message.id)),
-      );
+      return activeRuns.data
+        .filter(
+          (runData) =>
+            runData.conversation.id === id &&
+            (visibleMessageIds.has(runData.user_message.id) ||
+              visibleMessageIds.has(runData.assistant_message.id)),
+        )
+        .map(decodeRunDataReaderSelection);
     },
     [],
   );
@@ -393,7 +386,7 @@ export function useConversation(
       try {
         const response = await loadConversationTree(id);
         if (conversationIdRef.current !== id) return false;
-        applyConversationTree(response.data);
+        applyConversationTree(decodeTreeReaderSelection(response.data));
         setError(null);
         return true;
       } catch (err) {
@@ -436,7 +429,7 @@ export function useConversation(
         return {
           kind: "branching",
           conversationId: id,
-          tree: response.data,
+          tree: decodeTreeReaderSelection(response.data),
           activeRuns,
         };
       }
@@ -451,7 +444,7 @@ export function useConversation(
       return {
         kind: "linear",
         conversationId: id,
-        messages: history.data,
+        messages: decodeMessagesReaderSelection(history.data),
         olderCursor: history.page.before_cursor ?? null,
       };
     },
@@ -513,7 +506,6 @@ export function useConversation(
     setActiveLeafMessageId(null);
     setBranchDraft(null);
     selectedPathIdsRef.current = new Set();
-    attachedRefsRef.current = { id: null, uris: new Set() };
     rerunningAssistantMessageIds.clear();
   }, [
     abortAll,
@@ -621,47 +613,16 @@ export function useConversation(
         `/api/conversations/${id}/messages?${params}`,
       );
       scrollRef.current?.captureAnchor(null);
-      dispatchMessages({ type: "prepend_older", messages: response.data });
+      dispatchMessages({
+        type: "prepend_older",
+        messages: decodeMessagesReaderSelection(response.data),
+      });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       console.error("Failed to load older messages:", err);
     }
   }, [branching, conversationId, olderCursor]);
-
-  // --------------------------------------------------------------------------
-  // Resolve / create on first send
-  // --------------------------------------------------------------------------
-
-  const resolveConversation = useCallback(async (): Promise<string> => {
-    setError(null);
-    const refUris = initialContextRefsRef.current ?? [];
-    const id = conversationId;
-    if (id) {
-      if (attachedRefsRef.current.id !== id) {
-        attachedRefsRef.current = { id, uris: new Set() };
-      }
-      for (const uri of refUris) {
-        if (attachedRefsRef.current.uris.has(uri)) continue;
-        const ref = parseResourceRef(uri);
-        if (ref) await addContextRef(id, ref);
-        attachedRefsRef.current.uris.add(uri);
-      }
-      return id;
-    }
-    const created = await apiFetch<{ data: { id: string } }>(
-      "/api/conversations",
-      {
-        method: "POST",
-        body: JSON.stringify({ initial_context_refs: refUris }),
-      },
-    );
-    locallyCreatedIdsRef.current.add(created.data.id);
-    attachedRefsRef.current = { id: created.data.id, uris: new Set(refUris) };
-    conversationIdRef.current = created.data.id;
-    setConversationId(created.data.id);
-    return created.data.id;
-  }, [conversationId]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -725,7 +686,7 @@ export function useConversation(
             headers: { "Idempotency-Key": createRandomId() },
           },
         );
-        onChatRunCreated(response.data);
+        onChatRunCreated(decodeRunDataReaderSelection(response.data));
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(toFeedback(err, { fallback: "Failed to run again" }));
@@ -812,7 +773,7 @@ export function useConversation(
         );
         if (activePathSwitchSeqRef.current !== switchSeq) return false;
         scrollRef.current?.captureAnchor(anchorMessageId);
-        applyConversationTree(response.data);
+        applyConversationTree(decodeTreeReaderSelection(response.data));
         void tailVisibleActiveRuns(
           messageIdsForPath(
             response.data.selected_path,
@@ -985,7 +946,6 @@ export function useConversation(
     sendDisabledReason,
     conversationId,
     title,
-    resolveConversation,
     onChatRunCreated,
     activeRunId,
     cancelActiveRun,

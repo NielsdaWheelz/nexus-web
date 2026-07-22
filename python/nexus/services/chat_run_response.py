@@ -43,14 +43,18 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
         viewer_id=viewer_id,
         assistant_message_ids=[user_message.id, assistant_message.id],
     )
-    user_message_out = message_to_out(user_message, can_rerun=user_message.id in rerunnable_ids)
+    user_message_out = message_to_out(
+        db, user_message, viewer_id=viewer_id, can_rerun=user_message.id in rerunnable_ids
+    )
     trust_trail = build_assistant_trust_trail(
         db,
         viewer_id=viewer_id,
         assistant_message_id=assistant_message.id,
     )
     assistant_message_out = message_to_out(
+        db,
         assistant_message,
+        viewer_id=viewer_id,
         can_rerun=assistant_message.id in rerunnable_ids,
         trust_trail=trust_trail,
         citations=[trust_citation.citation for trust_citation in trust_trail.citations],

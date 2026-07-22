@@ -1,4 +1,5 @@
 import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
+import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type { MessageRetrieval } from "./types";
 
 /**
@@ -12,7 +13,7 @@ export type ReaderSourceTarget = MediaReaderTarget | NoteReaderTarget;
 
 export interface MediaReaderTarget {
   kind: "media";
-  source: "message_retrieval";
+  source: "message_retrieval" | "reader_selection";
   media_id: string;
   locator: RetrievalLocator;
   snippet: string | null;
@@ -40,6 +41,29 @@ export interface NoteReaderTarget {
   label?: string;
   href?: string | null;
   evidence_id?: string;
+}
+
+/**
+ * Build a reader-source activation target from an immutable reader-quote
+ * snapshot (`ReaderSelectionOut`). CRITICAL: the reader positions from this
+ * IMMUTABLE snapshot locator, never the live `#highlight-{id}` anchor — a sent
+ * quote must resolve to exactly the passage it captured even after the live
+ * Highlight moves, is edited, or disappears. Backend activation routes to
+ * `/media/{id}` (visibility-gated); the FE scrolls via this locator target.
+ */
+export function readerTargetFromReaderSelection(
+  selection: ReaderSelectionOut,
+): ReaderSourceTarget {
+  return {
+    kind: "media",
+    source: "reader_selection",
+    media_id: selection.key.mediaId,
+    locator: selection.locator,
+    snippet: selection.exact,
+    highlight_behavior: "pulse",
+    focus_behavior: "scroll_into_view",
+    label: selection.sourceLabel,
+  };
 }
 
 export function readerTargetFromRetrieval(

@@ -193,20 +193,27 @@ update cadences.
 
 ### reader-to-chat quote selection
 
-quote-to-chat is highlight-first. The reader creates or reuses a durable
-highlight, adds `highlight:<id>` as the document-chat reference, and sends a
-transient `reader_selection` turn anchor for the current chat run.
+quote-to-chat is highlight-first. A durable Highlight must exist first; the
+reader's **Ask in new chat** and **Ask in existing chat…** actions launch chat
+with a typed intent and perform no conversation mutation on launch. The launch
+address is the pane-local intent hash `#mediaId=<uuid>&highlightId=<uuid>` (the
+destination is the path); the chat pane parses it, hydrates one canonical preview
+through `GET /api/chat-reader-selections/highlights/{id}?media_id=`, and shows
+the pending quote card above the composer.
 
-- `reader_selection` carries `media_id` and `highlight_id`; the backend
-  canonicalizes prefix, exact, suffix, and source from the highlight row before
-  rendering `<reader_selection>`
-- the selection is bind-only context for phrases like "this" or "the quote";
-  it is never persisted as a reference and never receives a citation ordinal
-- citation chips point at the attached `highlight:` reference or later
-  `read_resource` evidence, not at the transient selection block
-- PDF quote-to-chat passes the freshly created highlight payload through the
-  same path as web and EPUB so a just-created quote does not depend on a stale
-  highlight-list refresh
+- the request sends only `reader_selection = { key: {media_id, highlight_id},
+  revision }`; on send the server row-locks the Highlight and captures an
+  immutable per-message snapshot (`exact`, `prefix`, `suffix`, source label,
+  `locator`) that drives `<reader_selection>` for every current and historical
+  turn. Client quote text is rejected, and a later Highlight edit/delete cannot
+  change a sent quote
+- the snapshot is not a durable conversation context ref that gets cited and
+  never receives a citation ordinal; citation chips point at the attached
+  `highlight:` reference or later `read_resource` evidence
+- reaching a new or existing chat uses workspace canonical-pane adoption: the
+  destination pane is reused or opened without duplication, and source
+  activation returns to the reader pane from the immutable locator
+- a geometry-only PDF Highlight (blank `exact`) is non-sendable as a quote
 
 ### anchored evidence projection
 
@@ -644,9 +651,9 @@ required e2e coverage includes:
   preserves unrelated query/hash state
 - clean, dormant cross-device re-entry auto-applies a newer cursor without
   remounting; active/dirty re-entry shows the handoff instead of teleporting
-- reader-to-chat quote flow sends a durable `highlight:` reference and, when
-  the highlight has nonblank exact text, a transient `reader_selection`
-  carrying `media_id` and `highlight_id`
+- reader-to-chat quote flow sends `reader_selection` (highlight key + revision)
+  from a typed launch intent and captures an immutable per-message snapshot that
+  survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
 
 supporting test infra:
 

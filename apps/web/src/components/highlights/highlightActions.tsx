@@ -111,7 +111,7 @@ export function buildHighlightActions({
     options.push({
       kind: "command",
       id: "quote-new",
-      label: "Quote to new chat",
+      label: "Ask in new chat",
       icon: <MessageSquarePlus size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onQuoteToNewChat,
@@ -119,7 +119,7 @@ export function buildHighlightActions({
     options.push({
       kind: "command",
       id: "quote-existing",
-      label: "Quote to existing chat",
+      label: "Ask in existing chat…",
       icon: <MessagesSquare size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onQuoteToExistingChat,

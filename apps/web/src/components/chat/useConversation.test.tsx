@@ -312,13 +312,11 @@ describe("useConversation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("resolve-on-send creates a conversation and seeds optimistic messages", async () => {
+  it("adopts a new conversation from the first atomic run with no eager create", async () => {
+    // The eager POST /conversations pre-create is gone: the atomic send
+    // (destination:New) creates the conversation, and onChatRunCreated adopts it.
     const fetchMock = stubFetch((input, init) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations" && init?.method === "POST") {
-        return jsonResponse({ data: { id: "created-1" } });
-      }
-      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
+      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${pathOf(input)}`);
     });
 
     const { result } = renderHook(() =>
@@ -329,24 +327,8 @@ describe("useConversation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(fetchMock).not.toHaveBeenCalled();
 
-    let resolvedId = "";
-    await act(async () => {
-      resolvedId = await result.current.resolveConversation();
-    });
-
-    // POST /conversations created the conversation and the engine adopted its id.
-    expect(resolvedId).toBe("created-1");
-    const createCall = fetchMock.mock.calls.find(
-      ([input, init]) =>
-        pathOf(input as RequestInfo | URL) === "/api/conversations" &&
-        (init as RequestInit | undefined)?.method === "POST",
-    );
-    expect(createCall).toBeDefined();
-    await waitFor(() =>
-      expect(result.current.conversationId).toBe("created-1"),
-    );
-
-    // The first run seeds the optimistic user+assistant pair and tails the run.
+    // The first run seeds the optimistic user+assistant pair, adopts the id, and
+    // tails the run — with no POST /conversations ever issued.
     const run = {
       ...chatRunData(),
       run: {
@@ -362,11 +344,17 @@ describe("useConversation", () => {
     act(() => {
       result.current.onChatRunCreated(run);
     });
+
+    await waitFor(() =>
+      expect(result.current.conversationId).toBe("created-1"),
+    );
     expect(result.current.messages.map((m) => m.id)).toEqual([
       "user-new",
       "assistant-new",
     ]);
     expect(tailMocks.tailChatRun).toHaveBeenCalledWith(run);
+    // No eager create — the atomic send is the sole creator.
+    expect(fetchMock).not.toHaveBeenCalled();
     // Linear (reader) mode is single-stream: the prior run is aborted BEFORE the
     // new one is tailed.
     expect(tailMocks.abortAll).toHaveBeenCalled();
@@ -410,69 +398,6 @@ describe("useConversation", () => {
     });
 
     expect(onContextRefAdded).toHaveBeenCalledWith(contextRefAdded);
-  });
-
-  it("attaches initialContextRefs to an existing conversation on resolve", async () => {
-    const fetchMock = stubFetch((input, init) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1") {
-        return jsonResponse({ data: { title: "Existing chat" } });
-      }
-      if (path === "/api/conversations/conversation-1/messages") {
-        return jsonResponse({ data: [], page: { next_cursor: null } });
-      }
-      if (
-        path === "/api/conversations/conversation-1/context-refs" &&
-        init?.method === "POST"
-      ) {
-        return jsonResponse({
-          data: {
-            id: "ref-1",
-            conversation_id: "conversation-1",
-            resource_ref: "media:44444444-4444-4444-8444-444444444444",
-            activation: {
-              resourceRef: "media:44444444-4444-4444-8444-444444444444",
-              kind: "route",
-              href: "/media/44444444-4444-4444-8444-444444444444",
-              unresolvedReason: null,
-            },
-            label: "Existing media",
-            summary: "Context",
-            missing: false,
-            created_at: "2026-06-03T00:00:00Z",
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
-    });
-
-    const mediaRef = "media:44444444-4444-4444-8444-444444444444";
-    const { result } = renderHook(() =>
-      useConversation({
-        conversationId: "conversation-1",
-        initialContextRefs: [mediaRef],
-        branching: false,
-      }),
-    );
-
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    let resolvedId = "";
-    await act(async () => {
-      resolvedId = await result.current.resolveConversation();
-    });
-    expect(resolvedId).toBe("conversation-1");
-
-    const refCall = fetchMock.mock.calls.find(
-      ([input, init]) =>
-        pathOf(input as RequestInfo | URL) ===
-          "/api/conversations/conversation-1/context-refs" &&
-        (init as RequestInit | undefined)?.method === "POST",
-    );
-    expect(refCall).toBeDefined();
-    expect(JSON.parse((refCall?.[1] as RequestInit).body as string)).toEqual({
-      resource_ref: mediaRef,
-    });
   });
 
   it("rerun posts to the message rerun endpoint and tracks the busy id", async () => {

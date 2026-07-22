@@ -17,7 +17,13 @@ import {
   Suspense,
   type UIEvent,
 } from "react";
-import { startResourceChat } from "@/lib/resources/resourceChat";
+import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
+import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
+import {
+  readerHighlightChatIntent,
+  readerHighlightChatIntentHref,
+} from "@/lib/conversations/readerHighlightChatIntent";
+import { assumeReaderSelectionKey } from "@/lib/conversations/readerSelectionKey";
 import EvidencePaneSurface from "@/components/reader/document-map/EvidencePaneSurface";
 import { activateResource } from "@/lib/resources/activation";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
@@ -3950,7 +3956,7 @@ export default function MediaPaneBody() {
   // ==========================================================================
 
   const openChatForMedia = useCallback(async () => {
-    const conversationId = await startResourceChat(`media:${id}`);
+    const conversationId = await startResourceContextChat(`media:${id}`);
     openInNewPane?.(`/conversations/${conversationId}`, "Chat");
   }, [id, openInNewPane]);
 
@@ -4437,15 +4443,61 @@ export default function MediaPaneBody() {
     [handleDocumentScroll],
   );
 
-  const quoteHighlightToChat = useCallback(
-    async (highlightId: string) => {
-      const conversationId = await startResourceChat(
-        `highlight:${highlightId}`,
-      );
+  // The highlight whose quote is awaiting an "Ask in existing chat…" destination
+  // pick. The overlay is hosted below; a non-null id opens it. Selecting a row
+  // navigates to that conversation with the typed intent — no conversation is
+  // created or mutated on launch (reader-highlight-quote-chat cutover §Reader
+  // actions).
+  const [pendingExistingChatHighlightId, setPendingExistingChatHighlightId] =
+    useState<string | null>(null);
+
+  // "Ask in new chat": navigate to `/conversations/new` carrying the typed
+  // ReaderHighlightChatIntent in the pane-local hash. Launch performs no
+  // conversation mutation — the atomic first send creates it. The Highlight
+  // already exists here (an existing row, or one just created by the selection
+  // popover before this fires); refresh so a fresh selection's row appears.
+  const quoteHighlightToNewChat = useCallback(
+    (highlightId: string) => {
       refreshMediaHighlights();
-      openInNewPane?.(`/conversations/${conversationId}`, "Chat");
+      openInNewPane?.(
+        readerHighlightChatIntentHref(
+          readerHighlightChatIntent(
+            { kind: "New" },
+            assumeReaderSelectionKey({ mediaId: id, highlightId }),
+          ),
+        ),
+        "Chat",
+      );
     },
-    [openInNewPane, refreshMediaHighlights],
+    [id, openInNewPane, refreshMediaHighlights],
+  );
+
+  // "Ask in existing chat…": open the destination picker over this Highlight.
+  // Navigation to the chosen conversation happens on selection, below.
+  const quoteHighlightToExistingChat = useCallback(
+    (highlightId: string) => {
+      refreshMediaHighlights();
+      setPendingExistingChatHighlightId(highlightId);
+    },
+    [refreshMediaHighlights],
+  );
+
+  const handleSelectExistingChatDestination = useCallback(
+    (conversationId: string) => {
+      const highlightId = pendingExistingChatHighlightId;
+      setPendingExistingChatHighlightId(null);
+      if (highlightId === null) return;
+      openInNewPane?.(
+        readerHighlightChatIntentHref(
+          readerHighlightChatIntent(
+            { kind: "Existing", conversationId },
+            assumeReaderSelectionKey({ mediaId: id, highlightId }),
+          ),
+        ),
+        "Chat",
+      );
+    },
+    [id, openInNewPane, pendingExistingChatHighlightId],
   );
 
   const handleDismissSynapse = useCallback(async (edgeId: string) => {
@@ -5672,7 +5724,8 @@ export default function MediaPaneBody() {
               isEditingBounds: focusState.editingBounds,
               isReflowable: !isPdf,
               onFocusHighlight: focusHighlight,
-              onQuoteToChat: quoteHighlightToChat,
+              onQuoteToNewChat: quoteHighlightToNewChat,
+              onQuoteToExistingChat: quoteHighlightToExistingChat,
               onLink: handleLink,
               onColorChange: handleColorChange,
               onDelete: handleDelete,
@@ -5723,7 +5776,8 @@ export default function MediaPaneBody() {
     hoveredEvidenceItemId,
     isPdf,
     media?.capabilities?.can_quote,
-    quoteHighlightToChat,
+    quoteHighlightToNewChat,
+    quoteHighlightToExistingChat,
     readerEvidence,
     readerDocumentMapResource.status,
     readerDocumentMapAggregateStatus,
@@ -6117,16 +6171,12 @@ export default function MediaPaneBody() {
                   onHighlightHover={handleHoverPdfHighlight}
                   onQuoteToNewChat={
                     media?.capabilities?.can_quote
-                      ? (highlightId) => {
-                          void quoteHighlightToChat(highlightId);
-                        }
+                      ? (highlightId) => quoteHighlightToNewChat(highlightId)
                       : undefined
                   }
-                  onQuoteToExtantChat={
+                  onQuoteToExistingChat={
                     media?.capabilities?.can_quote
-                      ? (highlightId) => {
-                          void quoteHighlightToChat(highlightId);
-                        }
+                      ? (highlightId) => quoteHighlightToExistingChat(highlightId)
                       : undefined
                   }
                   onAddNote={({ quote, anchorRect, creation }) =>
@@ -6298,16 +6348,12 @@ export default function MediaPaneBody() {
             onCreateHighlight={handleCreateHighlight}
             onQuoteToNewChat={
               media?.capabilities?.can_quote
-                ? (highlight) => {
-                    void quoteHighlightToChat(highlight.id);
-                  }
+                ? (highlight) => quoteHighlightToNewChat(highlight.id)
                 : undefined
             }
-            onQuoteToExtantChat={
+            onQuoteToExistingChat={
               media?.capabilities?.can_quote
-                ? (highlight) => {
-                    void quoteHighlightToChat(highlight.id);
-                  }
+                ? (highlight) => quoteHighlightToExistingChat(highlight.id)
                 : undefined
             }
             onAddNote={handleAddNoteToSelection}
@@ -6343,11 +6389,11 @@ export default function MediaPaneBody() {
           }}
           onDelete={() => handleDelete(highlightActionTarget.id)}
           onQuoteToNewChat={() => {
-            void quoteHighlightToChat(highlightActionTarget.id);
+            quoteHighlightToNewChat(highlightActionTarget.id);
             dismissHighlightActions();
           }}
           onQuoteToExistingChat={() => {
-            void quoteHighlightToChat(highlightActionTarget.id);
+            quoteHighlightToExistingChat(highlightActionTarget.id);
             dismissHighlightActions();
           }}
           onToggleEditBounds={() => {
@@ -6358,6 +6404,12 @@ export default function MediaPaneBody() {
           onDismiss={dismissHighlightActions}
         />
       ) : null}
+
+      <ConversationDestinationOverlay
+        open={pendingExistingChatHighlightId !== null}
+        onClose={() => setPendingExistingChatHighlightId(null)}
+        onSelectConversation={handleSelectExistingChatDestination}
+      />
 
       {creditsOverlayMounted && mediaResourceHeader?.status === "ready" ? (
         <ResourceCreditsOverlay

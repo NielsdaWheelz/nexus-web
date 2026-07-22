@@ -256,7 +256,7 @@ async function quoteRowToNewChat(row: Locator): Promise<void> {
   await actionsTrigger.click();
   const quoteItem = row
     .page()
-    .getByRole("menuitem", { name: "Quote to new chat" });
+    .getByRole("menuitem", { name: "Ask in new chat" });
   await expect(quoteItem).toBeVisible();
   await expect(quoteItem).toBeEnabled();
   await quoteItem.click();
@@ -270,11 +270,23 @@ async function expectHighlightRowActionsAvailable(row: Locator): Promise<void> {
 }
 
 async function expectConversationPaneOpened(page: Page): Promise<void> {
-  // Quote-to-chat now opens a full conversation pane (AC-7) instead of revealing a
-  // reader secondary Chat tab. The newly opened, active pane exposes the chat
-  // composer; the quoted passage is attached as a conversation context ref.
+  // Post reader-highlight-quote-chat cutover, "Ask in new chat" navigates the
+  // Highlight into a fresh conversation pane on the pane-local intent hash
+  // (/conversations/new#mediaId=..&highlightId=..). No conversation is created
+  // yet — the composer shows a *pending* QuotedPassageCard (a
+  // <figure aria-label="Quoted passage"> with a <blockquote> of the canonical
+  // exact text) above the "ask anything" textbox, and send stays gated until it
+  // hydrates.
+  const activePane = activeWorkspacePane(page);
+  const quotedPassage = activePane.getByRole("figure", {
+    name: "Quoted passage",
+  });
+  await expect(quotedPassage).toBeVisible({ timeout: 15_000 });
+  await expect(quotedPassage.locator("blockquote")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(
-    activeWorkspacePane(page).getByRole("textbox", { name: /ask anything/i }),
+    activePane.getByRole("textbox", { name: /ask anything/i }),
   ).toBeVisible({ timeout: 10_000 });
 }
 
@@ -512,13 +524,15 @@ test.describe("pdf reader", () => {
       ).toHaveCount(0);
       const chatPaneCountBefore = await workspacePaneButton(
         page,
-        /^chat\b/i,
+        /^new chat\b/i,
       ).count();
       await quoteRowToNewChat(linkedRow);
       await expectConversationPaneOpened(page);
-      // Quote-to-chat opens a new conversation pane (AC-7), so the pane count grows.
+      // "Ask in new chat" opens a fresh (not-yet-created) conversation pane, so a
+      // "New chat" pane appears in the strip. The conversation is created only on
+      // the first send, so pre-send the pane is labelled "New chat", not "Chat: …".
       await expect
-        .poll(() => workspacePaneButton(page, /^chat\b/i).count(), {
+        .poll(() => workspacePaneButton(page, /^new chat\b/i).count(), {
           timeout: 10_000,
         })
         .toBeGreaterThan(chatPaneCountBefore);

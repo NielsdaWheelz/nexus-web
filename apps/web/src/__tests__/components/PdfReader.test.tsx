@@ -286,7 +286,7 @@ describe("PdfReader selection chat destinations", () => {
     pdfRuntimeState.createdHighlightId = "created-highlight-42";
     const onQuoteToNewChat =
       vi.fn<(highlightId: string, highlight: unknown) => void>();
-    const onQuoteToExtantChat =
+    const onQuoteToExistingChat =
       vi.fn<(highlightId: string, highlight: unknown) => void>();
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(110, 140, 160, 20),
@@ -299,7 +299,7 @@ describe("PdfReader selection chat destinations", () => {
       <PdfReader
         mediaId="media-1"
         onQuoteToNewChat={onQuoteToNewChat}
-        onQuoteToExtantChat={onQuoteToExtantChat}
+        onQuoteToExistingChat={onQuoteToExistingChat}
       />,
     );
 
@@ -319,10 +319,10 @@ describe("PdfReader selection chat destinations", () => {
     document.dispatchEvent(new Event("selectionchange"));
 
     const newChatButton = await screen.findByRole("button", {
-      name: "Quote to new chat",
+      name: "Ask in new chat",
     });
     expect(
-      screen.getByRole("button", { name: "Quote to existing chat" }),
+      screen.getByRole("button", { name: "Ask in existing chat…" }),
     ).toBeInTheDocument();
 
     fireEvent.click(newChatButton);
@@ -339,7 +339,7 @@ describe("PdfReader selection chat destinations", () => {
         suffix: "",
       }),
     );
-    expect(onQuoteToExtantChat).not.toHaveBeenCalled();
+    expect(onQuoteToExistingChat).not.toHaveBeenCalled();
 
     const postCalls = vi
       .mocked(apiFetch)

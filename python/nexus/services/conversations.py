@@ -37,6 +37,7 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.logging import get_logger
+from nexus.schemas.chat_reader_selection import ReaderSelectionOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
@@ -47,7 +48,12 @@ from nexus.schemas.conversation import (
     MessagePageInfo,
     PageInfo,
 )
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services.chat_failure import compute_has_write_tool_attempt, rerun_eligibility
+from nexus.services.chat_reader_selection import (
+    decode_reader_selection_snapshot,
+    reader_selection_out,
+)
 from nexus.services.llm_profiles import profile as lookup_profile
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
@@ -71,6 +77,8 @@ MIN_LIMIT = 1
 MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
+# Defensive upper bound on the destination-picker title-search query.
+MAX_CONVERSATION_SEARCH_QUERY = 200
 
 
 # =============================================================================
@@ -140,6 +148,13 @@ def _conversation_cursor_clause(cursor: str | None) -> tuple[str, dict[str, obje
 def clamp_limit(limit: int) -> int:
     """Clamp limit to valid range [MIN_LIMIT, MAX_LIMIT]."""
     return min(max(limit, MIN_LIMIT), MAX_LIMIT)
+
+
+def _escape_title_search(value: str) -> str:
+    """Escape LIKE metacharacters so ``q`` matches as a literal substring under
+    Postgres' default backslash escape. Backslash is escaped first so the escapes
+    added for ``%``/``_`` are not themselves re-escaped."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def derive_conversation_title(content: str | None) -> str:
@@ -218,17 +233,35 @@ def conversation_to_out(
 
 
 def message_to_out(
+    db: Session,
     message: Message,
+    *,
+    viewer_id: UUID,
     can_rerun: bool = False,
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
     """Convert Message ORM model to MessageOut schema.
 
-    Pure mapper: ``citations`` (the server-built ``[N]`` read-model for assistant
-    messages) is computed by the caller and threaded through here.
+    The one run/history/tree ``MessageOut`` projector. ``citations`` (the
+    server-built ``[N]`` read-model for assistant messages) is computed by the
+    caller and threaded through here. ``reader_selection`` projects the immutable
+    per-message reader-quote snapshot (Present only on a quoted user message,
+    Absent otherwise); activation is recomputed from ``viewer_id``'s current
+    source visibility.
     """
     branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
+    reader_selection: Presence[ReaderSelectionOut]
+    if message.reader_selection_snapshot is not None:
+        reader_selection = present(
+            reader_selection_out(
+                db,
+                viewer_id=viewer_id,
+                snapshot=decode_reader_selection_snapshot(message.reader_selection_snapshot),
+            )
+        )
+    else:
+        reader_selection = absent()
     return MessageOut(
         id=message.id,
         seq=message.seq,
@@ -242,6 +275,7 @@ def message_to_out(
         branch_anchor=branch_anchor,
         status=message.status,
         can_rerun=can_rerun,
+        reader_selection=reader_selection,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -410,8 +444,16 @@ def list_conversations(
     cursor: str | None = None,
     scope: str | None = None,
     has_context_ref: str | None = None,
+    q: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
     """List conversations.
+
+    When ``q`` is supplied (the destination-picker title search), the scope is
+    forced to owned and the query composes only with ``cursor``/``limit``; any
+    ``scope`` or ``has_context_ref`` filter is rejected. ``q`` is trimmed and
+    length-bounded; a blank query applies no title filter. Ordering stays
+    ``(updated_at DESC, id DESC)`` so a cursor stays stable while ``q`` is fixed
+    (changing ``q`` clears the cursor caller-side).
 
     When ``has_context_ref`` is supplied, returns conversations with any edge to
     that resource URI (single-user: viewer-owned only); ``scope`` is meaningless
@@ -425,15 +467,34 @@ def list_conversations(
         cursor: Opaque pagination cursor.
         scope: One of 'mine' (default), 'all', 'shared'.
         has_context_ref: Resource URI to filter conversations by context edge.
+        q: Owned-scope title search (destination picker); composes only with
+            cursor/limit.
 
     Returns:
         Tuple of (conversations, page_info).
 
     Raises:
-        InvalidRequestError(E_INVALID_REQUEST): If scope is invalid, or the
-            has_context_ref URI is malformed.
+        InvalidRequestError(E_INVALID_REQUEST): If scope is invalid, the
+            has_context_ref URI is malformed, or ``q`` is combined with another
+            scope/context filter or exceeds its length bound.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
+    if q is not None:
+        if scope is not None or has_context_ref is not None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                "q composes only with cursor and limit",
+            )
+        normalized_q = q.strip()
+        if len(normalized_q) > MAX_CONVERSATION_SEARCH_QUERY:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"q must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
+            )
+        return _list_conversations_mine(
+            db, viewer_id, clamp_limit(limit), cursor, title_search=normalized_q or None
+        )
+
     if has_context_ref is not None:
         ref = parse_resource_ref(has_context_ref)
         if isinstance(ref, ResourceRefParseFailure):
@@ -466,11 +527,21 @@ def _list_conversations_mine(
     viewer_id: UUID,
     limit: int,
     cursor: str | None,
+    title_search: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """List only conversations owned by viewer (scope=mine)."""
+    """List only conversations owned by viewer (scope=mine).
+
+    When ``title_search`` is set, applies a case-insensitive literal-substring
+    title match alongside the same cursor/order so pagination stays stable.
+    """
     params: dict = {"viewer_id": viewer_id, "limit": limit + 1}
     cursor_clause, cursor_params = _conversation_cursor_clause(cursor)
     params.update(cursor_params)
+
+    title_clause = ""
+    if title_search:
+        title_clause = "AND c.title ILIKE :title_search"
+        params["title_search"] = f"%{_escape_title_search(title_search)}%"
 
     result = db.execute(
         text(f"""
@@ -478,6 +549,7 @@ def _list_conversations_mine(
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             WHERE c.owner_user_id = :viewer_id
+              {title_clause}
               {cursor_clause}
             ORDER BY c.updated_at DESC, c.id DESC
             LIMIT :limit
@@ -680,23 +752,23 @@ def list_messages(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
+    # Project through the single message projector: load the ORM rows for this
+    # already-paginated/ordered window (which carry the reader_selection_snapshot
+    # the raw row tuple omits) and preserve the row order.
+    messages_by_id = {
+        message.id: message
+        for message in db.execute(select(Message).where(Message.id.in_(message_ids))).scalars()
+    }
     messages: list[MessageOut] = []
-    for row in rows:
-        trust_trail = trust_trails[row[0]] if row[2] == "assistant" else None
+    for message_id in message_ids:
+        message = messages_by_id[message_id]
+        trust_trail = trust_trails[message_id] if message.role == "assistant" else None
         messages.append(
-            MessageOut(
-                id=row[0],
-                seq=row[1],
-                role=row[2],
-                message_document=MessageDocument.model_validate(row[11]),
-                parent_message_id=row[7],
-                branch_root_message_id=row[8],
-                branch_anchor_kind=row[9],
-                branch_anchor={"kind": row[9], **(row[10] or {})},
-                status=row[4],
-                can_rerun=row[0] in rerunnable_message_ids,
-                created_at=row[5],
-                updated_at=row[6],
+            message_to_out(
+                db,
+                message,
+                viewer_id=viewer_id,
+                can_rerun=message_id in rerunnable_message_ids,
                 trust_trail=trust_trail,
                 citations=(
                     [trust_citation.citation for trust_citation in trust_trail.citations]

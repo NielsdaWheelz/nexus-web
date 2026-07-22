@@ -152,23 +152,28 @@ is
 
 ## Quote-To-Chat
 
-Reader quote-to-chat is highlight-first. The reader creates or reuses a durable
-highlight, attaches `highlight:<id>` to the document chat, and sends a transient
-`reader_selection` containing `media_id` and `highlight_id` for the current
-run.
+Reader quote-to-chat is Highlight-first: a durable Highlight must exist before
+launch, and chat launch performs no conversation mutation. The reader offers
+**Ask in new chat** and **Ask in existing chat…** on a Highlight; both navigate
+to the chat destination and pass a typed launch intent, never a generic subject
+send.
 
-The backend canonicalizes `prefix`, `exact`, `suffix`, and source label from
-the stored highlight row before prompt assembly. Client-supplied quote text is
-not the source of truth once the highlight exists.
+On send the server row-locks the Highlight, derives the canonical `exact`,
+`prefix`, `suffix`, source label, and `locator` from the stored anchor/quote
+fields, and captures them once as an immutable `ReaderSelectionSnapshot` on the
+user message (`messages.reader_selection_snapshot`). The request carries only
+`reader_selection: { key: {media_id, highlight_id}, revision }`; client-supplied
+quote text is rejected. A later edit, move, or deletion of the Highlight cannot
+change a sent quote — every read derives from the snapshot, not the live row.
+Under the same row lock the server derives the `highlight:<id>` subject and
+`media:<id>` companion as `ResourceEdge(kind="context")` rows.
 
-`reader_selection` is bind-only context for phrases like "this quote". It is
-not a durable conversation context ref and never receives a citation ordinal.
-Citation chips point at the attached `highlight:<id>` resource or later
-`read_resource` evidence.
+The snapshot is not a durable conversation context ref that gets cited and never
+receives a citation ordinal. Citation chips point at the attached
+`highlight:<id>` resource or later `read_resource` evidence.
 
-Quote actions require nonblank `exact` text. Geometry-only PDF highlights can
-exist and be shown, but they do not create reader-selection quote context until
-there is quote text to bind.
+Quote actions require nonblank `exact` text. A geometry-only PDF Highlight (blank
+`exact`) is explicitly non-sendable as a quote; it can still exist and be shown.
 
 ## Graph Connections And Citations
 
@@ -217,7 +222,7 @@ Keep these tests aligned with this module contract:
 - `apps/web/src/components/reader/document-map/EvidencePaneSurface.test.tsx`
 - `apps/web/src/components/reader/MarginRail.test.tsx`
 - `apps/web/src/__tests__/components/SelectionPopover.test.tsx`
-- `apps/web/src/__tests__/components/ResourceChatDetail.test.tsx`
+- `apps/web/src/components/chat/QuotedPassageCard.test.tsx`
 - `e2e/tests/quote-attach-references.spec.ts`
 - `e2e/tests/pdf-reader.spec.ts`
 - `e2e/tests/universal-linking.spec.ts`

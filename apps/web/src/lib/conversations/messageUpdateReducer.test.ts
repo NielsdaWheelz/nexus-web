@@ -4,7 +4,9 @@ import {
   type MessageUpdateAction,
 } from "@/lib/conversations/messageUpdateReducer";
 import { conversationMessageText } from "@/lib/conversations/types";
+import { absent, present } from "@/lib/api/presence";
 import type { CitationOut } from "@/lib/conversations/citationOut";
+import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
 import type {
   ChatRunResponse,
   ConversationMessage,
@@ -82,6 +84,31 @@ const citationOut: CitationOut = {
     section_label: "Section",
     result_type: "media",
     summary_md: "A concise source summary.",
+  },
+};
+
+// A decoded reader-quote snapshot as it rides on a server user message.
+const readerSelection: ReaderSelectionOut = {
+  key: {
+    mediaId: "22222222-2222-4222-8222-222222222222",
+    highlightId: "33333333-3333-4333-8333-333333333333",
+  },
+  sourceLabel: "The Source",
+  exact: "quoted text",
+  prefix: "before ",
+  suffix: " after",
+  locator: {
+    type: "epub_fragment_offsets",
+    media_id: "22222222-2222-4222-8222-222222222222",
+    fragment_id: "frag-1",
+    start_offset: 0,
+    end_offset: 11,
+  },
+  activation: {
+    resourceRef: "media:22222222-2222-4222-8222-222222222222",
+    kind: "route",
+    href: "/media/22222222-2222-4222-8222-222222222222",
+    unresolvedReason: null,
   },
 };
 
@@ -349,6 +376,86 @@ describe("messageUpdateReducer", () => {
     });
     expect(next[1].status).toBe("error");
     expect(next[1].trust_trail?.status).toBe("error");
+  });
+
+  it("set_all carries a server user message's reader_selection snapshot", () => {
+    const quoted: ConversationMessage = {
+      ...message("u1", 1, "user", "What does this passage mean?"),
+      reader_selection: present(readerSelection),
+    };
+    const next = messageUpdateReducer(transcript(), {
+      type: "set_all",
+      messages: [quoted, message("a1", 2, "assistant", "", "u1")],
+    });
+    expect(next[0].reader_selection).toEqual(present(readerSelection));
+  });
+
+  it("merge_run_pair preserves the server user message's reader_selection", () => {
+    const run = forkRunData("assistant-1");
+    const runWithQuote: ChatRunResponse["data"] = {
+      ...run,
+      user_message: {
+        ...run.user_message,
+        reader_selection: present(readerSelection),
+      },
+    };
+    const next = messageUpdateReducer(
+      [
+        message("user-1", 1, "user", "Start"),
+        message("assistant-1", 2, "assistant", "First answer", "user-1"),
+      ],
+      {
+        type: "merge_run_pair",
+        run: runWithQuote,
+        idsToReplace: ["fork-user", "fork-assistant"],
+      },
+    );
+    const forkUser = next.find((m) => m.id === "fork-user");
+    expect(forkUser?.reader_selection).toEqual(present(readerSelection));
+  });
+
+  it("seed_optimistic does not fabricate a reader_selection (stays Absent)", () => {
+    const next = messageUpdateReducer([], {
+      type: "seed_optimistic",
+      user: {
+        ...message("u1", 1, "user", "Question"),
+        reader_selection: absent(),
+      },
+      assistant: message("a1", 2, "assistant", "", "u1"),
+    });
+    expect(next[0].reader_selection).toEqual(absent());
+  });
+
+  it("fold_text_delta keeps a sibling user message's reader_selection intact", () => {
+    const quoted: ConversationMessage = {
+      ...message("u1", 1, "user", "Question"),
+      reader_selection: present(readerSelection),
+    };
+    const state = [quoted, message("a1", 2, "assistant", "", "u1")];
+    const next = messageUpdateReducer(state, {
+      type: "fold_text_delta",
+      assistantId: "a1",
+      delta: "Hi",
+    });
+    // The untouched user message keeps referential identity and its snapshot.
+    expect(next[0]).toBe(quoted);
+    expect(next[0].reader_selection).toEqual(present(readerSelection));
+  });
+
+  it("swap_meta_ids re-points ids while preserving the reader_selection", () => {
+    const quoted: ConversationMessage = {
+      ...message("temp-user", 1, "user", "Question"),
+      reader_selection: present(readerSelection),
+    };
+    const next = messageUpdateReducer(
+      [quoted, message("temp-asst", 2, "assistant", "", "temp-user")],
+      {
+        type: "swap_meta_ids",
+        map: [{ tempId: "temp-user", realId: "real-user" }],
+      },
+    );
+    expect(next[0].id).toBe("real-user");
+    expect(next[0].reader_selection).toEqual(present(readerSelection));
   });
 
   it("merge_run_pair delegates to selectedPathAfterRun (fork replace)", () => {

@@ -90,6 +90,8 @@ def render_system_prompt_block() -> str:
         "Any <reader_selection> block is the exact passage the user is currently looking "
         "at and asking about for this turn; it narrows the current question but does "
         "not replace the durable <subject>. "
+        "A <historical_reader_selection> block applies only to the immediately following "
+        "historical user message in the conversation, not to the current turn. "
         "You have three tools for the user's content. "
         "app_search(query=..., scopes=[...]) finds relevant passages across referenced "
         "search-scope resources; omit scopes to search this conversation's context refs. "

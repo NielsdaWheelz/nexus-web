@@ -42,8 +42,8 @@ describe("HighlightActionPopover", () => {
     expect(group).toBeInTheDocument();
     for (const name of [
       "Highlight color",
-      "Quote to new chat",
-      "Quote to existing chat",
+      "Ask in new chat",
+      "Ask in existing chat…",
       "Edit bounds",
       "Delete highlight",
     ]) {

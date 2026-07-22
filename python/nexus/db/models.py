@@ -4166,6 +4166,12 @@ class Message(Base):
         nullable=False,
         server_default=text("""'{"type":"message_document","blocks":[]}'::jsonb"""),
     )
+    # The immutable per-message reader-quote snapshot (quote-to-chat cutover).
+    # Present only on a quoted user message; none_as_null keeps DB NULL (Absent)
+    # distinct from a JSON `null` value, which strict decode rejects.
+    reader_selection_snapshot: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
     parent_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -4223,6 +4229,11 @@ class Message(Base):
         CheckConstraint(
             "jsonb_typeof(message_document) = 'object'",
             name="ck_messages_message_document_object",
+        ),
+        CheckConstraint(
+            "reader_selection_snapshot IS NULL "
+            "OR jsonb_typeof(reader_selection_snapshot) = 'object'",
+            name="ck_messages_reader_selection_snapshot_object",
         ),
         CheckConstraint(
             "(role = 'user' AND parent_message_id IS NULL) "
@@ -4774,12 +4785,6 @@ class ChatRunTurnContext(Base):
         ForeignKey("resource_edges.id", ondelete="SET NULL"),
         nullable=True,
     )
-    reader_selection_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
-    reader_selection_highlight_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4796,11 +4801,7 @@ class ChatRunTurnContext(Base):
             name="ck_chat_run_turn_contexts_subject_pair",
         ),
         CheckConstraint(
-            "(reader_selection_media_id IS NULL) = (reader_selection_highlight_id IS NULL)",
-            name="ck_chat_run_turn_contexts_reader_selection_pair",
-        ),
-        CheckConstraint(
-            "subject_id IS NOT NULL OR reader_selection_highlight_id IS NOT NULL",
+            "subject_id IS NOT NULL",
             name="ck_chat_run_turn_contexts_has_anchor",
         ),
         CheckConstraint(

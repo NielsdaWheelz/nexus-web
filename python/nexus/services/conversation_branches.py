@@ -1118,7 +1118,9 @@ def _message_outs_by_id(
     for message_id, message in messages_by_id.items():
         trust_trail = trust_trails[message_id] if message.role == "assistant" else None
         out = message_to_out(
+            db,
             message,
+            viewer_id=viewer_id,
             can_rerun=message.id in rerunnable_message_ids,
             trust_trail=trust_trail,
             citations=(

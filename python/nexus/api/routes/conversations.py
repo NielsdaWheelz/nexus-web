@@ -45,18 +45,25 @@ def list_conversations(
         default=None,
         description="Filter to conversations with a context edge to this resource URI",
     ),
+    q: str | None = Query(
+        default=None,
+        description="Owned-scope title search (destination picker); composes only with cursor/limit",
+    ),
 ) -> dict:
     """List conversations.
 
-    When ``has_context_ref`` is supplied, returns conversations with any edge to
-    the given resource URI (single-user: viewer-owned only); ``scope`` is ignored
-    in that case. Otherwise lists by visibility scope (mine|all|shared).
+    When ``q`` is supplied, forces owned scope and title-searches; it composes
+    only with cursor/limit and rejects any other scope/context filter. When
+    ``has_context_ref`` is supplied, returns conversations with any edge to the
+    given resource URI (single-user: viewer-owned only); ``scope`` is ignored in
+    that case. Otherwise lists by visibility scope (mine|all|shared).
 
     Returns conversations ordered by updated_at DESC, id DESC.
     Supports cursor-based pagination.
 
     Errors:
-        E_INVALID_REQUEST (400): Invalid scope value or malformed has_context_ref URI.
+        E_INVALID_REQUEST (400): Invalid scope value, malformed has_context_ref
+            URI, or ``q`` combined with another filter / over its length bound.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
     conversations, page = conversations_service.list_conversations(
@@ -66,6 +73,7 @@ def list_conversations(
         cursor=cursor,
         scope=scope,
         has_context_ref=has_context_ref,
+        q=q,
     )
     return ok_page(conversations, page)
 

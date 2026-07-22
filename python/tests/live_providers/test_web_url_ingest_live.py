@@ -128,12 +128,20 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
     assert conversation_response.status_code == 201, conversation_response.text
     conversation_id = conversation_response.json()["data"]["id"]
 
-    stale_context_response = auth_client.post(
+    # The reader-highlight quote-to-chat hard cutover replaced the /chat-runs
+    # request shape: a top-level ``conversation_id`` and a client ``contexts``
+    # array no longer exist. The new schema requires ``destination`` +
+    # ``reader_selection`` and is ``extra="forbid"``, so this pre-cutover body is
+    # rejected outright before any run is created. Client-authored evidence
+    # context is gone, so there is no live "stale evidence" path left to
+    # exercise; the meaningful coverage is that the legacy body shape can never
+    # reach the run pipeline.
+    legacy_chat_run_response = auth_client.post(
         "/chat-runs",
-        headers={**headers, "Idempotency-Key": f"live-provider-web-stale-context-{media_id}"},
+        headers={**headers, "Idempotency-Key": f"live-provider-web-legacy-body-{media_id}"},
         json={
             "conversation_id": conversation_id,
-            "content": "Use this stale evidence.",
+            "content": "Answer using the linked source.",
             "profile_id": "balanced",
             "reasoning_option_id": "none",
             "contexts": [
@@ -146,8 +154,8 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
             ],
         },
     )
-    assert stale_context_response.status_code == 400, stale_context_response.text
-    assert stale_context_response.json()["error"]["code"] == "E_INVALID_REQUEST"
+    assert legacy_chat_run_response.status_code == 400, legacy_chat_run_response.text
+    assert legacy_chat_run_response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     write_trace(
         tmp_path,
@@ -163,6 +171,6 @@ def test_live_web_url_ingest_indexes_real_article_evidence(auth_client, direct_d
             "replacement": replacement_trace,
             "refreshed_evidence": refreshed_evidence_trace,
             "refreshed_search": refreshed_search_trace,
-            "stale_context": stale_context_response.json()["error"],
+            "legacy_chat_run_rejection": legacy_chat_run_response.json()["error"],
         },
     )

@@ -41,7 +41,8 @@ export interface EvidenceHighlightActions {
   isEditingBounds: boolean;
   isReflowable: boolean;
   onFocusHighlight: (highlightId: string) => void;
-  onQuoteToChat: (highlightId: string) => void;
+  onQuoteToNewChat: (highlightId: string) => void;
+  onQuoteToExistingChat: (highlightId: string) => void;
   onLink: (target: HighlightActionTarget) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
@@ -206,10 +207,10 @@ export function EvidenceItemRow({
               }
               onDelete={() => highlightActions.onDelete(highlight.id)}
               onQuoteToNewChat={() =>
-                highlightActions.onQuoteToChat(highlight.id)
+                highlightActions.onQuoteToNewChat(highlight.id)
               }
               onQuoteToExistingChat={() =>
-                highlightActions.onQuoteToChat(highlight.id)
+                highlightActions.onQuoteToExistingChat(highlight.id)
               }
               onToggleEditBounds={() => {
                 if (
