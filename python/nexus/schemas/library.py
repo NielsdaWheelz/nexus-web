@@ -145,13 +145,6 @@ class LibraryEntryOut(BaseModel):
     media: MediaOut | None = None
     podcast: LibraryPodcastOut | None = None
     subscription: LibraryPodcastSubscriptionOut | None = None
-    # Per-entry engagement recency + "surfaced today" lane signal (S3,
-    # collection-surface cutover). `last_engaged_at` is the entry target's most
-    # recent read/listen recency (None when never engaged); `surfaced_today`
-    # evaluates GREATEST(created_at, last_engaged_at, last_connected_at,
-    # published_at) against the viewer-timezone day boundary.
-    surfaced_today: bool = False
-    last_engaged_at: datetime | None = None
     reading_time_estimate: Presence[ReadingTimeEstimateOut] = Field(
         serialization_alias="readingTimeEstimate"
     )

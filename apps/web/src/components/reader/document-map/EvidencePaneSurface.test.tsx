@@ -7,6 +7,7 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type {
   ReaderEvidence,
   ReaderEvidenceHighlight,
+  ReaderEvidenceLink,
   ReaderEvidenceObject,
 } from "@/lib/reader/documentMap";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
@@ -80,6 +81,7 @@ function evidence(): ReaderEvidence {
               start_offset: 1,
               end_offset: 8,
             },
+            passage_anchor_id: null,
           },
           order_key: "document:0001",
         },
@@ -156,7 +158,7 @@ function actions(): EvidenceHighlightActions {
     isReflowable: true,
     onFocusHighlight: vi.fn(),
     onQuoteToChat: vi.fn(),
-    onCite: vi.fn(),
+    onLink: vi.fn(),
     onColorChange: vi.fn(async () => {}),
     onDelete: vi.fn(async () => {}),
     onStartEditBounds: vi.fn(),
@@ -177,6 +179,9 @@ function Harness({
   followGeneration = 0,
   aggregateStatus = "ready",
   activatePassage = vi.fn(() => true),
+  onRemoveLink = vi.fn(),
+  onSaveLinkNote = vi.fn().mockResolvedValue({ note_block_id: "nb-new" }),
+  onDeleteLinkNote = vi.fn().mockResolvedValue(undefined),
 }: {
   source?: ReaderEvidence | null;
   activeItemId?: string | null;
@@ -185,6 +190,13 @@ function Harness({
   activatePassage?: (
     group: ReaderEvidence["passage_groups"][number],
   ) => boolean;
+  onRemoveLink?: (item: ReaderEvidenceLink) => void;
+  onSaveLinkNote?: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  onDeleteLinkNote?: (linkId: string) => Promise<void>;
 }) {
   const filters = useEvidenceFilters();
   return (
@@ -204,6 +216,9 @@ function Harness({
         onActivateSourceTarget={vi.fn()}
         onHoverItem={vi.fn()}
         onDismissSynapse={vi.fn()}
+        onRemoveLink={onRemoveLink}
+        onSaveLinkNote={onSaveLinkNote}
+        onDeleteLinkNote={onDeleteLinkNote}
       />
     </FeedbackProvider>
   );
@@ -408,5 +423,41 @@ describe("EvidencePaneSurface", () => {
     expect(
       screen.queryByRole("button", { name: "Show all" }),
     ).not.toBeInTheDocument();
+  });
+
+  describe("stable user Link controls", () => {
+    it("removes a stable user Link via onRemoveLink with the Link fact", async () => {
+      const onRemoveLink = vi.fn();
+      render(<Harness onRemoveLink={onRemoveLink} />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Remove link Document relation" }),
+      );
+      expect(onRemoveLink).toHaveBeenCalledWith(
+        expect.objectContaining({ edge_id: "edge-l1", kind: "Link" }),
+      );
+    });
+
+    it("toggles a single link-note editor from the Link row", async () => {
+      render(<Harness />);
+      await userEvent.click(
+        screen.getByRole("tab", { name: /Whole document 1/ }),
+      );
+      const noteButton = screen.getByRole("button", {
+        name: "Note on link Document relation",
+      });
+      await userEvent.click(noteButton);
+      expect(
+        screen.getByRole("button", { name: "Done editing note" }),
+      ).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Done editing note" }),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Done editing note" }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

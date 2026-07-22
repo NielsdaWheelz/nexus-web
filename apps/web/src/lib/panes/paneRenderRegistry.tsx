@@ -32,7 +32,6 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   settingsReader: () => import("@/app/(authenticated)/settings/reader/SettingsReaderPaneBody"),
   settingsAppearance: () =>
     import("@/app/(authenticated)/settings/appearance/SettingsAppearancePaneBody"),
-  settingsKeys: () => import("@/app/(authenticated)/settings/keys/SettingsKeysPaneBody"),
   settingsLocalVault: () =>
     import("@/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody"),
   settingsIdentities: () =>

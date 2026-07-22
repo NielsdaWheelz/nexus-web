@@ -340,15 +340,16 @@ class TestIngestYoutubeVideo:
         assert second["reason"] == "already_ready"
         assert calls["count"] == 1, f"expected one transcript fetch, got {calls['count']}"
 
-    def test_reingest_replace_strategy_deletes_anchored_highlight_and_replaces_fragments(
+    def test_reingest_replace_strategy_preserves_highlight_and_replaces_fragments(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
-        # Characterization test pinning the destructive current transcript replacement
-        # side of `write_current_transcript`: a YouTube re-ingest deletes the
-        # media's pre-existing highlights (via the highlight_fragment_anchors join)
-        # and replaces its fragments wholesale. The "preserve_anchors" counterpart is
-        # pinned in test_podcasts.py
-        # (test_retranscription_creates_new_version_without_deleting_old_highlight_anchor).
+        # Highlight Durability (invariant 9): a YouTube re-ingest through
+        # `write_current_transcript` replaces the media's fragments wholesale
+        # but never deletes highlights. The pre-existing highlight survives
+        # with a stale locator cache; because the new transcript's text no
+        # longer contains the authored quote, media-wide reads return it as
+        # visibly unresolved (null locator) rather than deleting it or
+        # painting it at a wrong location.
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
@@ -451,12 +452,12 @@ class TestIngestYoutubeVideo:
             second = run_youtube_video_ingest(session, media_id, user_id)
         assert second["status"] == "success"
 
-        # The pre-existing highlight anchored to a now-deleted fragment is GONE.
+        # The pre-existing highlight SURVIVES the fragment replacement.
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}", headers=auth_headers(user_id)
         )
-        assert highlight_detail.status_code == 404, (
-            "expected the re-ingest 'replace' strategy to delete the anchored highlight, "
+        assert highlight_detail.status_code == 200, (
+            "expected the highlight to survive the re-ingest fragment replacement, "
             f"got {highlight_detail.status_code}: {highlight_detail.text}"
         )
 
@@ -491,5 +492,22 @@ class TestIngestYoutubeVideo:
                 text("SELECT COUNT(*) FROM fragments WHERE id = :fragment_id"),
                 {"fragment_id": first_fragment_id},
             ).scalar()
-        assert anchor_count == 0
+        # The anchor row survives as a stale locator cache; only the fragment
+        # (a replaceable index row) is gone.
+        assert anchor_count == 1
         assert old_fragment_count == 0
+
+        # The quote no longer exists in the beta transcript, so the media-wide
+        # read reports the surviving highlight as unresolved: no locator, never
+        # a wrong location.
+        media_highlights = auth_client.get(
+            f"/media/{media_id}/highlights", headers=auth_headers(user_id)
+        )
+        assert media_highlights.status_code == 200, media_highlights.text
+        rows = media_highlights.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [str(highlight_id)]
+        anchor = rows[0]["anchor"]
+        assert anchor["type"] == "fragment_offsets"
+        assert anchor["fragment_id"] is None
+        assert anchor["start_offset"] is None
+        assert anchor["end_offset"] is None

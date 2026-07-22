@@ -11,14 +11,14 @@ IMPORTANT: Static routes (/libraries/invites) must be registered BEFORE
 dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, ok_page
 from nexus.schemas.library import (
@@ -33,6 +33,7 @@ from nexus.schemas.library import (
     UpdateLibraryRequest,
 )
 from nexus.services import library_entries, library_governance, library_invitations
+from nexus.services.resonance import service as resonance_service
 
 router = APIRouter(tags=["libraries"])
 
@@ -327,42 +328,60 @@ def list_library_entries(
     request: Request,
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     sort: Annotated[
-        library_entries.LibraryEntrySort,
+        Literal["position", "resonance"],
         Query(description="Entry ordering: 'position' (default) or 'resonance'"),
     ] = "position",
-    viewer_tz: Annotated[
-        str,
-        Query(
-            max_length=128,
-            description="IANA timezone used for the surfaced-today boundary",
-        ),
-    ] = "UTC",
 ) -> dict:
     """List ordered entries in a library.
 
     Returns one mixed list of podcasts and media. ``sort='position'`` (default)
-    orders by entry position ASC; ``sort='resonance'`` applies the deterministic
-    recency + connection-count score (no request-time LLM).
+    orders by entry position ASC; ``sort='resonance'`` delegates the
+    deterministic contextual order to Resonance (no request-time model call).
     """
-    if "offset" in request.query_params:
+    if set(request.query_params) - {"limit", "cursor", "sort"}:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
-            "offset pagination is not supported for library entries",
+            "Unsupported library-entry query parameter",
         )
-    result, page = library_entries.list_library_entries(
-        db,
-        viewer.user_id,
-        library_id,
-        limit=limit,
-        cursor=cursor,
-        sort=sort,
-        viewer_timezone=viewer_tz,
-    )
+    if sort == "resonance":
+        result, page = resonance_service.rank_library_entry_page(
+            db,
+            viewer_id=viewer.user_id,
+            library_id=library_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    else:
+        result, page = library_entries.list_library_entries(
+            db,
+            viewer.user_id,
+            library_id,
+            limit=limit,
+            cursor=cursor,
+        )
     return ok_page(result, page, by_alias=True)
+
+
+@router.get("/libraries/{library_id}/slate")
+def get_library_slate(
+    request: Request,
+    library_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
+) -> dict:
+    if request.query_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            "Reading Slate does not accept query parameters",
+        )
+    slate = resonance_service.build_library_slate(
+        db, viewer_id=viewer.user_id, library_id=library_id
+    )
+    return ok(slate, by_alias=True)
 
 
 @router.patch("/libraries/{library_id}/entries/reorder", status_code=204)

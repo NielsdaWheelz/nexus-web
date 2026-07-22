@@ -46,7 +46,7 @@ for key in (
 ):
     os.environ.pop(key, None)
 
-from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus, UserApiKey
+from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
 from nexus.db.session import create_session_factory
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
@@ -54,7 +54,6 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.content_indexing import (
     rebuild_fragment_content_index,
 )
-from nexus.services.crypto import CryptoError, encrypt_api_key
 from nexus.services.epub_ingest import EpubExtractionError
 from nexus.services.epub_metadata import persist_epub_metadata
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -107,7 +106,6 @@ YOUTUBE_TRANSCRIPT_SEGMENTS = [
         "t_end_ms": 17_000,
     },
 ]
-E2E_OPENAI_API_KEY = "sk-e2e-openai-fixture"
 
 
 # EPUB chapter content for deterministic tests
@@ -707,33 +705,6 @@ def _ensure_ai_plus_billing(db, user_id: UUID) -> None:
         reason="E2E seed access",
         actor_label="seed_e2e_data",
     )
-
-
-def _ensure_e2e_openai_key(db, user_id: UUID) -> None:
-    """Seed a deterministic BYOK row for API-key and chat-composer E2E."""
-    key = db.scalar(
-        select(UserApiKey).where(
-            UserApiKey.user_id == user_id,
-            UserApiKey.provider == "openai",
-        )
-    )
-    if key is None:
-        key = UserApiKey(user_id=user_id, provider="openai")
-        db.add(key)
-
-    try:
-        encrypted_key, nonce, version, fingerprint = encrypt_api_key(E2E_OPENAI_API_KEY)
-    except CryptoError as error:
-        raise RuntimeError(
-            "NEXUS_KEY_ENCRYPTION_KEY is required for E2E API-key fixtures"
-        ) from error
-
-    key.encrypted_key = encrypted_key
-    key.key_nonce = nonce
-    key.master_key_version = version
-    key.key_fingerprint = fingerprint
-    key.status = "untested"
-    key.revoked_at = None
 
 
 def _upsert_media_transcript_state(
@@ -1507,7 +1478,6 @@ def main() -> None:
     with session_factory() as db:
         ensure_user_and_default_library(db, user_id, email=E2E_USER_EMAIL)
         _ensure_ai_plus_billing(db, user_id)
-        _ensure_e2e_openai_key(db, user_id)
         init_data = init_upload(
             db=db,
             viewer_id=user_id,

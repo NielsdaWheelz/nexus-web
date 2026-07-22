@@ -138,11 +138,7 @@ export function useChatMessageUpdates({
   );
 
   const handleDone = useCallback(
-    (
-      assistantId: string,
-      status: "complete" | "error" | "cancelled",
-      errorCode: string | null,
-    ) => {
+    (assistantId: string, status: "complete" | "error" | "cancelled") => {
       const buffer = deltaBufferRef.current;
       const remaining = buffer.get(assistantId);
       buffer.delete(assistantId);
@@ -150,7 +146,6 @@ export function useChatMessageUpdates({
         type: "finalize_done",
         assistantId,
         status,
-        errorCode,
         delta: remaining,
       });
     },

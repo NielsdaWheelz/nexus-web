@@ -25,36 +25,137 @@ export interface ConversationListItem {
   updated_at: string;
 }
 
-export interface ConversationModel {
+/** One reasoning option a profile offers (GET /llm-profiles). */
+export interface LlmReasoningOption {
   id: string;
-  provider: string;
-  provider_display_name: string;
-  model_name: string;
-  model_display_name: string;
-  model_tier: "sota" | "light";
-  reasoning_modes: Array<
-    "default" | "none" | "minimal" | "low" | "medium" | "high" | "max"
-  >;
-  max_context_tokens: number;
-  available_via: "byok" | "platform" | "both";
-  provider_rank: number;
-  model_rank: number;
-  is_default: boolean;
-  available_key_modes: Array<"auto" | "byok_only" | "platform_only">;
-  capabilities: {
-    prompt_cache: {
-      mode: "none" | "turn_ttl" | "keyed_ttl";
-      supported: boolean;
-      key_required: boolean;
-      ttl_options: Array<"5m" | "1h">;
-    };
-    streaming: boolean;
-    tool_calling: boolean;
-    structured_output: boolean;
-    structured_output_streaming: boolean;
-    reasoning_continuation: boolean;
-  };
+  label: string;
 }
+
+/**
+ * A product-facing LLM profile (GET /llm-profiles). The browser owns no
+ * provider/model/reasoning enum, ordering, default, capability, key, or
+ * availability policy — it renders exactly what this endpoint returns.
+ * Deliberately has no resolved provider/model field: that pair is an
+ * internal runtime fact, not a selection control (§10).
+ */
+export interface LlmProfile {
+  id: string;
+  label: string;
+  description: string;
+  provider_label: string;
+  model_label: string;
+  reasoning_options: LlmReasoningOption[];
+  default_reasoning_option_id: string;
+  privacy_notice: string;
+}
+
+/** Response schema for GET /llm-profiles. */
+export interface LlmProfilesOut {
+  default_profile_id: string;
+  profiles: LlmProfile[];
+}
+
+// =============================================================================
+// ExpectedChatFailure — mirrors python/nexus/schemas/llm.py EXACTLY.
+//
+// Closed, discriminated union (discriminator `code`) exposed by ChatRunOut,
+// message hydration, terminal SSE, reconnect folding, and the trust trail.
+// A DEFECT (internal error) exposes NO variant — `failure` is null but the
+// run status is terminal-failed with a support_id; render the same generic,
+// non-rerunnable card (see chatFailureMessage in lib/llm/failure.ts).
+// =============================================================================
+
+interface ExpectedChatFailureBase {
+  support_id: string | null;
+  can_rerun: boolean;
+}
+
+/** Streamed Fable refusal (provider_stream) or non-streamed provider refusal
+ * (provider_http). Never rerunnable. */
+export interface RefusedChatFailure extends ExpectedChatFailureBase {
+  code: "refused";
+  origin: "provider_http" | "provider_stream";
+}
+
+/** Provider-declared incomplete completion, or local truncation folded to the
+ * same closed code. */
+export interface IncompleteChatFailure extends ExpectedChatFailureBase {
+  code: "incomplete";
+  origin: "provider_response";
+}
+
+/** Run status `cancelled` alone drives this variant — a cancelled run's error
+ * columns are NULL, so it carries no `origin`. */
+export interface CancelledChatFailure extends ExpectedChatFailureBase {
+  code: "cancelled";
+}
+
+/** Owner-side assembly rejected the intent before generation began (`intent`,
+ * ledgerless), or the provider rejected an in-bound request as oversize
+ * (`provider_http`). */
+export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
+  code: "context_too_large";
+  origin: "intent" | "provider_http";
+}
+
+export interface InvalidToolArgumentsChatFailure extends ExpectedChatFailureBase {
+  code: "invalid_tool_arguments";
+  origin: "tool_arguments";
+}
+
+/** Platform-token-reservation denial. Never rerunnable. */
+export interface BudgetExceededChatFailure extends ExpectedChatFailureBase {
+  code: "budget_exceeded";
+  origin: "budget";
+}
+
+/** Transient: mapped from the runtime's TransientExhausted(cause=
+ * ProviderRateLimit) leaf. */
+export interface RateLimitedChatFailure extends ExpectedChatFailureBase {
+  code: "rate_limited";
+  origin: "provider_http";
+  attempts: number;
+}
+
+/** Transient: mapped from the runtime's TransientExhausted(cause=
+ * ProviderTimeout) leaf. */
+export interface TimeoutChatFailure extends ExpectedChatFailureBase {
+  code: "timeout";
+  origin: "transport";
+  attempts: number;
+}
+
+/** Transient: mapped from either TransientExhausted(cause=
+ * ProviderHttpUnavailable) (provider_http) or TransientExhausted(cause=
+ * TransportUnavailable) (transport). */
+export interface ProviderUnavailableChatFailure extends ExpectedChatFailureBase {
+  code: "provider_unavailable";
+  origin: "provider_http" | "transport";
+  attempts: number;
+}
+
+/** Transient: mapped from TransientExhausted(cause=
+ * ProviderStreamInterrupted), and from crashed/interrupted-run recovery when
+ * provider output existed without a terminal. This is the SERVER-side
+ * variant — distinct from the CLIENT-only ConnectionLostStatusUnknown owned
+ * by useChatRunTail.ts, which is never persisted and never SSE. */
+export interface StreamInterruptedChatFailure extends ExpectedChatFailureBase {
+  code: "stream_interrupted";
+  origin: "provider_stream";
+  attempts: number;
+}
+
+export type ExpectedChatFailure =
+  | RefusedChatFailure
+  | IncompleteChatFailure
+  | CancelledChatFailure
+  | ContextTooLargeChatFailure
+  | InvalidToolArgumentsChatFailure
+  | BudgetExceededChatFailure
+  | RateLimitedChatFailure
+  | TimeoutChatFailure
+  | ProviderUnavailableChatFailure
+  | StreamInterruptedChatFailure;
 
 export interface MessageRetrieval {
   id?: string;
@@ -143,14 +244,15 @@ export interface AssistantTrustTrail {
   status: "pending" | "running" | "complete" | "error" | "cancelled";
   run: {
     run_id: string;
-    model_id: string;
-    provider: string;
-    model_name: string;
-    reasoning_mode: string | null;
-    key_mode: string | null;
+    profile_id: string | null;
+    reasoning_option_id: string | null;
+    provider: string | null;
+    model_name: string | null;
     status: "pending" | "running" | "complete" | "error" | "cancelled";
     usage: Record<string, unknown> | null;
     error_code: string | null;
+    error_origin: string | null;
+    failure: ExpectedChatFailure | null;
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
@@ -244,9 +346,7 @@ export interface ConversationMessage {
    */
   citations?: CitationOut[];
   status: "pending" | "complete" | "error" | "cancelled";
-  error_code: string | null;
-  can_retry_response: boolean;
-  can_resend_response?: boolean;
+  can_rerun: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -381,9 +481,21 @@ export interface ChatRun {
   conversation_id: string;
   user_message_id: string;
   assistant_message_id: string;
-  model_id: string;
-  reasoning: string;
-  key_mode: string;
+  /** Product-selection snapshot taken at creation; null only before the run
+   * record has been fully hydrated. */
+  profile_id: string | null;
+  reasoning_option_id: string | null;
+  /** Resolved operator facts filled in from the plan at execution — null
+   * until then. Not selection controls. */
+  provider: string | null;
+  model_name: string | null;
+  reasoning_effort: string | null;
+  error_origin: string | null;
+  support_id: string | null;
+  /** The one chat_failure_projection read. Null for a run that is not a
+   * card-bearing failure (still running, or a defect with no stored closed
+   * code — render the generic defect card via chatFailureMessage(null)). */
+  failure: ExpectedChatFailure | null;
   cancel_requested_at: string | null;
   started_at: string | null;
   completed_at: string | null;

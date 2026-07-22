@@ -4,8 +4,8 @@
 
 The chat module owns durable, branchable, streamed, retrieval-grounded conversation UX.
 It covers full conversation panes, resource-subject chats, branch replies, context refs,
-assistant-answer selection forks, model/key-mode sends, optimistic run state, retries, and the
-frontend request contract for `/api/chat-runs`.
+assistant-answer selection forks, profile/reasoning-option sends, optimistic run state,
+rerun, and the frontend request contract for `/api/chat-runs`.
 
 Backend owners live under `python/nexus/api/routes/chat_runs.py`,
 `python/nexus/services/chat_run_*`, `python/nexus/services/context_assembler.py`, and
@@ -47,7 +47,7 @@ Hard-cutover specs that govern chat work. Each owns one axis; they compose.
 ## Engine, View, Adapter Split
 
 `useConversation` is the live chat engine. It owns history loading, create-on-send,
-optimistic run lifecycle, run resumption, message updates, retry state, branch state,
+optimistic run lifecycle, run resumption, message updates, rerun state, branch state,
 conversation context refs, and selected leaf/path state. It holds the `messages`
 state as a `useReducer` over `messageUpdateReducer` — there is no raw `setMessages`
 caller.
@@ -98,12 +98,19 @@ jumps. See `docs/cutovers/chat-scroll-anchoring-hard-cutover.md`.
 
 ## Send Path
 
-`ChatComposer` owns user input, model controls, key-mode selection, and send action wiring.
-It does not construct API branch semantics directly.
+`ChatComposer` owns user input, the `ChatProfilePicker` (profile + reasoning
+option controls), and send action wiring. It does not construct API branch
+semantics directly.
 
-`ModelSettingsPopover` owns model-settings presentation. Desktop is an anchored
-popover; the mobile path presents through the shared `MobileSheet` primitive
-(see `docs/modules/overlays.md`).
+`useChatProfiles` fetches `GET /api/llm-profiles` (module-scope cached across
+mounted composers) and exposes `{ profiles, defaultProfileId, isLoading,
+error }`. `ChatProfilePicker` is a controlled component
+(`{ value: ProfileSelection | null; onChange; disabled? }` where
+`ProfileSelection = { profileId, reasoningOptionId }`); it emits a corrected
+default selection whenever the current value isn't valid against the loaded
+profiles, and renders the selected profile's `privacy_notice`. The browser
+owns no provider/model/reasoning enum, ordering, default, capability, key, or
+availability policy — see [modules/llms.md](llms.md).
 
 `buildChatRunBody` is the single frontend request-body assembler. It decides:
 
@@ -111,46 +118,54 @@ popover; the mobile path presents through the shared `MobileSheet` primitive
 - `branch_anchor`
 - `chat_subject`
 - `reader_selection`
-- `key_mode`
+- `profile_id` / `reasoning_option_id`
 
 Branch drafts win over plain continuation replies. Plain continuation replies become
 `assistant_message` anchors. Fresh first turns send `{ kind: "none" }`.
 
-## Retry vs Resend
+## Failure card and rerun
 
-Chat has two explicit recovery operations for terminal assistant rows:
+`ChatFailureCard` is the only failure renderer, in two modes:
 
-- `POST /messages/{assistant_message_id}/retry` is the narrow retry operation.
-  It accepts only failed assistant messages whose source run ended in `error`
-  with a retryable chat error code (`E_INTERNAL`, transient LLM/provider/rate
-  limiter failures, or `E_LLM_INTERRUPTED`). It preserves the original prompt,
-  model, reasoning, key mode, branch metadata, and turn context, but creates a
-  new user/assistant pair and a new queued `chat_run`; it never mutates the
-  failed assistant row.
-- `POST /messages/{assistant_message_id}/resend` is the broad resend operation.
-  It accepts failed or `cancelled` assistant messages whose source run is
-  terminal `error` or `cancelled`, including nonretryable provider rejections
-  such as `E_LLM_BAD_REQUEST`. It reconstructs the same send into a new
-  user/assistant pair and queued run with the original run settings and turn
-  context.
+- `{ failure: ExpectedChatFailure | null; canRerun?; onRerun?; rerunning? }` —
+  copy comes from the exhaustive `chatFailureMessage(failure)` helper
+  (`lib/llm/failure.ts`), a `switch` over `failure.code` with a compile-time
+  `never` exhaustiveness guard; shows an optional `Support ID`; shows a
+  **Run again** action iff `canRerun && onRerun`. `failure === null` (a defect
+  with no stored closed code, or a still-healthy fold) renders the generic
+  non-leaking copy.
+- `{ mode: "reconnect"; onReconnect }` — fixed **Reconnect** copy and action;
+  never calls `/rerun`.
 
-Use retry for transient failures that the product already classifies as
-retryable. Use resend after an operator or deploy fix for terminal nonretryable
-failures, and for explicit cancellations the user wants to run again. OpenAI
-400s caused by strict tool or structured-output schema incompatibilities are
-resend recovery cases after the provider-runtime/schema fix is deployed; the old
-assistant message remains a terminal diagnostic artifact.
+At most one action ever renders. `ExpectedChatFailure` is the closed,
+discriminated union (`code` as the tag) mirroring
+`python/nexus/schemas/llm.py`; see [modules/llms.md](llms.md) for the ten
+variants, their valid origins, and the `chat_failure_projection`/
+`rerun_eligibility` policy that produces them.
 
-The backend owns these row capabilities: `can_retry_response` and
-`can_resend_response` are serialized on `MessageOut` after checking the
-persisted source run. The frontend must not infer resendability from local
-terminal UI state alone; client-side stream interruptions still tell the user to
-reload/reconcile rather than cloning a run that may not be terminal in the DB.
+`POST /messages/{assistant_message_id}/rerun` is the sole recovery route,
+proxied by the sole BFF route
+`app/api/messages/[messageId]/rerun/route.ts`. It creates one new durable run
+from the source prompt and its stored profile selection; a retired,
+uncertified, or changed profile, or any prior attempted write-tool call on the
+source run, makes `can_rerun=false`. It is idempotent under the normal
+`Idempotency-Key`: replaying the same key returns the existing replacement
+run. There is no separate retry/resend pair, no model picker on rerun, and no
+key mode.
 
-Both operations are idempotent under their `Idempotency-Key` and operation
-payload. Replaying the same key returns the existing replacement run; reusing a
-key for a different failed/cancelled assistant message or operation is a replay
-mismatch.
+## Connection lost, status unknown
+
+`ConnectionLostStatusUnknown { run_id, last_cursor }` is a client-only state
+owned by `useChatRunTail.ts` — never persisted on a message/run, never an SSE
+event, and never mapped to a server failure. On a dropped stream the hook
+first reconciles run status (`GET /api/chat-runs/{id}`); only if that doesn't
+confirm a terminal status does it mark the connection lost. During a bounded
+automatic-reconnect budget (`CHAT_STREAM_MAX_RECONNECTS`, backoff with
+jitter) the UI retains partial text and shows a quiet reconnecting state.
+After that budget, `ChatFailureCard`'s reconnect mode renders. Reconnecting
+resumes from `last_cursor` and never calls `/rerun`. Any rehydrated server
+state replaces the local card, so it can't coexist with a terminal failure
+card.
 
 ## Branch Drafts And Anchors
 

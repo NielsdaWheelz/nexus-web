@@ -659,3 +659,64 @@ jobs:
           path: test-results/live-providers/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Protected release-promotion gate for the LLM provider-runtime hard cutover
+  # (docs/cutovers/llm-provider-runtime-hard-cutover.md §14). Unlike the
+  # `test-live-providers` job above — which soft-skips when secrets are absent so
+  # ordinary deterministic PR CI never claims paid-live success — this job runs
+  # ONLY on promotion (push to main), behind the protected `llm-live-certification`
+  # environment (same environment-gating pattern as android-release.yml), and it
+  # FAILS CLOSED: `make certify-llm-providers` refuses to run (exit 1) when any
+  # required direct/OpenRouter credential or the Fable retention assertion is
+  # missing, and runs the full UNFILTERED provider matrix otherwise. PRs never
+  # execute this job, so a normal PR build is not, and does not claim to be,
+  # paid-live proof; a promotable artifact requires this current certification.
+  certify-llm-providers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: test-provider-runtime
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: llm-live-certification
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      NEXUS_FABLE_RETENTION_ACCEPTED_AT: ${{ secrets.NEXUS_FABLE_RETENTION_ACCEPTED_AT }}
+      LLM_CALLING_DIR: llm-calling
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve provider-runtime revision
+        id: provider-runtime
+        run: |
+          rev="$(sed -n 's/^provider-runtime.*rev = "\([0-9a-f]*\)".*/\1/p' python/pyproject.toml)"
+          if [ -z "$rev" ]; then
+            echo "::error title=Missing provider-runtime pin::python/pyproject.toml does not pin provider-runtime by git rev."
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Check out provider-runtime
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: NielsdaWheelz/llm-calling
+          ref: ${{ steps.provider-runtime.outputs.rev }}
+          path: llm-calling
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: llm-calling/uv.lock
+
+      - name: Certify LLM providers (unfiltered paid matrix; fails closed on missing live secrets)
+        run: make certify-llm-providers

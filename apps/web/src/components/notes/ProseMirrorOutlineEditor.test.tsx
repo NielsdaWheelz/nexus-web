@@ -3,7 +3,6 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { Component, type ReactNode } from "react";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
-import type { HydratedObjectRef } from "@/lib/objectRefs";
 import ProseMirrorOutlineEditor from "./ProseMirrorOutlineEditor";
 
 class DefectBoundary extends Component<
@@ -658,228 +657,219 @@ describe("ProseMirrorOutlineEditor object refs", () => {
   it("leaves typed tag resource refs as text", async () => {
     const user = userEvent.setup();
     const tagId = "77777777-7777-4777-8777-777777777777";
+    const { spy } = mockTargetSearch(() => []);
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:tag-object-ref"
-        initialDoc={emptyDoc()}
-        searchObjects={async () => []}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:tag-object-ref"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard(`[[[[tag:${tagId}|#sota]]`);
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard(`[[[[tag:${tagId}|#sota]]`);
 
-    expect(screen.queryByRole("link", { name: "Open #sota" })).toBeNull();
-    expect(editor).toHaveTextContent(`[[tag:${tagId}|#sota]]`);
+      expect(screen.queryByRole("link", { name: "Open #sota" })).toBeNull();
+      expect(editor).toHaveTextContent(`[[tag:${tagId}|#sota]]`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("inserts object refs from @ autocomplete", async () => {
     const user = userEvent.setup();
     const objectId = "22222222-2222-4222-8222-222222222222";
-    const searchObjects = vi.fn(
-      async (): Promise<HydratedObjectRef[]> => [
-        {
-          objectType: "media",
-          objectId,
-          label: "Evergreen Source",
-          route: `/media/${objectId}`,
-        },
-      ],
-    );
+    const { spy, requests } = mockTargetSearch(() => [
+      resourceTarget("media", objectId, "Evergreen Source"),
+    ]);
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:autocomplete"
-        initialDoc={emptyDoc()}
-        searchObjects={searchObjects}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:autocomplete"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard("@Evergreen");
-    const option = await screen.findByRole("option", {
-      name: /Evergreen Source/,
-    });
-    expect(editor).toHaveAttribute("aria-expanded", "true");
-    expect(editor).toHaveAttribute("aria-controls");
-    expect(editor).toHaveAttribute("aria-activedescendant", option.id);
-    await user.click(option);
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("@Evergreen");
+      const option = await screen.findByRole("option", {
+        name: /Evergreen Source/,
+      });
+      await waitFor(() => {
+        expect(editor).toHaveAttribute("aria-activedescendant", option.id);
+      });
+      expect(editor).toHaveAttribute("aria-expanded", "true");
+      expect(editor).toHaveAttribute("aria-controls");
+      await user.click(option);
 
-    await screen.findByRole("link", { name: "Open Evergreen Source" });
-    await waitFor(() => {
-      expect(searchObjects).toHaveBeenLastCalledWith("Evergreen", {});
-    });
+      await screen.findByRole("link", { name: "Open Evergreen Source" });
+      await waitFor(() => {
+        expect(requests.at(-1)).toMatchObject({
+          q: "Evergreen",
+          purpose: "reference",
+        });
+        expect(requests.at(-1)?.schemes).toBeUndefined();
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("inserts page and note refs from [[ autocomplete", async () => {
     const user = userEvent.setup();
     const pageId = "44444444-4444-4444-8444-444444444444";
     const noteBlockId = "55555555-5555-4555-8555-555555555555";
-    const mediaId = "66666666-6666-4666-8666-666666666666";
-    const searchObjects = vi.fn(
-      async (): Promise<HydratedObjectRef[]> => [
-        {
-          objectType: "media",
-          objectId: mediaId,
-          label: "Evergreen Media",
-          route: `/media/${mediaId}`,
-        },
-        {
-          objectType: "page",
-          objectId: pageId,
-          label: "Evergreen Page",
-          route: `/pages/${pageId}`,
-        },
-        {
-          objectType: "note_block",
-          objectId: noteBlockId,
-          label: "Evergreen Note",
-          route: `/notes/${noteBlockId}`,
-        },
-      ],
+    // The `[[` trigger constrains schemes server-side, so the target-search
+    // response only ever contains page / note_block rows for this path.
+    const { spy, requests } = mockTargetSearch((body) =>
+      Array.isArray(body.schemes)
+        ? [
+            resourceTarget("page", pageId, "Evergreen Page"),
+            resourceTarget("note_block", noteBlockId, "Evergreen Note"),
+          ]
+        : [],
     );
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:page-autocomplete"
-        initialDoc={emptyDoc()}
-        searchObjects={searchObjects}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:page-autocomplete"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard("[[[[Evergreen");
-    const option = await screen.findByRole("option", {
-      name: /Evergreen Page/,
-    });
-
-    expect(
-      screen.queryByRole("option", { name: /Evergreen Media/ }),
-    ).toBeNull();
-
-    await user.click(option);
-
-    await screen.findByRole("link", { name: "Open Evergreen Page" });
-    await waitFor(() => {
-      expect(searchObjects).toHaveBeenLastCalledWith("Evergreen", {
-        objectTypes: ["page", "note_block"],
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("[[[[Evergreen");
+      const option = await screen.findByRole("option", {
+        name: /Evergreen Page/,
       });
-    });
+
+      expect(
+        screen.queryByRole("option", { name: /Evergreen Media/ }),
+      ).toBeNull();
+
+      await user.click(option);
+
+      await screen.findByRole("link", { name: "Open Evergreen Page" });
+      await waitFor(() => {
+        expect(requests.at(-1)).toMatchObject({
+          q: "Evergreen",
+          purpose: "reference",
+          schemes: ["page", "note_block"],
+        });
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("keeps hashtags as text without opening autocomplete", async () => {
     const user = userEvent.setup();
-    const searchObjects = vi.fn(async (): Promise<HydratedObjectRef[]> => []);
+    const { spy, requests } = mockTargetSearch(() => []);
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:tag-autocomplete"
-        initialDoc={emptyDoc()}
-        searchObjects={searchObjects}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:tag-autocomplete"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard("#sot");
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("#sot");
 
-    expect(searchObjects).not.toHaveBeenCalled();
-    expect(screen.queryByRole("option")).toBeNull();
-    expect(editor).toHaveTextContent("#sot");
+      expect(requests).toHaveLength(0);
+      expect(screen.queryByRole("option")).toBeNull();
+      expect(editor).toHaveTextContent("#sot");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("opens object ref autocomplete for selected text with Mod+K", async () => {
     const user = userEvent.setup();
     const objectId = "33333333-3333-4333-8333-333333333333";
-    const searchObjects = vi.fn(
-      async (): Promise<HydratedObjectRef[]> => [
-        {
-          objectType: "page",
-          objectId,
-          label: "Evergreen Page",
-          route: `/pages/${objectId}`,
-        },
-      ],
-    );
+    const { spy, requests } = mockTargetSearch(() => [
+      resourceTarget("page", objectId, "Evergreen Page"),
+    ]);
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:selection-autocomplete"
-        initialDoc={emptyDoc()}
-        searchObjects={searchObjects}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:selection-autocomplete"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard("Evergreen");
-    await user.keyboard("{Shift>}");
-    for (let index = 0; index < "Evergreen".length; index += 1) {
-      await user.keyboard("{ArrowLeft}");
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("Evergreen");
+      await user.keyboard("{Shift>}");
+      for (let index = 0; index < "Evergreen".length; index += 1) {
+        await user.keyboard("{ArrowLeft}");
+      }
+      await user.keyboard("{/Shift}");
+
+      fireEvent.keyDown(editor, { key: "k", metaKey: true });
+      const option = await screen.findByRole("option", {
+        name: /Evergreen Page/,
+      });
+      await user.click(option);
+
+      await screen.findByRole("link", { name: "Open Evergreen Page" });
+      await waitFor(() => {
+        expect(requests.at(-1)).toMatchObject({
+          q: "Evergreen",
+          purpose: "reference",
+        });
+      });
+    } finally {
+      spy.mockRestore();
     }
-    await user.keyboard("{/Shift}");
-
-    fireEvent.keyDown(editor, { key: "k", metaKey: true });
-    const option = await screen.findByRole("option", {
-      name: /Evergreen Page/,
-    });
-    await user.click(option);
-
-    await screen.findByRole("link", { name: "Open Evergreen Page" });
-    await waitFor(() => {
-      expect(searchObjects).toHaveBeenLastCalledWith("Evergreen", {});
-    });
   });
 
   it("keeps focus in the editor and inserts the active autocomplete option from the keyboard", async () => {
     const user = userEvent.setup();
     const firstId = "88888888-8888-4888-8888-888888888888";
     const secondId = "99999999-9999-4999-8999-999999999999";
-    const searchObjects = vi.fn(
-      async (): Promise<HydratedObjectRef[]> => [
-        {
-          objectType: "page",
-          objectId: firstId,
-          label: "Evergreen First",
-          route: `/pages/${firstId}`,
-        },
-        {
-          objectType: "page",
-          objectId: secondId,
-          label: "Evergreen Second",
-          route: `/pages/${secondId}`,
-        },
-      ],
-    );
+    const { spy } = mockTargetSearch(() => [
+      resourceTarget("page", firstId, "Evergreen First"),
+      resourceTarget("page", secondId, "Evergreen Second"),
+    ]);
 
-    render(
-      <ProseMirrorOutlineEditor
-        resourceKey="test:keyboard-autocomplete"
-        initialDoc={emptyDoc()}
-        searchObjects={searchObjects}
-      />,
-    );
+    try {
+      render(
+        <ProseMirrorOutlineEditor
+          resourceKey="test:keyboard-autocomplete"
+          initialDoc={emptyDoc()}
+        />,
+      );
 
-    const editor = screen.getByRole("textbox", { name: "Notes outline" });
-    await user.click(editor);
-    await user.keyboard("@Evergreen");
-    const second = await screen.findByRole("option", {
-      name: /Evergreen Second/,
-    });
+      const editor = screen.getByRole("textbox", { name: "Notes outline" });
+      await user.click(editor);
+      await user.keyboard("@Evergreen");
+      const second = await screen.findByRole("option", {
+        name: /Evergreen Second/,
+      });
 
-    await user.keyboard("{ArrowDown}{Enter}");
+      await user.keyboard("{ArrowDown}{Enter}");
 
-    await screen.findByRole("link", { name: "Open Evergreen Second" });
-    expect(editor).toHaveFocus();
-    expect(
-      screen.queryByRole("option", { name: /Evergreen First/ }),
-    ).toBeNull();
-    expect(editor).toHaveAttribute("aria-expanded", "false");
-    expect(second.id).toContain(secondId);
+      await screen.findByRole("link", { name: "Open Evergreen Second" });
+      expect(editor).toHaveFocus();
+      expect(
+        screen.queryByRole("option", { name: /Evergreen First/ }),
+      ).toBeNull();
+      expect(editor).toHaveAttribute("aria-expanded", "false");
+      expect(second.id).toContain(secondId);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("keeps the live editor doc when parent props echo a new snapshot for the same resource", async () => {
@@ -971,6 +961,55 @@ function jsonResponse(data: unknown, init?: ResponseInit): Response {
     status: init?.status ?? 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/** A wire-shape `ResourceTargetResource` row for the target-search response. */
+function resourceTarget(scheme: string, id: string, label: string) {
+  const ref = `${scheme}:${id}`;
+  return {
+    kind: "resource",
+    existingLinkId: null,
+    item: {
+      ref,
+      scheme,
+      id,
+      label,
+      summary: "",
+      route: `/open/${id}`,
+      activation: {
+        resourceRef: ref,
+        kind: "route",
+        href: `/open/${id}`,
+        unresolvedReason: null,
+      },
+      missing: false,
+      capabilities: { userRelation: {} },
+      versionByLane: {},
+    },
+  };
+}
+
+/** Stub `POST /api/resource-items/targets/search`, returning the rows chosen by
+ * `targetsFor` for each request and recording the parsed request bodies. */
+function mockTargetSearch(
+  targetsFor: (body: Record<string, unknown>) => unknown[],
+) {
+  const requests: Record<string, unknown>[] = [];
+  const spy = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/resource-items/targets/search") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(body);
+        return jsonResponse({ data: { targets: targetsFor(body) } });
+      }
+      return jsonResponse({ data: {} }, { status: 404 });
+    });
+  return { spy, requests };
 }
 
 function dropFile(target: HTMLElement, file: File) {

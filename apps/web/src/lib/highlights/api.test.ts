@@ -16,8 +16,8 @@ function highlight(
   id: string,
   noteIds: string[] = [],
   overrides: Partial<{
-    start: number;
-    end: number;
+    start: number | null;
+    end: number | null;
     created_at: string;
   }> = {},
 ): Highlight {
@@ -27,8 +27,8 @@ function highlight(
       type: "fragment_offsets",
       media_id: "media-1",
       fragment_id: "fragment-1",
-      start_offset: overrides.start ?? 0,
-      end_offset: overrides.end ?? 10,
+      start_offset: "start" in overrides ? overrides.start ?? null : 0,
+      end_offset: "end" in overrides ? overrides.end ?? null : 10,
     },
     color: "yellow",
     exact: "quote",
@@ -174,6 +174,36 @@ describe("upsertHighlightSorted", () => {
       "z",
       "a",
       "m",
+    ]);
+  });
+
+  it("sorts an unresolved highlight (null anchor offsets) after every resolved one", () => {
+    const resolved = highlight("resolved", [], { start: 0, end: 5 });
+    const unresolved = highlight("unresolved", [], { start: null, end: null });
+
+    expect(
+      upsertHighlightSorted([resolved], unresolved).map((h) => h.id),
+    ).toEqual(["resolved", "unresolved"]);
+    expect(
+      upsertHighlightSorted([unresolved], resolved).map((h) => h.id),
+    ).toEqual(["resolved", "unresolved"]);
+  });
+
+  it("breaks a tie between two unresolved highlights by created_at, then id", () => {
+    const earlier = highlight("z", [], {
+      start: null,
+      end: null,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const later = highlight("a", [], {
+      start: null,
+      end: null,
+      created_at: "2026-02-01T00:00:00Z",
+    });
+
+    expect(upsertHighlightSorted([later], earlier).map((h) => h.id)).toEqual([
+      "z",
+      "a",
     ]);
   });
 });

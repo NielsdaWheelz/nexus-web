@@ -12,8 +12,7 @@ import type {
 
 const base = {
   status: "complete",
-  error_code: null,
-  can_retry_response: false,
+  can_rerun: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
@@ -95,9 +94,14 @@ function forkRunData(parentMessageId: string): ChatRunResponse["data"] {
       conversation_id: "conversation-1",
       user_message_id: user.id,
       assistant_message_id: "fork-assistant",
-      model_id: "model-1",
-      reasoning: "default",
-      key_mode: "auto",
+      profile_id: "profile-1",
+      reasoning_option_id: "reasoning-default",
+      provider: null,
+      model_name: null,
+      reasoning_effort: null,
+      error_origin: null,
+      support_id: null,
+      failure: null,
       cancel_requested_at: null,
       started_at: null,
       completed_at: null,
@@ -330,7 +334,6 @@ describe("messageUpdateReducer", () => {
       type: "finalize_done",
       assistantId: "a1",
       status: "complete",
-      errorCode: null,
       delta: " done.",
     });
     expect(conversationMessageText(next[1])).toBe("Answer done.");
@@ -338,15 +341,14 @@ describe("messageUpdateReducer", () => {
     expect(next[1].trust_trail?.status).toBe("complete");
   });
 
-  it("finalize_done propagates an error code", () => {
+  it("finalize_done stamps a terminal error status on the message and trail", () => {
     const next = only({
       type: "finalize_done",
       assistantId: "a1",
       status: "error",
-      errorCode: "E_STREAM_INTERRUPTED",
     });
     expect(next[1].status).toBe("error");
-    expect(next[1].error_code).toBe("E_STREAM_INTERRUPTED");
+    expect(next[1].trust_trail?.status).toBe("error");
   });
 
   it("merge_run_pair delegates to selectedPathAfterRun (fork replace)", () => {

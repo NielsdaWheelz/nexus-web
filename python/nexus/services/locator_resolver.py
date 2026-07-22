@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
+from nexus.services import text_quote
+from nexus.services.text_quote import QuoteStatus
 
 ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
 
@@ -21,6 +23,135 @@ class LocatorResolution:
     params: dict[str, str]
     status: ResolverStatus
     highlight: dict[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class PassageSelectorResolution:
+    """Live resolution of a passage-anchor quote within its owner.
+
+    ``prefix``/``suffix`` are the recomputed 64-normalized-scalar context
+    windows and ``locator`` a current locator-hint-shaped dict, both set only
+    when the quote resolves uniquely. Ambiguity/no-match is explicit — never
+    first-occurrence, and locator hints never disambiguate identity.
+    """
+
+    status: QuoteStatus
+    prefix: str
+    suffix: str
+    locator: dict[str, Any] | None
+
+
+def resolve_passage_selector(
+    db: Session,
+    *,
+    owner_scheme: str,
+    owner_id: UUID,
+    exact: str,
+    prefix: str = "",
+    suffix: str = "",
+    locator_hint: dict[str, Any] | None = None,
+    sources_cache: text_quote.MediaSourceCache | None = None,
+) -> PassageSelectorResolution:
+    """Resolve a normalized passage quote against its owner's CURRENT text.
+
+    Quote identity (``exact``/``prefix``/``suffix``, already normalized) is
+    matched by the shared unique/ambiguous/no-match matchers; the replaceable
+    ``locator_hint`` only contributes presentation geometry the text match
+    cannot recompute (PDF quads, time range), and only when consistent with
+    the unique match. No status is persisted. ``sources_cache`` memoizes the
+    owner-media fetch+normalize across quotes that share one owner.
+    """
+    if not exact:
+        return PassageSelectorResolution(QuoteStatus.empty_exact, "", "", None)
+    hint: dict[str, Any] = locator_hint if isinstance(locator_hint, dict) else {}
+
+    if owner_scheme == "media":
+        kind = db.execute(
+            text("SELECT kind FROM media WHERE id = :media_id"), {"media_id": owner_id}
+        ).scalar()
+        if kind is None:
+            return PassageSelectorResolution(QuoteStatus.no_match, "", "", None)
+        if kind == "pdf":
+            return _resolve_pdf_passage(
+                db, media_id=owner_id, exact=exact, prefix=prefix, suffix=suffix, hint=hint
+            )
+
+    match = text_quote.resolve_owner_quote(
+        db,
+        owner_scheme=owner_scheme,
+        owner_id=owner_id,
+        exact=exact,
+        prefix=prefix,
+        suffix=suffix,
+        sources_cache=sources_cache,
+    )
+    if match.status is not QuoteStatus.unique:
+        return PassageSelectorResolution(match.status, "", "", None)
+
+    locator: dict[str, Any]
+    if owner_scheme == "note_block":
+        locator = {"kind": "text", "start_offset": match.raw_start, "end_offset": match.raw_end}
+    elif hint.get("kind") == "time" and match.t_start_ms is not None:
+        # Times are recomputed from the matched fragment, not trusted from the hint.
+        locator = {"kind": "time", "t_start_ms": match.t_start_ms, "t_end_ms": match.t_end_ms}
+    else:
+        locator = {
+            "kind": "text",
+            "fragment_id": str(match.fragment_id),
+            "start_offset": match.raw_start,
+            "end_offset": match.raw_end,
+        }
+    return PassageSelectorResolution(QuoteStatus.unique, match.prefix, match.suffix, locator)
+
+
+def _resolve_pdf_passage(
+    db: Session,
+    *,
+    media_id: UUID,
+    exact: str,
+    prefix: str,
+    suffix: str,
+    hint: dict[str, Any],
+) -> PassageSelectorResolution:
+    plain_text = db.execute(
+        text("SELECT plain_text FROM media WHERE id = :media_id"), {"media_id": media_id}
+    ).scalar()
+    normalized = text_quote.normalize_for_match(plain_text or "")
+    candidates = text_quote.find_quote_candidates(
+        normalized, exact=exact, prefix=prefix, suffix=suffix
+    )
+    if len(candidates) > 1:
+        return PassageSelectorResolution(QuoteStatus.ambiguous, "", "", None)
+    if not candidates:
+        return PassageSelectorResolution(QuoteStatus.no_match, "", "", None)
+
+    hit = candidates[0]
+    context_prefix, context_suffix = text_quote.context_window(
+        normalized, start=hit.normalized_start, end=hit.normalized_end
+    )
+    page_number = db.execute(
+        text(
+            """
+            SELECT page_number FROM pdf_page_text_spans
+            WHERE media_id = :media_id
+              AND start_offset <= :offset AND :offset < end_offset
+            ORDER BY page_number
+            LIMIT 1
+            """
+        ),
+        {"media_id": media_id, "offset": hit.raw_start},
+    ).scalar()
+
+    locator: dict[str, Any] | None = None
+    if page_number is not None:
+        locator = {"kind": "pdf", "page_number": int(page_number)}
+        if (
+            hint.get("kind") == "pdf"
+            and hint.get("page_number") == int(page_number)
+            and isinstance(hint.get("quads"), list)
+        ):
+            locator["quads"] = hint["quads"]
+    return PassageSelectorResolution(QuoteStatus.unique, context_prefix, context_suffix, locator)
 
 
 def resolve_evidence_span(

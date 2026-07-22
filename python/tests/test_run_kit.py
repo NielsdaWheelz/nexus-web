@@ -16,7 +16,6 @@ from tests.factories import (
     create_test_conversation_with_message,
     create_test_library,
     create_test_message,
-    create_test_model,
 )
 
 pytestmark = pytest.mark.integration
@@ -31,7 +30,6 @@ def _insert_user(db) -> UUID:
 
 def _running_chat_run(db) -> ChatRun:
     user_id = _insert_user(db)
-    model_id = create_test_model(db)
     conversation_id, user_message_id = create_test_conversation_with_message(db, user_id)
     assistant_message_id = create_test_message(
         db, conversation_id, seq=2, role="assistant", content="", status="pending"
@@ -45,9 +43,8 @@ def _running_chat_run(db) -> ChatRun:
         idempotency_key=f"run-kit-{uuid4()}",
         payload_hash="hash",
         status="running",
-        model_id=model_id,
-        reasoning="none",
-        key_mode="auto",
+        profile_id="balanced",
+        reasoning_option_id="medium",
     )
     db.add(run)
     db.flush()
@@ -177,14 +174,14 @@ def test_mark_terminal_stamps_error_pair_on_li_revision(db_session):
         stream=run_kit.artifact_revision_stream(revision),
         status="failed",
         done_payload={"error": "llm_failure"},
-        error_code="E_LLM_TIMEOUT",
-        error_detail="ModelCallError: took too long",
+        error_code="timeout",
+        error_detail="took too long",
     )
 
     assert (revision.status, revision.error_code, revision.error_detail) == (
         "failed",
-        "E_LLM_TIMEOUT",
-        "ModelCallError: took too long",
+        "timeout",
+        "took too long",
     )
     assert revision.completed_at is not None
 

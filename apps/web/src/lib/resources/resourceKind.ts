@@ -25,13 +25,11 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
-import type { ObjectType } from "@/lib/objectRefs";
 import {
   isResourceScheme,
   parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
-import { resourceSchemeIsLinkable } from "./resourceCapabilities.generated";
 
 const RESOURCE_SCHEME_ICONS = {
   media: FileText,
@@ -52,13 +50,8 @@ const RESOURCE_SCHEME_ICONS = {
   contributor: User,
   podcast: Disc3,
   reader_apparatus_item: NotebookTabs,
+  passage_anchor: TextQuote,
 } satisfies Record<ResourceScheme, LucideIcon>;
-
-export function resourceObjectTypeForScheme(
-  scheme: ResourceScheme,
-): ObjectType | null {
-  return resourceSchemeIsLinkable(scheme) ? scheme : null;
-}
 
 export function resourceIconForUri(resourceRef: string): LucideIcon {
   const parsed = parseResourceRef(resourceRef);

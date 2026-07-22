@@ -16,8 +16,8 @@ gesture away on desktop and mobile.
 - **Desktop and mobile share one model.** The rail and sheet differ only where
   their containers require different interaction mechanics.
 - **Fixed navigation is not customizable.** Pinning is not part of this
-  contract. Personalized retrieval belongs in Lectern recents and the Launcher,
-  where it can scale without destabilizing spatial memory.
+  contract. Personalized retrieval belongs in the Lectern Reading Slate and the
+  Launcher, where it can scale without destabilizing spatial memory.
 
 Account, Add, and Launcher controls are shell actions outside the ordered
 destination list. Search, Authors, settings subpages, and other valid

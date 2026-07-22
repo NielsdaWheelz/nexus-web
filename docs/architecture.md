@@ -104,7 +104,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / OpenRouter / Cloudflare (LLM + embeddings),
+   External: OpenAI / Anthropic / Gemini / Moonshot (LLM; OpenAI also
+             embeddings + transcription); OpenRouter is a hidden, uncertified
+             operator route only — no product profile targets it,
              Brave (web search), Podcast Index, Deepgram, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
@@ -328,10 +330,11 @@ hashes, fingerprints, or supersession chains.
 
 The tables group into these domains:
 
-**Identity / auth / sessions** — `users` (PK = Supabase `sub`), `user_api_keys`
-(encrypted BYOK), `billing_accounts`, `billing_entitlement_overrides` (+events),
+**Identity / auth / sessions** — `users` (PK = Supabase `sub`),
+`billing_accounts`, `billing_entitlement_overrides` (+events),
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
-`reader_profiles`, `workspace_sessions`, `command_palette_usages`.
+`reader_profiles`, `workspace_sessions`, `command_palette_usages`. LLM access
+runs on platform credentials only — there is no per-user key table.
 
 **Media / ingestion** — `media` (the central readable entity; PDF `plain_text`
 has a same-row STORED `plain_text_word_count` derivative), `media_file` (private
@@ -352,9 +355,19 @@ The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
 `object_search` substrate.
 
-**Highlights** — `highlights` (base row + the exact/prefix/suffix triple),
-`highlight_fragment_anchors` (codepoint ranges), `highlight_pdf_anchors` +
-`highlight_pdf_quads` (page-space geometry).
+**Highlights & passage anchors** — `highlights` (base row + the
+exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
+`fragment_id` is a disposable locator cache, not an FK — a missing fragment is
+detected by LEFT JOIN and re-resolved by quote, never cascade-deleted),
+`highlight_pdf_anchors` + `highlight_pdf_quads` (page-space geometry), and
+`passage_anchors` (durable user-owned identity for a derived/passage
+endpoint — owner `media`/`note_block`, an immutable normalized-quote
+`anchor_key`, and a replaceable `locator_hint`; it is the sole durable form a
+passage candidate takes once linked, never a persisted `evidence_span`/
+`content_chunk`/`fragment`/`reader_apparatus_item`/`oracle_passage_anchor`
+row). None of the highlight-family FKs cascade; ordinary deletion is explicit
+child-first cleanup, and reindex/refresh never delete Highlights or passage
+anchors — unresolved locators stay visible rather than disappearing.
 
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
 `library_invitations`, and the current **library-intelligence** head/revision
@@ -375,19 +388,34 @@ Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 
 **Resource graph** — `resource_edges` (the single directed connection table:
-stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
-`highlight_note`, `synapse`), polymorphic `scheme`+`id`
+`kind` (`context`, `supports`, `contradicts`), writer `origin` (`user`,
+`citation`, `system`, `note_body`, `highlight_note`, `synapse`,
+`document_embed`, `assistant`, `link_note`), polymorphic `scheme`+`id`
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
 `ordinal`+`snapshot`, and synapse rationale snapshots),
 `resource_external_snapshots` (stable targets for public web-search citations),
 and `oracle_reading_folios` (oracle-owned generated folio content referencing its
 citation edge). This subgraph is the single durable positive connection
-contract.
+contract. **Link** is the one durable relationship-authoring primitive:
+exactly one neutral `origin='user', kind='context'` edge exists per user and
+canonical unordered endpoint pair (`min(A,B) → max(A,B)`, ordered by
+`(scheme, id)`); repeated or reverse creation returns the existing Link rather
+than raising or duplicating. A directional user **stance**
+(`supports`/`contradicts`) may coexist on the same pair — at most one per
+user/unordered pair, its stored direction carrying meaning — and ordered
+adjacency (page/note occurrence order) is a third, never-canonicalized shape;
+all three may coexist on the same endpoints. An optional **Link note** is one
+ordinary note attached through two structural `link_note` edges (one per
+endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
+field — the attachment edges themselves never render as separate rows.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`, `message_llm`, `models` (LLM registry);
-plus the **chat-run** machinery: `chat_runs`,
+(per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
+(carries product selection snapshots `profile_id`/`reasoning_option_id` and
+resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
+`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
+gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -546,21 +574,22 @@ rather than proposed and reconciled after the fact.
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation-run harness.** The five LLM generation kinds (`chat_run`,
-`oracle_reading_generate`, `library_intelligence_artifact_generate`,
-`media_unit_build`, `enrich_metadata`) run their bodies inside one shared worker
-envelope, `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop,
-`httpx` client, and `ModelRuntime` construction (including the fixture swap and
-the worker-exception boundary). Ledgered generation calls inside those jobs leave
-one `llm_calls` row via `llm_ledger.observed_generate` /
-`observed_generate_stream`, on success and on failure, and
-`run_kit.mark_terminal` stamps `error_code`/`error_detail` on the run parent —
-so a failed run is diagnosable. Saved-key probes and transcript embeddings are
-explicit exceptions described in [modules/llms.md](modules/llms.md). The worker
-installs the process-global rate limiter at startup so the first job of any kind
-has a working limiter. SERIALIZABLE retries everywhere (including the scheduler
-loop) go through the one helper `db/retries.py:retry_serializable`. See
-[modules/llms.md](modules/llms.md).
+**Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
+`oracle_reading_generate`, `synapse_scan`, `dawn_write`,
+`library_intelligence_artifact_generate` and the conversation-distillate
+reducer under the generic `artifacts` engine, `media_unit_build`,
+`enrich_metadata`) run their bodies inside one shared worker envelope,
+`tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
+client, and `ExecutionRuntime` construction (production or the real-media
+fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
+worker-exception boundary). Every provider call inside a job goes through
+`services/llm_execution.py:execute_generation`/`execute_generation_stream` —
+the sole caller of the ledger — leaving one `llm_calls` row on every terminal
+path (success, defect, or entitlement/budget denial), with the failure
+attributed to the layer that detected it. See [modules/llms.md](modules/llms.md).
+The worker installs the process-global rate limiter at startup so the first job
+of any kind has a working limiter. SERIALIZABLE retries everywhere (including
+the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -582,16 +611,20 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 BYOK keys, billing & entitlements
+### 7.5 Platform LLM credentials, billing & entitlements
 
-- **BYOK** (`services/user_keys.py`, `crypto.py`, `api_key_resolver.py`): user
-  provider keys (openai/anthropic/gemini/openrouter; Cloudflare is platform-only
-  in the current credential contract) are encrypted with XChaCha20-Poly1305
-  (PyNaCl `SecretBox`) under `NEXUS_KEY_ENCRYPTION_KEY`; only a 4-char fingerprint
-  is exposed. Status lifecycle `untested → valid → invalid → revoked` (revoke
-  wipes ciphertext, keeps fingerprint for audit). `key_mode ∈ {auto, byok_only,
-platform_only}` chooses BYOK-first vs platform; platform use is gated by
-  entitlements.
+- **Platform credentials** (`services/llm_credentials.py`): the sole platform-key
+  reader for every generation, embedding, and transcription call — no BYOK, no
+  per-user key, no DB lookup, no encryption. It reads `OPENAI_API_KEY` /
+  `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `MOONSHOT_API_KEY` straight off
+  `Settings`; a missing key at call time is a `RuntimeDefect` (broken deployment
+  invariant), never a product-facing failure, because presence is enforced at
+  startup by `config.validate_required_settings` for staging/prod (which also
+  requires an RFC 3339 `NEXUS_FABLE_RETENTION_ACCEPTED_AT` deployment
+  assertion — Fable requires 30-day retention and is not ZDR-eligible).
+  `OPENROUTER_API_KEY` is not part of the deployed app's required settings; it
+  belongs only to the separate paid provider-runtime certification command.
+  See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
@@ -610,13 +643,26 @@ platform_only}` chooses BYOK-first vs platform; platform use is gated by
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-three surfaces: the in-app search page, the chat `app_search` agent tool (RAG), and
-object-ref resolution for notes. The request is a single typed `SearchQuery` value
-object parsed at the edge; the user-facing taxonomy is **six kinds** (Documents,
-Notes, Highlights, Conversations, People, Web) folding the internal result types,
-with operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
+two public surfaces: the in-app search page and the chat `app_search` agent tool
+(RAG). The request is a single typed `SearchQuery` value object parsed at the
+edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
+Conversations, People, Web) folding the internal result types, with
+operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
 `embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+Ranking/retrieval is extracted below that public projection into one internal
+pre-projection candidate seam (`search/candidates.py`); **resource target
+search** (`services/resource_items/targets.py`, `POST
+/resource-items/targets/search`) is a second projection over the same
+candidate engine, not a second search engine, and never introduces a new
+public `SearchKind` or `GET /search` result type. Its `purpose=link` profile
+is the full hybrid retrieval and may surface passage candidates (`kind:
+"passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
+one-character-capable lexical fast path (exact/prefix/substring/FTS,
+including note-body substrings) restricted to direct targets, and never calls
+`build_query_embedding`. Both profiles apply target capability, visibility,
+canonical dedupe, and exclusions before per-source caps, and refill a sparse
+filtered page rather than under-filling it.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -640,8 +686,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
-  `library_intelligence_artifact`, `library_intelligence_revision`,
-  `reader_apparatus_item`, `external_snapshot`, `contributor`, `podcast`)
+  `artifact`, `artifact_revision`, `reader_apparatus_item`, `external_snapshot`,
+  `contributor`, `podcast`, `passage_anchor`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, a chat subject, and a read/inspect agent-tool
@@ -649,7 +695,20 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   strict (canonical lowercase uuid) and returns a typed failure, never `None`.
   Hydration + permission checks live in `services/resource_graph/resolve.py` —
   `load_resource_batch` is the one place each scheme's read SQL + visibility gate
-  exists.
+  exists, including a viewer-scoped `passage_anchor` branch under the same
+  masked-404 convention as every other scheme.
+- **User-Link/mention capability** (`services/resource_items/capabilities.py`):
+  one explicit `ResourceUserRelationPolicy(user_link_source: bool,
+user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
+  former scalar `linkable` flag — `UserLinkTargetMode` is `"none" | "direct" |
+"materialize_passage"`, so a scheme can admit a durable Link while
+  distinguishing a direct endpoint from one that must first materialize a
+  `passage_anchor`; a derived `note_reference_target` property is `True` only
+  for `"direct"`. `evidence_span`, `content_chunk`, `fragment`,
+  `reader_apparatus_item`, and `oracle_passage_anchor` are passage-candidate-only
+  (`materialize_passage`); `external_snapshot` is `"none"`; every other scheme
+  above is a direct source/target/reference. Backend policy and the
+  hand-maintained frontend projection are exhaustive and parity-tested.
 
 ### 7.7 Citations & the agent tool contract
 
@@ -853,10 +912,15 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Cancellation/crash**: cancel sets a flag the worker polls; a `delta` without a
-  `done` (crashed mid-stream) is detected and finalized as interrupted/retryable.
-- **Models** (`llm_catalog.py`, `services/models.py`): a curated catalog gates
-  which provider/model/reasoning combos are usable; availability is the
-  intersection of enabled providers and usable keys (BYOK or platform).
+  `done` (crashed mid-stream) is detected and folded into the closed
+  `ExpectedChatFailure` union (`stream_interrupted`), never a bespoke retry code.
+- **Profiles, not a catalog** (`services/llm_profiles.py`): chat sends
+  `profile_id` + `reasoning_option_id` from seven code-defined, startup-validated
+  product profiles (`fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`),
+  each mapped to one certified `provider_runtime.CATALOG` target. There is no
+  provider/model/key picker and no availability intersection to compute — every
+  listed profile is always usable on the platform key. See
+  [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -942,7 +1006,7 @@ predicates in `auth/permissions.py`; the search/object readers read
   still be explicitly filed, and that direct entry is what a later
   membership loss cannot take away. Pagination over any library — default or
   not — is stateless keyset pagination with three cursor kinds (default-set
-  media-recency, non-default position order, and non-default resonance
+  media-recency, non-default position order, and non-default Resonance
   order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
   any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
   reinterpretation.
@@ -957,6 +1021,14 @@ predicates in `auth/permissions.py`; the search/object readers read
   positive word count rather than reading `plain_text`. Nested `media` owns read
   state/progress; the entry does not duplicate them, and no Library list path
   scans source text.
+- **Resonance is the one relevance owner.** `services/resonance/` composes
+  policy-neutral read ports from consumption, libraries, the resource graph,
+  contributors, and the semantic index. It owns Related ordering, non-default
+  library Resonance ordering, and the on-demand Reading Slate projection; fact
+  owners retain their tables and mutations. `GET /libraries/{id}/slate`
+  returns at most ten deterministic, destination-addable suggestions outside
+  complete membership. A successful Add preserves visible Slate survivors and
+  appends at most one novel result from a canonical refetch.
 - **Library Intelligence** (`services/library_intelligence.py`) is one stable
   synthesis artifact head per library plus immutable generated revisions.
   Citations belong to `library_intelligence_revision:<id>`; the artifact head
@@ -1037,11 +1109,12 @@ the sole DML owner of current-state reader recency — `last_engaged_at` plus,
 for non-PDF locators, a monotonic `max_total_progression`; no session,
 device, span, or dwell history), and `_projection.py` (the combined
 explicit-override + reader-engagement read model, plus batched
-`PlayerDescriptor`s reusing `derive_playback_source`, plus the visible,
-viewer-indexed recent-reading/listening projection). `GET /lectern/recent`
-is independent from the ordered Lectern snapshot: it merges truthful
-`last_engaged_at` from the reader/listener sources, excludes invisible and
-never-engaged media, and uses stable `media_id DESC` ties. Two bounded
+`PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
+policy-neutral engagement and complete queue-membership reads to Resonance;
+it does not own a second public Recent product. `GET /lectern/slate` builds the
+on-demand **At hand** projection from Continuity, Arrival, and factual graph,
+author, and calibrated semantic evidence. It returns at most ten placeable
+media outside the complete queue and excludes `Finished` targets. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
@@ -1066,7 +1139,11 @@ across pane navigation and is never an editor. A single app-wide `<audio>`
 element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
 OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
-[`modules/player.md`](modules/player.md) for the full file map.
+[`modules/player.md`](modules/player.md) for the full file map. The shared
+`ReadingSlateSection` consumes an optional Lectern first-paint seed and
+otherwise queries only while its pane is active. It delegates Add to the
+existing Lectern or library mutation owner and owns deterministic stable
+refill, not destination state.
 
 ### 8.9 Search surfaces & Launcher
 
@@ -1134,8 +1211,9 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   source trigger for an already-active destination or to the destination for a
   real pane handoff, so closing mobile/account surfaces do not strand or steal
   focus. Lectern is the brand and authenticated-home target.
-  Pinning is intentionally absent; personalization lives in Lectern recents and
-  Launcher ranking. See [`modules/app-navigation.md`](modules/app-navigation.md).
+  Pinning is intentionally absent; personalized retrieval lives in the Lectern
+  Reading Slate and Launcher ranking. See
+  [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
   `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in
@@ -1286,18 +1364,18 @@ raw SQL. Every backend test is marked (`unit`/`integration`/`slow`/`supabase`).
 
 Tiers:
 
-| Tier                | Scope                                                                                                                 | Real vs mocked                                                   | Command                      |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------- |
-| Static              | ruff/pyright/eslint/tsc/actionlint                                                                                    | —                                                                | `make check`                 |
-| Backend unit        | pure logic                                                                                                            | no I/O, no mocks                                                 | `make test-back-unit`        |
-| Frontend unit       | pure TS                                                                                                               | Node env                                                         | `make test-front-unit`       |
-| Component           | React in real Chromium                                                                                                | only `next/image` shim                                           | `make test-front-browser`    |
-| Backend integration | FastAPI + real Postgres                                                                                               | external boundaries mockable                                     | `make test-back-integration` |
-| Migrations          | Alembic up/down                                                                                                       | dedicated DB                                                     | `make test-migrations`       |
-| E2E env preflight   | Supabase env resolver contract                                                                                        | no services                                                      | `make test-e2e-env`          |
-| E2E (default)       | user journeys, prod-built web, no-reload API                                                                          | full real stack, fixture providers                               | `make test-e2e`              |
-| Real-media          | ingest/search/chat acceptance                                                                                         | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media`       |
-| Live-providers      | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external                                                    | `make test-live-providers`   |
+| Tier                | Scope                                                                                                                                                  | Real vs mocked                                                   | Command                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------- |
+| Static              | ruff/pyright/eslint/tsc/actionlint                                                                                                                     | —                                                                | `make check`                 |
+| Backend unit        | pure logic                                                                                                                                             | no I/O, no mocks                                                 | `make test-back-unit`        |
+| Frontend unit       | pure TS                                                                                                                                                | Node env                                                         | `make test-front-unit`       |
+| Component           | React in real Chromium                                                                                                                                 | only `next/image` shim                                           | `make test-front-browser`    |
+| Backend integration | FastAPI + real Postgres                                                                                                                                | external boundaries mockable                                     | `make test-back-integration` |
+| Migrations          | Alembic up/down                                                                                                                                        | dedicated DB                                                     | `make test-migrations`       |
+| E2E env preflight   | Supabase env resolver contract                                                                                                                         | no services                                                      | `make test-e2e-env`          |
+| E2E (default)       | user journeys, prod-built web, no-reload API                                                                                                           | full real stack, fixture providers                               | `make test-e2e`              |
+| Real-media          | ingest/search/chat acceptance                                                                                                                          | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media`       |
+| Live-providers      | real OpenAI/Anthropic/Gemini/Moonshot/OpenRouter (pinned `provider_runtime` matrix), OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external                                                    | `make test-live-providers`   |
 
 The **real-media vs live-providers** split is the determinism boundary:
 real-media runs real product code but swaps the _external provider edge_ for
@@ -1359,31 +1437,31 @@ The things most likely to bite you, distilled:
 
 ## 14. Where to look (file index)
 
-| You want…                                            | Start at                                                                                                                                                                                               |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Repository rules / boundaries                        | [`rules/index.md`](rules/index.md)                                                                                                                                                                     |
-| Reader behavior contract                             | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
-| FastAPI bootstrap / middleware / lifecycle           | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
-| DB layer / sessions / LISTEN-NOTIFY                  | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                           | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
-| Background jobs / worker                             | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Media catalog and ingest owners                      | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
-| Reader/highlights backend                            | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py`                                                                                                                            |
-| Chat / conversations                                 | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
-| Oracle                                               | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
-| Search / retrieval / indexing                        | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`                                                                                                                |
-| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`)                                                                                 |
-| Agent tools                                          | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
-| Libraries / contributors / notes                     | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
-| Podcasts / playback                                  | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
-| Auth / billing / keys / rate limit                   | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
-| Frontend BFF / auth / SSE                            | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
-| Workspace / panes                                    | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/`                                                                                                                            |
-| Reader / chat / player UI                            | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
-| Android shell                                        | `apps/android/app/src/main/`                                                                                                                                                                           |
-| Browser extension                                    | `apps/extension/`                                                                                                                                                                                      |
-| Build / run / deploy                                 | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
-| Tests                                                | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts`                                                                                                          |
+| You want…                                                         | Start at                                                                                                                                                                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository rules / boundaries                                     | [`rules/index.md`](rules/index.md)                                                                                                                                                                     |
+| Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
+| FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
+| DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
+| The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
+| Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
+| Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
+| Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
+| Search / retrieval / indexing / Link target search                | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/targets.py`               |
+| Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
+| Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
+| Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
+| Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
+| Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
+| Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
+| Workspace / panes                                                 | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/`                                                                                                                            |
+| Reader / chat / player UI                                         | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
+| Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
+| Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |
+| Build / run / deploy                                              | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
+| Tests                                                             | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts`                                                                                                          |
 
 ---
 

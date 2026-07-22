@@ -198,7 +198,7 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
                 source=ResourceRef(scheme="note_block", id=note_block_id),
                 target=ResourceRef(scheme="fragment", id=fragment_id),
                 kind="context",
-                origin="user",
+                origin="note_body",
             ),
         )
         replace_media_apparatus(
@@ -437,7 +437,9 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
     )
     assert all(item.get("edge_id") != str(companion_edge_id) for item in citation_group["items"])
     assert data["diagnostics"]["omitted_item_counts"]["coalesced_chat_context"] == 3
-    stance_link = _item(citation_group["items"], f"link:{stance_edge.id}")
+    stance_link = _item(
+        citation_group["items"], f"link:{stance_edge.id}:anchor:fragment:{fragment_id}"
+    )
     assert stance_link["kind"] == "Link"
     assert stance_link["role"] == "supports"
     assert citation_group["also_references"] == [
@@ -466,7 +468,9 @@ def test_document_map_aggregates_reader_evidence(auth_client, direct_db: DirectS
         item.get("edge_id") for group in evidence["passage_groups"] for item in group["items"]
     }
 
-    document_link = _item(evidence["document_items"], f"link:{document_edge_id}")
+    document_link = _item(
+        evidence["document_items"], f"link:{document_edge_id}:anchor:media:{media_id}"
+    )
     assert document_link["kind"] == "Link"
     assert document_link["object"]["kind"] == "Chat"
     assert {marker["kind"] for marker in data["markers"]} >= {

@@ -20,9 +20,12 @@ from nexus.db.session import use_read_committed_if_available, use_serializable_i
 # resolver's exact-batch operation (spec
 # lightweight-author-deduplication-hard-cutover.md §2.7), the repository-wide
 # replay-memo constraint, the reader profile's first-PATCH insert (spec
-# reader-profile-persistence-hard-cutover.md §6), and the consumption
-# ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3)
-# all retry the whole operation on a first-sight race.
+# reader-profile-persistence-hard-cutover.md §6), the consumption
+# ensure-membership insert (spec lectern-player-lifecycle-hard-cutover.md §5.3),
+# and the Link mutation's first inserts — passage-anchor identity, canonical
+# neutral-Link pair, directed stance pair, and client-minted Highlight id (spec
+# universal-link-authoring-hard-cutover.md, Graph Shapes) — all retry the whole
+# operation on a first-sight race.
 RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
     {
         "uq_contributors_handle",
@@ -37,6 +40,10 @@ RETRYABLE_UNIQUE_CONSTRAINTS = frozenset(
         "uix_resource_mutations_client_id",
         "reader_profiles_pkey",
         "uq_consumption_queue_items_user_media",
+        "uq_passage_anchors_identity",
+        "uq_resource_edges_user_context_link_pair",
+        "uq_resource_edges_user_stance_directed_pair",
+        "highlights_pkey",
     }
 )
 

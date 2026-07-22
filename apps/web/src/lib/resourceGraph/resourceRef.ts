@@ -28,6 +28,7 @@ export const RESOURCE_SCHEMES = [
   "contributor",
   "podcast",
   "reader_apparatus_item",
+  "passage_anchor",
 ] as const;
 
 export type ResourceScheme = (typeof RESOURCE_SCHEMES)[number];

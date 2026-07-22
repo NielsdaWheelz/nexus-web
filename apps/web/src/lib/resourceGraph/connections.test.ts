@@ -79,6 +79,17 @@ const connection: ConnectionOut = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
+const undirectedLink: ConnectionOut = {
+  ...connection,
+  edge_id: "edge-2",
+  direction: "undirected",
+  link_note: {
+    ref: "note_block:33333333-3333-4333-8333-333333333333",
+    note_block_id: "33333333-3333-4333-8333-333333333333",
+    preview: "Why these connect",
+  },
+};
+
 const summary: ConnectionSummaryOut = {
   ref: "media:22222222-2222-4222-8222-222222222222",
   total: 1,
@@ -122,6 +133,19 @@ describe("resource graph connections client", () => {
         }),
       },
     );
+  });
+
+  it("carries undirected neutral Links and their folded link_note", async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      data: { items: [undirectedLink], next_cursor: null },
+    });
+
+    await expect(
+      queryConnections({
+        refs: ["page:11111111-1111-4111-8111-111111111111"],
+        direction: "both",
+      }),
+    ).resolves.toEqual({ items: [undirectedLink], next_cursor: null });
   });
 
   it("passes abort signals on connection queries", async () => {

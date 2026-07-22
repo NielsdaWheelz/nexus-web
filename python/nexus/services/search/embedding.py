@@ -8,6 +8,7 @@ typed and logged, never a silent legacy fallback.
 
 from __future__ import annotations
 
+from provider_runtime.runtime import NonGenerationCallFailed
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -44,18 +45,16 @@ def build_query_embedding(
         db.rollback()
     try:
         embedding = build_text_embedding(q)
-    except ApiError as exc:
-        if exc.code is not ApiErrorCode.E_LLM_NO_KEY:
-            raise
+    except NonGenerationCallFailed as exc:
         logger.warning(
             "search_semantic_embedding_unavailable_lexical_fallback",
-            error_code=exc.code.value,
+            error=type(exc.failure).__name__,
             result_types=",".join(result_types),
         )
         return None
     if len(embedding[1]) != transcript_embedding_dimensions():
         raise ApiError(
-            ApiErrorCode.E_LLM_PROVIDER_DOWN,
+            ApiErrorCode.E_APP_SEARCH_FAILED,
             "Embedding provider returned an invalid response.",
         )
     return embedding

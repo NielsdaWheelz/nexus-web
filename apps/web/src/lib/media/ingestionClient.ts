@@ -5,6 +5,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
   isUnauthenticatedApiError,
+  type SameSystemApiDefect,
 } from "@/lib/api/client";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { createRandomId } from "@/lib/createRandomId";
@@ -75,7 +76,7 @@ export class MediaIngestionContractDefect extends Error {
 
 export function isMediaIngestionDefect(
   error: unknown,
-): error is MediaIngestionContractDefect {
+): error is MediaIngestionContractDefect | SameSystemApiDefect {
   return (
     error instanceof MediaIngestionContractDefect ||
     isSameSystemApiDefect(error)

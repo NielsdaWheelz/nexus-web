@@ -33,6 +33,27 @@ def visible_credit_rows_sql() -> str:
     return visible_content_credit_rows_sql()
 
 
+def visible_author_credit_rows_sql() -> str:
+    """Visible canonical author-credit facts. Binds ``:viewer_id``.
+
+    Columns are ``contributor_id``, canonical ``display_name``, ``media_id``,
+    and ``podcast_id``. The author role is filtered before consumers join
+    either side of the relation; credited-name variants are intentionally not
+    exposed as canonical reason copy.
+    """
+    return f"""
+        SELECT
+            vcc.contributor_id,
+            c.display_name,
+            vcc.media_id,
+            vcc.podcast_id
+        FROM ({visible_content_credit_rows_sql()}) vcc
+        JOIN contributors c ON c.id = vcc.contributor_id
+        WHERE vcc.role = 'author'
+          AND (vcc.media_id IS NOT NULL OR vcc.podcast_id IS NOT NULL)
+    """
+
+
 def distinct_visible_works_sql() -> str:
     """Distinct visible credited targets with nested role facts. Binds ``:viewer_id``.
 

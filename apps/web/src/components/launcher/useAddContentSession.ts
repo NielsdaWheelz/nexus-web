@@ -52,6 +52,8 @@ import {
   type FrozenAcceptanceIntent,
   type MembershipCommand,
   type MembershipMutationProgress,
+  type MembershipState,
+  type RestingMembershipState,
   type SessionMutationOperation,
   type StagedAddItem,
 } from "./addContentSessionModel";
@@ -157,6 +159,23 @@ function requireIndexedItem<T>(items: readonly T[], index: number): T {
     throw new Error("Bounded task outcome did not match its input item.");
   }
   return item;
+}
+
+function restingMembershipSnapshot(
+  membership: MembershipState | undefined,
+): RestingMembershipState | null {
+  if (!membership) return { kind: "Unloaded" };
+  switch (membership.kind) {
+    case "Unloaded":
+    case "Ready":
+    case "LoadFailed":
+    case "CommandFailed":
+      return membership;
+    case "Loading":
+    case "Updating":
+    case "Reconciling":
+      return null;
+  }
 }
 
 export function useAddContentSession(): AddContentSessionController {
@@ -1047,22 +1066,21 @@ export function useAddContentSession(): AddContentSessionController {
     async (mediaIds: readonly string[]) => {
       const current = stateRef.current;
       const accepted = new Set(acceptedMediaIds(current));
-      const uniqueMediaIds = [...new Set(mediaIds)].filter((mediaId) => {
-        const membership = current.membershipByMediaId.get(mediaId);
-        return (
-          accepted.has(mediaId) &&
-          membership?.kind !== "Loading" &&
-          membership?.kind !== "Updating" &&
-          membership?.kind !== "Reconciling"
+      const refreshWork: Array<{
+        mediaId: string;
+        previous: RestingMembershipState;
+      }> = [];
+      for (const mediaId of new Set(mediaIds)) {
+        if (!accepted.has(mediaId)) continue;
+        const previous = restingMembershipSnapshot(
+          current.membershipByMediaId.get(mediaId),
         );
-      });
-      if (uniqueMediaIds.length === 0) return;
+        if (previous) refreshWork.push({ mediaId, previous });
+      }
+      if (refreshWork.length === 0) return;
       const generation = generationRef.current;
       const signal = sessionAbortRef.current.signal;
-      for (const mediaId of uniqueMediaIds) {
-        const previous =
-          current.membershipByMediaId.get(mediaId) ??
-          ({ kind: "Unloaded" } as const);
+      for (const { mediaId, previous } of refreshWork) {
         apply({
           kind: "SetMembership",
           mediaId,
@@ -1070,9 +1088,9 @@ export function useAddContentSession(): AddContentSessionController {
         });
       }
       const outcomes = await runBoundedTasks({
-        items: uniqueMediaIds,
+        items: refreshWork,
         concurrency: MUTATION_CONCURRENCY,
-        run: (mediaId) => {
+        run: ({ mediaId }) => {
           signal.throwIfAborted();
           return fetchMediaLibraryMemberships(mediaId, { signal });
         },
@@ -1081,7 +1099,7 @@ export function useAddContentSession(): AddContentSessionController {
 
       const defects: unknown[] = [];
       outcomes.forEach((outcome, index) => {
-        const mediaId = requireIndexedItem(uniqueMediaIds, index);
+        const { mediaId, previous } = requireIndexedItem(refreshWork, index);
         if (outcome.kind === "Fulfilled") {
           apply({
             kind: "SetMembership",
@@ -1091,14 +1109,11 @@ export function useAddContentSession(): AddContentSessionController {
           return;
         }
         if (signal.aborted || isAbortError(outcome.error)) return;
-        const previousMembership =
-          current.membershipByMediaId.get(mediaId) ??
-          ({ kind: "Unloaded" } as const);
         if (handleUnauthenticatedApiError(outcome.error)) {
           apply({
             kind: "SetMembership",
             mediaId,
-            membership: previousMembership,
+            membership: previous,
           });
           return;
         }
@@ -1110,7 +1125,7 @@ export function useAddContentSession(): AddContentSessionController {
           apply({
             kind: "SetMembership",
             mediaId,
-            membership: previousMembership,
+            membership: previous,
           });
           defects.push(outcome.error);
         } else {

@@ -82,8 +82,7 @@ function message(
           }
         : null,
     status,
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -114,9 +113,14 @@ function chatRunData(foldedSeq = 0): ChatRunResponse["data"] {
       conversation_id: CONVERSATION_ID,
       user_message_id: USER_ID,
       assistant_message_id: ASSISTANT_ID,
-      model_id: "gpt-5-mini",
-      reasoning: "default",
-      key_mode: "auto",
+      profile_id: "balanced",
+      reasoning_option_id: "default",
+      provider: null,
+      model_name: null,
+      reasoning_effort: null,
+      error_origin: null,
+      support_id: null,
+      failure: null,
       cancel_requested_at: null,
       started_at: timestamp,
       completed_at: null,
@@ -149,8 +153,8 @@ function metaEvent(seq: number): SSEEvent {
       conversation_id: CONVERSATION_ID,
       user_message_id: USER_ID,
       assistant_message_id: ASSISTANT_ID,
-      model_id: "gpt-5-mini",
-      provider: "openai",
+      profile_id: "balanced",
+      reasoning_option_id: "default",
       chat_subject: null,
     },
   };
@@ -224,7 +228,6 @@ function useHarness(opts: {
   onRunDone?: (
     runId: string,
     status: "complete" | "error" | "cancelled",
-    errorCode: string | null,
   ) => void;
   onRunFinished?: (runId: string) => void;
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
@@ -286,7 +289,7 @@ describe("useChatRunTail", () => {
       sse.onEvent(doneEvent(4, "complete"));
     });
 
-    expect(onRunDone).toHaveBeenCalledWith(RUN_ID, "complete", null);
+    expect(onRunDone).toHaveBeenCalledWith(RUN_ID, "complete");
     await waitFor(() =>
       expect(assistantText(result.current.messages)).toBe("Hello world"),
     );

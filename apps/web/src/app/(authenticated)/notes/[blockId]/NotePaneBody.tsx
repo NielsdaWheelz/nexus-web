@@ -232,7 +232,7 @@ export default function NotePaneBody() {
         }
       />
       <ConnectionsSurface
-        objectRef={{ objectType: "note_block", objectId: blockId }}
+        resourceRef={{ scheme: "note_block", id: blockId }}
         onOpenRoute={openRoute}
       />
     </div>

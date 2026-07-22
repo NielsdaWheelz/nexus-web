@@ -125,11 +125,7 @@ export default function ShareCapture({
         }
         switch (outcome.kind) {
           case "Fulfilled":
-            settled.push(
-              outcome.value.ok
-                ? outcome.value
-                : { ...outcome.value, reason: "Capture" },
-            );
+            settled.push(outcome.value);
             return;
           case "Rejected":
             if (isUnauthenticatedApiError(outcome.error)) {
@@ -173,11 +169,12 @@ export default function ShareCapture({
       idempotencyKey = createRandomId("share-url");
       urlIdempotencyKeys.current.set(url, idempotencyKey);
     }
-    return captureSourceUrl({
+    const result = await captureSourceUrl({
       url,
       libraryIds: selectedDestinations.map((destination) => destination.id),
       idempotencyKey,
     });
+    return result.ok ? result : { ...result, reason: "Capture" };
   }
 
   function runSaveUrls(targetUrls: string[]): void {

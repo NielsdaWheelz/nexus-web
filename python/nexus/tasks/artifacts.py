@@ -12,7 +12,6 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from provider_runtime import ModelRuntime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -24,6 +23,7 @@ from nexus.logging import get_logger
 from nexus.schemas.artifact import ArtifactDoneEventPayload
 from nexus.services import run_kit
 from nexus.services.artifacts import engine
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -45,8 +45,8 @@ def _run_artifact_revision(revision_id: str, *, label: str) -> dict:
     revision_uuid = UUID(revision_id)
     spec = LlmTaskSpec(label=label, http_timeout_s=120.0)
 
-    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
-        await engine.run_revision(db, revision_id=revision_uuid, llm=router)
+    async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
+        await engine.run_revision(db, revision_id=revision_uuid, runtime=runtime)
         return {"status": "ok", "revision_id": revision_id}
 
     def _boundary(db: Session, exc: Exception) -> dict:

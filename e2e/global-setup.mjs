@@ -426,51 +426,6 @@ function databaseHasSeededEpubTitle(dbUrl) {
   }
 }
 
-function databaseHasSeededOpenAiKey(dbUrl, ownerUserId) {
-  // This probe runs app SQLAlchemy code (create_session_factory), which needs
-  // the postgresql+psycopg dialect; stripping it would select the absent
-  // psycopg2 default driver. Only raw psycopg.connect probes strip the scheme.
-  const probeDatabaseUrl = dbUrl;
-  const command =
-    "uv run --project python python -c " +
-    JSON.stringify(
-      "import os;" +
-        "from uuid import UUID;" +
-        "from sqlalchemy import select;" +
-        "from nexus.db.models import UserApiKey;" +
-        "from nexus.db.session import create_session_factory;" +
-        "from nexus.services.user_keys import get_usable_key_providers;" +
-        "db=create_session_factory()();" +
-        "user_id=UUID(os.environ['NEXUS_E2E_OWNER_USER_ID']);" +
-        "key=db.scalar(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == 'openai'));" +
-        "usable=get_usable_key_providers(db, user_id);" +
-        "print('1' if key is not None and key.key_fingerprint == 'ture' and 'openai' in usable else '0');" +
-        "db.close()",
-    );
-
-  try {
-    const raw = execSync(command, {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "inherit"],
-      env: {
-        ...buildE2eAppRuntimeEnv(process.env),
-        DATABASE_URL: probeDatabaseUrl,
-        NEXUS_E2E_OWNER_USER_ID: ownerUserId,
-      },
-    })
-      .toString()
-      .trim();
-    return raw === "1";
-  } catch (error) {
-    throw new Error(
-      "[global-setup] API-key readiness probe failed.\n" +
-        `  Command: ${command}\n` +
-        `  CWD:     ${ROOT}\n` +
-        `  Cause:   ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 function databaseHasSeededYoutubeTranscriptStates(dbUrl) {
   if (!seedArtifactsExist()) {
     return false;
@@ -690,7 +645,6 @@ export default function globalSetup() {
     databaseHasSeededEpubTitle(dbUrl) &&
     databaseHasReadyEvidenceIndexes(dbUrl) &&
     databaseHasSeededBilling(dbUrl) &&
-    databaseHasSeededOpenAiKey(dbUrl, e2eOwnerUserId) &&
     databaseHasSeededYoutubeTranscriptStates(dbUrl) &&
     databaseHasCleanSeededHighlightFixtures(dbUrl)
   ) {

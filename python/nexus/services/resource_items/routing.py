@@ -324,6 +324,24 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
     if ref.scheme == "oracle_passage_anchor":
         current = oracle_anchor_current_target(db, ref.id)
         return route_for_ref(db, viewer_id=viewer_id, ref=current) if current is not None else None
+    if ref.scheme == "passage_anchor":
+        row = db.execute(
+            text(
+                "SELECT owner_scheme, owner_id FROM passage_anchors"
+                " WHERE id = :id AND user_id = :viewer_id"
+            ),
+            {"id": ref.id, "viewer_id": viewer_id},
+        ).first()
+        if row is None:
+            return None
+        owner_scheme, owner_id = row[0], row[1]
+        # Activation opens the owner resource at the anchor (highlight precedent):
+        # a passage anchor has no reader surface of its own.
+        if owner_scheme == "media":
+            return f"/media/{owner_id}#passage-{ref.id}"
+        if owner_scheme == "note_block":
+            return f"/notes/{owner_id}#passage-{ref.id}"
+        return None
     if ref.scheme == "external_snapshot":
         return None
     assert_never(ref.scheme)

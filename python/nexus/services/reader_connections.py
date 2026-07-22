@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -10,12 +11,8 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_highlight, can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.resource_graph import (
-    ConnectionCitationOut,
-    ConnectionEndpointOut,
-    ConnectionOut,
-    ConnectionReaderTargetOut,
-)
+from nexus.schemas.resource_graph import ConnectionOut, connection_out
+from nexus.services import passage_anchors, text_quote
 from nexus.services.reader_locations import (
     highlight_locator,
     locator_fragment,
@@ -27,11 +24,9 @@ from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import (
     Connection,
-    ConnectionEndpoint,
     ConnectionFilters,
     ConnectionQuery,
     EdgeOrigin,
-    snapshot_to_jsonb,
 )
 
 READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
@@ -50,6 +45,7 @@ READER_CONNECTION_ORIGINS: tuple[EdgeOrigin, ...] = (
 class ReaderConnectionAnchor:
     locator: dict[str, object]
     order_key: str | None
+    passage_anchor_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,40 +86,82 @@ def list_reader_connections(
             cursor=cursor,
         ),
     )
+    # One request-scoped memo of normalized owner sources: a page whose passage
+    # anchors share the media being read reloads+renormalizes it once, not once
+    # per anchor. Passage-anchor locators are resolved LIVE (never persisted).
+    sources_cache: text_quote.MediaSourceCache = {}
     anchors: dict[str, ReaderConnectionAnchor | None] = {}
     rows: list[ReaderConnectionRow] = []
-    for connection in page.items:
-        anchor_ref = _anchor_ref(connection)
-        if anchor_ref.uri not in anchors:
-            anchors[anchor_ref.uri] = _anchor_for_connection(
+
+    def anchor_for(connection: Connection, ref: ResourceRef) -> ReaderConnectionAnchor | None:
+        if ref.uri not in anchors:
+            anchors[ref.uri] = _anchor_for_connection(
                 db,
                 viewer_id=viewer_id,
                 media_id=media_id,
-                ref=anchor_ref,
+                ref=ref,
                 connection=connection,
+                sources_cache=sources_cache,
             )
-        rows.append(_row(connection=connection, anchor=anchors[anchor_ref.uri]))
+        return anchors[ref.uri]
+
+    for connection in page.items:
+        # A neutral Link is undirected, so BOTH endpoints may anchor in this
+        # media. When they do (a same-media Link between two local passages), the
+        # reader emits one row per local endpoint — each activating the opposite
+        # endpoint (§ Reader Projection). Every other edge keeps its single,
+        # locality-chosen anchor.
+        if connection.direction == "undirected":
+            source_anchor = anchor_for(connection, connection.source_ref)
+            target_anchor = anchor_for(connection, connection.target_ref)
+            if source_anchor is not None and target_anchor is not None:
+                rows.append(
+                    _row(connection=replace(connection, other=connection.target), anchor=source_anchor)
+                )
+                rows.append(
+                    _row(connection=replace(connection, other=connection.source), anchor=target_anchor)
+                )
+                continue
+            anchor_ref = _anchor_ref(connection)
+            rows.append(
+                _row(
+                    connection=connection,
+                    anchor=source_anchor
+                    if anchor_ref.uri == connection.source_ref.uri
+                    else target_anchor,
+                )
+            )
+            continue
+        anchor_ref = _anchor_ref(connection)
+        rows.append(_row(connection=connection, anchor=anchor_for(connection, anchor_ref)))
     rows.sort(key=_row_order_key)
     return ReaderConnectionPage(items=tuple(rows), next_cursor=page.next_cursor)
 
 
 def _row(*, connection: Connection, anchor: ReaderConnectionAnchor | None) -> ReaderConnectionRow:
-    source = connection.source if connection.direction == "incoming" else connection.target
-    excerpt = source.description
+    far = connection.other
+    excerpt = far.description
     if connection.snapshot is not None and connection.snapshot.excerpt:
         excerpt = connection.snapshot.excerpt
     if connection.citation is not None and connection.citation.snapshot.excerpt:
         excerpt = connection.citation.snapshot.excerpt
     return ReaderConnectionRow(
-        connection=_connection_out(connection),
+        connection=connection_out(connection),
         anchor=anchor,
-        title=source.label or source.ref.uri,
+        title=far.label or far.ref.uri,
         excerpt=excerpt,
     )
 
 
 def _anchor_ref(connection: Connection) -> ResourceRef:
-    return connection.target_ref if connection.direction == "incoming" else connection.source_ref
+    # The anchored endpoint is the LOCAL one — the endpoint that is not the far
+    # ``other``. ``other`` is chosen by locality (matched_incoming), so this holds
+    # for neutral undirected Links too, where storage direction carries no meaning.
+    return (
+        connection.source_ref
+        if connection.other.ref == connection.target_ref
+        else connection.target_ref
+    )
 
 
 def _anchor_for_connection(
@@ -133,6 +171,7 @@ def _anchor_for_connection(
     media_id: UUID,
     ref: ResourceRef,
     connection: Connection,
+    sources_cache: text_quote.MediaSourceCache,
 ) -> ReaderConnectionAnchor | None:
     citation = connection.citation
     if (
@@ -145,11 +184,18 @@ def _anchor_for_connection(
             locator=citation.target_locator,
             order_key=_locator_order_key(db, citation.target_locator),
         )
-    return _anchor_for_ref(db, viewer_id=viewer_id, media_id=media_id, ref=ref)
+    return _anchor_for_ref(
+        db, viewer_id=viewer_id, media_id=media_id, ref=ref, sources_cache=sources_cache
+    )
 
 
 def _anchor_for_ref(
-    db: Session, *, viewer_id: UUID, media_id: UUID, ref: ResourceRef
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    ref: ResourceRef,
+    sources_cache: text_quote.MediaSourceCache,
 ) -> ReaderConnectionAnchor | None:
     if ref.scheme == "evidence_span":
         target_media_id, locator = reader_target_for_citation_target(
@@ -254,6 +300,77 @@ def _anchor_for_ref(
             locator=locator,
             order_key=_locator_order_key(db, locator) or str(row[1]),
         )
+    if ref.scheme == "passage_anchor":
+        return _passage_anchor_anchor(
+            db, viewer_id=viewer_id, media_id=media_id, ref=ref, sources_cache=sources_cache
+        )
+    return None
+
+
+def _passage_anchor_anchor(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    ref: ResourceRef,
+    sources_cache: text_quote.MediaSourceCache,
+) -> ReaderConnectionAnchor | None:
+    """Anchor a passage_anchor endpoint at its LIVE current locator.
+
+    Never persisted: ``passage_anchors.resolve_current_location`` re-resolves the
+    quote against current owner text on every read. Fail-closed — an anchor owned
+    by another media/viewer, or one that no longer resolves uniquely, returns
+    ``None`` so the row stays visible in the unanchored collection with no false
+    jump.
+    """
+    location = passage_anchors.resolve_current_location(
+        db, viewer_id=viewer_id, passage_anchor_id=ref.id, sources_cache=sources_cache
+    )
+    if location is None or location.owner_scheme != "media" or location.owner_id != media_id:
+        return None
+    if not location.resolved or location.locator is None:
+        return None
+    reader_locator = _reader_locator_from_passage(media_id, location.locator)
+    if reader_locator is None:
+        return None
+    return ReaderConnectionAnchor(
+        locator=reader_locator,
+        order_key=_locator_order_key(db, reader_locator),
+        passage_anchor_id=ref.id,
+    )
+
+
+def _reader_locator_from_passage(media_id: UUID, locator: dict[str, Any]) -> dict[str, Any] | None:
+    """Map a passage-anchor selector locator to a reader retrieval locator."""
+    kind = locator.get("kind")
+    if kind == "text":
+        fragment_id = locator.get("fragment_id")
+        if fragment_id is None:
+            return None
+        return {
+            "type": "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(fragment_id),
+            "start_offset": locator.get("start_offset"),
+            "end_offset": locator.get("end_offset"),
+        }
+    if kind == "pdf":
+        page_number = locator.get("page_number")
+        if page_number is None:
+            return None
+        return {
+            "type": "pdf_page_geometry",
+            "media_id": str(media_id),
+            "page_number": int(page_number),
+            "quads": locator.get("quads", []),
+        }
+    if kind == "time":
+        return {
+            "type": "transcript_time_range",
+            "media_id": str(media_id),
+            "t_start_ms": locator.get("t_start_ms"),
+            "t_end_ms": locator.get("t_end_ms"),
+        }
     return None
 
 
@@ -380,52 +497,3 @@ def _locator_order_key(db: Session, locator: dict[str, object]) -> str | None:
         idx = db.scalar(text("SELECT idx FROM fragments WHERE id = :id"), {"id": fragment_id})
         fragment_indexes[str(fragment_id)] = int(idx or 0)
     return order_key_from_locator(locator, fragment_indexes)
-
-
-def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
-    return ConnectionEndpointOut(
-        ref=endpoint.ref.uri,
-        scheme=endpoint.ref.scheme,
-        id=endpoint.ref.id,
-        label=endpoint.label,
-        description=endpoint.description,
-        activation=endpoint.activation,
-        href=endpoint.href,
-        missing=endpoint.missing,
-    )
-
-
-def _connection_out(item: Connection) -> ConnectionOut:
-    citation = None
-    if item.citation is not None:
-        target_reader = None
-        if item.citation.target_media_id is not None or item.citation.target_locator is not None:
-            target_reader = ConnectionReaderTargetOut(
-                media_id=item.citation.target_media_id,
-                locator=item.citation.target_locator,
-            )
-        citation = ConnectionCitationOut(
-            ordinal=item.citation.ordinal,
-            role=item.citation.role,
-            snapshot=snapshot_to_jsonb(item.citation.snapshot),
-            activation=item.citation.activation,
-            target_reader=target_reader,
-            target_status=item.citation.target_status,
-        )
-    return ConnectionOut(
-        edge_id=item.edge_id,
-        direction=item.direction,
-        kind=item.kind,
-        origin=item.origin,
-        snapshot=snapshot_to_jsonb(item.snapshot) if item.snapshot is not None else None,
-        source_order_key=item.source_order_key,
-        target_order_key=item.target_order_key,
-        ordinal=item.ordinal,
-        source_ref=item.source_ref.uri,
-        target_ref=item.target_ref.uri,
-        source=_endpoint_out(item.source),
-        target=_endpoint_out(item.target),
-        other=_endpoint_out(item.other),
-        citation=citation,
-        created_at=item.created_at,
-    )

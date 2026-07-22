@@ -3,46 +3,105 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.types import ModelResponse, TokenUsage
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Failed,
+    PossiblyBillable,
+    Present,
+    ProviderHttpUnavailable,
+    Refused,
+    ResponsePayload,
+    Succeeded,
+    TextContent,
+    TokenUsage,
+    TransientExhausted,
+)
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import DailyNotePage, DawnWrite, Highlight, Page
-from nexus.services.dawn_write import collect_signals, generate_dawn_write
+from nexus.services.dawn_write import DAWN_WRITE_OPERATION, collect_signals, generate_dawn_write
+from nexus.services.llm_profiles import operation_profile
+from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from tests.factories import (
     create_test_media_in_library,
     get_user_default_library,
 )
 from tests.helpers import auth_headers
-from tests.utils.db import DirectSessionManager
+from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
+
+_PROFILE = operation_profile(DAWN_WRITE_OPERATION)
+
+
+# ---------------------------------------------------------------------------
+# Fake ExecutionRuntime + outcome builders
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ScriptedRuntime:
+    """A fake `ExecutionRuntime`: scripts one outcome (non-stream) or raises on
+    dispatch. Copied from tests/test_llm_execution.py `_ScriptedRuntime`
+    (stream() is unused by dawn_write, which never streams)."""
+
+    outcome: object = None
+    generate_error: BaseException | None = None
+    calls: list[str] = field(default_factory=list)
+
+    async def generate(self, intent, plan, credential) -> object:
+        self.calls.append("generate")
+        if self.generate_error is not None:
+            raise self.generate_error
+        assert self.outcome is not None
+        return self.outcome
+
+    def stream(self, intent, plan, credential, *, cancel):  # pragma: no cover - unused
+        raise NotImplementedError
+
+
+def _meta(**overrides: object) -> CallMeta:
+    fields: dict[str, object] = {
+        "provider": _PROFILE.target.provider,
+        "model": _PROFILE.target.model,
+        "provider_request_id": Present("req-abc"),
+        "upstream_provider": Absent(),
+        "usage": Present(
+            TokenUsage(
+                input_tokens=50,
+                output_tokens=80,
+                total_tokens=130,
+                reasoning_tokens=Absent(),
+                cache_read_input_tokens=Absent(),
+                cache_write_input_tokens=Absent(),
+            )
+        ),
+        "attempt_trace": (),
+        "billability": PossiblyBillable(),
+    }
+    fields.update(overrides)
+    return CallMeta(**fields)  # type: ignore[arg-type]
+
+
+def _succeeded_text_outcome(text: str) -> Succeeded:
+    return Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=TextContent(text=text, tool_calls=()), continuation=Absent()
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_fake_llm_response(text: str) -> ModelResponse:
-    return ModelResponse(
-        text=text,
-        usage=TokenUsage(
-            input_tokens=50,
-            output_tokens=80,
-            total_tokens=130,
-            reasoning_tokens=0,
-            cache_creation_input_tokens=0,
-            cache_read_input_tokens=0,
-            cached_tokens=0,
-        ),
-        provider_request_id="test-req-id",
-    )
 
 
 def _seed_daily_note_page(db: Session, user_id: UUID, tz: str = "America/New_York") -> None:
@@ -194,26 +253,51 @@ class TestCollectSignals:
 class TestGenerateDawnWrite:
     @pytest.fixture(autouse=True)
     def _platform_key(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-platform-key")
+        # DAWN_WRITE_OPERATION resolves to the "balanced" profile, whose target
+        # provider is openai (see llm_profiles.PROFILES) — the key must be
+        # OPENAI_API_KEY, not an anthropic key.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-platform-key")
         from nexus.config import clear_settings_cache
 
         clear_settings_cache()
         yield
         clear_settings_cache()
 
+    @pytest.fixture(autouse=True)
+    def _dawn_write_session_factory(self, monkeypatch, db_session):
+        """Route the owner's internal ``get_session_factory()`` call onto this
+        test's savepoint connection (same pattern as tests/test_llm_task.py
+        `_task_db`), so execute_generation's entitlement/ledger reads see the
+        grants and rows this test sets up on ``db_session``.
+        """
+        monkeypatch.setattr(
+            "nexus.services.dawn_write.get_session_factory",
+            lambda: task_session_factory(db_session),
+        )
+
+    @pytest.fixture(autouse=True)
+    def _rate_limiter(self, db_session):
+        """Install the real RateLimiter as the global singleton so
+        execute_generation's reservation/commit/release ledger flow runs for
+        real against this test's DB."""
+        previous = get_rate_limiter()
+        set_rate_limiter(RateLimiter(session_factory=task_session_factory(db_session)))
+        yield
+        set_rate_limiter(previous)
+
     def test_skips_when_signals_empty(self, db_session: Session, bootstrapped_user: UUID) -> None:
-        fake_llm = MagicMock()
+        runtime = _ScriptedRuntime()
         result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,
                 local_date=date.today(),
                 tz="UTC",
-                llm=fake_llm,
+                runtime=runtime,
             )
         )
         assert result is None
-        fake_llm.generate.assert_not_called()
+        assert runtime.calls == []
 
     def test_generates_and_inserts_row(self, db_session: Session, bootstrapped_user: UUID) -> None:
         from nexus.services.billing_entitlements import grant_entitlement_override
@@ -221,10 +305,10 @@ class TestGenerateDawnWrite:
         grant_entitlement_override(
             db_session,
             user_id=bootstrapped_user,
-            plan_tier="ai_plus",
-            platform_token_quota_mode="plan",
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
             platform_token_limit_monthly=None,
-            transcription_quota_mode="plan",
+            transcription_quota_mode="unlimited",
             transcription_minutes_limit_monthly=None,
             expires_at=None,
             reason="test",
@@ -238,22 +322,19 @@ class TestGenerateDawnWrite:
         )
         _seed_highlight(db_session, bootstrapped_user, media_id, exact="a memorable phrase")
 
-        fake_response = _make_fake_llm_response(
-            "Yesterday the reader marked a passage in Machine Learnable.\n\n"
-            "No overnight connections or stale dossiers."
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_text_outcome(
+                "Yesterday the reader marked a passage in Machine Learnable.\n\n"
+                "No overnight connections or stale dossiers."
+            )
         )
-
-        # Mock the router, not LedgeredLLM.generate — the llm_calls ledger row this
-        # test asserts on is written inside the real observed_generate path.
-        fake_router = MagicMock()
-        fake_router.generate = AsyncMock(return_value=fake_response)
         result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,
                 local_date=date.today(),
                 tz="UTC",
-                llm=fake_router,
+                runtime=runtime,
             )
         )
 
@@ -276,6 +357,142 @@ class TestGenerateDawnWrite:
         ).scalar()
         assert llm_call_count == 1
 
+    def test_skips_when_llm_not_entitled(
+        self, db_session: Session, bootstrapped_user: UUID
+    ) -> None:
+        """No entitlement grant → execute_generation raises ApiError(E_BILLING_REQUIRED),
+        which generate_dawn_write catches and treats as a skip (no row, no
+        ledger entry) — port of the old "empty response" no-write scenario to
+        the new entitlement-denial surface (see llm_execution.py: entitlement
+        denial raises before any llm_calls row is written)."""
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
+        _seed_highlight(db_session, bootstrapped_user, media_id)
+
+        runtime = _ScriptedRuntime(outcome=_succeeded_text_outcome("should not be reached"))
+        result = asyncio.run(
+            generate_dawn_write(
+                db_session,
+                user_id=bootstrapped_user,
+                local_date=date.today(),
+                tz="UTC",
+                runtime=runtime,
+            )
+        )
+        assert result is None
+        assert runtime.calls == []
+
+    def test_skips_when_provider_call_fails(
+        self, db_session: Session, bootstrapped_user: UUID
+    ) -> None:
+        from nexus.services.billing_entitlements import grant_entitlement_override
+
+        grant_entitlement_override(
+            db_session,
+            user_id=bootstrapped_user,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="test",
+            actor_label="test",
+        )
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
+        _seed_highlight(db_session, bootstrapped_user, media_id)
+
+        failure = TransientExhausted(attempts=1, cause=ProviderHttpUnavailable())
+        runtime = _ScriptedRuntime(outcome=Failed(meta=_meta(usage=Absent()), failure=failure))
+        result = asyncio.run(
+            generate_dawn_write(
+                db_session,
+                user_id=bootstrapped_user,
+                local_date=date.today(),
+                tz="UTC",
+                runtime=runtime,
+            )
+        )
+        assert result is None
+        db_row = db_session.scalar(
+            select(DawnWrite).where(
+                DawnWrite.user_id == bootstrapped_user,
+                DawnWrite.local_date == date.today(),
+            )
+        )
+        assert db_row is None
+
+    def test_skips_when_provider_refuses(
+        self, db_session: Session, bootstrapped_user: UUID
+    ) -> None:
+        from nexus.services.billing_entitlements import grant_entitlement_override
+
+        grant_entitlement_override(
+            db_session,
+            user_id=bootstrapped_user,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="test",
+            actor_label="test",
+        )
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
+        _seed_highlight(db_session, bootstrapped_user, media_id)
+
+        runtime = _ScriptedRuntime(
+            outcome=Refused(meta=_meta(usage=Absent()), safe_detail="declined")
+        )
+        result = asyncio.run(
+            generate_dawn_write(
+                db_session,
+                user_id=bootstrapped_user,
+                local_date=date.today(),
+                tz="UTC",
+                runtime=runtime,
+            )
+        )
+        assert result is None
+
+    def test_skips_when_empty_response(self, db_session: Session, bootstrapped_user: UUID) -> None:
+        from nexus.services.billing_entitlements import grant_entitlement_override
+
+        grant_entitlement_override(
+            db_session,
+            user_id=bootstrapped_user,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="test",
+            actor_label="test",
+        )
+        library_id = get_user_default_library(db_session, bootstrapped_user)
+        assert library_id is not None
+        media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
+        _seed_highlight(db_session, bootstrapped_user, media_id)
+
+        runtime = _ScriptedRuntime(outcome=_succeeded_text_outcome("   "))
+        result = asyncio.run(
+            generate_dawn_write(
+                db_session,
+                user_id=bootstrapped_user,
+                local_date=date.today(),
+                tz="UTC",
+                runtime=runtime,
+            )
+        )
+        assert result is None
+
     def test_skips_when_disabled(
         self, db_session: Session, bootstrapped_user: UUID, monkeypatch
     ) -> None:
@@ -289,14 +506,14 @@ class TestGenerateDawnWrite:
         media_id = create_test_media_in_library(db_session, bootstrapped_user, library_id)
         _seed_highlight(db_session, bootstrapped_user, media_id)
 
-        fake_llm = MagicMock()
+        runtime = _ScriptedRuntime()
         result = asyncio.run(
             generate_dawn_write(
                 db_session,
                 user_id=bootstrapped_user,
                 local_date=date.today(),
                 tz="UTC",
-                llm=fake_llm,
+                runtime=runtime,
             )
         )
         assert result is None

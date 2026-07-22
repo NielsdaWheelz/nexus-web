@@ -41,6 +41,7 @@ ReaderDocumentMapMarkerTone = Literal[
 
 class ReaderEvidenceAnchorOut(BaseModel):
     locator: MediaRetrievalLocator
+    passage_anchor_id: UUID | None = None
 
     model_config = ConfigDict(extra="forbid")
 

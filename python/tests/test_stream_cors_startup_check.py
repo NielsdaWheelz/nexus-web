@@ -33,6 +33,13 @@ _DEPLOY_ENV = {
     "R2_SECRET_ACCESS_KEY": "r2-secret",
     "R2_BUCKET": "media",
     "X_API_BEARER_TOKEN": "test-x-api-bearer-token",
+    # Platform LLM provider keys + Fable retention acceptance are required in
+    # staging/prod (config.validate_required_settings, spec §12).
+    "OPENAI_API_KEY": "sk-test-openai",
+    "ANTHROPIC_API_KEY": "sk-test-anthropic",
+    "GEMINI_API_KEY": "test-gemini",
+    "MOONSHOT_API_KEY": "sk-test-moonshot",
+    "NEXUS_FABLE_RETENTION_ACCEPTED_AT": "2026-01-01T00:00:00Z",
 }
 
 

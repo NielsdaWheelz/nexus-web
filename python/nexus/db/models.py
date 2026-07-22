@@ -21,6 +21,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -383,7 +384,7 @@ class ResourceVersion(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_versions_resource_scheme",
@@ -509,7 +510,7 @@ class ResourceViewState(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_view_states_surface_scheme",
@@ -523,7 +524,7 @@ class ResourceViewState(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_view_states_target_scheme",
@@ -595,7 +596,7 @@ class ResourceEdge(Base):
             """
             origin IN (
                 'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'synapse', 'document_embed', 'assistant'
+                'synapse', 'document_embed', 'assistant', 'link_note'
             )
             """,
             name="ck_resource_edges_origin",
@@ -609,7 +610,7 @@ class ResourceEdge(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_edges_source_scheme",
@@ -623,7 +624,7 @@ class ResourceEdge(Base):
                 'oracle_passage_anchor', 'artifact',
                 'artifact_revision',
                 'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item'
+                'reader_apparatus_item', 'passage_anchor'
             )
             """,
             name="ck_resource_edges_target_scheme",
@@ -813,8 +814,47 @@ class ResourceEdge(Base):
             unique=True,
             postgresql_where=text("ordinal IS NOT NULL"),
         ),
+        # One neutral Link per user and directed pair; the service canonicalizes
+        # the pair to total (scheme, id) order before insert, so directed
+        # uniqueness here is unordered uniqueness in practice
+        # (universal-link-authoring-hard-cutover.md, Graph Shapes).
         Index(
-            "uq_resource_edges_context_pair",
+            "uq_resource_edges_user_context_link_pair",
+            "user_id",
+            "source_scheme",
+            "source_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'user' AND kind = 'context' AND ordinal IS NULL"
+                " AND snapshot IS NULL AND source_order_key IS NULL"
+                " AND target_order_key IS NULL"
+            ),
+        ),
+        # One stance per user and directed pair, excluding kind so supports and
+        # contradicts share the slot; the opposite-orientation invariant is
+        # transaction-enforced by the stance service, this index catches
+        # same-orientation races.
+        Index(
+            "uq_resource_edges_user_stance_directed_pair",
+            "user_id",
+            "source_scheme",
+            "source_id",
+            "target_scheme",
+            "target_id",
+            unique=True,
+            postgresql_where=text(
+                "origin = 'user' AND kind IN ('supports', 'contradicts')"
+                " AND ordinal IS NULL AND snapshot IS NULL"
+                " AND source_order_key IS NULL AND target_order_key IS NULL"
+            ),
+        ),
+        # Directed per-origin dedupe for non-user orderless bare pairs,
+        # replacing the dropped broad uq_resource_edges_context_pair without
+        # colliding ordered adjacency or user-shape rows.
+        Index(
+            "uq_resource_edges_nonuser_orderless_pair",
             "user_id",
             "origin",
             "source_scheme",
@@ -822,7 +862,10 @@ class ResourceEdge(Base):
             "target_scheme",
             "target_id",
             unique=True,
-            postgresql_where=text("ordinal IS NULL"),
+            postgresql_where=text(
+                "origin <> 'user' AND ordinal IS NULL"
+                " AND source_order_key IS NULL AND target_order_key IS NULL"
+            ),
         ),
         Index(
             "uq_resource_edges_source_order",
@@ -882,6 +925,49 @@ class ResourceExternalSnapshot(Base):
         CheckConstraint(
             "jsonb_typeof(source_snapshot) = 'object'",
             name="ck_resource_external_snapshots_source_object",
+        ),
+    )
+
+
+class PassageAnchor(Base):
+    """User-owned durable passage identity within one owner (media or
+    note_block), materialized when a Link/stance targets a derived passage
+    (universal-link-authoring-hard-cutover.md, Passage Anchor). Owner, version,
+    normalized quote, and key are immutable; only the selector's locator_hint
+    is replaceable. ``id`` is application-generated. ``owner_id`` is
+    polymorphic and deliberately has no FK; owner visibility and explicit
+    owner cleanup replace it. Shape is service-validated, not a CHECK/trigger.
+    """
+
+    __tablename__ = "passage_anchors"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_passage_anchors_user"),
+        nullable=False,
+    )
+    owner_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    selector_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # sha256 hex of the canonical normalized quote {exact, prefix, suffix}.
+    anchor_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Quote identity plus non-identity locator_hint.
+    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "owner_scheme",
+            "owner_id",
+            "selector_version",
+            "anchor_key",
+            name="uq_passage_anchors_identity",
         ),
     )
 
@@ -3469,7 +3555,7 @@ class Highlight(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("users.id"),
         nullable=False,
     )
 
@@ -3477,7 +3563,7 @@ class Highlight(Base):
     anchor_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     anchor_media_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=True,
     )
 
@@ -3512,26 +3598,22 @@ class Highlight(Base):
         ),
     )
 
-    # Relationships
+    # Relationships. No ORM cascade ownership: Highlight deletion is explicit
+    # child-first cleanup (universal-link-authoring-hard-cutover.md, Highlight
+    # Durability).
     fragment_anchor: Mapped["HighlightFragmentAnchor | None"] = relationship(
         "HighlightFragmentAnchor",
         back_populates="highlight",
         uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     pdf_anchor: Mapped["HighlightPdfAnchor | None"] = relationship(
         "HighlightPdfAnchor",
         back_populates="highlight",
         uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     pdf_quads: Mapped[list["HighlightPdfQuad"]] = relationship(
         "HighlightPdfQuad",
         back_populates="highlight",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
 
 
@@ -3551,14 +3633,13 @@ class HighlightFragmentAnchor(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
-    fragment_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("fragments.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    # Disposable locator cache pointer: no FK — fragments are replaceable
+    # index rows, and a stale fragment_id is an expected state resolved by
+    # quote (universal-link-authoring-hard-cutover.md, Highlight Durability).
+    fragment_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -3571,7 +3652,11 @@ class HighlightFragmentAnchor(Base):
     )
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
-    fragment: Mapped["Fragment"] = relationship("Fragment")
+    fragment: Mapped["Fragment | None"] = relationship(
+        "Fragment",
+        primaryjoin="foreign(HighlightFragmentAnchor.fragment_id) == Fragment.id",
+        viewonly=True,
+    )
 
 
 class HighlightPdfAnchor(Base):
@@ -3585,12 +3670,12 @@ class HighlightPdfAnchor(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
+        ForeignKey("media.id"),
         nullable=False,
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -3644,7 +3729,7 @@ class HighlightPdfQuad(Base):
 
     highlight_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("highlights.id", ondelete="CASCADE"),
+        ForeignKey("highlights.id"),
         primary_key=True,
     )
     quad_idx: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -3739,40 +3824,6 @@ class BranchAnchorKind(str, PyEnum):
     none = "none"
     assistant_message = "assistant_message"
     assistant_selection = "assistant_selection"
-
-
-class LLMProvider(str, PyEnum):
-    """Supported LLM providers."""
-
-    openai = "openai"
-    anthropic = "anthropic"
-    gemini = "gemini"
-    openrouter = "openrouter"
-    cloudflare = "cloudflare"
-
-
-class KeyModeRequested(str, PyEnum):
-    """Requested key mode for LLM calls."""
-
-    auto = "auto"
-    byok_only = "byok_only"
-    platform_only = "platform_only"
-
-
-class KeyModeUsed(str, PyEnum):
-    """Actual key mode used for LLM calls."""
-
-    platform = "platform"
-    byok = "byok"
-
-
-class ApiKeyStatus(str, PyEnum):
-    """Status of a user API key."""
-
-    untested = "untested"
-    valid = "valid"
-    invalid = "invalid"
-    revoked = "revoked"
 
 
 class ContextTargetType(str, PyEnum):
@@ -3963,36 +4014,6 @@ class ConversationShare(Base):
     library: Mapped["Library"] = relationship("Library")
 
 
-class Model(Base):
-    """Model registry for LLM models."""
-
-    __tablename__ = "models"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False)
-    max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    cost_per_1k_input_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cost_per_1k_output_tokens_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
-
-    __table_args__ = (
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_models_provider",
-        ),
-        CheckConstraint(
-            "max_context_tokens > 0",
-            name="ck_models_max_context_positive",
-        ),
-        UniqueConstraint("provider", "model_name", name="uix_models_provider_model_name"),
-    )
-
-
 class LLMCall(Base):
     """One provider LLM call in the polymorphic ledger (sole writer: llm_ledger)."""
 
@@ -4007,13 +4028,11 @@ class LLMCall(Base):
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_route: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reasoning_effort: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode_used: Mapped[str] = mapped_column(Text, nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -4022,7 +4041,13 @@ class LLMCall(Base):
     cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cached_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    error_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    catalog_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cache_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cache_ttl: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -4059,14 +4084,6 @@ class LLMCall(Base):
             name="ck_llm_calls_owner_kind",
         ),
         CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_llm_calls_provider",
-        ),
-        CheckConstraint(
-            "provider_route IN ('openai', 'anthropic', 'gemini', 'openrouter', 'cloudflare')",
-            name="ck_llm_calls_provider_route",
-        ),
         CheckConstraint(
             "input_tokens >= 0 AND output_tokens >= 0 AND total_tokens >= 0 "
             "AND reasoning_tokens >= 0 AND cache_write_input_tokens >= 0 "
@@ -4150,12 +4167,6 @@ class Message(Base):
         server_default=text("""'{"type":"message_document","blocks":[]}'::jsonb"""),
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="complete")
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    model_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     parent_message_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id"),
@@ -4225,7 +4236,6 @@ class Message(Base):
 
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
-    model: Mapped["Model | None"] = relationship("Model")
     parent_message: Mapped["Message | None"] = relationship(
         "Message",
         foreign_keys=[parent_message_id],
@@ -4672,13 +4682,14 @@ class ChatRun(Base):
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    model_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
-        nullable=False,
-    )
-    reasoning: Mapped[str] = mapped_column(Text, nullable=False)
-    key_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    # Product selection snapshots (non-FK: profile_id/reasoning_option_id name a
+    # frozen registry row in services/llm_profiles.py, not a mutable table).
+    profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Resolved operator/trust-trail facts, filled at execution from the plan.
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -4686,7 +4697,9 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -4707,14 +4720,6 @@ class ChatRun(Base):
             "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
             name="ck_chat_runs_idempotency_key_length",
         ),
-        CheckConstraint(
-            "reasoning IN ('default', 'none', 'minimal', 'low', 'medium', 'high', 'max')",
-            name="ck_chat_runs_reasoning",
-        ),
-        CheckConstraint(
-            "key_mode IN ('auto', 'byok_only', 'platform_only')",
-            name="ck_chat_runs_key_mode",
-        ),
         UniqueConstraint(
             "owner_user_id",
             "idempotency_key",
@@ -4730,7 +4735,6 @@ class ChatRun(Base):
         "Message",
         foreign_keys=[assistant_message_id],
     )
-    model: Mapped["Model"] = relationship("Model")
     events: Mapped[list["ChatRunEvent"]] = relationship(
         "ChatRunEvent",
         back_populates="run",
@@ -4805,7 +4809,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_passage_anchor', 'artifact', "
             "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item')",
+            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
             name="ck_chat_run_turn_contexts_requested_subject_scheme",
         ),
         CheckConstraint(
@@ -4814,7 +4818,7 @@ class ChatRunTurnContext(Base):
             "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
             "'oracle_passage_anchor', 'artifact', "
             "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item')",
+            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
             name="ck_chat_run_turn_contexts_subject_scheme",
         ),
         Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),
@@ -4847,11 +4851,6 @@ class ChatPromptAssembly(Base):
     assistant_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("messages.id"),
-        nullable=False,
-    )
-    model_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("models.id"),
         nullable=False,
     )
     cacheable_input_tokens_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -4951,7 +4950,6 @@ class ChatPromptAssembly(Base):
         back_populates="prompt_assemblies",
     )
     assistant_message: Mapped["Message"] = relationship("Message")
-    model: Mapped["Model"] = relationship("Model")
 
 
 class ChatRunEvent(Base):
@@ -4992,63 +4990,6 @@ class ChatRunEvent(Base):
     )
 
     run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
-
-
-class UserApiKey(Base):
-    """UserApiKey model - encrypted BYOK API keys per provider."""
-
-    __tablename__ = "user_api_keys"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    provider: Mapped[str] = mapped_column(Text, nullable=False)
-    # These fields are nullable to support secure revocation (wipe to NULL)
-    encrypted_key: Mapped[bytes | None] = mapped_column(nullable=True)
-    key_nonce: Mapped[bytes | None] = mapped_column(nullable=True)
-    master_key_version: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, server_default="1"
-    )
-    key_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="untested")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_tested_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'gemini', 'openrouter')",
-            name="ck_user_api_keys_provider",
-        ),
-        CheckConstraint(
-            "master_key_version IS NULL OR master_key_version > 0",
-            name="ck_user_api_keys_master_key_version",
-        ),
-        CheckConstraint(
-            "status IN ('untested', 'valid', 'invalid', 'revoked')",
-            name="ck_user_api_keys_status",
-        ),
-        CheckConstraint(
-            "key_nonce IS NULL OR octet_length(key_nonce) = 24",
-            name="ck_user_api_keys_nonce_len",
-        ),
-        UniqueConstraint("user_id", "provider", name="uix_user_api_keys_user_provider"),
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship("User")
 
 
 class BillingAccount(Base):

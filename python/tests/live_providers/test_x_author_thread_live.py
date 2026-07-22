@@ -66,7 +66,7 @@ def test_live_x_author_thread_ingest_indexes_real_provider_thread(auth_client, d
     settings = get_settings()
     if settings.nexus_env.value == "test":
         pytest.fail("live provider gate must run with NEXUS_ENV=local, staging, or prod")
-    if not settings.enable_openai or not os.environ.get("OPENAI_API_KEY"):
+    if not settings.openai_api_key or not os.environ.get("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY and ENABLE_OPENAI=true are required for live X ingest")
     if not settings.x_api_bearer_token:
         pytest.fail("X_API_BEARER_TOKEN must be set for live X ingest")

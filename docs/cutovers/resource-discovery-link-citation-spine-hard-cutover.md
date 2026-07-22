@@ -5,6 +5,17 @@ Author: Codex
 Type: hard cutover
 Date: 2026-06-17
 
+**Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
+this document remains authoritative for the one-address/one-capability/
+one-search/one-citation/one-activation architecture. It is superseded only
+in its implication that a direct derived endpoint — `evidence_span`,
+`content_chunk`, or `fragment` — can itself be a durable user Link target: a
+passage endpoint now materializes/reuses a `passage_anchor:<id>` before any
+Link persists, so `linkable` is no longer a single scalar boolean but the
+narrower `ResourceUserRelationPolicy(user_link_source, user_link_target)`
+contract (`none | direct | materialize_passage`) described in the superseding
+spec.
+
 ## North Star
 
 Every user-visible thing in Nexus has one address, one capability policy, one

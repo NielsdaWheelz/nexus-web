@@ -9,7 +9,7 @@ import type { PillTone } from "@/components/ui/Pill";
 import type { ResourceRowPrimary } from "@/components/ui/ResourceRow";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
-import type { EdgeKind } from "@/lib/resourceGraph/edges";
+import type { EdgeKind } from "@/lib/resourceGraph/connections";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export type CollectionItemKind =
@@ -58,6 +58,8 @@ export interface CollectionRowView {
   primary: ResourceRowPrimary;
   lead: ResourceThumbSpec;
   headline: { text: string; segments?: EmphasisSegment[] };
+  /** Compact identity context rendered separately from explanatory signals. */
+  description?: string;
   signals: SignalFact[];
   /** Derived read/listen state (S3). */
   consumption?: { status: ReadStatus; fraction?: number };

@@ -632,8 +632,9 @@ This is the implemented footprint, not a prospective file plan.
 ### Modified
 
 - Authenticated/share surfaces:
-  `apps/web/src/app/(authenticated)/libraries/[id]/{LibraryPaneBody.tsx,LibraryPaneBody.ac4.test.tsx}`,
-  `notes/[blockId]/NotePaneBody.tsx`, `pages/[pageId]/PagePaneBody.tsx`,
+  `apps/web/src/app/(authenticated)/libraries/[id]/{LibraryPaneBody.tsx,LibraryPaneBody.ac4.test.tsx,LibraryPaneBody.readingSlate.test.tsx}`,
+  `notes/[blockId]/NotePaneBody.tsx`,
+  `pages/[pageId]/{PagePaneBody.tsx,PagePaneBody.test.tsx}`,
   `podcasts/PodcastsPaneBody.tsx`,
   `podcasts/[podcastId]/PodcastDetailPaneBody.tsx`, and
   `apps/web/src/app/share/{ShareCapture.tsx,ShareCapture.test.tsx}`.
@@ -658,9 +659,9 @@ This is the implemented footprint, not a prospective file plan.
   `services/{library_entries.py,library_governance.py,media_deletion.py,media_source_ingest.py,oracle_corpus.py,web_article_ingest.py,agent_tools/writes.py}`.
 - Backend tests:
   `python/tests/{factories.py,test_author_deduplication_cutover.py,test_consumption_projection.py,test_cutover_negative_gates.py,test_db_retries.py,test_highlights.py,test_libraries.py,test_library_target_picker.py,test_listening_heartbeat.py,test_media_deletion.py,test_media_libraries_endpoint.py,test_pdf_highlights_integration.py,test_podcasts.py,test_reader_apparatus_service.py,test_reader_integration.py,test_search.py,test_upload.py,test_web_article_highlight_e2e.py}`
-  and `python/tests/real_media/test_reingest_delete_permissions.py`.
+  and `python/tests/{test_media_related.py,real_media/test_reingest_delete_permissions.py}`.
 - E2E:
-  `e2e/tests/{add-content.ts,epub.spec.ts,launcher.spec.ts,pdf-reader.spec.ts,web-articles.spec.ts}`
+  `e2e/tests/{add-content.ts,epub.spec.ts,launcher.spec.ts,pdf-reader.spec.ts,resonance-reading-slate.spec.ts,web-articles.spec.ts}`
   and `e2e/tests/real-media/real-media-seed.ts`.
 - Docs: `docs/architecture.md`, `docs/dreams.md`,
   `docs/cutovers/{android-share-library-destinations-hard-cutover.md,browse-surface-deletion-hard-cutover.md,durable-source-ingest-hard-cutover.md,lectern-player-lifecycle-hard-cutover.md,library-reading-time-hard-cutover.md,universal-launcher-hard-cutover.md}`,
@@ -728,10 +729,24 @@ Completed on 2026-07-21 with exact changed-contract selections only:
   passed, plus **5** directly affected integration tests. Targeted Ruff passed for the 12
   changed backend modules. The real-media case was deselected by its normal marker; it was
   not reported as executed.
+- After merging current `main`, exact integration selections passed: launcher architecture
+  invariants **16/16**; Notes **19/19**; Connections **17/17**; Reading Slate **5/5**;
+  Library AC4/default **13/13**; and Page **19/19**. The correctly migrated backend
+  selection initially passed **41/42**; after replacing one stale deleted-provider guard,
+  its exact affected file passed **3/3**, leaving every selected backend case passing.
+  Targeted ESLint and Ruff passed for all conflict-resolved and integration-adjusted files.
+  The production-start gate exposed and closed three strict typing gaps; the exact Share
+  browser owner passed **16/16**, API/ingest/capture/session-model owners **57/57**, and the
+  session controller owner **13/13**.
 - Real-stack Playwright, isolated services: auth setup plus only
   `web articles › accepted rows support convergent row and bulk filing` — **2 passed**;
   the named case completed in 2.8 s. It proves retained partial outcomes and authoritative
   row/bulk add/remove across the Next/FastAPI boundary.
+- Real-stack Playwright after merging `main`, isolated services: auth setup plus only
+  `Reading Slate acceptance preserves survivors, excludes the accepted target, and
+  reconciles on library reactivation` — **2 passed**; the named case completed in 6.5 s.
+  It proves explicit post-upload Open, canonical Link creation/deletion, canonical
+  membership acceptance, bounded Slate refill, and reactivation reconciliation.
 - Targeted static residue checks and document-scoped `git diff --check` passed.
 
-No Makefile, CI, or broad/full verification target was run for this cutover.
+No broad Makefile verification, CI, or full verification target was run for this cutover.

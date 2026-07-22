@@ -83,9 +83,12 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   while the media lock is held; object-store deletion happens only after commit.
 - **One read tier (Tier-R).** Writes have one owner; visibility/search readers
   read the table under an explicit allowlist: `auth/permissions.py`,
-  `services/search.py`, `services/contributors.py`,
-  `services/agent_tools/app_search.py`, `services/object_refs.py`,
-  `services/note_indexing.py`, and `services/library_intelligence.py`.
+  `services/search/scope.py`, `services/contributors.py`,
+  `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
+  `services/library_intelligence.py`. `services/object_refs.py` is deleted;
+  its former note/@-mention reads are superseded by `services/resource_items/
+  targets.py` (target search) and the shared frontend target controller — see
+  [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).
   Visibility itself remains the boolean predicates in `auth/permissions.py`;
   `services/highlights.py` reuses `permissions.highlight_library_intersection_exists`
   rather than re-implementing the intersection.
@@ -115,7 +118,7 @@ contribution the moment it is gone, on the very next read.
 - **Stateless keyset pagination, three cursor kinds.** Listing any library
   never touches a snapshot table. The default library's own listing paginates
   the deduplicated virtual set by media recency; a non-default library
-  paginates its physical entries either by position or by resonance order.
+  paginates its physical entries either by position or by Resonance order.
   Each cursor is opaque, self-describing (`k`), and scoped to the exact
   `(viewer_id, library_id, kind)` it was minted for — a cursor from the wrong
   viewer, library, or kind (including any cursor minted before this cutover)
@@ -138,7 +141,7 @@ contribution the moment it is gone, on the very next read.
 ## Reading-time projection
 
 Reading time is owned by the Library list read model, not `MediaOut` and not an
-ingestion writer. Migration `0186` stores same-row word-count derivatives beside
+ingestion writer. Migration `0187` stores same-row word-count derivatives beside
 canonical fragment text and PDF plain text. `services/media_document_metrics.py`
 is the sole media-level aggregate owner: it sums stored integers for a bounded
 batch and never reads document text on a request. Shared PDF quote readiness
@@ -153,6 +156,36 @@ inside a present estimate; remaining is present only for in-progress web/EPUB
 media with the consumption projection's monotonic whole-document progression.
 PDF is total-only. Nested `media` is the sole entry consumption owner; root entry
 read-state/progress fields do not exist.
+
+## Resonance and Reading Slate
+
+`python/nexus/services/resonance/` is the sole relevance-policy owner. It
+composes public, policy-neutral read ports from `library_entries`, consumption,
+the resource graph, contributor credits, media/podcasts, and the semantic index;
+those modules retain their tables and mutations.
+
+- `GET /libraries/{id}/entries?sort=resonance` ranks the complete eligible
+  physical membership before keyset pagination. The strict cursor kind is
+  `library_entries:resonance:v2`; prior cursor payloads are invalid.
+- `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
+  outside complete destination membership. A library suggestion must have a
+  factual graph, shared-author, or calibrated semantic relation to one of five
+  representative complete-membership anchors; recency cannot qualify it.
+- A non-default, non-system admin library accepts media plus actively
+  subscribed podcasts. Default accepts media suggestions only. Member-only and
+  system libraries return an empty Slate because their actor-facing filing
+  commands cannot add entries. `Finished` media remains eligible for an
+  addable destination.
+- Every read uses one repeatable-read, read-only snapshot and performs no
+  request-time AI, generation, embedding, scheduled job, or persisted
+  recommendation state.
+
+The frontend renders **Suggested for this library** after entries and Load More
+in a fixed comfortable List, independent of the main collection's empty state,
+Gallery choice, or density. Add delegates to the existing media/podcast filing
+command. It does not synthesize a `LibraryEntry`; visible Slate survivors stay
+in order, at most one canonical replacement is appended, and the main entry
+projection reloads on the next pane activation.
 
 ## Writable library destinations
 

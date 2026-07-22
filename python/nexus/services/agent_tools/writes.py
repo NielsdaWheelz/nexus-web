@@ -69,6 +69,13 @@ WRITE_TOOL_NAMES: tuple[str, ...] = (
 
 _EDGE_KINDS = ("context", "supports", "contradicts")
 
+# Parameter schemas follow the canonical JSON-Schema subset (llm-provider-runtime
+# hard cutover §5): every property is listed in ``required`` with
+# ``additionalProperties: false``, and semantically optional values are
+# required-nullable ``anyOf [X, {"type": "null"}]``. Executors treat an explicit
+# null exactly like an omitted key (all argument reads go through ``args.get``),
+# and defaults (highlight color yellow, edge kind context) live in the execute
+# path, never in the schema.
 ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "name": ADD_TO_LIBRARY_TOOL_NAME,
@@ -87,13 +94,19 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                     "type": "string",
                     "description": "media:<uuid> or podcast:<uuid> to file.",
                 },
-                "library_id": {"type": "string", "description": "Target library UUID."},
+                "library_id": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Target library UUID; null when filing by library_name.",
+                },
                 "library_name": {
-                    "type": "string",
-                    "description": "Target library name (exact, case-insensitive).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Target library name (exact, case-insensitive); "
+                        "null when filing by library_id."
+                    ),
                 },
             },
-            "required": ["resource_uri"],
+            "required": ["resource_uri", "library_id", "library_name"],
             "additionalProperties": False,
         },
     },
@@ -109,11 +122,11 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
             "properties": {
                 "markdown": {"type": "string", "description": "The note text (markdown)."},
                 "page_uri": {
-                    "type": "string",
-                    "description": "page:<uuid> to append to; omit for today's daily note.",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "page:<uuid> to append to; null for today's daily note.",
                 },
             },
-            "required": ["markdown"],
+            "required": ["markdown", "page_uri"],
             "additionalProperties": False,
         },
     },
@@ -132,21 +145,35 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                 "media_uri": {"type": "string", "description": "media:<uuid> to highlight in."},
                 "exact": {"type": "string", "description": "The passage, verbatim."},
                 "prefix": {
-                    "type": "string",
-                    "description": "Text immediately before the passage (to disambiguate).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately before the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
                 },
                 "suffix": {
-                    "type": "string",
-                    "description": "Text immediately after the passage (to disambiguate).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately after the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
                 },
                 "color": {
-                    "type": "string",
-                    "enum": ["yellow", "green", "blue", "pink", "purple"],
-                    "description": "Highlight color (default yellow).",
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "enum": ["yellow", "green", "blue", "pink", "purple"],
+                        },
+                        {"type": "null"},
+                    ],
+                    "description": "Highlight color; null for the default (yellow).",
                 },
-                "note": {"type": "string", "description": "Optional highlight note (markdown)."},
+                "note": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Optional highlight note (markdown); null for none.",
+                },
             },
-            "required": ["media_uri", "exact"],
+            "required": ["media_uri", "exact", "prefix", "suffix", "color", "note"],
             "additionalProperties": False,
         },
     },
@@ -164,16 +191,18 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                 "source_uri": {"type": "string", "description": "One endpoint URI."},
                 "target_uri": {"type": "string", "description": "The other endpoint URI."},
                 "kind": {
-                    "type": "string",
-                    "enum": list(_EDGE_KINDS),
-                    "description": "Relationship kind (default context).",
+                    "anyOf": [
+                        {"type": "string", "enum": list(_EDGE_KINDS)},
+                        {"type": "null"},
+                    ],
+                    "description": "Relationship kind; null for the default (context).",
                 },
                 "rationale": {
                     "type": "string",
                     "description": "One-line reason for the connection.",
                 },
             },
-            "required": ["source_uri", "target_uri", "rationale"],
+            "required": ["source_uri", "target_uri", "kind", "rationale"],
             "additionalProperties": False,
         },
     },

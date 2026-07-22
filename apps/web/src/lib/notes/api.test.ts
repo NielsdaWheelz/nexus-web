@@ -337,7 +337,11 @@ function resourceItem(
     },
     missing: false,
     capabilities: {
-      linkable: true,
+      user_relation: {
+        user_link_source: true,
+        user_link_target: "direct",
+        note_reference_target: true,
+      },
       attachable: true,
       chat_subject: "label",
       readable: "body",

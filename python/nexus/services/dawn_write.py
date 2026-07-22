@@ -9,32 +9,40 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import cast
 from uuid import UUID, uuid4
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
-from provider_runtime.types import ModelCall, ModelMessage, ModelRef, ProviderName, ReasoningConfig
+from provider_runtime import (
+    Dynamic,
+    GenerateIntent,
+    GlobalScope,
+    PromptBlock,
+    ProviderTarget,
+    ReasoningLevel,
+    Stable,
+    Succeeded,
+    SystemMessage,
+    TextContent,
+    TextOutput,
+    UserMessage,
+)
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import DawnWrite
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
-from nexus.services.api_key_resolver import resolve_api_key
 from nexus.services.artifacts.engine import is_artifact_stale
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
+from nexus.services.structured_synthesis import outcome_failure_facts
 
 logger = get_logger(__name__)
 
-DAWN_WRITE_PROVIDER = "anthropic"
-DAWN_WRITE_MODEL_NAME = "claude-haiku-4-5-20251001"
+DAWN_WRITE_OPERATION = "dawn_write"
 DAWN_WRITE_MAX_TOKENS = 300
-DAWN_WRITE_TIMEOUT_SECONDS = 45
-
-require_catalog_model(DAWN_WRITE_PROVIDER, DAWN_WRITE_MODEL_NAME)
 
 _SYSTEM_PROMPT = """\
 You are the dawn writer for a reading system. You have access to one user's
@@ -220,18 +228,22 @@ def _render_signals(signals: DawnWriteSignals) -> str:
     return "\n\n".join(parts)
 
 
-def _build_request(user_content: str) -> ModelCall:
-    return ModelCall(
-        model=ModelRef(
-            provider=cast(ProviderName, DAWN_WRITE_PROVIDER),
-            model=DAWN_WRITE_MODEL_NAME,
+def _build_intent(
+    *, target: ProviderTarget, reasoning: ReasoningLevel, user_content: str
+) -> GenerateIntent:
+    return GenerateIntent(
+        target=target,
+        messages=(
+            SystemMessage(
+                blocks=(PromptBlock(text=_SYSTEM_PROMPT, stability=Stable(GlobalScope())),)
+            ),
+            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
         ),
-        messages=[
-            ModelMessage(role="system", content=_SYSTEM_PROMPT, cache_ttl="5m"),
-            ModelMessage(role="user", content=user_content, cache_ttl="none"),
-        ],
         max_output_tokens=DAWN_WRITE_MAX_TOKENS,
-        reasoning=ReasoningConfig(effort="none"),
+        reasoning=reasoning,
+        tools=(),
+        tool_choice="none",
+        output=TextOutput(),
     )
 
 
@@ -241,12 +253,13 @@ async def generate_dawn_write(
     user_id: UUID,
     local_date: date,
     tz: str,
-    llm: ModelRuntime,
+    runtime: ExecutionRuntime,
 ) -> DawnWrite | None:
     """Generate and persist a dawn write for *user_id* on *local_date*.
 
-    Returns None when signals are empty (nothing to say) or when no API key
-    is available. Callers must check for an existing row before calling.
+    Returns None when signals are empty (nothing to say), the platform
+    entitlement/rate-limit rejects the call, or the provider call does not
+    succeed. Callers must check for an existing row before calling.
     """
     settings = get_settings()
     if not settings.dawn_write_enabled:
@@ -258,39 +271,49 @@ async def generate_dawn_write(
         logger.info("dawn_write_skipped", reason="no_signals", user_id=str(user_id))
         return None
 
+    user_content = _render_signals(signals)
+
+    # Pre-generate the row id so the ledger owner can reference it before the
+    # row is inserted. llm_calls.owner_id has no FK so the forward reference
+    # is safe.
+    row_id = uuid4()
+    profile = operation_profile(DAWN_WRITE_OPERATION)
+    intent = _build_intent(
+        target=profile.target,
+        reasoning=profile.default_reasoning_option_id,
+        user_content=user_content,
+    )
+
     try:
-        resolved_key = resolve_api_key(db, user_id, DAWN_WRITE_PROVIDER, "auto")
-    except (ApiError, ModelCallError) as exc:
+        call = await execute_generation(
+            GenerationRequest(
+                owner=LlmCallOwner(kind="dawn_write", id=row_id, user_id=user_id),
+                operation=DAWN_WRITE_OPERATION,
+                profile=profile,
+                reasoning=profile.default_reasoning_option_id,
+                intent=intent,
+            ),
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            settings=settings,
+        )
+    except ApiError as exc:
         logger.info(
-            "dawn_write_skipped",
-            reason="no_api_key",
-            user_id=str(user_id),
-            error=str(exc),
+            "dawn_write_skipped", reason="llm_rejected", user_id=str(user_id), error=str(exc)
         )
         return None
 
-    user_content = _render_signals(signals)
-    request = _build_request(user_content)
-
-    # Pre-generate the row id so the ledger owner can reference it before the
-    # row is inserted.  llm_calls.owner_id has no FK so the forward reference
-    # is safe.
-    row_id = uuid4()
-
-    try:
-        response = await LedgeredLLM(
-            db=db,
-            owner=LlmCallOwner(kind="dawn_write", id=row_id),
-            router=llm,
-            llm_operation="dawn_write",
-            key_mode_requested="auto",
-            key_mode_used=resolved_key.mode,
-        ).generate(request, key=resolved_key.api_key, timeout_s=DAWN_WRITE_TIMEOUT_SECONDS)
-    except (ApiError, ModelCallError) as exc:
-        logger.warning("dawn_write_llm_failure", user_id=str(user_id), error=str(exc))
+    if not isinstance(call.outcome, Succeeded):
+        code, _detail = outcome_failure_facts(call.outcome)
+        logger.warning("dawn_write_llm_failure", user_id=str(user_id), error_code=code)
         return None
 
-    body = response.text.strip()
+    content = call.outcome.response.content
+    if not isinstance(content, TextContent):
+        # justify-defect: output=TextOutput plans output_kind="text", which the
+        # runtime never promotes to StructuredContent.
+        raise AssertionError("dawn write TextOutput outcome decoded as StructuredContent")
+    body = content.text.strip()
     if not body:
         logger.warning("dawn_write_empty_response", user_id=str(user_id))
         return None

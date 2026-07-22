@@ -17,7 +17,7 @@ from nexus.db.models import ChatRun, Message
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, enqueue_job, fail_job
 from nexus.jobs.registry import JobDefinition
 from nexus.jobs.worker import JobWorker
-from tests.factories import create_test_conversation, create_test_message, create_test_model
+from tests.factories import create_test_conversation, create_test_message
 from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
@@ -250,7 +250,6 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
     db_session: Session,
     bootstrapped_user: UUID,
 ):
-    model_id = create_test_model(db_session)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     user_message_id = create_test_message(
         db_session,
@@ -266,7 +265,6 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
         role="assistant",
         content="",
         status="pending",
-        model_id=model_id,
         parent_message_id=user_message_id,
     )
     run_id = uuid4()
@@ -280,9 +278,6 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
             idempotency_key=f"dead-letter-{uuid4()}",
             payload_hash="dead-letter-payload",
             status="running",
-            model_id=model_id,
-            reasoning="none",
-            key_mode="auto",
         )
     )
     db_session.commit()
@@ -322,16 +317,22 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
     assert row["status"] == "dead"
     assert row["error_code"] == "E_JOB_LEASE_EXPIRED"
 
+    # Dead-letter finalization is a generic defect (§10 taxonomy): no closed
+    # error_code / error_origin and no synthesized prose — the exhausted-job
+    # reason is surfaced only via error_detail plus a fresh support_id for
+    # operator correlation. The job row still carries the queue's own code.
     run = db_session.get(ChatRun, run_id)
     assert run is not None
     assert run.status == "error"
-    assert run.error_code == "E_JOB_LEASE_EXPIRED"
+    assert run.error_code is None
+    assert run.error_origin is None
+    assert run.support_id is not None
+    assert run.error_detail is not None
 
     assistant_message = db_session.get(Message, assistant_message_id)
     assert assistant_message is not None
     assert assistant_message.status == "error"
-    assert assistant_message.error_code == "E_JOB_LEASE_EXPIRED"
-    assert "exhausted its attempts" in assistant_message.content
+    assert assistant_message.content == ""
 
     done_payload = db_session.execute(
         text(
@@ -348,7 +349,7 @@ def test_chat_run_dead_letter_finalizes_run_in_worker_transaction(
     assert done_payload == {
         "status": "error",
         "usage": None,
-        "error_code": "E_JOB_LEASE_EXPIRED",
+        "error_code": None,
         "final_chars": None,
         "last_provider_event_seq": None,
         "cancelled": None,

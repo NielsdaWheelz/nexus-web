@@ -293,7 +293,8 @@ Guidelines:
 
 | Boundary | Tool / Pattern | Why |
 |---|---|---|
-| External LLM APIs (OpenAI, Anthropic, Gemini) | `respx` (HTTP-level) | Third-party cost, nondeterminism, rate limits |
+| Nexus's own LLM generation boundary (`services/llm_execution.py`) | a fake `ExecutionRuntime` scripting `provider_runtime` outcomes (a local `_ScriptedRuntime`-style double implementing the `generate`/`stream` protocol, returning a scripted `CallOutcome` or `RuntimeStreamEvent` sequence, or raising) | Exercises the real 8-step execution/ledger boundary without a live provider call; `provider_runtime` itself is a separately pinned, separately tested package |
+| The `provider_runtime` package's own provider wire calls (OpenAI, Anthropic, Gemini, Moonshot, OpenRouter) | `respx` (HTTP-level) in that package's own test suite; `provider_runtime.testing.ScriptedRuntime`/`NoNetworkRuntime` for its own `ProviderRuntime` interface | Third-party cost, nondeterminism, rate limits — owned by the pinned sibling package, not re-mocked ad hoc inside Nexus |
 | External auth verification boundary | test verifier / fake verifier at boundary | Third-party dependency boundary |
 | Async job dispatch boundary | mock queue enqueue helper | Verifies dispatch intent without running the worker inline |
 | External object storage | mock storage client | Third-party service dependency |
@@ -365,6 +366,29 @@ Rule:
 
 - If the same fixture appears in multiple files, centralize it.
 
+### Backend: Testing the LLM generation boundary
+
+- Grant a test user AI-tier billing access with
+  `billing_entitlements.grant_entitlement_override(...)` (`plan_tier="ai_pro"`,
+  unlimited platform-token/transcription quota modes) rather than faking Stripe
+  state. This is the standard fixture across chat/oracle/synapse/dawn-write/
+  media-intelligence tests that exercise `llm_execution._check_entitlement`.
+- `services/llm_execution.py` opens its own dedicated sessions from a
+  caller-supplied `session_factory` and commits across multiple steps (start
+  row, plan-facts commit, terminal commit) — incompatible with the default
+  savepoint-rollback `db_session` fixture. Use
+  `tests/utils/db.py:task_session_factory(db_session)` to build a
+  `session_factory` whose sessions share the test's DB connection (so they see
+  fixture data and roll back with the test) but can be closed independently,
+  matching how a worker job actually calls `get_session_factory()`. Call
+  `db_session.expire_all()` after running the boundary under test before
+  asserting on ORM objects.
+- Script the generation outcome itself with a fake `ExecutionRuntime` (see the
+  Mocking Policy table above), not a mocked HTTP layer — it exercises the real
+  plan → dispatch → terminalize → settle sequence in `llm_execution.py`
+  against a scripted `CallOutcome`/`RuntimeStreamEvent`, independent of
+  `provider_runtime`'s own wire-level tests.
+
 ### E2E Seeding
 
 - Seed through app APIs or a dedicated `e2e/` seed script
@@ -374,7 +398,7 @@ Rule:
 - `globalSetup` may load repo `.env`/runtime port files to mirror Makefile behavior when tests are run outside Make, but those files must only provide public/runtime values.
 - Local Supabase Auth bootstrap has one owner: `scripts/with_supabase_services.sh` starts the local Auth stack, `e2e/supabase-env.cjs` resolves public/admin env from that stack, and Playwright `globalSetup` seeds the user/session. E2E may use the real local Supabase Admin API to create the test user and session; it must not use fake auth, fake JWTs, auth skips, or browser-held admin credentials.
 - `SUPABASE_AUTH_ADMIN_KEY` is trusted E2E bootstrap env only. Next.js, FastAPI, workers, migrations, and helper subprocesses must receive a scrubbed app runtime env without Supabase admin/service-role/database keys.
-- Do not seed fake or undecryptable BYOK rows just to expose chat models. Chat-run E2E flows require a real runnable model through platform or BYOK configuration; otherwise they must skip through the shared chat-readiness helper before attempting to send.
+- Chat runs on platform LLM credentials only — there is no BYOK/per-user key to seed. Chat-run E2E flows require the deployed environment's platform provider keys (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`GEMINI_API_KEY`/`MOONSHOT_API_KEY`) to be configured; otherwise they must skip through the shared chat-readiness helper before attempting to send.
 
 ### E2E Determinism and Pane-Aware Assertions
 
@@ -515,7 +539,7 @@ Command semantics:
   Supabase containers, migrations, seeding, or Playwright succeed
 - `make test-e2e`: explicit default real-stack Playwright run (used before merge and in CI)
 - `make test-real-media`: deterministic real-media backend and Playwright acceptance gate with fixture-backed external providers
-- `make test-live-providers`: live external-provider backend gate, including the shared OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare generation matrix, OpenAI embeddings/transcription, and real Podcast Index/Deepgram/YouTube/X edges
+- `make test-live-providers`: live external-provider backend gate, including the pinned `provider_runtime` paid live matrix (direct OpenAI/Anthropic/Gemini/Moonshot plus the certified OpenRouter operator route), OpenAI embeddings/transcription, and real Podcast Index/Deepgram/YouTube/X edges
 - `make verify`: check + build + non-E2E tests for routine development
 - `make verify-full`: verify + real-media + live-provider + E2E
 - `make test-android`: instrumentation tests; requires a connected Android device or emulator

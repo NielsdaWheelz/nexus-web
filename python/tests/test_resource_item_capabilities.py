@@ -19,14 +19,17 @@ from nexus.services.resource_items.capabilities import (
     resource_can_attach,
     resource_can_be_app_search_scope,
     resource_can_be_chat_subject,
+    resource_can_be_note_reference_target,
     resource_can_be_ordered_adjacency_target,
-    resource_can_link,
+    resource_can_link_source,
+    resource_can_link_target,
     resource_can_own_ordered_adjacency,
     resource_citation_result_type,
     resource_expansion_policy,
     resource_inspect_policy,
     resource_prompt_render_policy,
     resource_read_policy,
+    resource_user_link_target_mode,
 )
 
 pytestmark = pytest.mark.unit
@@ -65,6 +68,7 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
         "contributor",
         "podcast",
         "reader_apparatus_item",
+        "passage_anchor",
     )
     assert conversation_search_scope_schemes() == ("highlight", "page", "note_block")
     assert citation_output_source_schemes() == (
@@ -84,10 +88,23 @@ def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert resource_citation_result_type(_ref("oracle_reading")) is None
     assert resource_can_own_ordered_adjacency(_ref("page")) is True
     assert resource_can_own_ordered_adjacency(_ref("note_block")) is True
-    assert resource_can_link(_ref("external_snapshot")) is False
+    assert resource_can_link_source(_ref("external_snapshot")) is False
+    assert resource_can_link_target(_ref("external_snapshot")) is False
     assert resource_can_attach(_ref("external_snapshot")) is False
-    assert resource_can_link(_ref("oracle_passage_anchor")) is True
+    # oracle_passage_anchor is passage-candidate-only: raw material a search hit
+    # must materialize into a passage_anchor before it can be a durable endpoint
+    # (Invariant 4) — it is neither a direct Link source nor target.
+    assert resource_can_link_source(_ref("oracle_passage_anchor")) is False
+    assert resource_can_link_target(_ref("oracle_passage_anchor")) is False
+    assert resource_user_link_target_mode(_ref("oracle_passage_anchor")) == "materialize_passage"
     assert resource_can_attach(_ref("oracle_passage_anchor")) is False
+    # passage_anchor is the direct, durable, user-owned Link endpoint that
+    # materialization converts passage candidates into.
+    assert resource_can_link_source(_ref("passage_anchor")) is True
+    assert resource_can_link_target(_ref("passage_anchor")) is True
+    assert resource_user_link_target_mode(_ref("passage_anchor")) == "direct"
+    assert resource_can_be_note_reference_target(_ref("passage_anchor")) is True
+    assert resource_can_be_note_reference_target(_ref("oracle_passage_anchor")) is False
     assert "tag" not in RESOURCE_ITEM_CAPABILITIES
     assert resource_can_be_ordered_adjacency_target(_ref("external_snapshot")) is False
     assert resource_can_be_ordered_adjacency_target(_ref("oracle_passage_anchor")) is True
@@ -115,8 +132,13 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
         "note_block_owned_evidence",
         "artifact_revisions",
     }
+    user_link_target_modes = {"none", "direct", "materialize_passage"}
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items():
-        assert isinstance(capability.linkable, bool), scheme
+        assert isinstance(capability.user_relation.user_link_source, bool), scheme
+        assert capability.user_relation.user_link_target in user_link_target_modes, scheme
+        assert capability.user_relation.note_reference_target is (
+            capability.user_relation.user_link_target == "direct"
+        ), scheme
         assert isinstance(capability.attachable, bool), scheme
         assert capability.chat_subject in chat_subject_modes, scheme
         assert capability.readable in {"none", "scope", "body", "media"}, scheme

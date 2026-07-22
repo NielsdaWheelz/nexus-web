@@ -185,11 +185,11 @@ describe("PagePaneBody note activation", () => {
     await screen.findByRole("listitem");
 
     // The connections apparatus renders in place (no secondary drawer); its
-    // composer is quiet by default, collapsed behind the "＋ Connect" disclosure.
+    // composer is quiet by default, collapsed behind the "＋ Link" disclosure.
     expect(
       await screen.findByRole("region", { name: "Connections" }),
     ).toBeInTheDocument();
-    const disclosure = screen.getByRole("button", { name: /Connect/ });
+    const disclosure = screen.getByRole("button", { name: /Link/ });
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.queryByRole("textbox", { name: "Connection target" }),

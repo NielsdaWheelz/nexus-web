@@ -24,7 +24,9 @@ import {
   type CitationEventData,
 } from "./citations";
 
-/** Meta event: initial IDs and model info. */
+/** Meta event: initial IDs and product-selection snapshot (profile_id/
+ * reasoning_option_id). Resolved provider/model are operator facts filled in
+ * later on the run record, not carried on this event (§10). */
 interface SSEMetaEvent {
   type: "meta";
   data: {
@@ -32,8 +34,8 @@ interface SSEMetaEvent {
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
-    model_id: string;
-    provider: string;
+    profile_id: string;
+    reasoning_option_id: string;
     chat_subject: {
       requested_resource_ref: string;
       resource_ref: string;
@@ -191,16 +193,16 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
       "conversation_id",
       "user_message_id",
       "assistant_message_id",
-      "model_id",
-      "provider",
+      "profile_id",
+      "reasoning_option_id",
       "chat_subject",
     ]) ||
     typeof data.run_id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.model_id !== "string" ||
-    typeof data.provider !== "string" ||
+    typeof data.profile_id !== "string" ||
+    typeof data.reasoning_option_id !== "string" ||
     (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
   ) {
     throw new Error("Invalid SSE payload for meta");

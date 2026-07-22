@@ -941,8 +941,11 @@ class TestGenericPdfHighlightCoverage:
         assert data["anchor"]["media_id"] == str(media_id)
         assert data["anchor"]["page_number"] == 1
 
-    def test_delete_cascades_pdf_highlight(self, auth_client, direct_db: DirectSessionManager):
-        """DELETE /highlights/{id} removes PDF highlight + anchor + quads."""
+    def test_delete_explicitly_removes_pdf_highlight_children(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """DELETE /highlights/{id} removes anchor + quads via explicit child-first
+        cleanup (no DB cascades remain on the highlight family)."""
         user_id = create_test_user_id()
         media_id = _setup_pdf_media(auth_client, direct_db, user_id)
 

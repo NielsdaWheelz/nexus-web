@@ -16,7 +16,7 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
     ResourceMutation,
 )
-from nexus.services import contributors, library_entries, library_governance
+from nexus.services import contributors, library_entries, library_governance, passage_anchors
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_taxonomy import (
     ContributorIdentityKey,
@@ -33,6 +33,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
 from tests.factories import (
     create_test_conversation_with_message,
+    create_test_fragment,
     create_test_highlight,
     create_test_library,
     create_test_media,
@@ -1366,3 +1367,185 @@ def test_delete_document_removes_credits_and_memos_prunes_only_keyless_authors(
     assert memo_count == 0
     assert prune_exists is False, "keyless orphaned author should be pruned"
     assert keep_exists is True, "key-owner author is retained after its last credit is gone"
+
+
+def test_delete_document_removes_passage_anchors_and_preserves_note_prose(
+    auth_client, direct_db: DirectSessionManager, monkeypatch
+):
+    """AC9 (universal-link-authoring): true media deletion explicitly removes
+    the media's passage anchors and highlight family child-first — including
+    bare edges touching the dying anchor — while detached note prose survives
+    as standalone authored data."""
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title="Doomed Document")
+        keeper_media_id = create_test_media(session, title="Keeper Document")
+        fragment_id = create_test_fragment(
+            session, media_id, content="Alpha bravo charlie delta echo foxtrot golf."
+        )
+        highlight_id = create_test_highlight(session, user_id, fragment_id, exact="Alpha bravo")
+        anchor = passage_anchors.materialize_or_reuse(
+            session,
+            user_id=user_id,
+            owner_scheme="media",
+            owner_id=media_id,
+            exact="delta echo foxtrot",
+        )
+        anchor_id = anchor.id
+        session.add(
+            ResourceEdge(
+                user_id=user_id,
+                kind="context",
+                origin="user",
+                source_scheme="passage_anchor",
+                source_id=anchor_id,
+                target_scheme="media",
+                target_id=keeper_media_id,
+            )
+        )
+        session.commit()
+
+    direct_db.register_cleanup("note_blocks", "user_id", user_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("media", "id", keeper_media_id)
+
+    _seed_default_library_reachability(direct_db, user_id, media_id)
+    add_response = auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    assert add_response.status_code == 201, add_response.json()
+
+    note_response = auth_client.put(
+        f"/highlights/{highlight_id}/note",
+        json={
+            "note_block_id": str(uuid4()),
+            "client_mutation_id": f"highlight-note-{uuid4()}",
+            "body_pm_json": {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Prose that must survive"}],
+            },
+        },
+        headers=auth_headers(user_id),
+    )
+    assert note_response.status_code == 200, note_response.text
+    note_block_id = note_response.json()["data"]["note_block_id"]
+
+    delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
+
+    with direct_db.session() as session:
+        counts = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM passage_anchors
+                     WHERE owner_scheme = 'media' AND owner_id = :media_id),
+                    (SELECT COUNT(*) FROM highlights WHERE anchor_media_id = :media_id),
+                    (SELECT COUNT(*) FROM highlight_fragment_anchors
+                     WHERE highlight_id = :highlight_id),
+                    (SELECT COUNT(*) FROM resource_edges
+                     WHERE (source_scheme = 'passage_anchor' AND source_id = :anchor_id)
+                        OR (target_scheme = 'passage_anchor' AND target_id = :anchor_id)),
+                    (SELECT COUNT(*) FROM note_blocks WHERE id = :note_block_id)
+                """
+            ),
+            {
+                "media_id": media_id,
+                "highlight_id": highlight_id,
+                "anchor_id": anchor_id,
+                "note_block_id": note_block_id,
+            },
+        ).one()
+        assert_no_dangling_bare_edges(
+            session, ref=ResourceRef(scheme="passage_anchor", id=anchor_id)
+        )
+    assert tuple(counts) == (0, 0, 0, 0, 1), (
+        "anchors/highlights/edges must be explicitly removed; note prose survives"
+    )
+
+
+def test_delete_document_with_stale_highlight_cache_after_refresh(
+    auth_client, direct_db: DirectSessionManager, monkeypatch
+):
+    """AC9 regression: refresh replaces fragments while deliberately preserving
+    the Highlight, so its anchor's fragment_id points at a hard-deleted row. If
+    no list read repairs the cache before true deletion, teardown must still
+    remove the anchor row — the cleanup keys off the highlight, never the
+    disposable fragment cache — or the Highlight-root delete violates its FK."""
+    install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
+    user_id = create_test_user_id()
+    default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
+        "default_library_id"
+    ]
+    # The stale-cache highlight belongs to ANOTHER user: the deleting viewer's
+    # own highlights are already removed by the viewer-scoped path, so only
+    # true deletion's all-users cleanup ever sees this row.
+    other_user_id = create_test_user_id()
+    assert auth_client.get("/me", headers=auth_headers(other_user_id)).status_code == 200
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title="Refreshed Then Deleted")
+        fragment_id = create_test_fragment(
+            session, media_id, content="Alpha bravo charlie delta echo foxtrot golf."
+        )
+        highlight_id = create_test_highlight(
+            session, other_user_id, fragment_id, exact="Alpha bravo"
+        )
+
+    direct_db.register_cleanup("fragments", "media_id", media_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+
+    _seed_default_library_reachability(direct_db, user_id, media_id)
+    add_response = auth_client.post(
+        f"/libraries/{default_id}/media",
+        json={"media_id": str(media_id)},
+        headers=auth_headers(user_id),
+    )
+    assert add_response.status_code == 201, add_response.json()
+
+    # Refresh-style wholesale fragment replacement, with NO list read afterward:
+    # the highlight and its anchor survive with a stale fragment_id cache.
+    with direct_db.session() as session:
+        session.execute(text("DELETE FROM fragments WHERE media_id = :m"), {"m": media_id})
+        session.commit()
+    with direct_db.session() as session:
+        create_test_fragment(
+            session, media_id, content="Alpha bravo charlie delta echo foxtrot golf."
+        )
+        stale_pointer = session.execute(
+            text("SELECT fragment_id FROM highlight_fragment_anchors WHERE highlight_id = :h"),
+            {"h": highlight_id},
+        ).scalar_one()
+    assert stale_pointer == fragment_id, "precondition: cache still points at the deleted fragment"
+
+    delete_response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(user_id))
+    assert delete_response.status_code == 200, delete_response.json()
+    assert delete_response.json()["data"]["kind"] == "Deleting"
+    assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
+
+    with direct_db.session() as session:
+        counts = session.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM highlights WHERE anchor_media_id = :media_id),
+                    (SELECT COUNT(*) FROM highlight_fragment_anchors
+                     WHERE highlight_id = :highlight_id)
+                """
+            ),
+            {"media_id": media_id, "highlight_id": highlight_id},
+        ).one()
+    assert tuple(counts) == (0, 0), "stale-cache anchor rows must die with the highlight family"

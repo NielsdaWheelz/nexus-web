@@ -31,6 +31,7 @@ ResourceScheme = Literal[
     "contributor",
     "podcast",
     "reader_apparatus_item",
+    "passage_anchor",
 ]
 
 RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
@@ -52,6 +53,7 @@ RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
     "contributor",
     "podcast",
     "reader_apparatus_item",
+    "passage_anchor",
 )
 
 

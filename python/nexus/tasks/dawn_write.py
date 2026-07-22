@@ -6,7 +6,6 @@ from datetime import date
 from uuid import UUID
 
 import httpx
-from provider_runtime import ModelRuntime
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -14,6 +13,7 @@ from nexus.config import get_settings
 from nexus.db.models import DawnWrite
 from nexus.logging import get_logger
 from nexus.services.dawn_write import generate_dawn_write
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ _SPEC = LlmTaskSpec(label="dawn_write_sweep", http_timeout_s=60.0)
 def dawn_write_sweep() -> dict:
     """Periodic sweep: generate a dawn write for every user who has a timezone record."""
 
-    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
+    async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
         settings = get_settings()
         if not settings.dawn_write_enabled:
             logger.info("dawn_write_sweep_skipped", reason="disabled")
@@ -71,7 +71,7 @@ def dawn_write_sweep() -> dict:
                     user_id=user_id,
                     local_date=local_date,
                     tz=tz,
-                    llm=router,
+                    runtime=runtime,
                 )
                 if result is not None:
                     generated += 1

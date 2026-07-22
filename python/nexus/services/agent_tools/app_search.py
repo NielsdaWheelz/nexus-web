@@ -98,40 +98,53 @@ APP_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "properties": {
             "query": {"type": "string"},
             "kinds": {
-                "type": ["array", "null"],
-                "items": {"type": "string", "enum": list(SEARCH_KINDS)},
+                "anyOf": [
+                    {"type": "array", "items": {"type": "string", "enum": list(SEARCH_KINDS)}},
+                    {"type": "null"},
+                ],
                 "description": (
                     "Optional user-facing kinds to search: documents, notes, "
                     "highlights, conversations, people, web. Use null or [] for no filter."
                 ),
             },
             "formats": {
-                "type": ["array", "null"],
-                "items": {"type": "string", "enum": list(SEARCH_FORMATS)},
+                "anyOf": [
+                    {"type": "array", "items": {"type": "string", "enum": list(SEARCH_FORMATS)}},
+                    {"type": "null"},
+                ],
                 "description": (
                     "Optional document formats: article, pdf, epub, video, episode, "
                     "podcast. Use null or [] for no format filter."
                 ),
             },
             "authors": {
-                "type": ["array", "null"],
-                "items": {"type": "string"},
+                "anyOf": [
+                    {"type": "array", "items": {"type": "string"}},
+                    {"type": "null"},
+                ],
                 "description": (
                     "Optional contributor handles to filter credited content. "
                     "Use null or [] for no author filter."
                 ),
             },
             "roles": {
-                "type": ["array", "null"],
-                "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES_ORDERED)},
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {"type": "string", "enum": sorted(CONTRIBUTOR_ROLES_ORDERED)},
+                    },
+                    {"type": "null"},
+                ],
                 "description": (
                     "Optional contributor roles to filter credited content. "
                     "Use null or [] for no role filter."
                 ),
             },
             "scopes": {
-                "type": ["array", "null"],
-                "items": {"type": "string"},
+                "anyOf": [
+                    {"type": "array", "items": {"type": "string"}},
+                    {"type": "null"},
+                ],
                 "description": (
                     f"Optional URI scopes ({APP_SEARCH_SCOPE_HINT}) "
                     "from this conversation's context refs. Defaults to all "

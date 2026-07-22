@@ -7,7 +7,6 @@ import {
   FolderOpen,
   Globe,
   Keyboard,
-  KeyRound,
   Library,
   Link2,
   ListMusic,
@@ -118,9 +117,6 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   settingsAppearance: {
     icon: Palette,
-  },
-  settingsKeys: {
-    icon: KeyRound,
   },
   settingsLocalVault: {
     icon: FolderOpen,

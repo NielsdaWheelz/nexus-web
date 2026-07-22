@@ -43,7 +43,13 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-export function isSameSystemApiDefect(error: unknown): error is ApiError {
+export type SameSystemApiDefect = ApiError & {
+  readonly code: "E_INVALID_RESPONSE" | "E_UNKNOWN" | "E_INTERNAL";
+};
+
+export function isSameSystemApiDefect(
+  error: unknown,
+): error is SameSystemApiDefect {
   return (
     isApiError(error) &&
     (error.code === "E_INVALID_RESPONSE" ||

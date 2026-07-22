@@ -5,6 +5,24 @@
 Implemented in `/home/niels/src/personal/nexus-web-current-only` on 2026-06-05.
 This document records the target contract and acceptance checklist.
 
+**Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
+current-only destructive replacement remains authoritative for readable
+artifacts, transcripts, search/evidence projections, and Oracle/notes. It is
+superseded only where refresh/reprocessing deleted authored Highlights or
+relations touching replaceable rows: reindex and source refresh (web, EPUB,
+PDF, transcript) no longer delete Highlights, Highlight-attached notes, or
+Links/relations touching them, and a passage anchor durably survives
+reindex/reingest. `highlights.{user_id,anchor_media_id}`,
+`highlight_fragment_anchors.highlight_id`,
+`highlight_pdf_anchors.{highlight_id,media_id}`, and
+`highlight_pdf_quads.highlight_id` are non-cascading; a fragment/PDF anchor
+row is a disposable locator cache, and content-change makes a Highlight
+visibly unresolved rather than deleting it or falling back to the wrong
+location (see below, "Highlights are current-source artifacts", and its
+per-format echoes for the specific superseded deletion claims). Destructive
+replacement of the readable artifact itself — fragments, chunks, evidence
+rows, page spans — is unaffected.
+
 This is the hard cutover contract. The final implementation removes app-level
 source versions, content hashes, content fingerprints, and runtime compatibility
 lanes from readable media, transcripts, search evidence, citations, Oracle corpus
@@ -169,6 +187,13 @@ Current reader navigation resolves against the current document only.
 Highlights belong to the current readable artifact. If the artifact is replaced
 and anchors cannot be safely kept by the same current owner command, the
 highlights are deleted. There is no preserve-anchor transcript lane.
+
+**Superseded:** this paragraph, and the per-format "replacement deletes ...
+highlights" bullets below (web article, EPUB, PDF, transcript), describe the
+pre-`universal-link-authoring` behavior. Highlights, Highlight-attached notes,
+and Links/passage anchors touching them are never deleted by reindex or
+source refresh; a Highlight whose locator no longer resolves stays visible
+and explicitly unresolved rather than being deleted or silently repointed.
 
 ### Notes accept last-write-wins
 

@@ -139,11 +139,13 @@ interface UseConversation {
   activeRunId: string | null;
   cancelActiveRun: () => Promise<void>;
 
-  // retry
-  retryingAssistantMessageIds: StringIdSet;
-  retryAssistantResponse: (assistantMessageId: string) => Promise<void>;
-  resendingAssistantMessageIds: StringIdSet;
-  resendAssistantResponse: (assistantMessageId: string) => Promise<void>;
+  // rerun (replaces the former retry + resend actions with one durable rerun)
+  rerunningAssistantMessageIds: StringIdSet;
+  rerunAssistantResponse: (assistantMessageId: string) => Promise<void>;
+
+  // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
+  connectionLostAssistantIds: Set<string>;
+  reconnectAssistantResponse: (assistantMessageId: string) => void;
 
   // branching (present only when options.branching === true)
   branch?: UseConversationBranch;
@@ -196,8 +198,7 @@ export function useConversation(
   );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
 
-  const retryingAssistantMessageIds = useStringIdSet();
-  const resendingAssistantMessageIds = useStringIdSet();
+  const rerunningAssistantMessageIds = useStringIdSet();
 
   // Conversations created on first send are seeded optimistically; their
   // initial route adoption must not refetch history. Existing conversations
@@ -261,7 +262,14 @@ export function useConversation(
     [],
   );
 
-  const { activeRunId, tailChatRun, abortAll, cancelRun } = useChatRunTail(
+  const {
+    activeRunId,
+    tailChatRun,
+    abortAll,
+    cancelRun,
+    lostConnections,
+    reconnectRun,
+  } = useChatRunTail(
     branching
       ? {
           dispatch: dispatchMessages,
@@ -506,14 +514,12 @@ export function useConversation(
     setBranchDraft(null);
     selectedPathIdsRef.current = new Set();
     attachedRefsRef.current = { id: null, uris: new Set() };
-    retryingAssistantMessageIds.clear();
-    resendingAssistantMessageIds.clear();
+    rerunningAssistantMessageIds.clear();
   }, [
     abortAll,
     conversationId,
     initialConversationId,
-    resendingAssistantMessageIds,
-    retryingAssistantMessageIds,
+    rerunningAssistantMessageIds,
   ]);
 
   // Drop any in-flight active-runs promise scoped to a previous conversation.
@@ -703,17 +709,17 @@ export function useConversation(
   );
 
   // --------------------------------------------------------------------------
-  // Retry
+  // Rerun (one durable rerun from the source prompt + its stored profile)
   // --------------------------------------------------------------------------
 
-  const retryAssistantResponse = useCallback(
+  const rerunAssistantResponse = useCallback(
     async (assistantMessageId: string) => {
-      if (retryingAssistantMessageIds.has(assistantMessageId)) return;
-      retryingAssistantMessageIds.add(assistantMessageId);
+      if (rerunningAssistantMessageIds.has(assistantMessageId)) return;
+      rerunningAssistantMessageIds.add(assistantMessageId);
       setError(null);
       try {
         const response = await apiFetch<ChatRunResponse>(
-          `/api/messages/${assistantMessageId}/retry`,
+          `/api/messages/${assistantMessageId}/rerun`,
           {
             method: "POST",
             headers: { "Idempotency-Key": createRandomId() },
@@ -722,36 +728,24 @@ export function useConversation(
         onChatRunCreated(response.data);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
-        setError(toFeedback(err, { fallback: "Failed to retry response" }));
+        setError(toFeedback(err, { fallback: "Failed to run again" }));
       } finally {
-        retryingAssistantMessageIds.remove(assistantMessageId);
+        rerunningAssistantMessageIds.remove(assistantMessageId);
       }
     },
-    [onChatRunCreated, retryingAssistantMessageIds],
+    [onChatRunCreated, rerunningAssistantMessageIds],
   );
 
-  const resendAssistantResponse = useCallback(
-    async (assistantMessageId: string) => {
-      if (resendingAssistantMessageIds.has(assistantMessageId)) return;
-      resendingAssistantMessageIds.add(assistantMessageId);
-      setError(null);
-      try {
-        const response = await apiFetch<ChatRunResponse>(
-          `/api/messages/${assistantMessageId}/resend`,
-          {
-            method: "POST",
-            headers: { "Idempotency-Key": createRandomId() },
-          },
-        );
-        onChatRunCreated(response.data);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        setError(toFeedback(err, { fallback: "Failed to resend response" }));
-      } finally {
-        resendingAssistantMessageIds.remove(assistantMessageId);
-      }
+  const connectionLostAssistantIds = useMemo(
+    () => new Set(Object.keys(lostConnections)),
+    [lostConnections],
+  );
+
+  const reconnectAssistantResponse = useCallback(
+    (assistantMessageId: string) => {
+      void reconnectRun(assistantMessageId);
     },
-    [onChatRunCreated, resendingAssistantMessageIds],
+    [reconnectRun],
   );
 
   // --------------------------------------------------------------------------
@@ -995,10 +989,10 @@ export function useConversation(
     onChatRunCreated,
     activeRunId,
     cancelActiveRun,
-    retryingAssistantMessageIds,
-    retryAssistantResponse,
-    resendingAssistantMessageIds,
-    resendAssistantResponse,
+    rerunningAssistantMessageIds,
+    rerunAssistantResponse,
+    connectionLostAssistantIds,
+    reconnectAssistantResponse,
     branch,
     scrollRef,
   };

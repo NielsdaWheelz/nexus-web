@@ -1,126 +1,106 @@
-"""Unit tests for the structured-synthesis scaffold + runner.
+"""Unit tests for the structured-synthesis scaffold.
 
-These pin the shared mechanics: ``build_synthesis_prompt`` /
-``build_synthesis_request`` reproduce the three call sites' assembled prompts
-and request turns byte-for-byte. Each golden test holds an independent copy of
-a call site's assembled system prompt and asserts the *production* constant
-(``_ORACLE_SYSTEM_PROMPT`` / ``_LI_SYSTEM_PROMPT`` /
-``_MEDIA_UNIT_SYSTEM_PROMPT``) equals it, so a prompt-fragment edit in the call
-site fails here until mirrored. ``ground_indices`` enforces THE grounding
-invariant, and ``run_structured_synthesis`` makes one ``llm.generate`` call
-plus at most ONE bounded repair round (parse/schema failure or semantic
-``validate`` rejection) with usage summed across attempts. Provider-call errors
-(``ModelCallError``) propagate unchanged and are never repaired. The fake routers
-stand in for the external LLM provider boundary (the only mock allowed here).
+These pin the shared mechanics owned by ``nexus.services.structured_synthesis``:
+
+- ``build_synthesis_prompt`` reproduces the three call sites' assembled system
+  prompts byte-for-byte. Each golden test holds an independent copy of a call
+  site's assembled prompt and asserts the *production* constant
+  (``_ORACLE_SYSTEM_PROMPT`` / ``_LI_SYSTEM_PROMPT`` /
+  ``_MEDIA_UNIT_SYSTEM_PROMPT``) equals it, so a prompt-fragment edit in the
+  call site fails here until mirrored.
+- ``build_synthesis_user_content`` reproduces each call site's user turn.
+- ``build_synthesis_intent`` pins the shared two-block strict-JSON intent shape.
+- ``ground_indices`` enforces THE grounding invariant.
+- ``decode_structured_synthesis`` validates a ``Succeeded`` strict-JSON outcome
+  into the caller's schema and runs the semantic ``validate`` hook — with NO
+  repair round: the runtime enforces strict JSON at the provider boundary
+  (``StrictJsonOutput``), so a decode/schema/validate failure here is terminal.
+- ``outcome_failure_facts`` maps every non-``Succeeded`` terminal outcome to the
+  ``(code, detail)`` a background owner records.
+
+There is no ``run_structured_synthesis`` runner and no repair round anymore —
+those mechanisms were deleted in the provider-runtime cutover (the runtime is now
+the sole generation boundary), so their tests are gone (see the module rewrite
+note). Structured synthesis is a pure decode/scaffold module: it never calls a
+provider, so these tests need no DB and no LLM stub.
 """
 
-import json
-from dataclasses import replace
-
-import pytest
-from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-from provider_runtime.types import (
-    ModelCall,
-    ModelMessage,
-    ModelRef,
-    ModelResponse,
-    ReasoningConfig,
-    TokenUsage,
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Cancelled,
+    Failed,
+    GenerateIntent,
+    GlobalScope,
+    Incomplete,
+    InvalidToolArguments,
+    PossiblyBillable,
+    Present,
+    ProviderContextTooLarge,
+    ProviderHttpUnavailable,
+    ProviderRateLimit,
+    ProviderStreamInterrupted,
+    ProviderTimeout,
+    Refused,
+    ResponsePayload,
+    Stable,
+    StrictJsonOutput,
+    StructuredContent,
+    Succeeded,
+    TextContent,
+    TransientExhausted,
+    parse_canonical_schema,
 )
+from provider_runtime.types import Dynamic, PromptBlock, SystemMessage, UserMessage
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 from nexus.services.artifacts.reducers.library_dossier import _LI_SYSTEM_PROMPT
+from nexus.services.llm_profiles import profile as profile_lookup
 from nexus.services.media_intelligence import _MEDIA_UNIT_SYSTEM_PROMPT
 from nexus.services.oracle import _ORACLE_SYSTEM_PROMPT
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
-    SynthesisRequest,
+    build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
+    decode_structured_synthesis,
     ground_indices,
-    run_structured_synthesis,
+    outcome_failure_facts,
 )
 
 pytestmark = pytest.mark.unit
 
 
 class _Output(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
     title: str
     count: int
 
 
-class _FakeRouter:
-    """Returns the same canned response for every ``generate`` call."""
-
-    def __init__(self, response: ModelResponse) -> None:
-        self.response = response
-        self.calls = 0
-
-    async def generate(self, _request, *, key, timeout_s):
-        self.calls += 1
-        return self.response
-
-
-class _ScriptedRouter:
-    """Plays scripted responses (or raises scripted errors) in order, capturing requests."""
-
-    def __init__(self, script: list[ModelResponse | ModelCallError]) -> None:
-        self.script = list(script)
-        self.requests: list[ModelCall] = []
-
-    async def generate(self, request, *, key, timeout_s):
-        self.requests.append(request)
-        item = self.script.pop(0)
-        if isinstance(item, ModelCallError):
-            raise item
-        return item
-
-
-class _RaisingRouter:
-    """Raises a provider error for every ``generate`` call."""
-
-    def __init__(self, error: ModelCallError) -> None:
-        self.error = error
-        self.calls = 0
-
-    async def generate(self, _request, *, key, timeout_s):
-        self.calls += 1
-        raise self.error
-
-
-def _request() -> SynthesisRequest:
-    return SynthesisRequest(
+def _meta() -> CallMeta:
+    """A minimal ``CallMeta``. ``outcome_failure_facts`` never inspects meta —
+    only the outcome variant and its own carried fields matter."""
+    return CallMeta(
         provider="anthropic",
-        llm_request=ModelCall(
-            model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
-            messages=[ModelMessage(role="user", content="hi")],
-            max_output_tokens=128,
-            reasoning=ReasoningConfig(effort="none"),
-        ),
-        api_key="sk-test",
-        timeout_s=30,
+        model="claude-haiku-4-5-20251001",
+        provider_request_id=Absent(),
+        upstream_provider=Absent(),
+        usage=Absent(),
+        attempt_trace=(),
+        billability=PossiblyBillable(),
     )
 
 
-def _response(text: str, *, usage: TokenUsage | None = None, request_id: str | None = None):
-    return ModelResponse(text=text, usage=usage, provider_request_id=request_id)
-
-
-def _repair_turns(raw: str, reason: str) -> list[ModelMessage]:
-    """The exact two turns the repair round appends (pinned copy)."""
-    return [
-        ModelMessage(role="assistant", content=raw),
-        ModelMessage(
-            role="user",
-            content=(
-                f"Your previous response was invalid: {reason}. "
-                "Respond again with only the corrected strict JSON object as instructed."
-            ),
+def _succeeded(payload: dict[str, object]) -> Succeeded:
+    return Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text="{}"), continuation=Absent()
         ),
-    ]
+    )
 
 
 # ---------- golden prompt reproduction ---------------------------------------
@@ -280,7 +260,7 @@ _ORACLE_JSON_SHAPE = (
     "[string, string, string]}"
 )
 
-# Copied verbatim from library_intelligence_reduce.py `_LI_SYSTEM_PROMPT`.
+# Copied verbatim from library_dossier.py `_LI_SYSTEM_PROMPT`.
 _LI_EXPECTED_PROMPT = (
     "You are a careful research assistant writing a whole-library synthesis from "
     "per-document claims. Each claim is offered by integer index.\n\n"
@@ -388,15 +368,18 @@ def test_prompt_golden_reproduction_media_unit():
     assert _MEDIA_UNIT_SYSTEM_PROMPT == _MEDIA_UNIT_EXPECTED_PROMPT
 
 
-# ---------- golden request reproduction --------------------------------------
+# ---------- golden user-content reproduction ---------------------------------
 #
-# Expected requests are built with the current call-site builder bytes
-# (oracle._build_llm_request / reduce._build_reduce_request /
-# media_intelligence._build_llm_request); per-candidate render lines stay
-# caller-owned and are copied here verbatim.
+# ``build_synthesis_user_content`` owns the user-turn bytes: the
+# ``{header}:``-labelled candidate block, an optional extra block (oracle's
+# QUESTION), and the closing strict-JSON instruction. Per-candidate render lines
+# stay caller-owned and are copied here verbatim. (The old ``build_synthesis_request``
+# folded system prompt + user turn + model ref into one ModelCall; the intent is
+# now assembled by ``build_synthesis_intent`` — see its shape test below — so the
+# user-turn contract is pinned here.)
 
 
-def test_request_golden_reproduction_oracle():
+def test_user_content_reproduction_oracle():
     candidates = [
         ("user_media", ["dawn", "lamp"], "The lamp the soul keeps lit."),
         ("public_domain", [], "The wood grows close."),
@@ -411,36 +394,20 @@ def test_request_golden_reproduction_oracle():
     )
     question = "  What stirs beneath the still water?  "
 
-    request = build_synthesis_request(
-        provider="anthropic",
-        system_prompt=_ORACLE_EXPECTED_PROMPT,
+    content = build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=f"QUESTION: {question.strip()}",
-        model_name="claude-haiku-4-5-20251001",
-        max_tokens=2000,
     )
 
-    assert request == ModelCall(
-        model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
-        messages=[
-            ModelMessage(role="system", content=_ORACLE_EXPECTED_PROMPT, cache_ttl="5m"),
-            ModelMessage(
-                role="user",
-                content=(
-                    f"CANDIDATES:\n{rendered}\n\n"
-                    f"QUESTION: {question.strip()}\n\n"
-                    "Respond with the strict JSON object as instructed."
-                ),
-                cache_ttl="none",
-            ),
-        ],
-        max_output_tokens=2000,
-        reasoning=ReasoningConfig(effort="none"),
+    assert content == (
+        f"CANDIDATES:\n{rendered}\n\n"
+        f"QUESTION: {question.strip()}\n\n"
+        "Respond with the strict JSON object as instructed."
     )
 
 
-def test_request_golden_reproduction_li_reduce():
+def test_user_content_reproduction_li_reduce():
     candidates = [
         (0, "media-1", "A summary.", "A claim."),
         (1, "media-2", "Another summary.", "Another claim."),
@@ -450,62 +417,63 @@ def test_request_golden_reproduction_li_reduce():
         for global_index, media_id, summary_md, claim_text in candidates
     )
 
-    request = build_synthesis_request(
-        provider="anthropic",
-        system_prompt=_LI_EXPECTED_PROMPT,
+    content = build_synthesis_user_content(
         candidates_header="UNIT CLAIMS",
         rendered_candidates=rendered,
         extra_user_block=None,
-        model_name="claude-sonnet-4-6",
-        max_tokens=4000,
     )
 
-    assert request == ModelCall(
-        model=ModelRef(provider="anthropic", model="claude-sonnet-4-6"),
-        messages=[
-            ModelMessage(role="system", content=_LI_EXPECTED_PROMPT, cache_ttl="5m"),
-            ModelMessage(
-                role="user",
-                content=(
-                    f"UNIT CLAIMS:\n{rendered}\n\n"
-                    "Respond with the strict JSON object as instructed."
-                ),
-                cache_ttl="none",
-            ),
-        ],
-        max_output_tokens=4000,
-        reasoning=ReasoningConfig(effort="none"),
+    assert content == (
+        f"UNIT CLAIMS:\n{rendered}\n\nRespond with the strict JSON object as instructed."
     )
 
 
-def test_request_golden_reproduction_media_unit():
+def test_user_content_reproduction_media_unit():
     texts = ["First passage text.", "Second passage text."]
     rendered = "\n\n".join(f"[{index}] {text}" for index, text in enumerate(texts))
 
-    request = build_synthesis_request(
-        provider="anthropic",
-        system_prompt=_MEDIA_UNIT_EXPECTED_PROMPT,
+    content = build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=None,
-        model_name="claude-haiku-4-5-20251001",
-        max_tokens=2000,
     )
 
-    assert request == ModelCall(
-        model=ModelRef(provider="anthropic", model="claude-haiku-4-5-20251001"),
-        messages=[
-            ModelMessage(role="system", content=_MEDIA_UNIT_EXPECTED_PROMPT, cache_ttl="5m"),
-            ModelMessage(
-                role="user",
-                content=(
-                    f"CANDIDATES:\n{rendered}\n\nRespond with the strict JSON object as instructed."
-                ),
-                cache_ttl="none",
+    assert content == (
+        f"CANDIDATES:\n{rendered}\n\nRespond with the strict JSON object as instructed."
+    )
+
+
+# ---------- golden intent shape ----------------------------------------------
+
+
+def test_build_synthesis_intent_shape():
+    profile = profile_lookup("fast")
+    assert profile is not None
+
+    intent = build_synthesis_intent(
+        profile=profile,
+        system_prompt="SYSTEM",
+        user_content="USER",
+        max_output_tokens=256,
+        schema=_Output,
+    )
+
+    assert intent == GenerateIntent(
+        target=profile.target,
+        messages=(
+            SystemMessage(
+                blocks=(PromptBlock(text="SYSTEM", stability=Stable(GlobalScope())),)
             ),
-        ],
-        max_output_tokens=2000,
-        reasoning=ReasoningConfig(effort="none"),
+            UserMessage(blocks=(PromptBlock(text="USER", stability=Dynamic()),)),
+        ),
+        max_output_tokens=256,
+        reasoning=profile.default_reasoning_option_id,
+        tools=(),
+        tool_choice="none",
+        output=StrictJsonOutput(
+            name="_Output",
+            schema=parse_canonical_schema(_Output.model_json_schema()),
+        ),
     )
 
 
@@ -547,195 +515,143 @@ def test_ground_indices_uses_index_of_accessor():
     assert result == [({"claim_index": 1}, "b")]
 
 
-# ---------- runner: success / parse / provider-error --------------------------
+# ---------- decode_structured_synthesis ---------------------------------------
+#
+# The runtime enforces strict JSON at the provider boundary (StrictJsonOutput),
+# so decode receives an already-parsed StructuredContent(payload=<dict>) — it
+# never parses a text response. The old string-level parse tolerance tests
+# (leading/trailing whitespace, fenced ```json, unparseable text, bare array)
+# are gone with that parsing responsibility; only schema + semantic validation
+# remain, and there is NO repair round (a decode/validate failure is terminal).
 
 
-async def test_valid_json_validates_into_schema_and_surfaces_usage():
-    usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
-    router = _FakeRouter(
-        _response(
-            json.dumps({"title": "Folio", "count": 3}),
-            usage=usage,
-            request_id="req-123",
-        )
+def test_decode_valid_payload_validates_into_schema():
+    value = decode_structured_synthesis(
+        _succeeded({"title": "Folio", "count": 3}), schema=_Output
     )
-
-    result = await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-    assert router.calls == 1, "first-attempt success makes exactly one generate call"
-    assert result.value == _Output(title="Folio", count=3)
-    assert result.usage is usage, "usage must be surfaced from the response"
+    assert value == _Output(title="Folio", count=3)
 
 
-async def test_passing_validate_hook_does_not_retry():
-    router = _FakeRouter(_response(json.dumps({"title": "Folio", "count": 3})))
-
-    await run_structured_synthesis(
-        llm=router, request=_request(), schema=_Output, validate=lambda value: None
-    )
-
-    assert router.calls == 1
-
-
-async def test_leading_and_trailing_whitespace_is_tolerated():
-    router = _FakeRouter(_response('\n  {"title": "Folio", "count": 1}\n  '))
-
-    result = await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-    assert result.value == _Output(title="Folio", count=1)
-
-
-async def test_fenced_json_is_rejected_as_typed_error():
-    # The contract is a *bare* JSON object; a ```json fence is rejected (it does
-    # not start with "{"), mirroring Oracle's strict no-fence acceptance.
-    fenced = "```json\n" + json.dumps({"title": "Folio", "count": 3}) + "\n```"
-    router = _FakeRouter(_response(fenced))
-
-    with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-
-async def test_unparseable_json_raises_typed_error():
-    router = _FakeRouter(_response("{not valid json,,,}"))
-
-    with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-
-async def test_non_object_json_raises_typed_error():
-    # A bare array starts with "[" so it fails the bare-object guard.
-    router = _FakeRouter(_response("[1, 2, 3]"))
-
-    with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-
-async def test_schema_mismatch_raises_typed_error():
-    # Wrong field type (count is a string) fails strict schema validation.
-    router = _FakeRouter(_response(json.dumps({"title": "Folio", "count": "three"})))
-
-    with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-
-async def test_extra_keys_raise_typed_error_under_forbid():
-    router = _FakeRouter(_response(json.dumps({"title": "Folio", "count": 3, "extra": "nope"})))
-
-    with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-
-async def test_provider_error_propagates_unchanged_without_repair():
-    # The provider-call failure must NOT be wrapped — callers (Oracle) map each
-    # ModelCallErrorCode to a distinct domain error code — and must not be repaired.
-    error = ModelCallError(ModelCallErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
-    router = _RaisingRouter(error)
-
-    with pytest.raises(ModelCallError) as excinfo:
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-    assert excinfo.value.error_code is ModelCallErrorCode.PROVIDER_DOWN
-    assert router.calls == 1, "provider errors are never repaired"
-
-
-# ---------- runner: the one bounded repair round -------------------------------
-
-
-async def test_parse_failure_repairs_once_with_appended_turns_and_summed_usage():
-    bad = "{not valid json,,,}"
-    first_usage = TokenUsage(input_tokens=10, output_tokens=5, total_tokens=15)
-    second_usage = TokenUsage(
-        input_tokens=20, output_tokens=7, total_tokens=27, cache_read_input_tokens=9
-    )
-    router = _ScriptedRouter(
-        [
-            _response(bad, usage=first_usage),
-            _response(json.dumps({"title": "Folio", "count": 3}), usage=second_usage),
-        ]
-    )
-    request = _request()
-
-    result = await run_structured_synthesis(llm=router, request=request, schema=_Output)
-
-    assert len(router.requests) == 2
-    assert router.requests[0] == request.llm_request
-    assert router.requests[1] == replace(
-        request.llm_request,
-        messages=[
-            *request.llm_request.messages,
-            *_repair_turns(bad, "response is not valid JSON"),
-        ],
-    )
-    assert result.value == _Output(title="Folio", count=3)
-    assert result.usage == TokenUsage(
-        input_tokens=30, output_tokens=12, total_tokens=42, cache_read_input_tokens=9
-    )
-
-
-async def test_validate_rejection_repairs_once_with_the_reason():
-    draft = json.dumps({"title": "draft", "count": 1})
-    router = _ScriptedRouter(
-        [
-            _response(draft),
-            _response(json.dumps({"title": "final", "count": 2})),
-        ]
-    )
+def test_decode_runs_and_accepts_passing_validate_hook():
+    calls: list[_Output] = []
 
     def validate(value: _Output) -> str | None:
-        return "title must not be draft" if value.title == "draft" else None
+        calls.append(value)
+        return None
 
-    result = await run_structured_synthesis(
-        llm=router, request=_request(), schema=_Output, validate=validate
+    value = decode_structured_synthesis(
+        _succeeded({"title": "Folio", "count": 3}), schema=_Output, validate=validate
     )
-
-    assert len(router.requests) == 2
-    assert list(router.requests[1].messages[-2:]) == _repair_turns(draft, "title must not be draft")
-    assert result.value == _Output(title="final", count=2)
+    assert value == _Output(title="Folio", count=3)
+    assert calls == [_Output(title="Folio", count=3)]
 
 
-async def test_second_parse_failure_raises_after_exactly_two_calls():
-    router = _FakeRouter(_response("{not valid json,,,}"))
-
+def test_decode_schema_mismatch_raises_typed_error():
+    # Wrong field type (count is a string) fails schema validation.
     with pytest.raises(StructuredSynthesisError):
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-    assert router.calls == 2, "exactly one repair round; the second failure raises"
-
-
-async def test_second_validate_rejection_raises_the_reason():
-    router = _FakeRouter(_response(json.dumps({"title": "draft", "count": 1})))
-
-    with pytest.raises(StructuredSynthesisError, match="title must not be draft"):
-        await run_structured_synthesis(
-            llm=router,
-            request=_request(),
-            schema=_Output,
-            validate=lambda value: "title must not be draft",
+        decode_structured_synthesis(
+            _succeeded({"title": "Folio", "count": "three"}), schema=_Output
         )
 
-    assert router.calls == 2
+
+def test_decode_extra_keys_raise_typed_error_under_forbid():
+    with pytest.raises(StructuredSynthesisError):
+        decode_structured_synthesis(
+            _succeeded({"title": "Folio", "count": 3, "extra": "nope"}), schema=_Output
+        )
 
 
-async def test_provider_error_on_the_repair_attempt_propagates_unchanged():
-    error = ModelCallError(ModelCallErrorCode.PROVIDER_DOWN, "boom", provider="anthropic")
-    router = _ScriptedRouter([_response("not json at all"), error])
-
-    with pytest.raises(ModelCallError) as excinfo:
-        await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
-
-    assert excinfo.value.error_code is ModelCallErrorCode.PROVIDER_DOWN
-    assert len(router.requests) == 2
+def test_decode_validate_rejection_raises_the_reason():
+    with pytest.raises(StructuredSynthesisError, match="title must not be draft"):
+        decode_structured_synthesis(
+            _succeeded({"title": "draft", "count": 1}),
+            schema=_Output,
+            validate=lambda value: "title must not be draft" if value.title == "draft" else None,
+        )
 
 
-async def test_repair_usage_sum_tolerates_a_missing_attempt_usage():
-    second_usage = TokenUsage(input_tokens=8, output_tokens=2, total_tokens=10)
-    router = _ScriptedRouter(
-        [
-            _response("not json at all"),  # usage=None
-            _response(json.dumps({"title": "Folio", "count": 3}), usage=second_usage),
-        ]
+def test_decode_text_content_is_a_defect():
+    # A StrictJsonOutput plan always yields StructuredContent on Succeeded; a
+    # TextContent arm is an impossible state the decoder asserts against.
+    outcome = Succeeded(
+        meta=_meta(),
+        response=ResponsePayload(
+            content=TextContent(text='{"title": "Folio", "count": 3}', tool_calls=()),
+            continuation=Absent(),
+        ),
+    )
+    with pytest.raises(AssertionError):
+        decode_structured_synthesis(outcome, schema=_Output)
+
+
+# ---------- outcome_failure_facts ---------------------------------------------
+#
+# The shared mapping from a non-Succeeded terminal CallOutcome to the (code,
+# detail) a background owner records. This replaces the old per-ModelCallErrorCode
+# mapping: providers no longer surface a ModelCallError the caller maps by hand;
+# every owner reads the same closed-union floor here.
+
+
+def test_outcome_failure_facts_refused():
+    assert outcome_failure_facts(Refused(meta=_meta(), safe_detail="declined")) == (
+        "refused",
+        "declined",
     )
 
-    result = await run_structured_synthesis(llm=router, request=_request(), schema=_Output)
 
-    assert result.usage == second_usage
+def test_outcome_failure_facts_incomplete_refused_status_is_refused():
+    outcome = Incomplete(
+        meta=_meta(),
+        reason="content_filter_partial",
+        status="refused",
+        safe_detail=Present("filtered"),
+    )
+    assert outcome_failure_facts(outcome) == ("refused", "filtered")
+
+
+def test_outcome_failure_facts_incomplete_provider_incomplete_status():
+    outcome = Incomplete(
+        meta=_meta(),
+        reason="max_output_tokens",
+        status="provider_incomplete",
+        safe_detail=Present("truncated"),
+    )
+    assert outcome_failure_facts(outcome) == ("incomplete", "truncated")
+
+
+def test_outcome_failure_facts_incomplete_absent_detail_is_none():
+    outcome = Incomplete(
+        meta=_meta(),
+        reason="max_output_tokens",
+        status="provider_incomplete",
+        safe_detail=Absent(),
+    )
+    assert outcome_failure_facts(outcome) == ("incomplete", None)
+
+
+def test_outcome_failure_facts_cancelled():
+    assert outcome_failure_facts(Cancelled(meta=_meta())) == ("cancelled", None)
+
+
+@pytest.mark.parametrize(
+    ("cause", "code"),
+    [
+        (ProviderHttpUnavailable(), "provider_unavailable"),
+        (ProviderRateLimit(retry_after=Absent()), "rate_limited"),
+        (ProviderTimeout(), "timeout"),
+        (ProviderStreamInterrupted(partial_output=False), "stream_interrupted"),
+    ],
+)
+def test_outcome_failure_facts_failed_transient(cause, code):
+    outcome = Failed(meta=_meta(), failure=TransientExhausted(attempts=1, cause=cause))
+    assert outcome_failure_facts(outcome) == (code, None)
+
+
+def test_outcome_failure_facts_failed_context_too_large():
+    outcome = Failed(meta=_meta(), failure=ProviderContextTooLarge())
+    assert outcome_failure_facts(outcome) == ("context_too_large", None)
+
+
+def test_outcome_failure_facts_failed_invalid_tool_arguments_carries_detail():
+    outcome = Failed(meta=_meta(), failure=InvalidToolArguments(safe_detail="bad args"))
+    assert outcome_failure_facts(outcome) == ("invalid_tool_arguments", "bad args")

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
-import { apiFetch, isApiError } from "@/lib/api/client";
+import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -37,14 +37,18 @@ import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
-import { fetchPodcastLibraries } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
+import {
+  addPodcastToLibrary,
+  fetchPodcastLibraries,
+  removePodcastFromLibrary,
+} from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import LibraryBrief from "@/components/library/LibraryBrief";
 import Button from "@/components/ui/Button";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
+import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
 import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
-import PaneSection from "@/components/ui/PaneSection";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import SortSelect from "@/components/ui/SortSelect";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -77,6 +81,8 @@ import {
   type LibraryMediaKind,
   type ReadingTimeEstimatePresence,
 } from "@/lib/libraries/readingTime";
+import { slateTargetId } from "@/lib/resonance/contract";
+import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./page.module.css";
 
 interface Library {
@@ -138,7 +144,6 @@ interface LibraryEntryBase {
   id: string;
   position: number;
   created_at: string;
-  surfaced_today?: boolean;
   readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
@@ -202,6 +207,16 @@ function appendUniqueEntries(
   return merged;
 }
 
+function toLibraryAddError(error: unknown): ApiError {
+  return isApiError(error)
+    ? error
+    : new ApiError(
+        0,
+        "E_NETWORK",
+        error instanceof Error ? error.message : "Request failed",
+      );
+}
+
 export default function LibraryPaneBody() {
   const id = usePaneParam("id");
   if (!id) {
@@ -212,7 +227,10 @@ export default function LibraryPaneBody() {
   const { displayState, setDisplayState } = useCollectionDisplayState(
     `/libraries/${id}`,
   );
-  const { openInNewPane } = usePaneRuntime() ?? {};
+  const paneRuntime = usePaneRuntime();
+  const { openInNewPane } = paneRuntime ?? {};
+  const isPaneActive = paneRuntime?.isActive ?? true;
+  const paneId = paneRuntime?.paneId ?? `library-${id}`;
   const feedback = useFeedback();
   const lectern = useLectern();
   const [library, setLibrary] = useState<Library | null>(null);
@@ -231,6 +249,22 @@ export default function LibraryPaneBody() {
   const refreshingMediaIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
+  const libraryEntriesStaleRef = useRef(false);
+  const entryReconciliationOwnerIdRef = useRef(id);
+  const wasPaneActiveRef = useRef(isPaneActive);
+  const paneActiveAtRenderRef = useRef(isPaneActive);
+  paneActiveAtRenderRef.current = isPaneActive;
+  const entryReconciliationAbortRef = useRef<AbortController | null>(null);
+  const entryReconciliationGenerationRef = useRef(0);
+  const [entryReconciliation, setEntryReconciliation] = useState<
+    | { kind: "Idle" }
+    | { kind: "Loading"; sort: "manual" | "resonance" }
+    | {
+        kind: "Failed";
+        sort: "manual" | "resonance";
+        error: ApiError;
+      }
+  >({ kind: "Idle" });
   const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
   const patchMediaInViews = useCallback(
     (
@@ -349,6 +383,85 @@ export default function LibraryPaneBody() {
   }, [cancelEntryLoadMore, id]);
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
+  const reconcileEntries = useCallback(
+    (requestedSort: "manual" | "resonance") => {
+      entryReconciliationAbortRef.current?.abort();
+      const generation = entryReconciliationGenerationRef.current + 1;
+      entryReconciliationGenerationRef.current = generation;
+      const controller = new AbortController();
+      entryReconciliationAbortRef.current = controller;
+      setEntryReconciliation({ kind: "Loading", sort: requestedSort });
+      const path = libraryEntriesResource.clientPath({
+        id,
+        sort: requestedSort === "resonance" ? "resonance" : undefined,
+      });
+      void apiFetch<LibraryEntryPage>(path, { signal: controller.signal })
+        .then(decodeLibraryEntryPage)
+        .then((page) => {
+          if (
+            controller.signal.aborted ||
+            entryReconciliationGenerationRef.current !== generation
+          ) {
+            return;
+          }
+          cancelEntryLoadMore();
+          clearRemovedEntryIds();
+          if (requestedSort === "resonance") {
+            setResonanceEntries(page.data);
+            setResonanceCursor(page.page.next_cursor);
+            setResonanceLoadMoreError(null);
+          } else {
+            setEntries(page.data);
+            setEntryCursor(page.page.next_cursor);
+            setManualLoadMoreError(null);
+          }
+          libraryEntriesStaleRef.current = false;
+          entryReconciliationAbortRef.current = null;
+          setEntryReconciliation({ kind: "Idle" });
+        })
+        .catch((error: unknown) => {
+          if (
+            controller.signal.aborted ||
+            entryReconciliationGenerationRef.current !== generation ||
+            isAbortError(error)
+          ) {
+            return;
+          }
+          if (handleUnauthenticatedApiError(error)) return;
+          entryReconciliationAbortRef.current = null;
+          setEntryReconciliation({
+            kind: "Failed",
+            sort: requestedSort,
+            error: toLibraryAddError(error),
+          });
+        });
+    },
+    [cancelEntryLoadMore, clearRemovedEntryIds, id],
+  );
+
+  useEffect(() => {
+    if (entryReconciliationOwnerIdRef.current !== id) return;
+    const becameActive = isPaneActive && !wasPaneActiveRef.current;
+    wasPaneActiveRef.current = isPaneActive;
+    if (becameActive && libraryEntriesStaleRef.current) {
+      reconcileEntries(sort);
+    }
+  }, [id, isPaneActive, reconcileEntries, sort]);
+
+  useEffect(() => {
+    entryReconciliationOwnerIdRef.current = id;
+    entryReconciliationGenerationRef.current += 1;
+    entryReconciliationAbortRef.current?.abort();
+    entryReconciliationAbortRef.current = null;
+    libraryEntriesStaleRef.current = false;
+    wasPaneActiveRef.current = paneActiveAtRenderRef.current;
+    setEntryReconciliation({ kind: "Idle" });
+    return () => {
+      entryReconciliationGenerationRef.current += 1;
+      entryReconciliationAbortRef.current?.abort();
+    };
+  }, [id]);
+
   useEffect(() => {
     if (libraryResource.status === "ready") {
       cancelEntryLoadMore();
@@ -458,10 +571,7 @@ export default function LibraryPaneBody() {
       setLibraryPanelError(null);
       try {
         if (libraryPanelEntry.kind === "podcast") {
-          await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
-            method: "POST",
-            body: JSON.stringify({ podcast_id: libraryPanelEntry.podcast.id }),
-          });
+          await addPodcastToLibrary(libraryPanelEntry.podcast.id, libraryId);
         } else {
           await ensureMediaInLibraries({
             mediaId: libraryPanelEntry.media.id,
@@ -484,6 +594,76 @@ export default function LibraryPaneBody() {
       }
     },
     [libraryPanelBusy, libraryPanelEntry],
+  );
+
+  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
+    (target, options) => {
+      const targetId = slateTargetId(target);
+      const frozenAttempt = () =>
+        target.kind === "Podcast"
+          ? addPodcastToLibrary(targetId, id)
+          : ensureMediaInLibraries({
+              mediaId: targetId,
+              libraryIds: [id],
+            });
+
+      return new Promise((resolve) => {
+        let observing = true;
+        let inFlight = false;
+        const abandon = () => {
+          if (!observing) return;
+          observing = false;
+          resolve({ kind: "Abandoned" });
+        };
+        const runAttempt = () => {
+          if (!observing || inFlight) return;
+          inFlight = true;
+          void frozenAttempt().then(
+            () => {
+              inFlight = false;
+              if (!observing) return;
+              observing = false;
+              options.signal.removeEventListener("abort", abandon);
+              libraryEntriesStaleRef.current = true;
+              feedback.show({
+                severity: "success",
+                title: `Added to ${currentLibrary?.name ?? "library"}`,
+              });
+              resolve({ kind: "Accepted" });
+            },
+            (error: unknown) => {
+              inFlight = false;
+              if (!observing) return;
+              if (handleUnauthenticatedApiError(error)) {
+                observing = false;
+                options.signal.removeEventListener("abort", abandon);
+                resolve({ kind: "Abandoned" });
+                return;
+              }
+              const apiError = toLibraryAddError(error);
+              if (apiError.status >= 400 && apiError.status < 500) {
+                observing = false;
+                options.signal.removeEventListener("abort", abandon);
+                resolve({ kind: "Rejected", error: apiError });
+                return;
+              }
+              options.onUnknown({
+                error: apiError,
+                recovery: { kind: "Local", retry: runAttempt },
+              });
+            },
+          );
+        };
+
+        if (options.signal.aborted) {
+          abandon();
+          return;
+        }
+        options.signal.addEventListener("abort", abandon, { once: true });
+        runAttempt();
+      });
+    },
+    [currentLibrary?.name, feedback, id],
   );
 
   const handleRemoveFromLibrary = useCallback(
@@ -528,12 +708,7 @@ export default function LibraryPaneBody() {
 
       try {
         if (entry.kind === "podcast") {
-          await apiFetch(
-            `/api/libraries/${libraryId}/podcasts/${entry.podcast.id}`,
-            {
-              method: "DELETE",
-            },
-          );
+          await removePodcastFromLibrary(entry.podcast.id, libraryId);
         } else {
           await ensureMediaAbsentFromLibrary({
             mediaId: entry.media.id,
@@ -1133,9 +1308,6 @@ export default function LibraryPaneBody() {
   const visibleResonanceEntries = resonanceEntries.filter(
     (entry) => !removedEntryIds.ids.has(entry.id),
   );
-  const surfacedEntries = visibleEntries.filter(
-    (entry) => entry.surfaced_today,
-  );
   const canReorderVisibleEntries =
     canReorder && sort === "manual" && entryCursor === null;
   const entryFooter =
@@ -1164,6 +1336,24 @@ export default function LibraryPaneBody() {
         />
       </>
     );
+  const entryReconciliationNotice =
+    entryReconciliation.kind === "Loading" ? (
+      <FeedbackNotice severity="neutral" title="Refreshing library entries…" />
+    ) : entryReconciliation.kind === "Failed" ? (
+      <FeedbackNotice
+        feedback={toFeedback(entryReconciliation.error, {
+          fallback: "Failed to refresh library entries",
+        })}
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => reconcileEntries(entryReconciliation.sort)}
+        >
+          Retry
+        </Button>
+      </FeedbackNotice>
+    ) : null;
   const resonanceStatus = resonanceFetch.loading
     ? "loading"
     : resonanceFetch.error !== null && resonanceEntries.length === 0
@@ -1295,13 +1485,12 @@ export default function LibraryPaneBody() {
             />
           ) : undefined
         }
-        state={error ? <FeedbackNotice {...error} /> : null}
-        empty={
-          sort === "manual" && visibleEntries.length === 0 ? (
-            <FeedbackNotice
-              severity="neutral"
-              title="No podcasts or media in this library yet."
-            />
+        state={
+          error || entryReconciliationNotice ? (
+            <>
+              {error ? <FeedbackNotice {...error} /> : null}
+              {entryReconciliationNotice}
+            </>
           ) : null
         }
       >
@@ -1332,18 +1521,6 @@ export default function LibraryPaneBody() {
           />
         ) : visibleEntries.length > 0 ? (
           <>
-            {surfacedEntries.length > 0 ? (
-              <PaneSection title="Surfaced today">
-                <CollectionView
-                  rows={surfacedEntries.map(entryRowView)}
-                  view={displayState.view}
-                  density={displayState.density}
-                  status="ready"
-                  ariaLabel="Surfaced today"
-                  surface={false}
-                />
-              </PaneSection>
-            ) : null}
             {displayState.view === "gallery" ? (
               <CollectionView
                 rows={visibleEntryRows}
@@ -1401,7 +1578,22 @@ export default function LibraryPaneBody() {
               />
             )}
           </>
-        ) : null}
+        ) : (
+          <FeedbackNotice
+            severity="neutral"
+            title="No podcasts or media in this library yet."
+          />
+        )}
+        <ReadingSlateSection
+          destination={{
+            kind: "Library",
+            id: currentLibrary.id,
+            name: currentLibrary.name,
+          }}
+          paneId={paneId}
+          isActive={isPaneActive}
+          accept={acceptSlateTarget}
+        />
       </PaneSurface>
 
       {editOpen && (

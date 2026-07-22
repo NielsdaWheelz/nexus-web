@@ -23,12 +23,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
-from provider_runtime.types import ModelCall
-from pydantic import BaseModel, ConfigDict, Field
+from provider_runtime import Succeeded
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -36,26 +34,24 @@ from sqlalchemy.orm import Session
 from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import Highlight, Media, NoteBlock, Page, SynapseSuppression
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
     ConflictError,
     NotFoundError,
-    api_error_code_for_model_call,
 )
 from nexus.jobs.queue import enqueue_unique_job
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.schemas.search import (
     SearchResultContentChunkOut,
     SearchResultNoteBlockOut,
     SearchResultOut,
 )
-from nexus.services.api_key_resolver import resolve_api_key, update_user_key_status
-from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.media_intelligence import NotReady, get_media_unit
-from nexus.services.prompt_budget import estimate_tokens
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
@@ -78,17 +74,17 @@ from nexus.services.search.query import SearchQuery
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,
-    SynthesisRequest,
+    build_synthesis_intent,
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
+    decode_structured_synthesis,
     ground_indices,
-    run_structured_synthesis,
+    outcome_failure_facts,
 )
 
 logger = get_logger(__name__)
 
-SYNAPSE_PROVIDER = "anthropic"
-SYNAPSE_MODEL_NAME = "claude-haiku-4-5-20251001"
+SYNAPSE_OPERATION = "synapse"
 SYNAPSE_CANDIDATE_LIMIT = 12
 SYNAPSE_MAX_CONNECTIONS = 4
 # Span-grain dedup lets one text-rich work fill every slot with its own spans;
@@ -96,11 +92,37 @@ SYNAPSE_MAX_CONNECTIONS = 4
 # candidate's owner media.
 SYNAPSE_MAX_CONNECTIONS_PER_WORK = 2
 SYNAPSE_MAX_OUTPUT_TOKENS = 1000
-SYNAPSE_LLM_TIMEOUT_SECONDS = 45
 SYNAPSE_QUERY_CHAR_BUDGET = 800
 SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000
-# The pinned model must exist in MODEL_CATALOG (code/catalog mismatch is a defect).
-require_catalog_model(SYNAPSE_PROVIDER, SYNAPSE_MODEL_NAME)
+
+# The only genuinely transient generation outcomes: retrying re-bills a fresh
+# provider call, so a scan may retry ONLY these. Every other failure
+# (structured-output decode, refusal, context_too_large, budget/billing) is
+# deterministic — retrying re-runs the same billed call up to the ladder depth
+# for the same result, so those short-circuit to a non-retryable terminal.
+_TRANSIENT_SCAN_CODES = frozenset(
+    {"provider_unavailable", "rate_limited", "timeout", "stream_interrupted"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScanResult:
+    """One scan's worker outcome. ``status`` drives the queue retry ladder:
+    ``failed`` is in ``synapse_scan``'s ``failed_result_statuses`` (retryable);
+    ``terminal_failed`` is not (deterministic — completes without a re-billing
+    retry). ``ok``/``skipped`` are non-failure completions. ``error_code`` is
+    persisted in the job ``result_payload`` for operator correlation."""
+
+    status: Literal["ok", "skipped", "failed", "terminal_failed"]
+    error_code: str | None = None
+
+
+def _generation_failure_result(code: str | None) -> ScanResult:
+    """Classify a generation-failure ``error_code`` into a retryable
+    (``failed``) or deterministic (``terminal_failed``) scan outcome."""
+    if code is not None and code in _TRANSIENT_SCAN_CODES:
+        return ScanResult("failed", error_code=code)
+    return ScanResult("terminal_failed", error_code=code)
 
 
 # ---------- public contract -------------------------------------------------
@@ -165,52 +187,46 @@ def scan_status(
 
 
 async def run_synapse_scan(
-    db: Session, *, user_id: UUID, ref: ResourceRef, llm: ModelRuntime
-) -> Literal["ok", "skipped", "failed"]:
+    db: Session, *, user_id: UUID, ref: ResourceRef, runtime: ExecutionRuntime
+) -> ScanResult:
     """Worker body: one dossier → retrieve → judge → replace-set scan.
 
     ``skipped`` (quiet, no edge changes): engine disabled, source missing or
-    not visible, dossier unavailable (media unit not ready, page never
-    indexed), or no resolvable API key. ``failed`` (queue retry ladder, prior
-    edges intact): rate-limit/budget rejection or LLM/synthesis error. ``ok``
+    not visible, or dossier unavailable (media unit not ready, page never
+    indexed). ``failed`` (queue retry ladder, prior edges intact): a
+    genuinely transient rejection (inflight rate-limit, limiter outage,
+    transient-exhausted generation) worth another billed attempt.
+    ``terminal_failed`` (prior edges intact, NOT retried): a deterministic
+    failure (structured-output decode, refusal, context_too_large,
+    budget/billing) a re-run would only re-bill for the same result. ``ok``
     replace-sets the ``(source, origin='synapse')`` edge set — possibly to
     empty (current-only, D6).
 
-    The provider call is BYOK-first for the scanned object's owner and runs
-    inside the shared rate-limit/budget envelope; every attempt is one
-    ``llm_calls`` row (owner ``synapse_scan`` = the source object id, AC8).
+    The provider call runs on the platform credential inside the shared
+    rate-limit envelope; every attempt is one ``llm_calls`` row (owner
+    ``synapse_scan`` = the source object id, AC8).
     """
     if not get_settings().synapse_enabled:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="disabled")
-        return "skipped"
+        return ScanResult("skipped")
     try:
         assert_ref_visible(db, viewer_id=user_id, ref=ref)
     except NotFoundError:
         logger.info("synapse_scan_skipped", ref=ref.uri, reason="source_missing")
-        return "skipped"
-    try:
-        resolved_key = resolve_api_key(db, user_id, SYNAPSE_PROVIDER, "auto")
-    except (ApiError, ModelCallError) as exc:
-        logger.info("synapse_scan_skipped", ref=ref.uri, reason="no_api_key", error=str(exc))
-        return "skipped"
+        return ScanResult("skipped")
 
     rate_limiter = get_rate_limiter()
     try:
         rate_limiter.acquire_inflight_slot(user_id)
     except ApiError as exc:
+        # Inflight-slot contention is transient — another attempt is warranted.
         logger.warning("synapse_scan_rate_limited", ref=ref.uri, error_code=exc.code.value)
-        return "failed"
-    budget_reserved = False
-    estimated_tokens = 0
-    # One reservation id per scan attempt: commit_token_budget charges a
-    # reservation id once forever, so a stable id (ref.id) would leave every
-    # rescan of the same object unmetered.
-    budget_reservation_id = uuid4()
+        return ScanResult("failed", error_code=exc.code.value)
     try:
         dossier = _build_dossier(db, user_id=user_id, ref=ref)
         if dossier is None:
             logger.info("synapse_scan_skipped", ref=ref.uri, reason="dossier_unavailable")
-            return "skipped"
+            return ScanResult("skipped")
 
         # Retrieval runs before any uncommitted writes in this session
         # (build_query_embedding rolls back a non-entry transaction around its
@@ -239,61 +255,61 @@ async def run_synapse_scan(
             )
             db.commit()
             logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-            return "ok"
+            return ScanResult("ok")
 
-        request = _build_llm_request(dossier.text, candidates)
-        if resolved_key.mode == "platform":
-            estimated_tokens = (
-                estimate_tokens("\n".join(turn.content for turn in request.messages))
-                + SYNAPSE_MAX_OUTPUT_TOKENS
+        user_content = _build_synapse_user_content(dossier.text, candidates)
+        profile = operation_profile(SYNAPSE_OPERATION)
+        intent = build_synthesis_intent(
+            profile=profile,
+            system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+            user_content=user_content,
+            max_output_tokens=SYNAPSE_MAX_OUTPUT_TOKENS,
+            schema=SynapseSynthesis,
+        )
+        try:
+            call = await execute_generation(
+                GenerationRequest(
+                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id, user_id=user_id),
+                    operation=SYNAPSE_OPERATION,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
+                ),
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                settings=get_settings(),
             )
-            try:
-                rate_limiter.reserve_token_budget(user_id, budget_reservation_id, estimated_tokens)
-                budget_reserved = True
-            except ApiError as exc:
-                logger.warning(
-                    "synapse_scan_budget_rejected", ref=ref.uri, error_code=exc.code.value
-                )
-                return "failed"
+        except ApiError as exc:
+            # Only a limiter outage is transient here; budget/billing denials
+            # are deterministic (a retry re-denies without dispatching).
+            logger.warning("synapse_scan_llm_rejected", ref=ref.uri, error_code=exc.code.value)
+            if exc.code == ApiErrorCode.E_RATE_LIMITER_UNAVAILABLE:
+                return ScanResult("failed", error_code=exc.code.value)
+            return ScanResult("terminal_failed", error_code=exc.code.value)
+
+        if not isinstance(call.outcome, Succeeded):
+            code, _detail = outcome_failure_facts(call.outcome)
+            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=code)
+            # Keep the failed-attempt llm_calls row; run_llm_task only closes
+            # the session, it never commits.
+            db.commit()
+            return _generation_failure_result(code)
 
         try:
-            result = await run_structured_synthesis(
-                llm=LedgeredLLM(
-                    db=db,
-                    owner=LlmCallOwner(kind="synapse_scan", id=ref.id),
-                    router=llm,
-                    llm_operation="synapse_scan",
-                    key_mode_requested="auto",
-                    key_mode_used=resolved_key.mode,
-                ),
-                request=SynthesisRequest(
-                    provider=SYNAPSE_PROVIDER,
-                    llm_request=request,
-                    api_key=resolved_key.api_key,
-                    timeout_s=SYNAPSE_LLM_TIMEOUT_SECONDS,
-                ),
-                schema=SynapseSynthesis,
-            )
-        except ModelCallError as exc:
-            error_code = api_error_code_for_model_call(exc.error_code).value
-            logger.warning("synapse_scan_llm_failure", ref=ref.uri, error_code=error_code)
-            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, resolved_key.user_key_id, "invalid")
-            # Keep the failed-attempt llm_calls rows (and any key-status flip);
-            # run_llm_task only closes the session, it never commits.
-            db.commit()
-            return "failed"
+            value = decode_structured_synthesis(call.outcome, schema=SynapseSynthesis)
         except StructuredSynthesisError as exc:
+            # Deterministic decode failure (no repair round): a retry re-bills
+            # the same call for the same malformed output — do not retry.
             logger.warning("synapse_scan_llm_failure", ref=ref.uri, error=str(exc)[:200])
             db.commit()
-            return "failed"
+            return ScanResult("terminal_failed", error_code="invalid_structured_output")
 
         # Commit the per-attempt llm_calls rows now so a write failure below
         # cannot erase them (media-unit precedent).
         db.commit()
         grounded = (
             ground_indices(
-                result.value.connections,
+                value.connections,
                 candidates,
                 index_of=lambda connection: connection.candidate_index,
                 policy="drop",
@@ -336,17 +352,9 @@ async def run_synapse_scan(
             ],
         )
         db.commit()
-        if budget_reserved:
-            actual_tokens = usage_tokens(result.usage)["total_tokens"]
-            rate_limiter.commit_token_budget(
-                user_id, budget_reservation_id, actual_tokens or estimated_tokens
-            )
-            budget_reserved = False
         logger.info("synapse_scan_completed", ref=ref.uri, edges=len(written))
-        return "ok"
+        return ScanResult("ok")
     finally:
-        if budget_reserved:
-            rate_limiter.release_token_budget(user_id, budget_reservation_id)
         rate_limiter.release_inflight_slot(user_id)
 
 
@@ -645,7 +653,16 @@ class SynapseConnectionOut(BaseModel):
 
     candidate_index: int
     kind: Literal["context", "supports", "contradicts"]
-    rationale: str = Field(min_length=1, max_length=240)
+    rationale: str
+
+    @field_validator("rationale")
+    @classmethod
+    def _bounded_rationale(cls, value: str) -> str:
+        # Former Field(min_length=1, max_length=240) — kept out of the emitted
+        # JSON schema (canonical subset carries no length keywords).
+        if not 1 <= len(value) <= 240:
+            raise ValueError("rationale must be 1-240 characters")
+        return value
 
 
 class SynapseSynthesis(BaseModel):
@@ -687,17 +704,13 @@ _SYNAPSE_SYSTEM_PROMPT = build_synthesis_prompt(
 )
 
 
-def _build_llm_request(source_text: str, candidates: list[_SynapseCandidate]) -> ModelCall:
+def _build_synapse_user_content(source_text: str, candidates: list[_SynapseCandidate]) -> str:
     rendered = "\n\n".join(
         f"[{index}] {candidate.label}: {candidate.snippet}"
         for index, candidate in enumerate(candidates)
     )
-    return build_synthesis_request(
-        provider=SYNAPSE_PROVIDER,
-        system_prompt=_SYNAPSE_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="CANDIDATES",
         rendered_candidates=rendered,
         extra_user_block=f"SOURCE:\n{source_text}",
-        model_name=SYNAPSE_MODEL_NAME,
-        max_tokens=SYNAPSE_MAX_OUTPUT_TOKENS,
     )

@@ -601,10 +601,14 @@ def test_execute_app_search_error_output_escapes_attribute_quotes(
 
 
 @respx.mock
-def test_execute_app_search_preserves_typed_provider_error_code(
+def test_execute_app_search_degrades_to_lexical_on_embedding_provider_failure(
     direct_db: DirectSessionManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A transient query-embedding provider failure is operational resilience,
+    not a search error (spec §5.5): it degrades to lexical-only and the
+    app_search run still completes, typed and logged, never surfaced as a
+    tool error."""
     user_id = create_test_user_id()
     _use_openai_embedding_provider(monkeypatch)
 
@@ -644,8 +648,8 @@ def test_execute_app_search_preserves_typed_provider_error_code(
 
         assert run is not None
         assert run.tool_call_id is not None
-        assert run.status == "error"
-        assert run.error_code == ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+        assert run.status == "complete"
+        assert run.error_code is None
 
         tool_status, tool_error_code = session.execute(
             text(
@@ -657,8 +661,8 @@ def test_execute_app_search_preserves_typed_provider_error_code(
             ),
             {"tool_call_id": run.tool_call_id},
         ).one()
-        assert tool_status == "error"
-        assert tool_error_code == ApiErrorCode.E_LLM_PROVIDER_DOWN.value
+        assert tool_status == "complete"
+        assert tool_error_code is None
 
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)

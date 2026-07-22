@@ -149,7 +149,6 @@ describe("pane route table", () => {
       "/settings/reader",
       "/settings/billing",
       "/settings/appearance",
-      "/settings/keys",
       "/settings/local-vault",
       "/settings/identities",
       "/settings/keybindings",

@@ -16,31 +16,24 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.types import ModelCall
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.llm_catalog import require_catalog_model
 from nexus.services import conversation_branches
 from nexus.services.artifacts.base import ArtifactReducer
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
 from nexus.services.structured_synthesis import (
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
     ground_indices,
 )
 
-DISTILL_MODEL_NAME = "claude-haiku-4-5-20251001"
-DISTILL_PROVIDER = "anthropic"
 DISTILL_MAX_OUTPUT_TOKENS = 1200
-DISTILL_TIMEOUT_SECONDS = 45
 # ~4 chars/token; messages past the budget are dropped from the offered set.
 DISTILL_INPUT_CHAR_BUDGET = 100_000
-
-require_catalog_model(DISTILL_PROVIDER, DISTILL_MODEL_NAME)
 
 
 @dataclass(frozen=True)
@@ -74,7 +67,7 @@ class _DistillateSynthesis(BaseModel):
 
 
 async def _collect(
-    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None, _llm: ModelRuntime
+    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None, _runtime: ExecutionRuntime
 ) -> DistillateInputs:
     tree = conversation_branches.get_conversation_tree(
         db, viewer_id=cast("UUID", viewer_id), conversation_id=subject_ref.id
@@ -113,19 +106,15 @@ async def _collect(
     )
 
 
-def _build_request(inputs: DistillateInputs, custom_instruction: str | None) -> ModelCall:
+def _build_user_content(inputs: DistillateInputs, custom_instruction: str | None) -> str:
     rendered = "\n\n".join(f"[{m.index}] ({m.role})\n{m.content}" for m in inputs.offered)
     extra_user_block = (
         f"CUSTOM INSTRUCTION:\n{custom_instruction}" if custom_instruction is not None else None
     )
-    return build_synthesis_request(
-        provider=DISTILL_PROVIDER,
-        system_prompt=_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="CONVERSATION MESSAGES",
         rendered_candidates=rendered,
         extra_user_block=extra_user_block,
-        model_name=DISTILL_MODEL_NAME,
-        max_tokens=DISTILL_MAX_OUTPUT_TOKENS,
     )
 
 
@@ -242,15 +231,13 @@ _SYSTEM_PROMPT = build_synthesis_prompt(
 
 CONVERSATION_DISTILLATE_REDUCER = ArtifactReducer(
     kind="conversation_distillate",
-    provider=DISTILL_PROVIDER,
-    model_name=DISTILL_MODEL_NAME,
-    llm_operation="distill",
+    llm_operation="conversation_distillate",
     max_output_tokens=DISTILL_MAX_OUTPUT_TOKENS,
-    timeout_s=DISTILL_TIMEOUT_SECONDS,
+    system_prompt=_SYSTEM_PROMPT,
     collect=_collect,
     is_empty=lambda inputs: len(inputs.offered) < 1,
     empty_error=("no_messages", "conversation has no complete messages to distill"),
-    build_request=_build_request,
+    build_user_content=_build_user_content,
     schema=_DistillateSynthesis,
     materialize=_materialize,
     fingerprint=_fingerprint,

@@ -396,6 +396,65 @@ describe("normalizeSearchResult happy-path adaptation", () => {
   });
 });
 
+describe("normalizeSearchResult artifact (distillate) handling", () => {
+  function artifactRow(overrides: Record<string, unknown> = {}) {
+    return {
+      type: "artifact",
+      id: "artifact-1",
+      score: 0.81,
+      snippet: "distilled <b>synthesis</b>",
+      title: "Memory Distillate",
+      source_label: "distillate",
+      media_id: null,
+      media_kind: null,
+      activationHref: "/artifacts/artifact-1",
+      revision_id: "rev-3",
+      subject_ref: "media:media-1",
+      kind: "library_intelligence",
+      context_ref: { type: "artifact", id: "artifact-1" },
+      ...overrides,
+    };
+  }
+
+  it("adapts an artifact row as a distillate result and carries its identity", () => {
+    const row = adapt(artifactRow());
+    expect(row).toMatchObject({
+      key: "artifact-artifact-1",
+      type: "artifact",
+      typeLabel: "distillate",
+      primaryText: "Memory Distillate",
+      sourceMeta: "distillate",
+      resourceRef: "artifact:artifact-1",
+      contextRef: { type: "artifact", id: "artifact-1", evidenceSpanIds: [] },
+    });
+    expect(normalize(artifactRow())).toMatchObject({
+      type: "artifact",
+      revision_id: "rev-3",
+      subject_ref: "media:media-1",
+      kind: "library_intelligence",
+    });
+  });
+
+  it("rejects an artifact row with a non-string revision_id", () => {
+    expect(normalize(artifactRow({ revision_id: 3 }))).toBeNull();
+  });
+
+  it("rejects an artifact row missing subject_ref", () => {
+    const { subject_ref: _dropped, ...rest } = artifactRow();
+    expect(normalize(rest)).toBeNull();
+  });
+
+  it("rejects an artifact row with a non-string kind", () => {
+    expect(normalize(artifactRow({ kind: null }))).toBeNull();
+  });
+
+  it("rejects an artifact row whose context_ref type drifts from artifact", () => {
+    expect(
+      normalize(artifactRow({ context_ref: { type: "page", id: "artifact-1" } })),
+    ).toBeNull();
+  });
+});
+
 describe("normalizeSearchResult structural rejections", () => {
   it("rejects non-object / missing base-field payloads", () => {
     expect(normalizeSearchResult(null)).toBeNull();

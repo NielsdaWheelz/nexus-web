@@ -46,11 +46,12 @@ WEB_SEARCH_QUERY_MAX_WORDS = 50
 
 
 class WebSearchQueryError(ValueError):
-    """The submitted web-search query is not a usable query.
+    """The submitted web-search request is not a usable request.
 
     Raised by :func:`normalize_web_search_query` when an untrusted query (an HTTP
     request param or LLM-generated tool argument) is empty, too short, too long, or
-    has too many words. This is an expected boundary failure for bad external input,
+    has too many words, and by :func:`search_web_readonly` when ``freshness_days``
+    is below 1. This is an expected boundary failure for bad external input,
     distinct from the provider-transport :class:`WebSearchError`; each caller maps it
     to its own surface (HTTP 400 at the route, an ``invalid_request`` tool status in
     chat).
@@ -84,9 +85,10 @@ WEB_SEARCH_TOOL_DEFINITION: dict[str, Any] = {
         "properties": {
             "query": {"type": "string"},
             "freshness_days": {
-                "type": ["integer", "null"],
-                "minimum": 1,
-                "description": "Limit results to the last N days. Use null for no limit.",
+                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                "description": (
+                    "Limit results to the last N days (minimum 1). Use null for no limit."
+                ),
             },
         },
         "required": ["query", "freshness_days"],
@@ -260,6 +262,12 @@ async def search_web_readonly(
     transport) propagates to the caller's boundary.
     """
     normalized_query = normalize_web_search_query(query)
+    # Domain validation for the freshness bound the tool schema used to declare as
+    # "minimum": 1 (the canonical JSON-Schema subset forbids range keywords). Mirrors
+    # WebSearchRequest.__post_init__'s `freshness_days < 1` rejection so an
+    # out-of-range value fails as a typed boundary error, never a bare ValueError.
+    if freshness_days is not None and freshness_days < 1:
+        raise WebSearchQueryError("Web search freshness_days must be at least 1")
     response = await provider.search(
         WebSearchRequest(
             query=normalized_query,

@@ -319,19 +319,6 @@ export const PANE_ROUTE_MODELS = [
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
-    id: "settingsKeys",
-    header: {
-      kind: "section",
-      destinationId: "settings",
-      defaultFolio: "none",
-    },
-    pattern: ["settings", "keys"],
-    defaultLabel: "API Keys",
-    labelMode: "static",
-    bodyMode: "standard",
-    ...STANDARD_WIDTH_CONTRACT,
-  }),
-  route({
     id: "settingsLocalVault",
     header: {
       kind: "section",

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ReaderEvidence, ReaderEvidenceItem } from "./documentMap";
+import type {
+  ReaderEvidence,
+  ReaderEvidenceItem,
+  ReaderEvidencePassageGroup,
+} from "./documentMap";
 import {
   MARGIN_MAX_ITEMS,
+  anchoredRowForEvidenceItem,
   buildMarginItems,
   capProjectedMarginRows,
   stackAnchoredRows,
@@ -118,6 +123,7 @@ function evidence(items: ReaderEvidenceItem[]): ReaderEvidence {
               start_offset: 4,
               end_offset: 12,
             },
+            passage_anchor_id: null,
           },
           order_key: "document:0001",
         },
@@ -236,6 +242,47 @@ describe("buildMarginItems", () => {
       visible: rows.slice(0, MARGIN_MAX_ITEMS),
       hidden: 3,
     });
+  });
+});
+
+describe("anchoredRowForEvidenceItem", () => {
+  function pdfGroup(
+    quads: unknown[],
+    items: ReaderEvidenceItem[],
+  ): ReaderEvidencePassageGroup {
+    return {
+      locus_ref: "link:locus",
+      resolution: {
+        kind: "Resolved",
+        anchor: {
+          locator: {
+            type: "pdf_page_geometry",
+            media_id: "m1",
+            page_number: 3,
+            quads,
+            exact: "",
+          },
+          passage_anchor_id: null,
+        },
+        order_key: "document:0001",
+      },
+      target_excerpt: absent,
+      items,
+      also_references: [],
+    };
+  }
+
+  it("keeps a page-only PDF passage-anchor locator (no quads) instead of dropping it", () => {
+    // A Link resolved through a passage_anchor on PDF media carries only
+    // `page_number` until a fresh selection supplies real quads (the
+    // passage-anchor resolver never recomputes geometry). This must not be
+    // dropped from margin/Evidence projection just because it is coarse.
+    const link = item("Link", "l1");
+    const group = pdfGroup([], [link]);
+    const anchor = anchoredRowForEvidenceItem(group, link);
+    expect(anchor).not.toBeNull();
+    expect(anchor?.page_number).toBe(3);
+    expect(anchor?.quads).toEqual([]);
   });
 });
 

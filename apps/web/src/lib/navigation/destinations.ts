@@ -84,11 +84,6 @@ export const DESTINATION_REGISTRY = {
     href: "/settings/reader",
     keywords: ["typography", "font", "theme"],
   },
-  keys: {
-    label: "API Keys",
-    href: "/settings/keys",
-    keywords: ["credentials", "providers"],
-  },
   identities: {
     label: "Linked Identities",
     href: "/settings/identities",

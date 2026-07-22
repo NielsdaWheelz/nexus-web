@@ -7,7 +7,7 @@ field, runtime text scan, fallback estimate, compatibility decoder, feature
 flag, cache, or dual path survives.
 
 **Measured release proof:** On an isolated production clone with API/worker
-disconnected, migration `0186` completed in 14.08s. Across 50 warmed
+disconnected, migration `0187` completed in 14.08s. Across 50 warmed
 representative max-page runs, the stored-count batch measured 4.523ms median and
 5.671ms p95; its plan projected fragment identity and the generated integer, not
 source text. Same-clone Library GET p95 moved from 57.923ms to 98.676ms across
@@ -143,7 +143,7 @@ Accepted 80/20 limitations:
 
 ### Stored source metrics
 
-Migration `0186` adds two internal PostgreSQL 15 STORED generated columns and a
+Migration `0187` adds two internal PostgreSQL 15 STORED generated columns and a
 storage-only downgrade that drops them. No downgrade restores an old runtime
 path or alternate source.
 
@@ -340,7 +340,7 @@ Refresh the superseded filing-outcome wording in
 
 Create:
 
-- `migrations/alembic/versions/0186_library_reading_time_word_counts.py`
+- `migrations/alembic/versions/0187_library_reading_time_word_counts.py`
 - `python/nexus/services/media_document_metrics.py`
 - `python/tests/test_media_document_metrics.py`
 - `apps/web/src/lib/libraries/readingTime.ts`
@@ -444,7 +444,7 @@ Hetzner is manual, and the web decoder intentionally rejects the old backend.
 Release as two ordered commits/deployments, not one combined push:
 
 1. Push the migration/backend commit; the unchanged web may redeploy safely.
-2. Hetzner deploy stops API/worker, applies migration `0186`, and starts the new
+2. Hetzner deploy stops API/worker, applies migration `0187`, and starts the new
    backend/worker. Smoke `GET /libraries/{id}/entries` for Presence, aliases,
    mixed kinds, and list latency/query shape.
 3. Push the web/docs commit; let Vercel deploy it, then smoke list/gallery and

@@ -1,34 +1,35 @@
 "use client";
 
 import { Play } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
-import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
+import {
+  FeedbackNotice,
+  toFeedback,
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { LECTERN_RECENT_LIMIT, lecternRecentResource } from "@/lib/api/resource";
-import { useResource } from "@/lib/api/useResource";
+import { ApiError, isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import {
-  playbackVerb,
-  presentLecternItem,
-  presentRecentConsumptionItem,
-} from "@/lib/collections/presenters/lectern";
-import { getRecentConsumption } from "@/lib/lectern/client";
+import { playbackVerb, presentLecternItem } from "@/lib/collections/presenters/lectern";
 import type {
   ConsumptionInfo,
   LecternItem,
   LecternItemId,
   LecternSnapshot,
-  MediaId,
-  RecentConsumptionSnapshot,
 } from "@/lib/lectern/contract";
+import { assumeMediaId } from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { slateTargetId } from "@/lib/resonance/contract";
+import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./LecternPaneBody.module.css";
 
 function PlaybackButton({
@@ -66,28 +67,12 @@ function snapshotItems(
 export default function LecternPaneBody() {
   const { resource, mutation, placeItems, removeItem, setOrder } = useLectern();
   const { playAudio } = useGlobalPlayer();
+  const toast = useFeedback();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [pendingQueueFocus, setPendingQueueFocus] = useState<LecternItemId | null>(null);
   const queueSectionId = useId();
-  const isPaneActive = usePaneRuntime()?.isActive ?? true;
-  const wasPaneActiveRef = useRef(isPaneActive);
-  const [recentRefreshVersion, setRecentRefreshVersion] = useState(0);
-  const recentResource = useResource<
-    RecentConsumptionSnapshot,
-    { limit: number; refreshVersion: number }
-  >({
-    descriptor: lecternRecentResource,
-    params: { limit: LECTERN_RECENT_LIMIT, refreshVersion: recentRefreshVersion },
-    load: ({ limit }, signal) => getRecentConsumption(limit, signal),
-  });
-
-  useEffect(() => {
-    const becameActive = isPaneActive && !wasPaneActiveRef.current;
-    wasPaneActiveRef.current = isPaneActive;
-    if (becameActive) {
-      setRecentRefreshVersion((version) => version + 1);
-    }
-  }, [isPaneActive]);
+  const paneRuntime = usePaneRuntime();
+  const isPaneActive = paneRuntime?.isActive ?? true;
+  const paneId = paneRuntime?.paneId ?? "lectern";
 
   // A leaf never holds a snapshot cache: it renders the provider's optimistic
   // `presentedSnapshot` while a mutation is Pending, otherwise canonical data.
@@ -103,21 +88,6 @@ export default function LecternPaneBody() {
       : resource.status === "error"
         ? "error"
         : "loading";
-
-  useEffect(() => {
-    if (pendingQueueFocus === null) return;
-    const frame = requestAnimationFrame(() => {
-      const section = document.getElementById(queueSectionId);
-      const row = Array.from(
-        section?.querySelectorAll<HTMLElement>("[data-collection-row-id]") ?? [],
-      ).find((candidate) => candidate.dataset.collectionRowId === pendingQueueFocus);
-      const primary = row?.querySelector<HTMLElement>("[data-row-focusable]");
-      if (!primary) return;
-      primary.focus();
-      setPendingQueueFocus(null);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [items, pendingQueueFocus, queueSectionId]);
 
   const handleRemove = useCallback(
     (itemId: LecternItemId, triggerEl: HTMLButtonElement | null) => {
@@ -156,19 +126,96 @@ export default function LecternPaneBody() {
     [setOrder],
   );
 
-  const handleAdd = useCallback(
-    (mediaId: MediaId) => {
-      void placeItems({ mediaIds: [mediaId], placement: { kind: "Last" } })
-        .then((result) => {
-          if (result.outcome.kind !== "Placed" || result.outcome.itemIds.length === 0) return;
-          setPendingQueueFocus(result.outcome.itemIds[0]);
-        })
-        .catch((err) => {
-          if (handleUnauthenticatedApiError(err)) return;
-          setFeedback(toFeedback(err, { fallback: "Failed to add to the Lectern" }));
+  const acceptSlateTarget = useCallback<ReadingSlateAccept>(
+    (target, options) => {
+      if (target.kind !== "Media") {
+        return Promise.resolve({
+          kind: "Rejected",
+          error: new ApiError(
+            400,
+            "E_INVALID_TARGET",
+            "Only media can be placed on the Lectern",
+          ),
         });
+      }
+      if (resource.status !== "ready") {
+        return Promise.resolve({
+          kind: "Rejected",
+          error: new ApiError(
+            409,
+            "E_LECTERN_NOT_READY",
+            "The Lectern is still loading.",
+          ),
+        });
+      }
+      let underlying: ReturnType<typeof placeItems>;
+      try {
+        underlying = placeItems({
+          mediaIds: [assumeMediaId(slateTargetId(target))],
+          placement: { kind: "Last" },
+          unknownObservation: {
+            signal: options.signal,
+            onUnknown: (error) =>
+              options.onUnknown({
+                error,
+                recovery: {
+                  kind: "External",
+                  owner: "LecternMutationNotice",
+                },
+              }),
+          },
+        });
+      } catch (error) {
+        return Promise.resolve({
+          kind: "Rejected",
+          error: isApiError(error)
+            ? error
+            : new ApiError(
+                0,
+                "E_LECTERN_DEFECT",
+                error instanceof Error ? error.message : "Lectern unavailable",
+              ),
+        });
+      }
+      return new Promise((resolve) => {
+        let observing = true;
+        const abandon = () => {
+          if (!observing) return;
+          observing = false;
+          resolve({ kind: "Abandoned" });
+        };
+        options.signal.addEventListener("abort", abandon, { once: true });
+        underlying.then(
+          () => {
+            if (!observing) return;
+            observing = false;
+            options.signal.removeEventListener("abort", abandon);
+            toast.show({ severity: "success", title: "Added to Lectern" });
+            resolve({ kind: "Accepted" });
+          },
+          (error: unknown) => {
+            if (!observing) return;
+            observing = false;
+            options.signal.removeEventListener("abort", abandon);
+            if (handleUnauthenticatedApiError(error)) {
+              resolve({ kind: "Abandoned" });
+              return;
+            }
+            resolve({
+              kind: "Rejected",
+              error: isApiError(error)
+                ? error
+                : new ApiError(
+                    0,
+                    "E_NETWORK",
+                    error instanceof Error ? error.message : "Request failed",
+                  ),
+            });
+          },
+        );
+      });
     },
-    [placeItems],
+    [placeItems, resource.status, toast],
   );
 
   usePanePrimaryChrome({
@@ -211,63 +258,6 @@ export default function LecternPaneBody() {
         </Button>
       </FeedbackNotice>
     ) : undefined;
-
-  const queuedMediaIds = new Set(items.map((item) => item.mediaId as string));
-  const queueSettled = resource.status === "ready" || resource.status === "error";
-  const recentItems =
-    recentResource.status === "ready" && queueSettled
-      ? recentResource.data.items
-          .filter((item) => !queuedMediaIds.has(item.mediaId))
-          .slice(0, 6)
-      : [];
-  const recentStatus: "loading" | "error" | "ready" =
-    recentResource.status === "error"
-      ? "error"
-      : recentResource.status === "ready" && queueSettled
-        ? "ready"
-        : "loading";
-  const recentRows = recentItems.map((item) =>
-    presentRecentConsumptionItem(item, {
-      canAdd: resource.status === "ready" && mutation.kind === "Idle",
-      onAdd: handleAdd,
-    }),
-  );
-  const recentControls = Object.fromEntries(
-    recentItems.flatMap((item) => {
-      if (item.playerDescriptor.kind !== "Present") return [];
-      const descriptor = item.playerDescriptor.value;
-      return [
-        [
-          item.mediaId,
-          <PlaybackButton
-            key="play"
-            title={item.title}
-            consumption={item.consumption}
-            onPlay={() => playAudio(descriptor)}
-          />,
-        ],
-      ];
-    }),
-  );
-
-  const recentError =
-    recentResource.status === "error" ? (
-      <FeedbackNotice
-        feedback={toFeedback(recentResource.error, {
-          fallback: "Failed to load recent reading and listening",
-        })}
-      >
-        <Button variant="secondary" size="sm" onClick={recentResource.retry}>
-          Retry recent activity
-        </Button>
-      </FeedbackNotice>
-    ) : undefined;
-  const recentEmpty =
-    recentResource.status === "ready" && recentResource.data.items.length > 0 ? (
-      <p className={styles.emptyState}>No other recent items to show.</p>
-    ) : (
-      <p className={styles.emptyState}>Nothing read or listened to yet.</p>
-    );
 
   return (
     <PaneSurface state={feedback ? <FeedbackNotice feedback={feedback} /> : undefined}>
@@ -313,20 +303,12 @@ export default function LecternPaneBody() {
           }}
         />
       </PaneSection>
-      <PaneSection title="Recently read & listened" aria-label="Recently read and listened">
-        <CollectionView
-          rows={recentRows}
-          view="list"
-          density="comfortable"
-          status={recentStatus}
-          ariaLabel="Recently read and listened"
-          error={recentError}
-          empty={recentEmpty}
-          rowControls={recentControls}
-          rowActionsVisibility="always"
-          surface={false}
-        />
-      </PaneSection>
+      <ReadingSlateSection
+        destination={{ kind: "Lectern" }}
+        paneId={paneId}
+        isActive={isPaneActive}
+        accept={acceptSlateTarget}
+      />
     </PaneSurface>
   );
 }

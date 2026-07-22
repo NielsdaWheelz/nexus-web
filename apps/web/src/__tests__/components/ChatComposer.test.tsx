@@ -3,67 +3,38 @@ import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import ChatComposer from "@/components/chat/ChatComposer";
+import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { BranchDraft } from "@/lib/conversations/types";
 
-const MODELS = [
-  {
-    id: "gpt-5.5",
-    provider: "openai",
-    provider_display_name: "OpenAI",
-    model_name: "gpt-5.5",
-    model_display_name: "GPT-5.5",
-    model_tier: "sota",
-    reasoning_modes: ["default", "medium", "high"],
-    max_context_tokens: 256000,
-    available_via: "both",
-    provider_rank: 0,
-    model_rank: 1,
-    is_default: false,
-    available_key_modes: ["auto", "byok_only", "platform_only"],
-    capabilities: {
-      prompt_cache: {
-        mode: "keyed_ttl",
-        supported: true,
-        key_required: true,
-        ttl_options: ["5m", "1h"],
-      },
-      streaming: true,
-      tool_calling: true,
-      structured_output: true,
-      structured_output_streaming: false,
-      reasoning_continuation: true,
+const LLM_PROFILES = {
+  default_profile_id: "balanced",
+  profiles: [
+    {
+      id: "balanced",
+      label: "Balanced",
+      description: "Everyday balanced profile",
+      provider_label: "Nexus AI",
+      model_label: "Sonnet",
+      reasoning_options: [
+        { id: "default", label: "Default" },
+        { id: "high", label: "High" },
+      ],
+      default_reasoning_option_id: "default",
+      privacy_notice: "Processed by Nexus AI.",
     },
-  },
-  {
-    id: "gpt-5-mini",
-    provider: "openai",
-    provider_display_name: "OpenAI",
-    model_name: "gpt-5-mini",
-    model_display_name: "GPT-5 mini",
-    model_tier: "light",
-    reasoning_modes: ["default", "none", "medium"],
-    max_context_tokens: 128000,
-    available_via: "platform",
-    provider_rank: 0,
-    model_rank: 0,
-    is_default: true,
-    available_key_modes: ["auto", "platform_only"],
-    capabilities: {
-      prompt_cache: {
-        mode: "keyed_ttl",
-        supported: true,
-        key_required: true,
-        ttl_options: ["5m", "1h"],
-      },
-      streaming: true,
-      tool_calling: true,
-      structured_output: true,
-      structured_output_streaming: false,
-      reasoning_continuation: true,
+    {
+      id: "fast",
+      label: "Fast",
+      description: "Low-latency profile",
+      provider_label: "Nexus AI",
+      model_label: "Haiku",
+      reasoning_options: [{ id: "default", label: "Default" }],
+      default_reasoning_option_id: "default",
+      privacy_notice: "Processed by Nexus AI.",
     },
-  },
-] as const;
+  ],
+};
 
 const originalInnerWidth = window.innerWidth;
 const originalBodyMargin = document.body.style.margin;
@@ -91,9 +62,14 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         conversation_id: "conversation-1",
         user_message_id: "user-message-1",
         assistant_message_id: "assistant-message-1",
-        model_id: body.model_id,
-        reasoning: body.reasoning,
-        key_mode: body.key_mode,
+        profile_id: body.profile_id,
+        reasoning_option_id: body.reasoning_option_id,
+        provider: null,
+        model_name: null,
+        reasoning_effort: null,
+        error_origin: null,
+        support_id: null,
+        failure: null,
         cancel_requested_at: null,
         started_at: null,
         completed_at: null,
@@ -112,8 +88,7 @@ function chatRunResponse(body: ChatRunCreateRequest) {
         },
         trust_trail: null,
         status: "complete",
-        error_code: null,
-        can_retry_response: false,
+        can_rerun: false,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       },
@@ -138,8 +113,7 @@ function chatRunResponse(body: ChatRunCreateRequest) {
           updated_at: "2026-01-01T00:00:00Z",
         },
         status: "pending",
-        error_code: null,
-        can_retry_response: false,
+        can_rerun: false,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
       },
@@ -150,8 +124,8 @@ function chatRunResponse(body: ChatRunCreateRequest) {
 function installChatComposerFetchMock() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = pathOf(input);
-    if (path === "/api/models") {
-      return jsonResponse({ data: MODELS });
+    if (path === "/api/llm-profiles") {
+      return jsonResponse({ data: LLM_PROFILES });
     }
     if (path === "/api/chat-runs" && init?.method === "POST") {
       return jsonResponse(
@@ -171,17 +145,6 @@ function chatRunCalls(fetchMock: ReturnType<typeof installChatComposerFetchMock>
   );
 }
 
-async function openModelSettings(user: ReturnType<typeof userEvent.setup>) {
-  if (screen.queryByRole("combobox", { name: "Provider" })) {
-    return;
-  }
-
-  await user.click(
-    screen.getByRole("button", { name: /model settings|gpt-5/i }),
-  );
-  await screen.findByRole("combobox", { name: "Provider" });
-}
-
 function setViewportWidth(width: number) {
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
@@ -193,6 +156,7 @@ function setViewportWidth(width: number) {
 
 describe("ChatComposer", () => {
   beforeEach(() => {
+    __resetChatProfilesCacheForTests();
     document.body.style.margin = "";
     setViewportWidth(1024);
   });
@@ -202,7 +166,7 @@ describe("ChatComposer", () => {
     setViewportWidth(originalInnerWidth);
   });
 
-  it("shares cached model loading across multiple composer mounts", async () => {
+  it("shares the cached profile catalog across multiple composer mounts", async () => {
     const fetchMock = installChatComposerFetchMock();
 
     render(
@@ -213,14 +177,16 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findAllByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findAllByRole("combobox", { name: "AI profile" }),
     ).toHaveLength(2);
     expect(
-      fetchMock.mock.calls.filter(([input]) => pathOf(input) === "/api/models").length,
+      fetchMock.mock.calls.filter(
+        ([input]) => pathOf(input) === "/api/llm-profiles",
+      ).length,
     ).toBeLessThanOrEqual(1);
   });
 
-  it("changes model settings and sends the selected request payload", async () => {
+  it("selects a non-default profile and sends its profile + default reasoning", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
     const onChatRunCreated = vi.fn();
@@ -233,27 +199,10 @@ describe("ChatComposer", () => {
       />,
     );
 
-    expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
-    ).toBeInTheDocument();
-
-    await openModelSettings(user);
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Model" }),
-      "gpt-5.5",
-    );
-
-    await openModelSettings(user);
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Reasoning" }),
-      "high",
-    );
-
-    await openModelSettings(user);
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Key mode" }),
-      "byok_only",
-    );
+    const profilePicker = await screen.findByRole("combobox", {
+      name: "AI profile",
+    });
+    await user.selectOptions(profilePicker, "fast");
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
@@ -277,10 +226,13 @@ describe("ChatComposer", () => {
         message_id: "assistant-current",
       },
       content: "Explain this quote",
-      model_id: "gpt-5.5",
-      reasoning: "high",
-      key_mode: "byok_only",
+      profile_id: "fast",
+      reasoning_option_id: "default",
     });
+    // The browser owns no provider/model/reasoning/key policy — those raw fields
+    // are never sent.
+    expect(body).not.toHaveProperty("model_id");
+    expect(body).not.toHaveProperty("key_mode");
     expect(body).not.toHaveProperty("web_search");
     expect(body).not.toHaveProperty("conversation_scope");
     expect(init?.headers).toEqual(
@@ -292,25 +244,21 @@ describe("ChatComposer", () => {
     expect(onChatRunCreated).toHaveBeenCalledOnce();
   });
 
-  it("sends platform_only when selected from model settings", async () => {
+  it("selects a reasoning option on the default profile and sends it", async () => {
     const user = userEvent.setup();
     const fetchMock = installChatComposerFetchMock();
 
     render(<ChatComposer conversationId="conversation-1" />);
 
-    expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
-    ).toBeInTheDocument();
-
-    await openModelSettings(user);
+    await screen.findByRole("combobox", { name: "AI profile" });
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Key mode" }),
-      "platform_only",
+      await screen.findByRole("combobox", { name: "Reasoning" }),
+      "high",
     );
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
-    await user.keyboard("Use the platform key");
+    await user.keyboard("Think hard about this");
     await user.click(screen.getByRole("button", { name: "SEND" }));
 
     await waitFor(() => {
@@ -319,7 +267,8 @@ describe("ChatComposer", () => {
 
     const [, init] = chatRunCalls(fetchMock)[0];
     const body = JSON.parse(String(init?.body)) as ChatRunCreateRequest;
-    expect(body.key_mode).toBe("platform_only");
+    expect(body.profile_id).toBe("balanced");
+    expect(body.reasoning_option_id).toBe("high");
   });
 
   it("keeps Shift+Enter as a newline and sends on Enter", async () => {
@@ -329,7 +278,7 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -524,7 +473,7 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -557,7 +506,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeInTheDocument();
     const message = screen.getByRole("textbox", { name: "Ask anything" });
     await user.click(message);
@@ -584,7 +533,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -621,7 +570,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeInTheDocument();
 
     const message = screen.getByRole("textbox", { name: "Ask anything" });
@@ -667,7 +616,7 @@ describe("ChatComposer", () => {
     render(<ChatComposer conversationId="conversation-1" />);
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeVisible();
     expect(
       screen.queryByRole("combobox", { name: /web search/i }),
@@ -685,8 +634,8 @@ describe("ChatComposer", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === "/api/chat-runs" && init?.method === "POST") {
           await runGate;
@@ -738,7 +687,7 @@ describe("ChatComposer", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /gpt-5 mini.*default/i }),
+      await screen.findByRole("combobox", { name: "AI profile" }),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Ask anything" })).toBeVisible();
     expect(

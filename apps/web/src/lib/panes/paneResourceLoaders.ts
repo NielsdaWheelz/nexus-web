@@ -7,16 +7,14 @@ import {
   librariesResource,
   libraryEntriesResource,
   libraryResource,
-  LECTERN_RECENT_LIMIT,
-  lecternRecentResource,
+  lecternSlateResource,
   mediaFragmentsResource,
   mediaResource,
   noteBlockResource,
   notePagesResource,
   settingsAccountResource,
-  settingsKeysResource,
 } from "@/lib/api/resource";
-import { decodeRecentConsumptionEnvelope } from "@/lib/lectern/contract";
+import { decodeSlateEnvelope } from "@/lib/resonance/contract";
 import type { ResourceFetcher } from "@/lib/api/resourceTransport";
 import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
@@ -119,18 +117,14 @@ function paneSubresourceFailure(error: unknown): PaneSubresourceFailure {
 // state), settingsIdentities (Supabase server action, no FastAPI path),
 // settingsLocalVault (client-only File System data), search (query-driven,
 // no route-keyed primary). Lectern's canonical ordered queue remains exclusively
-// owned by the shell-mounted LecternProvider; only its independent, read-only
-// recent-consumption resource is seeded here.
+// owned by the shell-mounted LecternProvider; only its independent Slate read is
+// seeded here.
 export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader>> = {
   lectern: {
-    cacheKey: () =>
-      lecternRecentResource.cacheKey({ limit: LECTERN_RECENT_LIMIT, refreshVersion: 0 }),
+    cacheKey: () => lecternSlateResource.cacheKey({ refreshVersion: 0 }),
     load: async (request) =>
-      decodeRecentConsumptionEnvelope(
-        await request(lecternRecentResource, {
-          limit: LECTERN_RECENT_LIMIT,
-          refreshVersion: 0,
-        }),
+      decodeSlateEnvelope(
+        await request(lecternSlateResource, { refreshVersion: 0 }),
       ),
   },
 
@@ -242,11 +236,6 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
   settingsAccount: {
     cacheKey: () => settingsAccountResource.cacheKey({}),
     load: (request) => request(settingsAccountResource, {}),
-  },
-
-  settingsKeys: {
-    cacheKey: () => settingsKeysResource.cacheKey({ refreshVersion: 0 }),
-    load: (request) => request(settingsKeysResource, { refreshVersion: 0 }),
   },
 
   settingsBilling: {

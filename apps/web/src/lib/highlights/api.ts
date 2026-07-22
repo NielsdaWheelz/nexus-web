@@ -16,9 +16,14 @@ export interface Highlight {
   anchor: {
     type: "fragment_offsets";
     media_id: string;
-    fragment_id: string;
-    start_offset: number;
-    end_offset: number;
+    // Disposable locator cache: null when the cached fragment row vanished
+    // (reindex/refresh) and the quote no longer resolves uniquely. The
+    // highlight stays visible but unresolved — it is never painted at a
+    // wrong location (universal-link-authoring-hard-cutover.md, Highlight
+    // Durability).
+    fragment_id: string | null;
+    start_offset: number | null;
+    end_offset: number | null;
   };
   color: HighlightColor;
   exact: string;
@@ -65,17 +70,25 @@ export async function fetchMediaHighlights(
   return response.data.highlights;
 }
 
+/** A null offset (unresolved locator cache) sorts after every resolved one. */
+function compareNullableOffset(a: number | null, b: number | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a - b;
+}
+
 /**
  * Total order on text-anchored highlights: anchor start, then anchor end,
- * then created_at, then id. Stable across reads from the API.
+ * then created_at, then id. Stable across reads from the API. Unresolved
+ * highlights (null offsets) sort after resolved ones at the same tier
+ * instead of comparing as `NaN`.
  */
 export function compareHighlightsByAnchor(a: Highlight, b: Highlight): number {
-  if (a.anchor.start_offset !== b.anchor.start_offset) {
-    return a.anchor.start_offset - b.anchor.start_offset;
-  }
-  if (a.anchor.end_offset !== b.anchor.end_offset) {
-    return a.anchor.end_offset - b.anchor.end_offset;
-  }
+  const startOrder = compareNullableOffset(a.anchor.start_offset, b.anchor.start_offset);
+  if (startOrder !== 0) return startOrder;
+  const endOrder = compareNullableOffset(a.anchor.end_offset, b.anchor.end_offset);
+  if (endOrder !== 0) return endOrder;
   if (a.created_at !== b.created_at) {
     return compareStableString(a.created_at, b.created_at);
   }

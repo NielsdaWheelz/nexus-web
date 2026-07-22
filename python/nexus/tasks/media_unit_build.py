@@ -5,12 +5,12 @@ from __future__ import annotations
 from uuid import UUID
 
 import httpx
-from provider_runtime import ModelRuntime
 from sqlalchemy.orm import Session
 
 from nexus.db.models import MediaSummary
 from nexus.errors import ApiErrorCode, exception_error_detail
 from nexus.services import run_kit
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.media_intelligence import (
     fail_media_unit,
     media_summary_orm_or_none,
@@ -24,8 +24,8 @@ _SPEC = LlmTaskSpec(label="media_unit_build")
 def media_unit_build(media_id: str) -> dict:
     media_uuid = UUID(media_id)
 
-    async def _handler(db: Session, router: ModelRuntime, _client: httpx.AsyncClient) -> dict:
-        status = await run_media_unit_build(db, media_id=media_uuid, llm=router)
+    async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
+        status = await run_media_unit_build(db, media_id=media_uuid, runtime=runtime)
         return {"status": status, "media_id": media_id}
 
     def _boundary(db: Session, exc: Exception) -> dict:

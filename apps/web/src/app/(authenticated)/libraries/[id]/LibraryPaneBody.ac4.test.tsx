@@ -168,9 +168,11 @@ const paneWithLectern = (
 );
 
 function lecternGetResponse(input: unknown): Response | null {
-  return fetchInputPath(input) === "/api/lectern"
-    ? Response.json({ data: { items: [] } })
-    : null;
+  const path = fetchInputPath(input);
+  if (path === "/api/lectern" || path === `/api/libraries/${LIBRARY_ID}/slate`) {
+    return Response.json({ data: { items: [] } });
+  }
+  return null;
 }
 
 function consumptionSuccessResponse(): Response {

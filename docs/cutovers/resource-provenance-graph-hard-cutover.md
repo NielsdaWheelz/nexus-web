@@ -16,6 +16,20 @@ transient, in-memory passes with no ledger row. This does not touch the
 citation-edge model itself — `resource_edges(origin='citation')` and
 `cited_edge_id` are unaffected.
 
+**Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
+narrowly, for user-authored relations only — provenance capture (`origin`
+values other than `user`, snapshot/ordinal shapes, the origin-per-writer
+discipline) remains authoritative. Superseded: (1) `origin='user'` relations
+are no longer symmetric-by-convention edges written by a generic public
+writer — `POST/DELETE /resource-graph/edges` is deleted, and exactly one
+canonical, dedupe-enforced `origin='user', kind='context'` **Link** row exists
+per user and unordered endpoint pair (`min(A,B) → max(A,B)`), with a
+partial unique index rather than the old broad context-pair index; (2) a
+direct derived endpoint (`evidence_span`/`content_chunk`/`fragment`) is no
+longer a legal `origin='user'` edge target — a passage endpoint must first
+materialize/reuse a durable `passage_anchor:<id>`; (3) `link_note` joins the
+`origin` vocabulary as a new structural writer, unrelated to `note_body`.
+
 Rev 3 changes: one flat `resource_edges` table replaces the base-plus-sidecar design (§8); the six workspace relation verbs are deleted — a code census showed they are machine writer-discriminators plus dead values, not user vocabulary, and the real job moves to an `origin` column (§1, §2.5, §5.4); `kind` collapses to the three stances `context | supports | contradicts` and `role` dies (§5, §8.1); `message_retrievals` + `message_retrieval_candidate_ledgers` are **no longer dropped** — they are chat run telemetry, not connections, and stay in the chat domain (§2.3, N7); Oracle marginalia moves to an oracle-owned `oracle_reading_folios` domain table pointing at its citation edge (§5.3, §8.3); deletion rules collapse to two (§9.6). Carried from Rev 2: sequencing gate (§0.1), concordance equivalence contract (§5.3), coverage-is-not-an-edge (§5.6, N8), transaction discipline (§9.0), contributor-merge repoint (§9.6), gate proofs (§17.0).
 
 Rev 4 changes: column-justification pass — every column must name the thing that breaks without it (§8.1). **Dropped:** `source_locator`/`target_locator` (position lives in the target grain: the graph points at `evidence_span`/`content_chunk`/`highlight`/`note_block` objects, which carry their own anchoring; residual jump precision is the snapshot `deep_link`) and `updated_at` (edges are create/delete-only rows — nothing updates). **Kept with pinned justification:** `origin` (writer ownership: note-body replace-set scoping, highlight-note precision, delete guards, `context_ref_added`), `ordinal` (the `[N]` in stored prose — data, not metadata), `snapshot` (the evidence-outlives-target invariant for citations, plus the later synapse rationale carveout). Dropping the ordinal/snapshot pair would not be flatter — it would move citations back into a second table.

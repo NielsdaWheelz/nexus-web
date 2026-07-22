@@ -7,24 +7,26 @@ the span's reader locator, with no new endpoint.
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import EpubNavLocation, Fragment, Media, MediaKind, ResourceEdge
+from nexus.db.models import EpubNavLocation, Fragment, Media, MediaKind, NoteBlock, ResourceEdge
 from nexus.schemas.highlights import CreatePdfHighlightRequest, PdfQuadIn
 from nexus.schemas.reader_document_map import ReaderEvidenceAnchorOut
-from nexus.services import reader_connections
+from nexus.services import passage_anchors, reader_connections
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.pdf_highlights import create_pdf_highlight
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
+from nexus.services.reader_connections import list_reader_connections
 from nexus.services.reader_document_map import get_reader_document_map
-from nexus.services.resource_graph import citations
+from nexus.services.resource_graph import citations, edges
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
+from nexus.services.resource_items.capabilities import expand_owned_child_refs
 from tests.factories import (
     add_context_edge,
     create_pdf_media_with_text,
@@ -40,6 +42,49 @@ def _seed_user(db: Session) -> UUID:
     user_id = create_test_user_id()
     ensure_user_and_default_library(db, user_id)
     return user_id
+
+
+def _anchor(db: Session, *, user_id: UUID, media_id: UUID, exact: str) -> UUID:
+    anchor = passage_anchors.materialize_or_reuse(
+        db, user_id=user_id, owner_scheme="media", owner_id=media_id, exact=exact
+    )
+    db.flush()
+    return anchor.id
+
+
+def _link(db: Session, *, user_id: UUID, a: UUID, b: UUID) -> UUID:
+    """Create a neutral Link between two passage anchors in canonical pair order."""
+    refs = {(ref.scheme, str(ref.id)): ref for ref in (_pa(a), _pa(b))}
+    lo, hi = sorted(refs)
+    write = edges.create_link(db, viewer_id=user_id, source=refs[lo], target=refs[hi])
+    db.flush()
+    return write.edge.id
+
+
+def _pa(anchor_id: UUID) -> ResourceRef:
+    return ResourceRef(scheme="passage_anchor", id=anchor_id)
+
+
+def _media_link(db: Session, *, user_id: UUID, media_a: UUID, media_b: UUID) -> UUID:
+    """A neutral Link between two whole media documents, in canonical pair order."""
+    ref_a = ResourceRef(scheme="media", id=media_a)
+    ref_b = ResourceRef(scheme="media", id=media_b)
+    lo, hi = sorted((ref_a, ref_b), key=lambda ref: (ref.scheme, str(ref.id)))
+    write = edges.create_link(db, viewer_id=user_id, source=lo, target=hi)
+    db.flush()
+    return write.edge.id
+
+
+def _user_connections(db: Session, *, user_id: UUID, media_id: UUID):
+    return list_reader_connections(
+        db,
+        viewer_id=user_id,
+        media_id=media_id,
+        origins=("user",),
+        source_schemes=None,
+        limit=50,
+        cursor=None,
+    )
 
 
 def _first_span(db: Session, media_id: UUID) -> UUID:
@@ -297,3 +342,211 @@ def test_repeated_citation_target_resolves_once_through_reader_projection(
     assert all(item.anchor is not None for item in page.items)
     assert graph_resolution_calls == 1
     assert reader_resolution_calls == 0
+
+
+# --- Universal-link-authoring passage-anchor reader coverage --------------------
+# Re-applied onto main's evidence-scope projection: main rebuilt the reader row
+# model (``ReaderConnectionPage.items`` of ``ReaderConnectionRow``; the anchor is a
+# resolved locator, evidence-item identity now lives in ``reader_evidence``), so
+# these assert against ``.items`` filtered by locality rather than the old
+# ``anchored``/``unanchored`` split or a per-row id. A same-media Link between two
+# local passages emits one row per local endpoint (each activating the opposite
+# one); whole-media/cross-document anchoring, live fail-closed resolution, the
+# per-read source cache, undirected direction, and the folded link note all survive.
+
+_QUOTE_A = "canonical text for {title}"
+_QUOTE_B = "searchable content about various topics"
+
+
+def _anchored(page) -> list:
+    return [row for row in page.items if row.anchor is not None]
+
+
+def _unanchored(page) -> list:
+    return [row for row in page.items if row.anchor is None]
+
+
+def test_passage_anchor_rollup_discovers_media_owned_anchors(db_session: Session) -> None:
+    user_id = _seed_user(db_session)
+    media_id = create_searchable_media(db_session, user_id, title="Rollup Doc")
+    anchor_id = _anchor(
+        db_session, user_id=user_id, media_id=media_id, exact=_QUOTE_A.format(title="Rollup Doc")
+    )
+
+    children = expand_owned_child_refs(
+        db_session, viewer_id=user_id, ref=ResourceRef(scheme="media", id=media_id)
+    )
+
+    assert _pa(anchor_id) in children, "media owner rollup must discover its passage anchors"
+
+
+def test_cross_document_link_anchors_in_each_reader(db_session: Session) -> None:
+    user_id = _seed_user(db_session)
+    media_a = create_searchable_media(db_session, user_id, title="Alpha Doc")
+    media_b = create_searchable_media(db_session, user_id, title="Beta Doc")
+    anchor_a = _anchor(
+        db_session, user_id=user_id, media_id=media_a, exact=_QUOTE_A.format(title="Alpha Doc")
+    )
+    anchor_b = _anchor(
+        db_session, user_id=user_id, media_id=media_b, exact=_QUOTE_A.format(title="Beta Doc")
+    )
+    _link(db_session, user_id=user_id, a=anchor_a, b=anchor_b)
+
+    anchored_a = _anchored(_user_connections(db_session, user_id=user_id, media_id=media_a))
+    assert len(anchored_a) == 1, "the cross-document Link anchors exactly once in reader A"
+    row_a = anchored_a[0]
+    assert row_a.connection.direction == "undirected"
+    assert row_a.connection.other.ref == f"passage_anchor:{anchor_b}"
+
+    anchored_b = _anchored(_user_connections(db_session, user_id=user_id, media_id=media_b))
+    assert len(anchored_b) == 1, "and exactly once in reader B, anchored at its own endpoint"
+    assert anchored_b[0].connection.other.ref == f"passage_anchor:{anchor_a}"
+
+
+def test_same_media_link_emits_one_row_per_local_endpoint(db_session: Session) -> None:
+    """A neutral Link between two passages in the SAME document is undirected and
+    anchors at both endpoints, so the reader emits one row per local passage. Each
+    row activates the OPPOSITE endpoint (via ``connection.other``, swapped between
+    the two rows) so both passages surface the Link in this reader (AC17)."""
+    user_id = _seed_user(db_session)
+    media_id = create_searchable_media(db_session, user_id, title="Solo Doc")
+    anchor_a = _anchor(
+        db_session, user_id=user_id, media_id=media_id, exact=_QUOTE_A.format(title="Solo Doc")
+    )
+    anchor_b = _anchor(db_session, user_id=user_id, media_id=media_id, exact=_QUOTE_B)
+    _link(db_session, user_id=user_id, a=anchor_a, b=anchor_b)
+
+    anchored = _anchored(_user_connections(db_session, user_id=user_id, media_id=media_id))
+    assert len(anchored) == 2, "each local passage of a same-media Link emits its own row"
+    assert all(row.connection.direction == "undirected" for row in anchored)
+    assert {row.connection.other.ref for row in anchored} == {
+        f"passage_anchor:{anchor_a}",
+        f"passage_anchor:{anchor_b}",
+    }, "each row activates the opposite endpoint"
+    assert {row.anchor.passage_anchor_id for row in anchored} == {anchor_a, anchor_b}
+
+
+def test_whole_media_link_surfaces_peer_not_self(db_session: Session) -> None:
+    """A whole-media↔whole-media Link anchors nowhere locally, so it surfaces as one
+    unanchored row per reader that names the PEER (via ``connection.other``, chosen
+    by locality) rather than the open document (AC17)."""
+    user_id = _seed_user(db_session)
+    media_a = create_searchable_media(db_session, user_id, title="Whole A")
+    media_b = create_searchable_media(db_session, user_id, title="Whole B")
+    _media_link(db_session, user_id=user_id, media_a=media_a, media_b=media_b)
+
+    page_a = _user_connections(db_session, user_id=user_id, media_id=media_a)
+    assert _anchored(page_a) == []
+    unanchored_a = _unanchored(page_a)
+    assert len(unanchored_a) == 1
+    assert unanchored_a[0].connection.other.ref == f"media:{media_b}", "reader A surfaces peer B"
+    assert unanchored_a[0].connection.direction == "undirected"
+
+    page_b = _user_connections(db_session, user_id=user_id, media_id=media_b)
+    unanchored_b = _unanchored(page_b)
+    assert len(unanchored_b) == 1
+    assert unanchored_b[0].connection.other.ref == f"media:{media_a}", "reader B surfaces peer A"
+
+
+def test_reader_link_note_folds_onto_connection(db_session: Session) -> None:
+    """The Link's ordinary note folds onto the reader connection row (Invariant 12):
+    the reader lane serializes through the shared ``connection_out``."""
+    user_id = _seed_user(db_session)
+    media_a = create_searchable_media(db_session, user_id, title="Note A")
+    media_b = create_searchable_media(db_session, user_id, title="Note B")
+    _media_link(db_session, user_id=user_id, media_a=media_a, media_b=media_b)
+
+    note = NoteBlock(
+        id=uuid4(),
+        user_id=user_id,
+        body_pm_json={"type": "paragraph"},
+        body_text="Why these relate",
+    )
+    db_session.add(note)
+    db_session.flush()
+    note_ref = ResourceRef(scheme="note_block", id=note.id)
+    for endpoint in (
+        ResourceRef(scheme="media", id=media_a),
+        ResourceRef(scheme="media", id=media_b),
+    ):
+        edges.create_edge(
+            db_session,
+            viewer_id=user_id,
+            input=EdgeCreate(source=note_ref, target=endpoint, kind="context", origin="link_note"),
+        )
+    db_session.flush()
+
+    row = _unanchored(_user_connections(db_session, user_id=user_id, media_id=media_a))[0]
+    assert row.connection.link_note is not None, "the Link's note must fold onto the reader row"
+    assert row.connection.link_note.note_block_id == note.id
+    assert row.connection.link_note.preview == "Why these relate"
+
+
+def test_passage_anchor_page_loads_each_owner_sources_once(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader page carrying many same-owner passage-anchor connections reloads the
+    owner's normalized sources ONCE for the whole page, not once per anchor. The
+    per-read ``sources_cache`` memoizes the fetch+normalize; resolution stays LIVE."""
+    from nexus.services import text_quote
+
+    user_id = _seed_user(db_session)
+    media_a = create_searchable_media(db_session, user_id, title="Sources A")
+    media_b = create_searchable_media(db_session, user_id, title="Sources B")
+
+    media_b_ref = ResourceRef(scheme="media", id=media_b)
+    for exact in (
+        _QUOTE_A.format(title="Sources A"),
+        _QUOTE_B,
+        "It contains searchable content",
+    ):
+        pa = _pa(_anchor(db_session, user_id=user_id, media_id=media_a, exact=exact))
+        lo, hi = sorted((pa, media_b_ref), key=lambda ref: (ref.scheme, str(ref.id)))
+        edges.create_link(db_session, viewer_id=user_id, source=lo, target=hi)
+        db_session.flush()
+
+    real_load = text_quote.load_normalized_media_sources
+    fetches: list[UUID] = []
+
+    def _spy(db, *, media_id, cache=None):
+        if cache is None or media_id not in cache:
+            fetches.append(media_id)
+        return real_load(db, media_id=media_id, cache=cache)
+
+    monkeypatch.setattr(text_quote, "load_normalized_media_sources", _spy)
+
+    page = _user_connections(db_session, user_id=user_id, media_id=media_a)
+
+    assert len(_anchored(page)) == 3, "each local passage anchor surfaces one anchored row"
+    assert fetches == [media_a], (
+        "the owner's normalized sources are fetched+normalized exactly once for the "
+        "whole page, not once per passage anchor"
+    )
+
+
+def test_unresolved_local_anchor_stays_unanchored_and_not_navigable(db_session: Session) -> None:
+    user_id = _seed_user(db_session)
+    media_a = create_searchable_media(db_session, user_id, title="Drift Doc")
+    media_b = create_searchable_media(db_session, user_id, title="Peer Doc")
+    anchor_a = _anchor(
+        db_session, user_id=user_id, media_id=media_a, exact=_QUOTE_A.format(title="Drift Doc")
+    )
+    anchor_b = _anchor(
+        db_session, user_id=user_id, media_id=media_b, exact=_QUOTE_A.format(title="Peer Doc")
+    )
+    _link(db_session, user_id=user_id, a=anchor_a, b=anchor_b)
+
+    # Content drift: the quote no longer resolves against media A's current text.
+    db_session.execute(
+        text(
+            "UPDATE fragments SET canonical_text = 'Rewritten body with no prior quote.' "
+            "WHERE media_id = :media_id"
+        ),
+        {"media_id": media_a},
+    )
+    db_session.flush()
+
+    page = _user_connections(db_session, user_id=user_id, media_id=media_a)
+
+    assert _anchored(page) == [], "the drifted anchor must not produce a false jump"
+    assert len(_unanchored(page)) == 1, "the Link stays visible in the unanchored collection"

@@ -85,8 +85,7 @@ function message(
           }
         : null,
     status,
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -212,9 +211,14 @@ function chatRunData(): ChatRunResponse["data"] {
       conversation_id: "conversation-1",
       user_message_id: "user-new",
       assistant_message_id: "assistant-new",
-      model_id: "gpt-5-mini",
-      reasoning: "default",
-      key_mode: "auto",
+      profile_id: "balanced",
+      reasoning_option_id: "default",
+      provider: null,
+      model_name: null,
+      reasoning_effort: null,
+      error_origin: null,
+      support_id: null,
+      failure: null,
       cancel_requested_at: null,
       started_at: timestamp,
       completed_at: null,
@@ -299,6 +303,8 @@ describe("useConversation", () => {
       abortAll: tailMocks.abortAll,
       cancelRun: tailMocks.cancelRun,
       activeRunId: null,
+      lostConnections: {},
+      reconnectRun: vi.fn(),
     });
   });
 
@@ -469,7 +475,7 @@ describe("useConversation", () => {
     });
   });
 
-  it("retry posts to the message retry endpoint and tracks the busy id", async () => {
+  it("rerun posts to the message rerun endpoint and tracks the busy id", async () => {
     const fetchMock = stubFetch((input, init) => {
       const path = pathOf(input);
       if (path === "/api/conversations/conversation-1") {
@@ -481,7 +487,7 @@ describe("useConversation", () => {
           page: { next_cursor: null },
         });
       }
-      if (path === "/api/messages/a/retry" && init?.method === "POST") {
+      if (path === "/api/messages/a/rerun" && init?.method === "POST") {
         return jsonResponse({ data: retryRunData() });
       }
       throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
@@ -493,62 +499,22 @@ describe("useConversation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.retryAssistantResponse("a");
+      await result.current.rerunAssistantResponse("a");
     });
 
-    const retryCall = fetchMock.mock.calls.find(
+    const rerunCall = fetchMock.mock.calls.find(
       ([input, init]) =>
-        pathOf(input as RequestInfo | URL) === "/api/messages/a/retry" &&
+        pathOf(input as RequestInfo | URL) === "/api/messages/a/rerun" &&
         (init as RequestInit | undefined)?.method === "POST",
     );
-    expect(retryCall).toBeDefined();
-    // Idempotency-Key header is preserved on retry.
-    expect((retryCall?.[1] as RequestInit).headers).toMatchObject({
-      "Idempotency-Key": expect.any(String),
-    });
-    // The retry run is tailed and the busy id is cleared after completion.
+    expect(rerunCall).toBeDefined();
+    // Idempotency-Key header is sent on rerun.
+    expect(
+      (rerunCall?.[1] as RequestInit).headers,
+    ).toMatchObject({ "Idempotency-Key": expect.any(String) });
+    // The rerun run is tailed and the busy id is cleared after completion.
     expect(tailMocks.tailChatRun).toHaveBeenCalled();
-    expect(result.current.retryingAssistantMessageIds.has("a")).toBe(false);
-  });
-
-  it("resend posts to the message resend endpoint and tracks the busy id", async () => {
-    const fetchMock = stubFetch((input, init) => {
-      const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1") {
-        return jsonResponse({ data: { title: "Resend chat" } });
-      }
-      if (path === "/api/conversations/conversation-1/messages") {
-        return jsonResponse({
-          data: [message("a", 1, "assistant", "boom", null, "error")],
-          page: { next_cursor: null },
-        });
-      }
-      if (path === "/api/messages/a/resend" && init?.method === "POST") {
-        return jsonResponse({ data: retryRunData() });
-      }
-      throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${path}`);
-    });
-
-    const { result } = renderHook(() =>
-      useConversation({ conversationId: "conversation-1", branching: false }),
-    );
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    await act(async () => {
-      await result.current.resendAssistantResponse("a");
-    });
-
-    const resendCall = fetchMock.mock.calls.find(
-      ([input, init]) =>
-        pathOf(input as RequestInfo | URL) === "/api/messages/a/resend" &&
-        (init as RequestInit | undefined)?.method === "POST",
-    );
-    expect(resendCall).toBeDefined();
-    expect((resendCall?.[1] as RequestInit).headers).toMatchObject({
-      "Idempotency-Key": expect.any(String),
-    });
-    expect(tailMocks.tailChatRun).toHaveBeenCalled();
-    expect(result.current.resendingAssistantMessageIds.has("a")).toBe(false);
+    expect(result.current.rerunningAssistantMessageIds.has("a")).toBe(false);
   });
 
   it("branching mode loads /tree, keeps olderCursor null, and loadOlder is a no-op", async () => {
@@ -618,6 +584,8 @@ describe("useConversation", () => {
       abortAll: tailMocks.abortAll,
       cancelRun: tailMocks.cancelRun,
       activeRunId: null,
+      lostConnections: {},
+      reconnectRun: vi.fn(),
     }));
     const fetchMock = stubFetch((input, init) => {
       const path = pathOf(input);

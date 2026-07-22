@@ -33,8 +33,7 @@ from nexus.services.conversations import (
     get_conversation_for_owner_write_or_404,
     get_conversation_for_visible_read_or_404,
     message_to_out,
-    resendable_assistant_message_ids,
-    retryable_assistant_message_ids,
+    rerunnable_assistant_message_ids,
 )
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 
@@ -1103,12 +1102,7 @@ def _message_outs_by_id(
 ) -> dict[UUID, MessageOut]:
     messages_by_id = {message.id: message for message in messages}
     message_ids = list(messages_by_id)
-    retryable_message_ids = retryable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    resendable_message_ids = resendable_assistant_message_ids(
+    rerunnable_message_ids = rerunnable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
@@ -1125,8 +1119,7 @@ def _message_outs_by_id(
         trust_trail = trust_trails[message_id] if message.role == "assistant" else None
         out = message_to_out(
             message,
-            can_retry_response=message.id in retryable_message_ids,
-            can_resend_response=message.id in resendable_message_ids,
+            can_rerun=message.id in rerunnable_message_ids,
             trust_trail=trust_trail,
             citations=(
                 [trust_citation.citation for trust_citation in trust_trail.citations]

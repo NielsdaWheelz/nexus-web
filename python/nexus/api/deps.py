@@ -3,7 +3,6 @@
 from uuid import UUID
 
 from fastapi import Request
-from provider_runtime import ModelRuntime
 from web_search_tool.types import WebSearchProvider
 
 from nexus.auth.bearer import parse_bearer_token
@@ -26,22 +25,6 @@ def get_stream_viewer(request: Request) -> UUID:
     verified = stream_tokens.verify_stream_token(token)
     set_stream_jti(verified.jti)
     return verified.user_id
-
-
-def get_llm_router(request: Request) -> ModelRuntime:
-    """Get the shared LLM router from app state.
-
-    App lifecycle contract:
-    - ModelRuntime is initialized at app startup with shared httpx.AsyncClient
-    - Provides connection pooling and proper cleanup
-
-    Args:
-        request: The incoming request (provides access to app.state)
-
-    Returns:
-        The shared ModelRuntime instance.
-    """
-    return request.app.state.llm_router
 
 
 def get_web_search_provider(request: Request) -> WebSearchProvider:

@@ -1,11 +1,12 @@
 """Integration tests for the resource graph connection read model."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.db.models import NoteBlock
 from nexus.services.resource_graph import citations
 from nexus.services.resource_graph.citations import replace_citations_for_output
 from nexus.services.resource_graph.connections import query_connections
@@ -21,6 +22,7 @@ from nexus.services.resource_graph.schemas import (
 from tests.factories import (
     create_test_conversation_with_message,
     create_test_fragment,
+    create_test_highlight,
     create_test_library,
     create_test_media_in_library,
     get_user_default_library,
@@ -36,6 +38,27 @@ def _media(db: Session, user_id: UUID, title: str) -> ResourceRef:
         scheme="media",
         id=create_test_media_in_library(db, user_id, library_id, title=title),
     )
+
+
+def _note_block(db: Session, user_id: UUID, body: str) -> ResourceRef:
+    block = NoteBlock(
+        id=uuid4(),
+        user_id=user_id,
+        body_pm_json={"type": "paragraph"},
+        body_text=body,
+    )
+    db.add(block)
+    db.flush()
+    return ResourceRef(scheme="note_block", id=block.id)
+
+
+def _attach_link_note(db: Session, user_id: UUID, note: ResourceRef, *endpoints: ResourceRef):
+    for endpoint in endpoints:
+        create_edge(
+            db,
+            viewer_id=user_id,
+            input=EdgeCreate(source=note, target=endpoint, kind="context", origin="link_note"),
+        )
 
 
 def _li_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef]:
@@ -118,7 +141,7 @@ def test_connection_cursor_uses_last_returned_row(db_session: Session, bootstrap
     assert len(seen) == len(set(seen))
 
 
-def test_outgoing_multi_ref_keeps_source_side_direction(
+def test_neutral_link_is_undirected_with_far_endpoint_as_other(
     db_session: Session, bootstrapped_user: UUID
 ):
     source = _media(db_session, bootstrapped_user, "source")
@@ -142,23 +165,29 @@ def test_outgoing_multi_ref_keeps_source_side_direction(
     )
 
     item = next(item for item in page.items if item.edge_id == edge.id)
-    assert item.direction == "outgoing"
+    assert item.direction == "undirected"
     assert item.source_ref == source
     assert item.target_ref == target
     assert item.other.ref == target
+    assert item.link_note is None
 
 
 def test_owner_rollup_matches_media_child_refs(db_session: Session, bootstrapped_user: UUID):
+    # A highlight is the durable user-linkable media child (derived
+    # fragment/span rows are materialize_passage candidates, never direct user
+    # endpoints): querying the owning media with rollup="owner" must surface
+    # an edge landing on it.
     source = _media(db_session, bootstrapped_user, "source")
     media = _media(db_session, bootstrapped_user, "target media")
-    fragment = ResourceRef(
-        scheme="fragment",
-        id=create_test_fragment(db_session, media.id, "Fragment body"),
+    fragment_id = create_test_fragment(db_session, media.id, "Fragment body")
+    highlight = ResourceRef(
+        scheme="highlight",
+        id=create_test_highlight(db_session, bootstrapped_user, fragment_id),
     )
     edge = create_edge(
         db_session,
         viewer_id=bootstrapped_user,
-        input=EdgeCreate(source=source, target=fragment, kind="context", origin="user"),
+        input=EdgeCreate(source=source, target=highlight, kind="context", origin="user"),
     )
 
     page = query_connections(
@@ -174,9 +203,98 @@ def test_owner_rollup_matches_media_child_refs(db_session: Session, bootstrapped
     )
 
     item = next(item for item in page.items if item.edge_id == edge.id)
-    assert item.direction == "incoming"
-    assert item.target_ref == fragment
+    assert item.direction == "undirected"
+    assert item.target_ref == highlight
     assert item.other.ref == source
+
+
+def test_link_note_motif_folds_onto_its_link_and_is_never_bare(
+    db_session: Session, bootstrapped_user: UUID
+):
+    a = _media(db_session, bootstrapped_user, "A")
+    b = _media(db_session, bootstrapped_user, "B")
+    link = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=a, target=b, kind="context", origin="user"),
+    )
+    note = _note_block(db_session, bootstrapped_user, "Why these two relate")
+    _attach_link_note(db_session, bootstrapped_user, note, a, b)
+
+    for ref in (a, b):
+        page = query_connections(
+            db_session,
+            viewer_id=bootstrapped_user,
+            query=ConnectionQuery(
+                refs=(ref,),
+                direction="both",
+                rollup="exact",
+                filters=ConnectionFilters(),
+                limit=100,
+            ),
+        )
+        assert all(item.origin != "link_note" for item in page.items), (
+            "structural attachment edges must never render as their own connection"
+        )
+        item = next(item for item in page.items if item.edge_id == link.id)
+        assert item.link_note is not None
+        assert item.link_note.ref == note
+        assert item.link_note.preview == "Why these two relate"
+
+
+def test_link_note_folding_ignores_other_links_notes(db_session: Session, bootstrapped_user: UUID):
+    """A note attaching to a and c must not fold onto the a-b Link."""
+    a = _media(db_session, bootstrapped_user, "A")
+    b = _media(db_session, bootstrapped_user, "B")
+    c = _media(db_session, bootstrapped_user, "C")
+    link_ab = create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=a, target=b, kind="context", origin="user"),
+    )
+    other_note = _note_block(db_session, bootstrapped_user, "About a and c")
+    _attach_link_note(db_session, bootstrapped_user, other_note, a, c)
+
+    page = query_connections(
+        db_session,
+        viewer_id=bootstrapped_user,
+        query=ConnectionQuery(
+            refs=(a,),
+            direction="both",
+            rollup="exact",
+            filters=ConnectionFilters(),
+            limit=100,
+        ),
+    )
+    item = next(item for item in page.items if item.edge_id == link_ab.id)
+    assert item.link_note is None, "only the note attaching to BOTH a and b folds in"
+
+
+def test_structural_link_note_rows_are_suppressed_from_note_reads(
+    db_session: Session, bootstrapped_user: UUID
+):
+    a = _media(db_session, bootstrapped_user, "A")
+    b = _media(db_session, bootstrapped_user, "B")
+    create_edge(
+        db_session,
+        viewer_id=bootstrapped_user,
+        input=EdgeCreate(source=a, target=b, kind="context", origin="user"),
+    )
+    note = _note_block(db_session, bootstrapped_user, "rationale")
+    _attach_link_note(db_session, bootstrapped_user, note, a, b)
+
+    page = query_connections(
+        db_session,
+        viewer_id=bootstrapped_user,
+        query=ConnectionQuery(
+            refs=(note,),
+            direction="both",
+            rollup="exact",
+            filters=ConnectionFilters(),
+            limit=100,
+        ),
+    )
+    assert page.items == (), "the note_block's own link_note edges never surface bare"
 
 
 def test_exact_li_revision_query_returns_revision_citation_edges(

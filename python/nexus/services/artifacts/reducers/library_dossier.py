@@ -15,17 +15,15 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.types import ModelCall
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
-from nexus.llm_catalog import require_catalog_model
 from nexus.logging import get_logger
 from nexus.services import library_entries
 from nexus.services.artifacts.base import ArtifactReducer
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.locator_resolver import resolve_evidence_span
 from nexus.services.media_intelligence import (
     MediaUnit,
@@ -37,22 +35,16 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot, EdgeKind
 from nexus.services.structured_synthesis import (
     build_synthesis_prompt,
-    build_synthesis_request,
+    build_synthesis_user_content,
     ground_indices,
 )
 
 logger = get_logger(__name__)
 
-# The reduce is the highest-stakes synthesis in the system — a strong model.
-LI_MODEL_NAME = "claude-sonnet-4-6"
-LI_PROVIDER = "anthropic"
 LI_MAX_OUTPUT_TOKENS = 4000
-LI_LLM_TIMEOUT_SECONDS = 90
 # Budget the reduce input in characters (~4 chars/token); claims past the budget
 # are dropped with a warning rather than silently capped (R1-minimal).
 LI_REDUCE_INPUT_CHAR_BUDGET = 120_000
-
-require_catalog_model(LI_PROVIDER, LI_MODEL_NAME)
 
 
 @dataclass(frozen=True)
@@ -146,7 +138,7 @@ def resolve_library_media_ids(db: Session, *, library_id: UUID, viewer_id: UUID)
 
 
 async def _collect(
-    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None, llm: ModelRuntime
+    db: Session, subject_ref: ResourceRef, viewer_id: UUID | None, runtime: ExecutionRuntime
 ) -> DossierInputs:
     """Resolve the library to media, build any not-yet-ready unit inline, gather claims.
 
@@ -165,7 +157,7 @@ async def _collect(
     for media_id in media_ids:
         ensure_media_unit(db, media_id=media_id)
         if not isinstance(get_media_unit(db, media_id=media_id), MediaUnit):
-            await run_media_unit_build(db, media_id=media_id, llm=llm)
+            await run_media_unit_build(db, media_id=media_id, runtime=runtime)
     candidates, coverage_by_media = _gather_candidates(db, media_ids=media_ids)
     return DossierInputs(
         candidates=candidates, media_ids=media_ids, coverage_by_media=coverage_by_media
@@ -210,7 +202,7 @@ def _gather_candidates(
     return candidates, coverage_by_media
 
 
-def _build_request(inputs: DossierInputs, custom_instruction: str | None) -> ModelCall:
+def _build_user_content(inputs: DossierInputs, custom_instruction: str | None) -> str:
     rendered = "\n\n".join(
         f"[{c.global_index}] (media {c.media_id})\nsummary: {c.summary_md}\nclaim: {c.claim_text}"
         for c in inputs.candidates
@@ -218,14 +210,10 @@ def _build_request(inputs: DossierInputs, custom_instruction: str | None) -> Mod
     extra_user_block = (
         f"CUSTOM INSTRUCTION:\n{custom_instruction}" if custom_instruction is not None else None
     )
-    return build_synthesis_request(
-        provider=LI_PROVIDER,
-        system_prompt=_LI_SYSTEM_PROMPT,
+    return build_synthesis_user_content(
         candidates_header="UNIT CLAIMS",
         rendered_candidates=rendered,
         extra_user_block=extra_user_block,
-        model_name=LI_MODEL_NAME,
-        max_tokens=LI_MAX_OUTPUT_TOKENS,
     )
 
 
@@ -405,18 +393,16 @@ _LI_SYSTEM_PROMPT = build_synthesis_prompt(
 
 LIBRARY_DOSSIER_REDUCER = ArtifactReducer(
     kind="library_dossier",
-    provider=LI_PROVIDER,
-    model_name=LI_MODEL_NAME,
-    llm_operation="li_reduce",
+    llm_operation="library_dossier",
     max_output_tokens=LI_MAX_OUTPUT_TOKENS,
-    timeout_s=LI_LLM_TIMEOUT_SECONDS,
+    system_prompt=_LI_SYSTEM_PROMPT,
     collect=_collect,
     is_empty=lambda inputs: not inputs.candidates,
     empty_error=(
         "no_ready_units",
         "no library media has a ready intelligence unit with claims",
     ),
-    build_request=_build_request,
+    build_user_content=_build_user_content,
     schema=_LiSynthesis,
     materialize=_materialize,
     fingerprint=_fingerprint,

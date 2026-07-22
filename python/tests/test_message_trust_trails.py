@@ -16,7 +16,6 @@ from nexus.services.message_trust_trails import build_assistant_trust_trail
 from tests.factories import (
     create_test_conversation,
     create_test_message,
-    create_test_model,
 )
 from tests.utils.db import DirectSessionManager
 
@@ -34,12 +33,11 @@ def _seed_user(direct_db: DirectSessionManager) -> UUID:
 
 def _seed_conversation(
     direct_db: DirectSessionManager,
-) -> tuple[UUID, UUID, UUID, UUID, UUID]:
-    """Seed user, model, conversation, user-message, assistant-message; return IDs."""
+) -> tuple[UUID, UUID, UUID, UUID]:
+    """Seed user, conversation, user-message, assistant-message; return IDs."""
     user_id = _seed_user(direct_db)
 
     with direct_db.session() as session:
-        model_id = create_test_model(session)
         conversation_id = create_test_conversation(session, user_id)
         user_message_id = create_test_message(
             session, conversation_id, seq=1, role="user", content="Hello"
@@ -56,14 +54,13 @@ def _seed_conversation(
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("conversations", "id", conversation_id)
 
-    return user_id, model_id, conversation_id, user_message_id, assistant_message_id
+    return user_id, conversation_id, user_message_id, assistant_message_id
 
 
 def _seed_chat_run(
     direct_db: DirectSessionManager,
     *,
     user_id: UUID,
-    model_id: UUID,
     conversation_id: UUID,
     user_message_id: UUID,
     assistant_message_id: UUID,
@@ -80,9 +77,6 @@ def _seed_chat_run(
                 idempotency_key=f"trust-trail-test-{run_id}",
                 payload_hash="hash",
                 status="complete",
-                model_id=model_id,
-                reasoning="none",
-                key_mode="auto",
             )
         )
         session.commit()
@@ -102,15 +96,13 @@ def _seed_llm_call(
         session.execute(
             text("""
                 INSERT INTO llm_calls (
-                    id, owner_kind, owner_id, call_seq, provider, provider_route,
+                    id, owner_kind, owner_id, call_seq, provider,
                     model_name, llm_operation, streaming, reasoning_effort,
-                    key_mode_requested, key_mode_used, cost_status,
-                    total_cost_usd_micros
+                    cost_status, total_cost_usd_micros
                 ) VALUES (
-                    :id, 'chat_run', :owner_id, :call_seq, 'openai', 'openai',
+                    :id, 'chat_run', :owner_id, :call_seq, 'openai',
                     'gpt-5-mini', 'chat', false, 'none',
-                    'auto', 'auto', 'estimated',
-                    :total_cost
+                    'estimated', :total_cost
                 )
             """),
             {
@@ -132,7 +124,6 @@ class TestTrustTrailCostField:
         """AC-12: total_cost_usd_micros is the SUM of llm_calls rows for the run."""
         (
             user_id,
-            model_id,
             conversation_id,
             user_message_id,
             assistant_message_id,
@@ -141,7 +132,6 @@ class TestTrustTrailCostField:
         run_id = _seed_chat_run(
             direct_db,
             user_id=user_id,
-            model_id=model_id,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
@@ -164,7 +154,6 @@ class TestTrustTrailCostField:
         """total_cost_usd_micros is null for runs with no llm_calls."""
         (
             user_id,
-            model_id,
             conversation_id,
             user_message_id,
             assistant_message_id,
@@ -173,7 +162,6 @@ class TestTrustTrailCostField:
         _seed_chat_run(
             direct_db,
             user_id=user_id,
-            model_id=model_id,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,

@@ -1,7 +1,10 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-interface ModelsResponse {
-  data: Array<{ id: string }>;
+interface LlmProfilesResponse {
+  data: {
+    default_profile_id: string | null;
+    profiles: Array<{ id: string }>;
+  };
 }
 
 export async function requireRunnableChatComposer({
@@ -15,15 +18,15 @@ export async function requireRunnableChatComposer({
   skipReason: string;
   timeout?: number;
 }): Promise<void> {
-  const modelsResponse = await page.request.get("/api/models");
-  const modelsBody = await modelsResponse.text();
+  const profilesResponse = await page.request.get("/api/llm-profiles");
+  const profilesBody = await profilesResponse.text();
   expect(
-    modelsResponse.ok(),
-    `GET /api/models failed: status=${modelsResponse.status()}; body=${modelsBody.slice(0, 300)}`,
+    profilesResponse.ok(),
+    `GET /api/llm-profiles failed: status=${profilesResponse.status()}; body=${profilesBody.slice(0, 300)}`,
   ).toBeTruthy();
 
-  const modelsPayload = JSON.parse(modelsBody) as ModelsResponse;
-  test.skip(modelsPayload.data.length === 0, skipReason);
+  const profilesPayload = JSON.parse(profilesBody) as LlmProfilesResponse;
+  test.skip(profilesPayload.data.profiles.length === 0, skipReason);
 
   await expect(modelSettings).toBeVisible();
   await expect

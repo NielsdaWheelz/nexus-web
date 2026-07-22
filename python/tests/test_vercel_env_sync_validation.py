@@ -357,6 +357,14 @@ def test_sync_env_rejects_removed_storage_origin_keys(tmp_path: Path, removed_ke
         "SERVICE_ROLE_KEY",
         "X_API_BEARER_TOKEN",
         "X_API_INCLUDE_USER_EXPANSIONS",
+        "NEXUS_KEY_ENCRYPTION_KEY",
+        "CLOUDFLARE_AI_API_TOKEN",
+        "CLOUDFLARE_AI_ACCOUNT_ID",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENROUTER_API_KEY",
     ],
 )
 def test_sync_env_rejects_backend_runtime_keys(tmp_path: Path, forbidden_key: str):

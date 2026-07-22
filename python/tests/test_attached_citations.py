@@ -49,7 +49,6 @@ from tests.factories import (
     create_test_highlight,
     create_test_media_in_library,
     create_test_message,
-    create_test_model,
     get_user_default_library,
 )
 from tests.helpers import create_test_user_id
@@ -153,9 +152,9 @@ def _make_chat_run(db: Session, conversation_id: UUID, user_id: UUID) -> ChatRun
 
     ``_persist_attached_citations`` reads conversation_id / user_message_id /
     assistant_message_id off the run, so a queued shell run is enough. Mirrors the
-    canonical ``ChatRun(...)`` construction in ``test_chat_runs._create_failed_chat_run``
-    so every NOT-NULL column the rebuilt schema enforces is populated — notably
-    ``payload_hash`` (NOT NULL, no default) and ``model_id``.
+    canonical ``ChatRun(...)`` construction in ``nexus.services.chat_runs`` so every
+    NOT-NULL column the rebuilt schema enforces is populated — notably
+    ``payload_hash`` (NOT NULL, no default).
     """
     user_message_id = create_test_message(
         db, conversation_id, seq=1, role="user", content="What does the source say?"
@@ -170,19 +169,17 @@ def _make_chat_run(db: Session, conversation_id: UUID, user_id: UUID) -> ChatRun
         parent_message_id=user_message_id,
     )
     idempotency_key = f"test-key-{uuid4()}"
-    model_id = create_test_model(db)
     run = ChatRun(
         id=uuid4(),
         conversation_id=conversation_id,
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
         owner_user_id=user_id,
-        model_id=model_id,
-        key_mode="byok_only",
         status="queued",
         idempotency_key=idempotency_key,
         payload_hash=f"{idempotency_key}-payload",
-        reasoning="medium",
+        profile_id="balanced",
+        reasoning_option_id="medium",
     )
     db.add(run)
     db.commit()

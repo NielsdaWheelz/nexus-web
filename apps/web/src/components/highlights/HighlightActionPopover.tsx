@@ -18,7 +18,7 @@ export default function HighlightActionPopover({
   isReflowable,
   onSelectColor,
   onAddNote,
-  onCite,
+  onLink,
   onDelete,
   onQuoteToNewChat,
   onQuoteToExistingChat,
@@ -32,7 +32,7 @@ export default function HighlightActionPopover({
   isReflowable: boolean;
   onSelectColor: (color: HighlightColor) => Promise<void>;
   onAddNote?: () => void;
-  onCite?: () => void;
+  onLink?: () => void;
   onDelete: () => Promise<void>;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
@@ -59,7 +59,7 @@ export default function HighlightActionPopover({
         isEditingBounds={false}
         onSelectColor={onSelectColor}
         onAddNote={onAddNote}
-        onCite={onCite}
+        onLink={onLink}
         onDelete={onDelete}
         onQuoteToNewChat={onQuoteToNewChat}
         onQuoteToExistingChat={onQuoteToExistingChat}

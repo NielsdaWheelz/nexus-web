@@ -110,13 +110,26 @@ writes, notes, and the LI generate/promote transactions.
 
 ## The LLM generation harness inside the worker
 
-The six LLM generation kinds (`chat_run`, `oracle_reading_generate`,
-`library_intelligence_artifact_generate`, `media_unit_build`, `enrich_metadata`,
-`synapse_scan`)
-run their bodies inside the shared `run_llm_task` envelope ([llms.md](llms.md)),
-not a hand-rolled per-task event loop. The queue contract is unchanged: the
-harness runs inside the existing claim/lease/heartbeat/dead-letter machinery and
-owns only the LLM mechanics (session, loop, client, router, ledger). Every
-provider call inside a job leaves an `llm_calls` row; a worker-boundary exception
-still leaves a row plus an `error_detail` on the run parent
-([llms.md](llms.md)), so the operator can always answer "what failed".
+Seven LLM generation kinds — `chat_run`, `oracle_reading_generate`,
+`library_intelligence_artifact_generate` (and the conversation-distillate
+reducer, both under the generic `artifacts` revision engine), `media_unit_build`,
+`enrich_metadata`, `synapse_scan`, and `dawn_write` — run their bodies inside
+the shared `run_llm_task` envelope ([llms.md](llms.md)), not a hand-rolled
+per-task event loop. `run_llm_task` owns only the worker mechanics: one DB
+session, one fresh event loop, one shared `httpx.AsyncClient`, and one
+`ExecutionRuntime` construction (production or the real-media fixture, keyed
+solely on `settings.real_media_provider_fixtures`). The queue contract is
+unchanged: the harness runs inside the existing claim/lease/heartbeat/
+dead-letter machinery.
+
+Every provider call inside a job goes through
+`services/llm_execution.py:execute_generation` — the sole caller of both the
+`ExecutionRuntime` seam and the `llm_calls` ledger — and reaches exactly one
+terminal ledger outcome: success, a classified provider/transport failure, a
+planning/budget denial, or a defect. A worker-boundary exception still leaves
+a ledger row (or, for a denial before any row exists, a typed `ApiError`) plus
+`error_code`/`error_origin` on the run parent, so the operator can always
+answer "what failed". See [llms.md](llms.md) for the full execution order and
+the profile each kind resolves against (`fast` for Oracle/Synapse/media
+summary/metadata enrichment/conversation distillate; `balanced` for library
+dossier and Dawn Write; chat alone is user-selected).

@@ -25,13 +25,20 @@ def _validate_fragment_offset_range(start_offset: int, end_offset: int) -> None:
 
 
 class FragmentAnchorOut(BaseModel):
-    """Fragment-offset anchor response."""
+    """Fragment-offset anchor response.
+
+    ``fragment_id``/``start_offset``/``end_offset`` are the disposable locator
+    cache, not highlight identity. They are None when the cached fragment row
+    vanished (reindex/refresh) and the quote no longer resolves uniquely: the
+    highlight stays visible but carries no locator, so it is never painted at a
+    wrong location.
+    """
 
     type: Literal["fragment_offsets"] = "fragment_offsets"
     media_id: UUID
-    fragment_id: UUID
-    start_offset: int
-    end_offset: int
+    fragment_id: UUID | None
+    start_offset: int | None
+    end_offset: int | None
 
 
 class PdfQuadOut(BaseModel):
