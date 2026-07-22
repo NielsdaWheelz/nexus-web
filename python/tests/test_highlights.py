@@ -102,7 +102,7 @@ def add_media_to_library(
 ) -> None:
     """Seed media into a user's default library.
 
-    Filing (`POST /libraries/{id}/media`) requires the target media to already
+    Actor-authorized filing requires the target media to already
     be membership-reachable, which production guarantees via
     `ensure_media_in_default_library` auto-filing new media on ingest. Bare
     media rows created directly by test fixtures are never auto-filed, so seed
@@ -121,8 +121,8 @@ def register_fragment_highlight_cleanup(
     direct_db: DirectSessionManager,
     fragment_id: UUID,
 ) -> None:
-    """Clean up fragment highlights through canonical anchor rows."""
-    direct_db.register_cleanup("highlight_fragment_anchors", "fragment_id", fragment_id)
+    """Clean up fragment highlights (anchor child rows first, then roots)."""
+    direct_db.register_cleanup("highlights", "fragment_anchor_fragment_id", fragment_id)
 
 
 def create_linked_highlight_note(
@@ -585,6 +585,338 @@ class TestDeleteHighlight:
                 {"highlight_id": UUID(highlight_id)},
             ).scalar_one()
         assert edge_count == 0, "highlight delete must clean its bare edges (graph cleanup rule 2)"
+
+
+# =============================================================================
+# Highlight durability (universal-link-authoring AC8/AC9)
+# =============================================================================
+
+
+class TestHighlightDurability:
+    """Fragment replacement invalidates only the locator cache (invariant 9).
+
+    The Highlight root, its attached note, and its graph edges survive;
+    media-wide LEFT JOIN reads return the highlight and re-resolve the quote
+    against current content — unique resolution recreates the cache, anything
+    else reads back visibly unresolved, never painted at a wrong location.
+    """
+
+    def _seed_highlight(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        user_id: UUID,
+        *,
+        canonical_text: str,
+        start_offset: int,
+        end_offset: int,
+    ) -> tuple[UUID, UUID, str]:
+        with direct_db.session() as session:
+            media_id, fragment_id = create_media_and_fragment(
+                session,
+                canonical_text=canonical_text,
+                html_sanitized=f"<p>{canonical_text}</p>",
+            )
+        direct_db.register_cleanup("note_blocks", "user_id", user_id)
+        direct_db.register_cleanup("resource_view_states", "user_id", user_id)
+        direct_db.register_cleanup("resource_edges", "user_id", user_id)
+        direct_db.register_cleanup("fragments", "media_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        # The media cleanup removes the highlight family child-first.
+        direct_db.register_cleanup("media", "id", media_id)
+
+        add_media_to_library(auth_client, direct_db, user_id, media_id)
+        create_resp = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": start_offset, "end_offset": end_offset, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        return media_id, fragment_id, create_resp.json()["data"]["id"]
+
+    @staticmethod
+    def _replace_fragment(direct_db: DirectSessionManager, media_id: UUID, new_text: str) -> UUID:
+        """Refresh-style wholesale fragment replacement (new row, new id)."""
+        new_fragment_id = uuid4()
+        with direct_db.session() as session:
+            session.execute(
+                text("DELETE FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text("""
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
+                    VALUES (:id, :media_id, 0, :html, :text)
+                """),
+                {
+                    "id": new_fragment_id,
+                    "media_id": media_id,
+                    "html": f"<p>{new_text}</p>",
+                    "text": new_text,
+                },
+            )
+            session.commit()
+        return new_fragment_id
+
+    def test_equivalent_content_repairs_cache_and_preserves_note_and_edges(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC8/AC9: unique re-resolution against equivalent content recreates
+        the locator cache; root, attached note, and graph edges survive."""
+        user_id = create_test_user_id()
+        media_id, fragment_id, highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text=FIXTURE_CANONICAL_TEXT,
+            start_offset=0,
+            end_offset=12,  # "Hello World!"
+        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "Durable")
+        assert note_resp.status_code == 200
+        note_block_id = note_resp.json()["data"]["note_block_id"]
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO resource_edges (
+                        user_id, kind, origin, source_scheme, source_id,
+                        target_scheme, target_id
+                    )
+                    VALUES (
+                        :user_id, 'context', 'user', 'highlight', :highlight_id,
+                        'media', :media_id
+                    )
+                """),
+                {"user_id": user_id, "highlight_id": highlight_id, "media_id": media_id},
+            )
+            session.commit()
+
+        new_fragment_id = self._replace_fragment(direct_db, media_id, FIXTURE_CANONICAL_TEXT)
+
+        list_resp = auth_client.get(f"/media/{media_id}/highlights", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200, list_resp.text
+        rows = list_resp.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [highlight_id]
+        anchor = rows[0]["anchor"]
+        assert anchor["fragment_id"] == str(new_fragment_id)
+        assert anchor["start_offset"] == 0
+        assert anchor["end_offset"] == 12
+
+        with direct_db.session() as session:
+            cached_fragment_id = session.execute(
+                text("""
+                    SELECT fragment_id FROM highlight_fragment_anchors
+                    WHERE highlight_id = :id
+                """),
+                {"id": highlight_id},
+            ).scalar_one()
+            note_count = session.execute(
+                text("SELECT COUNT(*) FROM note_blocks WHERE id = :id"),
+                {"id": note_block_id},
+            ).scalar_one()
+            edge_count = session.execute(
+                text("""
+                    SELECT COUNT(*) FROM resource_edges
+                    WHERE origin = 'user'
+                      AND source_scheme = 'highlight'
+                      AND source_id = :id
+                """),
+                {"id": highlight_id},
+            ).scalar_one()
+        # The repair is persisted, not recomputed per read.
+        assert cached_fragment_id == new_fragment_id
+        assert note_count == 1, "attached note must survive fragment replacement"
+        assert edge_count == 1, "the user-authored edge must survive fragment replacement"
+
+    def test_changed_content_reads_unresolved_never_deleted_or_wrong(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """Invariant 9: changed content yields a visible unresolved state —
+        null locator — never deletion and never a wrong location."""
+        user_id = create_test_user_id()
+        media_id, fragment_id, highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text=FIXTURE_CANONICAL_TEXT,
+            start_offset=0,
+            end_offset=12,
+        )
+
+        self._replace_fragment(
+            direct_db, media_id, "Entirely rewritten content without the old phrase."
+        )
+
+        list_resp = auth_client.get(f"/media/{media_id}/highlights", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200, list_resp.text
+        rows = list_resp.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [highlight_id]
+        anchor = rows[0]["anchor"]
+        assert anchor["type"] == "fragment_offsets"
+        assert anchor["fragment_id"] is None
+        assert anchor["start_offset"] is None
+        assert anchor["end_offset"] is None
+
+        detail_resp = auth_client.get(f"/highlights/{highlight_id}", headers=auth_headers(user_id))
+        assert detail_resp.status_code == 200, "unresolved highlight must not 404"
+
+        with direct_db.session() as session:
+            root_count = session.execute(
+                text("SELECT COUNT(*) FROM highlights WHERE id = :id"),
+                {"id": highlight_id},
+            ).scalar_one()
+            anchor_count = session.execute(
+                text("SELECT COUNT(*) FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                {"id": highlight_id},
+            ).scalar_one()
+        assert (root_count, anchor_count) == (1, 1)
+
+    def test_ambiguous_quote_stays_unresolved_never_geometry_disambiguated(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A quote that resolves ambiguously after refresh stays unresolved;
+        it is never silently repointed at either occurrence."""
+        user_id = create_test_user_id()
+        media_id, fragment_id, highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text="alpha beta gamma",
+            start_offset=6,
+            end_offset=10,  # "beta"
+        )
+
+        self._replace_fragment(direct_db, media_id, "alpha beta gamma alpha beta gamma")
+
+        list_resp = auth_client.get(f"/media/{media_id}/highlights", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200, list_resp.text
+        rows = list_resp.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [highlight_id]
+        assert rows[0]["anchor"]["fragment_id"] is None
+
+        with direct_db.session() as session:
+            cached_fragment_id = session.execute(
+                text("""
+                    SELECT fragment_id FROM highlight_fragment_anchors
+                    WHERE highlight_id = :id
+                """),
+                {"id": highlight_id},
+            ).scalar_one()
+        # The stale cache pointer is untouched — never repointed on ambiguity.
+        assert cached_fragment_id == fragment_id
+
+    def test_repaired_cache_sorts_at_true_document_position(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """The repairing read returns highlights in current anchor order: a
+        stale-but-repairable highlight early in the document precedes a live
+        highlight later in it, not the pre-repair NULLS-LAST tail."""
+        user_id = create_test_user_id()
+        media_id, fragment_id, early_highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text=FIXTURE_CANONICAL_TEXT,
+            start_offset=0,
+            end_offset=12,  # "Hello World!"
+        )
+
+        new_fragment_id = self._replace_fragment(direct_db, media_id, FIXTURE_CANONICAL_TEXT)
+        # A live highlight later in the document, created on the current fragment.
+        late_start = FIXTURE_CANONICAL_TEXT.index("test article")
+        late_resp = auth_client.post(
+            f"/fragments/{new_fragment_id}/highlights",
+            json={
+                "start_offset": late_start,
+                "end_offset": late_start + len("test article"),
+                "color": "yellow",
+            },
+            headers=auth_headers(user_id),
+        )
+        assert late_resp.status_code == 201, late_resp.text
+        late_highlight_id = late_resp.json()["data"]["id"]
+
+        list_resp = auth_client.get(f"/media/{media_id}/highlights", headers=auth_headers(user_id))
+        assert list_resp.status_code == 200, list_resp.text
+        rows = list_resp.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [early_highlight_id, late_highlight_id]
+        early_anchor = rows[0]["anchor"]
+        assert early_anchor["fragment_id"] == str(new_fragment_id)
+        assert (early_anchor["start_offset"], early_anchor["end_offset"]) == (0, 12)
+
+    def test_repair_survives_highlight_deleted_between_read_and_repair(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """A highlight deleted after the list read but before the repair loop
+        reaches it is skipped and flagged for re-read — never an AttributeError
+        crash on the vanished anchor row."""
+        from nexus.db.models import Highlight
+        from nexus.services.highlights import _repair_missing_fragment_caches
+
+        user_id = create_test_user_id()
+        media_id, fragment_id, highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text=FIXTURE_CANONICAL_TEXT,
+            start_offset=0,
+            end_offset=12,
+        )
+        self._replace_fragment(direct_db, media_id, FIXTURE_CANONICAL_TEXT)
+
+        with direct_db.session() as session:
+            highlight = session.get(Highlight, UUID(highlight_id))
+            assert highlight is not None
+            # Simulate DELETE /highlights/{id} committing between the list
+            # query and the repair loop: the anchor lazy-load returns None.
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                {"id": highlight_id},
+            )
+            session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
+            changed = _repair_missing_fragment_caches(session, media_id=media_id, stale=[highlight])
+        assert changed is True, "a vanished highlight must trigger the caller's re-read"
+
+    def test_delete_highlight_child_first_preserves_detached_note_prose(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        """AC9: ordinary deletion removes anchor children and graph rows
+        explicitly (no cascades remain) while the note prose survives."""
+        user_id = create_test_user_id()
+        media_id, fragment_id, highlight_id = self._seed_highlight(
+            auth_client,
+            direct_db,
+            user_id,
+            canonical_text=FIXTURE_CANONICAL_TEXT,
+            start_offset=0,
+            end_offset=12,
+        )
+        note_resp = create_linked_highlight_note(auth_client, user_id, highlight_id, "Kept")
+        assert note_resp.status_code == 200
+        note_block_id = note_resp.json()["data"]["note_block_id"]
+
+        delete_resp = auth_client.delete(
+            f"/highlights/{highlight_id}", headers=auth_headers(user_id)
+        )
+        assert delete_resp.status_code == 204
+
+        with direct_db.session() as session:
+            counts = session.execute(
+                text("""
+                    SELECT
+                        (SELECT COUNT(*) FROM highlights WHERE id = :id),
+                        (SELECT COUNT(*) FROM highlight_fragment_anchors
+                         WHERE highlight_id = :id),
+                        (SELECT COUNT(*) FROM resource_edges
+                         WHERE (source_scheme = 'highlight' AND source_id = :id)
+                            OR (target_scheme = 'highlight' AND target_id = :id)),
+                        (SELECT COUNT(*) FROM note_blocks WHERE id = :note_id)
+                """),
+                {"id": highlight_id, "note_id": note_block_id},
+            ).one()
+        assert tuple(counts) == (0, 0, 0, 1), (
+            "root+anchor+edges must be explicitly removed; detached note prose survives"
+        )
 
 
 # =============================================================================

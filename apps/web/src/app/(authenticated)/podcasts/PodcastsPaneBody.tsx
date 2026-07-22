@@ -13,12 +13,10 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import {
   FeedbackNotice,
@@ -27,8 +25,10 @@ import {
 } from "@/components/feedback/Feedback";
 import {
   getPodcastSubscriptionSettingsPatch,
+  decodePodcastSubscriptionListItem,
   type PodcastLibraryMembership,
   type PodcastSubscriptionListItem,
+  type PodcastSubscriptionListItemWire,
 } from "./podcastSubscriptions";
 import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
@@ -108,13 +108,14 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const { displayState, setDisplayState } = useCollectionDisplayState("/podcasts");
   const podcastListCodec = useMemo(
     () => ({
       basePath: "/podcasts",
       decode: decodePodcastListState,
       encode: encodePodcastListState,
-      replaceOptions: { viewTransition: { kind: "collection-reflow" } as const },
+      replaceOptions: {
+        viewTransition: { kind: "collection-reflow" } as const,
+      },
     }),
     [],
   );
@@ -139,10 +140,11 @@ export default function PodcastsPaneBody() {
   >({});
   const loadingLibraryPodcastIds = useStringIdSet();
   const busyLibraryMembershipKeys = actions.busyLibraryMembershipKeys;
-  const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<string | null>(null);
-  const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] = useState<HTMLElement | null>(
-    null
-  );
+  const [membershipPanelPodcastId, setMembershipPanelPodcastId] = useState<
+    string | null
+  >(null);
+  const [membershipPanelTriggerEl, setMembershipPanelTriggerEl] =
+    useState<HTMLElement | null>(null);
   const subscriptionRequestIdRef = useRef(0);
   const subscriptionAbortRef = useRef<AbortController | null>(null);
   const settingsModal = usePodcastSubscriptionSettingsModal({
@@ -167,9 +169,7 @@ export default function PodcastsPaneBody() {
     setSearchText(appliedSearch);
   }, [appliedSearch]);
 
-  const subscriptionListResource = useResource<
-    PodcastSubscriptionListItem[]
-  >({
+  const subscriptionListResource = useResource<PodcastSubscriptionListItem[]>({
     cacheKey: [
       "podcast-subscriptions",
       subscriptionSort,
@@ -190,11 +190,11 @@ export default function PodcastsPaneBody() {
       if (selectedLibraryId) {
         params.set("library_id", selectedLibraryId);
       }
-      const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
+      const response = await apiFetch<{ data: PodcastSubscriptionListItemWire[] }>(
         `/api/podcasts/subscriptions?${params.toString()}`,
         { signal },
       );
-      return response.data;
+      return response.data.map(decodePodcastSubscriptionListItem);
     },
   });
 
@@ -251,69 +251,72 @@ export default function PodcastsPaneBody() {
     };
   }, []);
 
-  const loadMoreSubscriptions = useCallback(
-    async () => {
-      if (loadingMore || !hasMore) {
+  const loadMoreSubscriptions = useCallback(async () => {
+    if (loadingMore || !hasMore) {
+      return;
+    }
+    const offset = nextOffset;
+    const requestId = subscriptionRequestIdRef.current + 1;
+    const controller = new AbortController();
+    subscriptionAbortRef.current?.abort();
+    subscriptionRequestIdRef.current = requestId;
+    subscriptionAbortRef.current = controller;
+
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        sort: subscriptionSort,
+        filter: subscriptionFilter,
+      });
+      if (appliedSearch) {
+        params.set("q", appliedSearch);
+      }
+      if (selectedLibraryId) {
+        params.set("library_id", selectedLibraryId);
+      }
+      const response = await apiFetch<{ data: PodcastSubscriptionListItemWire[] }>(
+        `/api/podcasts/subscriptions?${params.toString()}`,
+        { signal: controller.signal },
+      );
+      if (subscriptionRequestIdRef.current !== requestId) {
         return;
       }
-      const offset = nextOffset;
-      const requestId = subscriptionRequestIdRef.current + 1;
-      const controller = new AbortController();
-      subscriptionAbortRef.current?.abort();
-      subscriptionRequestIdRef.current = requestId;
-      subscriptionAbortRef.current = controller;
-
-      setLoadingMore(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: String(offset),
-          sort: subscriptionSort,
-          filter: subscriptionFilter,
-        });
-        if (appliedSearch) {
-          params.set("q", appliedSearch);
-        }
-        if (selectedLibraryId) {
-          params.set("library_id", selectedLibraryId);
-        }
-        const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
-          `/api/podcasts/subscriptions?${params.toString()}`,
-          { signal: controller.signal }
-        );
-        if (subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        setRows((prev) => [...prev, ...response.data]);
-        setHasMore(response.data.length === PAGE_SIZE);
-        setNextOffset(offset + response.data.length);
-      } catch (loadError) {
-        if (controller.signal.aborted || subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (handleUnauthenticatedApiError(loadError)) return;
-        setError(toFeedback(loadError, { fallback: "Failed to load followed podcasts" }));
-      } finally {
-        if (subscriptionRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (subscriptionAbortRef.current === controller) {
-          subscriptionAbortRef.current = null;
-        }
-        setLoadingMore(false);
+      const nextRows = response.data.map(decodePodcastSubscriptionListItem);
+      setRows((prev) => [...prev, ...nextRows]);
+      setHasMore(response.data.length === PAGE_SIZE);
+      setNextOffset(offset + response.data.length);
+    } catch (loadError) {
+      if (
+        controller.signal.aborted ||
+        subscriptionRequestIdRef.current !== requestId
+      ) {
+        return;
       }
-    },
-    [
-      appliedSearch,
-      hasMore,
-      loadingMore,
-      nextOffset,
-      selectedLibraryId,
-      subscriptionFilter,
-      subscriptionSort,
-    ],
-  );
+      if (handleUnauthenticatedApiError(loadError)) return;
+      setError(
+        toFeedback(loadError, { fallback: "Failed to load followed podcasts" }),
+      );
+    } finally {
+      if (subscriptionRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (subscriptionAbortRef.current === controller) {
+        subscriptionAbortRef.current = null;
+      }
+      setLoadingMore(false);
+    }
+  }, [
+    appliedSearch,
+    hasMore,
+    loadingMore,
+    nextOffset,
+    selectedLibraryId,
+    subscriptionFilter,
+    subscriptionSort,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -354,7 +357,11 @@ export default function PodcastsPaneBody() {
       actions.addToLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, true),
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
+            libraryId,
+            true,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) => {
@@ -364,7 +371,9 @@ export default function PodcastsPaneBody() {
             ) {
               return row;
             }
-            const summary = libraries.find((library) => library.id === libraryId);
+            const summary = libraries.find(
+              (library) => library.id === libraryId,
+            );
             if (!summary) {
               return row;
             }
@@ -372,7 +381,11 @@ export default function PodcastsPaneBody() {
               ...row,
               visible_libraries: [
                 ...row.visible_libraries,
-                { id: summary.id, name: summary.name, color: summary.color ?? null },
+                {
+                  id: summary.id,
+                  name: summary.name,
+                  color: summary.color ?? null,
+                },
               ],
             };
           }),
@@ -386,7 +399,11 @@ export default function PodcastsPaneBody() {
       actions.removeFromLibrary(podcastId, libraryId, () => {
         setLibrariesByPodcastId((prev) => ({
           ...prev,
-          [podcastId]: patchLibraryMembership(prev[podcastId] ?? [], libraryId, false),
+          [podcastId]: patchLibraryMembership(
+            prev[podcastId] ?? [],
+            libraryId,
+            false,
+          ),
         }));
         setRows((prev) =>
           prev.map((row) =>
@@ -436,19 +453,24 @@ export default function PodcastsPaneBody() {
   );
 
   const activeCount = rows.length;
-  usePaneChromeOverride({
-    folio: { kind: "count", value: activeCount, unit: "show" },
-    folioPending: loading,
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: activeCount, unit: "show" },
+      pending: loading,
+    },
   });
   const settingsRow =
     settingsModal.podcastId !== null
       ? (rows.find((row) => row.podcast_id === settingsModal.podcastId) ?? null)
       : null;
   const hasActiveFilters =
-    appliedSearch.length > 0 || subscriptionFilter !== "all" || selectedLibraryId.length > 0;
+    appliedSearch.length > 0 ||
+    subscriptionFilter !== "all" ||
+    selectedLibraryId.length > 0;
   const membershipPanelBusy = membershipPanelPodcastId
     ? Array.from(busyLibraryMembershipKeys.ids).some((key) =>
-        key.endsWith(`:${membershipPanelPodcastId}`)
+        key.endsWith(`:${membershipPanelPodcastId}`),
       )
     : false;
   const membershipPanelLibraries = membershipPanelPodcastId
@@ -475,11 +497,10 @@ export default function PodcastsPaneBody() {
       {
         id: row.podcast_id,
         title: row.podcast.title,
-        image_url: row.podcast.image_url,
         contributors: row.podcast.contributors,
-        unplayed_count: row.unplayed_count,
-        sync_status: row.sync_status,
-        latest_episode_published_at: row.latest_episode_published_at,
+        unplayedCount: row.unplayedCount,
+        publicationDate: row.publicationDate,
+        syncStatus: row.syncStatus,
       },
       {
         canUsePodcastActions: true,
@@ -507,8 +528,6 @@ export default function PodcastsPaneBody() {
     <>
       <CollectionView
         rows={collectionRows}
-        view={displayState.view}
-        density={displayState.density}
         status={loading ? "loading" : "ready"}
         ariaLabel="Followed podcasts"
         opener={<SectionOpener heading="Podcasts" />}
@@ -600,10 +619,6 @@ export default function PodcastsPaneBody() {
                 <span className={styles.summaryCount}>
                   {pluralize(activeCount, "followed show")}
                 </span>
-                <CollectionDisplayControls
-                  value={displayState}
-                  onChange={setDisplayState}
-                />
                 {hasActiveFilters ? (
                   <Button variant="secondary" size="md" onClick={clearFilters}>
                     Clear filters
@@ -612,7 +627,9 @@ export default function PodcastsPaneBody() {
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
+                  onClick={() =>
+                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                  }
                 >
                   Browse
                 </Button>
@@ -620,6 +637,7 @@ export default function PodcastsPaneBody() {
                   label="Podcast page actions"
                   options={[
                     {
+                      kind: "link",
                       id: "export-opml",
                       label: "Export OPML",
                       href: "/api/podcasts/export/opml",
@@ -652,7 +670,9 @@ export default function PodcastsPaneBody() {
                   variant="ghost"
                   size="sm"
                   className={styles.inlineButton}
-                  onClick={() => dispatchOpenLauncher({ lane: "browse" })}
+                  onClick={() =>
+                    dispatchOpenLauncher({ kind: "Root", lane: "browse" })
+                  }
                 >
                   Browse podcasts
                 </Button>

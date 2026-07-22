@@ -19,9 +19,8 @@ import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import ActionMenu from "@/components/ui/ActionMenu";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import ContributorFilter from "@/components/contributors/ContributorFilter";
 import KindChips from "@/components/search/KindChips";
 import AppliedFilters, {
@@ -60,8 +59,6 @@ import type {
   SearchResultRowViewModel,
 } from "@/lib/search/types";
 import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
-import { withCollectionDisplayHref } from "@/lib/collections/collectionViewState";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import styles from "./page.module.css";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -100,8 +97,6 @@ function hasExplicitEmptyKinds(query: SearchQuery): boolean {
 export default function SearchPaneBody() {
   const paneRouter = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
-  const { displayState, setDisplayState } = useCollectionDisplayState("/search");
-
   const query = useMemo(
     () => searchQueryFromParams(paneSearchParams),
     [paneSearchParams],
@@ -146,11 +141,11 @@ export default function SearchPaneBody() {
       pendingQueryRef.current = next;
       expectedQueryStringRef.current = nextQueryString;
       setOptimisticRequestedKinds(cloneRequestedKinds(next.requestedKinds));
-      paneRouter.replace(withCollectionDisplayHref(searchHref(next), displayState), {
+      paneRouter.replace(searchHref(next), {
         viewTransition: { kind: "collection-reflow" },
       });
     },
-    [displayState, paneRouter],
+    [paneRouter],
   );
 
   const updateQuery = useCallback(
@@ -342,12 +337,15 @@ export default function SearchPaneBody() {
 
   const rows = useMemo(() => results.map(presentSearchResult), [results]);
 
-  usePaneChromeOverride({
-    folio:
-      rows.length > 0
-        ? { kind: "count", value: rows.length, unit: "result" }
-        : { kind: "none" },
-    folioPending: searching,
+  usePanePrimaryChrome({
+    header: {
+      kind: "section",
+      folio:
+        rows.length > 0
+          ? { kind: "count", value: rows.length, unit: "result" }
+          : { kind: "none" },
+      pending: searching,
+    },
   });
 
   const notice =
@@ -378,8 +376,6 @@ export default function SearchPaneBody() {
   return (
     <CollectionView
       rows={rows}
-      view={displayState.view}
-      density={displayState.density}
       status="ready"
       ariaLabel="Search results"
       opener={<SectionOpener heading="Search" />}
@@ -417,6 +413,7 @@ export default function SearchPaneBody() {
             <ActionMenu
               label="+ Format"
               options={MEDIA_FORMATS.map((format) => ({
+                kind: "command" as const,
                 id: format,
                 label: MEDIA_FORMAT_LABELS[format],
                 onSelect: () => toggleFormat(format),
@@ -433,13 +430,6 @@ export default function SearchPaneBody() {
             onRemove={removeFilter}
             onClearAll={clearAllFilters}
           />
-
-          <div className={styles.displayControls}>
-            <CollectionDisplayControls
-              value={displayState}
-              onChange={setDisplayState}
-            />
-          </div>
         </div>
       }
       notice={notice}

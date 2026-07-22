@@ -245,7 +245,7 @@ test.describe("lectern + global player lifecycle", () => {
     // A Readable row offers Remove but no footer "Play" (Play is FooterAudio-only).
     const articleRow = lecternRow(page, READABLE_ARTICLE.title);
     await articleRow.hover();
-    await articleRow.getByRole("button", { name: "Actions" }).click();
+    await articleRow.getByRole("button", { name: /^Actions for / }).click();
     await expect(page.getByRole("menuitem", { name: "Remove from Lectern" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Play" })).toHaveCount(0);
     await page.keyboard.press("Escape");
@@ -268,7 +268,7 @@ test.describe("lectern + global player lifecycle", () => {
     // the canonical snapshot confirms it (Remove is not completion, §3.2/§8.2).
     const removeRow = lecternRow(page, READABLE_ARTICLE.title);
     await removeRow.hover();
-    await removeRow.getByRole("button", { name: "Actions" }).click();
+    await removeRow.getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Remove from Lectern" }).click();
     await expect(list.getByRole("listitem")).toHaveText([
       escapeRegExp(READABLE_RESUME.title),

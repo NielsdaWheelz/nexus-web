@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from nexus.services.search.results import InternalSearchResult
+from typing import Protocol
+
+from nexus.services.search.results import _SearchScore
 
 # Supported search result types (ordered for deterministic behavior).
 # Omitted type filters must mean "search everything the caller can ask for".
@@ -24,16 +26,30 @@ TYPE_WEIGHTS = {
     "conversation": 0.95,
     "artifact": 0.95,
     "web_result": 0.9,
+    # Target-only candidate types (link/reference profiles in candidates.py).
+    # Never public /search result types — SEARCH_RESULT_TYPES/SearchKind are frozen.
+    "library": 1.2,
+    "oracle_reading": 1.0,
+    "passage_anchor": 1.25,
 }
 
 
-def _normalize_scores_by_type(results: list[InternalSearchResult]) -> None:
+class _ScoredCandidate(Protocol):
+    """Any ranked candidate: public InternalSearchResult or a target-only candidate."""
+
+    score: _SearchScore
+
+    @property
+    def result_type(self) -> str: ...
+
+
+def _normalize_scores_by_type(results: list[_ScoredCandidate]) -> None:
     """Normalize weighted scores within each type to [0, 1] range.
 
     Modifies results in place.
     """
     # Group by type
-    by_type: dict[str, list[InternalSearchResult]] = {}
+    by_type: dict[str, list[_ScoredCandidate]] = {}
     for result in results:
         by_type.setdefault(result.result_type, []).append(result)
 

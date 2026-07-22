@@ -34,18 +34,20 @@ import {
   getLectern,
   postConsumptionCommand,
   postLecternCommand,
-  type ConsumptionCommand,
-  type ConsumptionResult,
-  type LecternCommand,
-  type LecternItem,
-  type LecternItemId,
-  type LecternResult,
-  type LecternSnapshot,
-  type MediaId,
-  type MediaListeningState,
-  type NextCapability,
-  type Placement,
 } from "@/lib/lectern/client";
+import type {
+  ConsumptionCommand,
+  ConsumptionResult,
+  LecternCommand,
+  LecternItem,
+  LecternItemId,
+  LecternResult,
+  LecternSnapshot,
+  MediaId,
+  MediaListeningState,
+  NextCapability,
+  Placement,
+} from "@/lib/lectern/contract";
 
 export const LECTERN_COMMAND_DEADLINE_MS = 35_000;
 export const LECTERN_REVALIDATE_MIN_INTERVAL_MS = 60_000;
@@ -75,7 +77,14 @@ export type CanonicalInstallEvent =
 export interface LecternCapability {
   resource: AsyncResource<LecternSnapshot>;
   mutation: LecternMutationState;
-  placeItems(input: { mediaIds: MediaId[]; placement: Placement }): Promise<LecternResult>;
+  placeItems(input: {
+    mediaIds: MediaId[];
+    placement: Placement;
+    unknownObservation?: {
+      signal: AbortSignal;
+      onUnknown: (error: ApiError) => void;
+    };
+  }): Promise<LecternResult>;
   removeItem(itemId: LecternItemId): Promise<LecternResult>;
   setOrder(itemIds: LecternItemId[]): Promise<LecternResult>;
   ensureMediaFinished(
@@ -307,6 +316,10 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     execute: (signal: AbortSignal) => Promise<R>,
     installResult: (result: R) => void,
     deferred: Deferred<R>,
+    unknownObservation?: {
+      signal: AbortSignal;
+      onUnknown: (error: ApiError) => void;
+    },
   ): Promise<void> {
     for (;;) {
       if (!active(gen)) {
@@ -346,12 +359,17 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
       }
       // Unknown outcome: stop being in flight, render provider-owned same-id
       // Retry, and block the lane until the user retries or the provider aborts.
-      const outcome = await park((resolveGate) => ({
+      const unknownError = toApiError(failure);
+      const parked = park((resolveGate) => ({
         kind: "RetryableFailure",
         attempt,
-        error: toApiError(failure),
+        error: unknownError,
         retry: () => resolveGate("retry"),
       }));
+      if (unknownObservation && !unknownObservation.signal.aborted) {
+        unknownObservation.onUnknown(unknownError);
+      }
+      const outcome = await parked;
       if (outcome === "aborted") {
         deferred.reject(makeAbortError());
         return;
@@ -426,6 +444,10 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
     gen: number,
     command: LecternCommand,
     presented: LecternSnapshot,
+    unknownObservation?: {
+      signal: AbortSignal;
+      onUnknown: (error: ApiError) => void;
+    },
   ): Promise<LecternResult> {
     const deferred = createDeferred<LecternResult>();
     if (mutation.kind === "Idle") {
@@ -439,6 +461,7 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
         (signal) => postLecternCommand(command, signal),
         (result) => installCanonical(result.lectern),
         deferred,
+        unknownObservation,
       ),
     );
     return deferred.promise;
@@ -471,7 +494,14 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
 
   // --- Public capability -----------------------------------------------------
 
-  function placeItems(input: { mediaIds: MediaId[]; placement: Placement }): Promise<LecternResult> {
+  function placeItems(input: {
+    mediaIds: MediaId[];
+    placement: Placement;
+    unknownObservation?: {
+      signal: AbortSignal;
+      onUnknown: (error: ApiError) => void;
+    };
+  }): Promise<LecternResult> {
     const snapshot = requireReadySnapshot();
     const command: LecternCommand = {
       kind: "PlaceItems",
@@ -479,7 +509,12 @@ function createLecternEngine(deps: EngineDeps): LecternEngine {
       mediaIds: input.mediaIds,
       placement: input.placement,
     };
-    return enqueueLecternMutation(generation, command, snapshot);
+    return enqueueLecternMutation(
+      generation,
+      command,
+      snapshot,
+      input.unknownObservation,
+    );
   }
 
   function removeItem(itemId: LecternItemId): Promise<LecternResult> {

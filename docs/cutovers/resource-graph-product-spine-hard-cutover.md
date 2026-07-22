@@ -6,6 +6,20 @@ BUILT - hard cutover implemented after the resource provenance graph,
 notes/pages graph order, incoming connections, synapse, and Library
 Intelligence revision-resource cutovers.
 
+**Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
+this spec already required undirected service-level dedupe for user bare
+links (below: "user-origin bare links dedupe in both directions at service
+level", "undirected duplicate dedupe for user bare links remains service
+behavior") — that requirement remains authoritative and is now also a DB
+invariant. The superseding spec fixes the live gap this spec did not close:
+duplicate/reverse **Link** creation now idempotently returns the existing row
+(`edges.create_edge` returns the existing edge for the neutral-Link
+constraint) rather than raising `edges.py`'s prior duplicate `ValueError`, and
+the one broad `uq_resource_edges_context_pair` index — which dually served
+non-user orderless pairs and overlapped ordered adjacency — is replaced by
+three narrower partial indexes: a user-context Link pair index, a user-stance
+directed pair index, and a non-user orderless-pair index.
+
 This spec describes the final hardening pass that makes `resource_edges` the
 single product-spine contract for durable resource connections:
 

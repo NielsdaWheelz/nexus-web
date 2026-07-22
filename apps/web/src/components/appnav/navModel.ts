@@ -1,46 +1,62 @@
 import type { LucideIcon } from "lucide-react";
-import { DESTINATIONS, type Destination } from "@/lib/navigation/destinations";
+import {
+  getDestination,
+  type Destination,
+  type DestinationId,
+} from "@/lib/navigation/destinations";
 
-export type NavSlot = "primary" | "tools" | "account";
-
-/** A navigation destination in the static model (single source of truth). */
-export interface NavDestination {
-  id: string;
-  label: string;
-  href: string;
-  slot: NavSlot;
-  /** Defaults to getPaneRouteIcon(href) when omitted. */
-  icon?: LucideIcon;
-  /** Defaults to { exact: [href] }. */
-  match?: { exact?: string[]; prefix?: string[] };
-  signature?: "oracle";
-}
-
-/** The resolved shape the rail and sheet render (static destinations + dynamic pins). */
+/** The resolved shape the rail and sheet render. */
 export interface NavItem {
-  id: string;
+  id: DestinationId;
   label: string;
   href: string;
   icon: LucideIcon;
-  signature?: "oracle";
+  presentation: NavItemPresentation;
 }
 
-/** A labelled section of items, rendered in order by the rail and sheet. */
-export interface NavGroup {
-  id: string;
-  label: string;
-  items: NavItem[];
+export type NavItemPresentation = "default" | "accent";
+
+interface AppNavigationDestinationDefinition {
+  id: DestinationId;
+  presentation?: NavItemPresentation;
 }
 
-// The slotted subset of the shared destination registry, in rail order (AC-8).
-export const NAV_MODEL: NavDestination[] = DESTINATIONS.filter(
-  (destination): destination is Destination & { slot: NavSlot } => destination.slot !== undefined,
-).map((destination) => ({
-  id: destination.id,
-  label: destination.label,
-  href: destination.href,
-  slot: destination.slot,
-  icon: destination.icon,
-  match: destination.match,
-  signature: destination.signature,
-}));
+interface AppNavigationDefinition {
+  destinations: readonly [
+    AppNavigationDestinationDefinition,
+    ...AppNavigationDestinationDefinition[],
+  ];
+  account: AppNavigationDestinationDefinition;
+}
+
+export interface NavDestination extends Destination {
+  presentation: NavItemPresentation;
+}
+
+/** The sole owner of fixed app-navigation membership, order, and decoration. */
+export const APP_NAVIGATION = {
+  destinations: [
+    { id: "lectern" },
+    { id: "libraries" },
+    { id: "podcasts" },
+    { id: "chats" },
+    { id: "notes" },
+    { id: "atlas" },
+    { id: "oracle", presentation: "accent" },
+  ],
+  account: { id: "settings" },
+} as const satisfies AppNavigationDefinition;
+
+function resolveNavDestination(
+  definition: AppNavigationDestinationDefinition,
+): NavDestination {
+  return {
+    ...getDestination(definition.id),
+    presentation: definition.presentation ?? "default",
+  };
+}
+
+export const NAV_MODEL: readonly NavDestination[] =
+  APP_NAVIGATION.destinations.map(resolveNavDestination);
+export const NAV_HOME = resolveNavDestination(APP_NAVIGATION.destinations[0]);
+export const NAV_ACCOUNT = resolveNavDestination(APP_NAVIGATION.account);

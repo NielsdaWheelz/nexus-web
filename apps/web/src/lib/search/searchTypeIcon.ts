@@ -5,6 +5,7 @@ import {
   MessageSquare,
   Mic,
   NotebookTabs,
+  Sparkles,
   UserRound,
   Video,
   type LucideIcon,
@@ -30,5 +31,6 @@ export const SEARCH_TYPE_ICON: Record<SearchType, LucideIcon> = {
   evidence_span: FileText,
   reader_apparatus_item: NotebookTabs,
   conversation: MessageSquare,
+  artifact: Sparkles,
   web_result: Globe,
 };

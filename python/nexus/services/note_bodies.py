@@ -16,6 +16,7 @@ from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import versions
+from nexus.services.resource_items.capabilities import resource_can_be_note_reference_target
 
 _OBJECT_REF_MARKDOWN_RE = re.compile(
     r"\[\[([a-z_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -124,6 +125,13 @@ def upsert_note_body(
 
 def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> None:
     source = _note_ref(block.id)
+    # A note_body edge is a durable relationship endpoint, so it obeys Invariant 4:
+    # it never persists a passage-candidate (evidence_span/content_chunk/fragment/
+    # reader_apparatus_item/oracle_passage_anchor) or otherwise non-direct scheme.
+    # The reference-insertion UI only emits direct targets, but a stale/forked
+    # client, a direct API write, or hand-authored markdown could carry one; those
+    # object nodes stay in note-owned prose but never mint a graph edge (the same
+    # drop-not-raise discipline replace_edges_for_origin applies to self-targets).
     replace_edges_for_origin(
         db,
         viewer_id=viewer_id,
@@ -132,7 +140,7 @@ def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> N
         edges=[
             EdgeCreate(source=source, target=target, kind="context", origin="note_body")
             for target in _body_target_refs(block.body_pm_json)
-            if target != source
+            if target != source and resource_can_be_note_reference_target(target)
         ],
     )
 

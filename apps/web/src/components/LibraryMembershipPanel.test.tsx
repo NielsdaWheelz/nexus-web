@@ -50,19 +50,33 @@ function setViewportWidth(width: number) {
   window.dispatchEvent(new Event("resize"));
 }
 
-function Harness(props: Partial<ComponentProps<typeof LibraryMembershipPanel>>) {
+function Harness(
+  props: Partial<ComponentProps<typeof LibraryMembershipPanel>>,
+) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [fallbackEl, setFallbackEl] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(true);
 
   return (
     <>
-      <button ref={setAnchorEl as RefCallback<HTMLButtonElement>} type="button">
+      <button
+        ref={setAnchorEl as RefCallback<HTMLButtonElement>}
+        type="button"
+        disabled={props.busy}
+      >
         Anchor
+      </button>
+      <button
+        ref={setFallbackEl as RefCallback<HTMLButtonElement>}
+        type="button"
+      >
+        Add fallback
       </button>
       <LibraryMembershipPanel
         open={open}
         title="Libraries"
         anchorEl={anchorEl}
+        returnFocusFallback={() => fallbackEl}
         libraries={libraries}
         onClose={() => setOpen(false)}
         onAddToLibrary={vi.fn()}
@@ -77,7 +91,9 @@ function renderHarness(
   props: Partial<ComponentProps<typeof LibraryMembershipPanel>> = {},
   renderEnvironment?: Parameters<typeof withRenderEnvironment>[1],
 ) {
-  return render(withRenderEnvironment(<Harness {...props} />, renderEnvironment));
+  return render(
+    withRenderEnvironment(<Harness {...props} />, renderEnvironment),
+  );
 }
 
 describe("LibraryMembershipPanel", () => {
@@ -100,38 +116,65 @@ describe("LibraryMembershipPanel", () => {
     });
 
     await screen.findByRole("dialog", { name: "Libraries" });
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search libraries" }), {
-      target: { value: "work" },
-    });
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search libraries" }),
+      {
+        target: { value: "work" },
+      },
+    );
 
     expect(
-      screen.queryByRole("button", { name: "Personal Remove from this library" })
+      screen.queryByRole("button", {
+        name: "Personal Remove from this library",
+      }),
     ).not.toBeInTheDocument();
 
-    const workButton = screen.getByRole("button", { name: "Work Add to library" });
+    const workButton = screen.getByRole("button", {
+      name: "Work Add to library",
+    });
     fireEvent.click(workButton);
 
     expect(handleAddToLibrary).toHaveBeenCalledWith("work");
-    expect(screen.getByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Libraries" }),
+    ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search libraries" }), {
-      target: { value: "" },
-    });
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search libraries" }),
+      {
+        target: { value: "" },
+      },
+    );
     fireEvent.click(
-      screen.getByRole("button", { name: "Personal Remove from this library" })
+      screen.getByRole("button", { name: "Personal Remove from this library" }),
     );
 
     expect(handleRemoveFromLibrary).toHaveBeenCalledWith("personal");
-    expect(screen.getByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Libraries" }),
+    ).toBeInTheDocument();
   });
 
   it("disables membership changes while busy", async () => {
     renderHarness({ busy: true });
 
     expect(
-      await screen.findByRole("button", { name: "Personal Remove from this library" })
+      await screen.findByRole("button", {
+        name: "Personal Remove from this library",
+      }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Work Add to library" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Work Add to library" }),
+    ).toBeDisabled();
+  });
+
+  it("exposes explicit recovery for an authoritative membership failure", async () => {
+    const onRetry = vi.fn();
+    renderHarness({ error: "Libraries could not be updated.", onRetry });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("restores focus to the anchor when it closes", async () => {
@@ -142,16 +185,47 @@ describe("LibraryMembershipPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Libraries" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("dialog", { name: "Libraries" }),
+      ).not.toBeInTheDocument();
       expect(anchor).toHaveFocus();
     });
   });
+
+  it.each([
+    { name: "desktop", width: 1280, environment: undefined },
+    {
+      name: "mobile",
+      width: 480,
+      environment: { initialViewport: "mobile" as const },
+    },
+  ])(
+    "restores focus to an enabled Add fallback after busy $name Escape dismissal",
+    async ({ width, environment }) => {
+      setViewportWidth(width);
+      renderHarness({ busy: true }, environment);
+
+      await screen.findByRole("dialog", { name: "Libraries" });
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("dialog", { name: "Libraries" }),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: "Add fallback" }),
+        ).toHaveFocus();
+      });
+    },
+  );
 
   it("uses the shared dialog on mobile", async () => {
     setViewportWidth(480);
 
     renderHarness({}, { initialViewport: "mobile" });
 
-    expect(await screen.findByRole("dialog", { name: "Libraries" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Libraries" }),
+    ).toBeInTheDocument();
   });
 });

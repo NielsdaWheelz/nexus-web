@@ -11,11 +11,11 @@ import {
 } from "@/lib/workspace/schema";
 import {
   resolvePaneRouteKey,
-  resolveWorkspacePaneTitle,
+  resolveWorkspacePaneLabel,
   useWorkspaceStore,
   WorkspaceStoreProvider,
-  type WorkspacePaneTitleRecord,
-  type WorkspacePaneTitleSource,
+  type WorkspacePaneLabelRecord,
+  type WorkspacePaneLabelSource,
 } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 
@@ -157,13 +157,13 @@ function flushWorkspaceSession() {
   });
 }
 
-function titleRecord(
+function labelRecord(
   href: string,
-  title: string,
-  source: WorkspacePaneTitleSource = "runtime",
-): WorkspacePaneTitleRecord {
+  label: string,
+  source: WorkspacePaneLabelSource = "runtime",
+): WorkspacePaneLabelRecord {
   return {
-    title,
+    label,
     source,
     routeKey: resolvePaneRouteKey(href),
   };
@@ -191,6 +191,36 @@ describe("WorkspaceStoreProvider", () => {
     });
     expect(activeHref(workspace())).toBe("/conversations");
     expect(primaryPanes(workspace().state)[1]?.visibility).toBe("visible");
+    flushWorkspaceSession();
+  });
+
+  it("restores and activates an existing matching Lectern pane", async () => {
+    const workspace = await mountWorkspaceStore();
+
+    act(() => {
+      workspace().openPane({ href: "/lectern", activate: false });
+    });
+    await waitFor(() => expect(primaryPanes(workspace().state)).toHaveLength(2));
+    const lecternPaneId = primaryPanes(workspace().state)[1]!.id;
+
+    act(() => {
+      workspace().minimizePane(lecternPaneId);
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[1]?.visibility).toBe("minimized");
+    });
+
+    act(() => {
+      workspace().openPane({ href: "/lectern" });
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)).toHaveLength(2);
+      expect(workspace().state.activePrimaryPaneId).toBe(lecternPaneId);
+      expect(primaryPanes(workspace().state)[1]).toMatchObject({
+        href: "/lectern",
+        visibility: "visible",
+      });
+    });
     flushWorkspaceSession();
   });
 
@@ -861,21 +891,21 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(1);
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries");
+      expect(primaryPanes(workspace().state)[0]?.href).toBe("/lectern");
     });
     flushWorkspaceSession();
   });
 
-  it("clears runtime titles across route-instance location changes", async () => {
+  it("clears runtime labels across route-instance location changes", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
     const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().publishPaneTitle({ paneId, routeKey, title: "My Book" });
+      workspace().publishPaneLabel({ paneId, routeKey, label: "My Book" });
     });
     await waitFor(() => {
-      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
+      expect(workspace().runtimeLabelByPaneId.get(paneId)?.label).toBe("My Book");
     });
 
     act(() => {
@@ -883,43 +913,43 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
-      expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
+      expect(workspace().runtimeLabelByPaneId.has(paneId)).toBe(false);
     });
     flushWorkspaceSession();
   });
 
-  it("clears runtime titles when the pane navigates to a different resource", async () => {
+  it("clears runtime labels when the pane navigates to a different resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
     const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
-      workspace().publishPaneTitle({ paneId, routeKey, title: "My Book" });
+      workspace().publishPaneLabel({ paneId, routeKey, label: "My Book" });
     });
     await waitFor(() => {
-      expect(workspace().runtimeTitleByPaneId.get(paneId)?.title).toBe("My Book");
+      expect(workspace().runtimeLabelByPaneId.get(paneId)?.label).toBe("My Book");
     });
 
     act(() => {
       workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
-      expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
+      expect(workspace().runtimeLabelByPaneId.has(paneId)).toBe(false);
     });
     flushWorkspaceSession();
   });
 
-  it("ignores stale runtime title publishes from a previous resource", async () => {
+  it("ignores stale runtime label publishes from a previous resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
     const oldRouteKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
 
     act(() => {
       workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
-      workspace().publishPaneTitle({
+      workspace().publishPaneLabel({
         paneId,
         routeKey: oldRouteKey,
-        title: "Old Book",
+        label: "Old Book",
       });
     });
 
@@ -928,56 +958,56 @@ describe("WorkspaceStoreProvider", () => {
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
-      expect(workspace().runtimeTitleByPaneId.has(paneId)).toBe(false);
-      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
-        title: "Media",
-        titleState: "pending",
-        titleSource: "fallback",
+      expect(workspace().runtimeLabelByPaneId.has(paneId)).toBe(false);
+      expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
+        label: "Media",
+        labelState: "pending",
+        labelSource: "fallback",
       });
     });
     flushWorkspaceSession();
   });
 
-  it("uses title hints for dynamic panes until runtime titles supersede them", async () => {
+  it("uses label hints for dynamic panes until runtime labels supersede them", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", titleHint: "Library Row Title" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", labelHint: "Library Row Label" });
     });
 
     await waitFor(() => {
       const paneId = workspace().state.activePrimaryPaneId;
-      expect(resolveWorkspacePaneTitle(primaryPanes(workspace().state)[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
-        title: "Library Row Title",
-        titleState: "resolved",
-        titleSource: "hint",
+      expect(resolveWorkspacePaneLabel(primaryPanes(workspace().state)[1]!, workspace().runtimeLabelByPaneId)).toMatchObject({
+        label: "Library Row Label",
+        labelState: "resolved",
+        labelSource: "hint",
       });
-      expect(workspace().runtimeTitleByPaneId.get(paneId)?.source).toBe("hint");
+      expect(workspace().runtimeLabelByPaneId.get(paneId)?.source).toBe("hint");
     });
 
     const paneId = workspace().state.activePrimaryPaneId;
     const routeKey = resolvePaneRouteKey("/media/11111111-1111-4111-8111-111111111111");
     act(() => {
-      workspace().publishPaneTitle({ paneId, routeKey, title: "Runtime Title" });
+      workspace().publishPaneLabel({ paneId, routeKey, label: "Runtime Label" });
     });
 
     await waitFor(() => {
-      expect(resolveWorkspacePaneTitle(primaryPanes(workspace().state)[1]!, workspace().runtimeTitleByPaneId)).toMatchObject({
-        title: "Runtime Title",
-        titleState: "resolved",
-        titleSource: "runtime",
+      expect(resolveWorkspacePaneLabel(primaryPanes(workspace().state)[1]!, workspace().runtimeLabelByPaneId)).toMatchObject({
+        label: "Runtime Label",
+        labelState: "resolved",
+        labelSource: "runtime",
       });
     });
     flushWorkspaceSession();
   });
 
-  it("uses title hints for same-pane navigation", async () => {
+  it("uses label hints for same-pane navigation", async () => {
     const workspace = await mountWorkspaceStore("/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111", {
-        titleHint: "Library Row Title",
+        labelHint: "Library Row Label",
       });
     });
 
@@ -986,23 +1016,23 @@ describe("WorkspaceStoreProvider", () => {
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111");
-      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
-        title: "Library Row Title",
-        titleState: "resolved",
-        titleSource: "hint",
+      expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
+        label: "Library Row Label",
+        labelState: "resolved",
+        labelSource: "hint",
       });
     });
     flushWorkspaceSession();
   });
 
-  it("applies the latest title hint to the opened route instance", async () => {
+  it("applies the latest label hint to the opened route instance", async () => {
     const workspace = await mountWorkspaceStore("/libraries");
 
     act(() => {
-      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", titleHint: "First title" });
+      workspace().openPane({ href: "/media/11111111-1111-4111-8111-111111111111", labelHint: "First label" });
       workspace().openPane({
         href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
-        titleHint: "Second title",
+        labelHint: "Second label",
       });
     });
 
@@ -1012,10 +1042,10 @@ describe("WorkspaceStoreProvider", () => {
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
       expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
-      expect(resolveWorkspacePaneTitle(activePane!, workspace().runtimeTitleByPaneId)).toMatchObject({
-        title: "Second title",
-        titleState: "resolved",
-        titleSource: "hint",
+      expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
+        label: "Second label",
+        labelState: "resolved",
+        labelSource: "hint",
       });
     });
     flushWorkspaceSession();
@@ -1188,47 +1218,47 @@ describe("WorkspaceStoreProvider", () => {
 
 });
 
-describe("resolveWorkspacePaneTitle", () => {
-  const empty = new Map<string, WorkspacePaneTitleRecord>();
+describe("resolveWorkspacePaneLabel", () => {
+  const empty = new Map<string, WorkspacePaneLabelRecord>();
 
-  it("returns pending for a dynamic route with no runtime title", () => {
+  it("returns pending for a dynamic route with no runtime label", () => {
     const pane = { id: "p1", href: "/media/m1" };
-    const result = resolveWorkspacePaneTitle(pane, empty);
-    expect(result.titleState).toBe("pending");
-    expect(result.title.length).toBeGreaterThan(0);
+    const result = resolveWorkspacePaneLabel(pane, empty);
+    expect(result.labelState).toBe("pending");
+    expect(result.label.length).toBeGreaterThan(0);
   });
 
-  it("returns resolved with the runtime title when one is published", () => {
+  it("returns resolved with the runtime label when one is published", () => {
     const pane = { id: "p1", href: "/media/m1" };
-    const result = resolveWorkspacePaneTitle(
+    const result = resolveWorkspacePaneLabel(
       pane,
-      new Map([["p1", titleRecord("/media/m1", "My Book")]]),
+      new Map([["p1", labelRecord("/media/m1", "My Book")]]),
     );
-    expect(result.titleState).toBe("resolved");
-    expect(result.title).toBe("My Book");
+    expect(result.labelState).toBe("resolved");
+    expect(result.label).toBe("My Book");
   });
 
-  it("ignores stale title records from a different resource", () => {
+  it("ignores stale label records from a different resource", () => {
     const pane = { id: "p1", href: "/media/m2" };
-    const result = resolveWorkspacePaneTitle(
+    const result = resolveWorkspacePaneLabel(
       pane,
-      new Map([["p1", titleRecord("/media/m1", "My Book")]]),
+      new Map([["p1", labelRecord("/media/m1", "My Book")]]),
     );
-    expect(result.titleState).toBe("pending");
-    expect(result.title).toBe("Media");
+    expect(result.labelState).toBe("pending");
+    expect(result.label).toBe("Media");
   });
 
   it("returns resolved for a static route with the route label", () => {
     const pane = { id: "p2", href: "/libraries" };
-    const result = resolveWorkspacePaneTitle(pane, empty);
-    expect(result.titleState).toBe("resolved");
-    expect(result.title).toBe("Libraries");
+    const result = resolveWorkspacePaneLabel(pane, empty);
+    expect(result.labelState).toBe("resolved");
+    expect(result.label).toBe("Libraries");
   });
 
-  it("title is always a non-empty string", () => {
+  it("label is always a non-empty string", () => {
     for (const href of ["/media/m1", "/libraries"]) {
-      const result = resolveWorkspacePaneTitle({ id: "px", href }, empty);
-      expect(result.title.length).toBeGreaterThan(0);
+      const result = resolveWorkspacePaneLabel({ id: "px", href }, empty);
+      expect(result.label.length).toBeGreaterThan(0);
     }
   });
 });

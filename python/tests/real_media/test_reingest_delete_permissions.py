@@ -6,7 +6,6 @@ from uuid import UUID
 
 import pytest
 
-from tests.factories import create_test_model
 from tests.helpers import auth_headers, create_test_user_id
 from tests.real_media.assertions import (
     assert_complete_evidence_trace,
@@ -48,8 +47,6 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
     auth_client.get("/me", headers=headers)
     direct_db.register_cleanup("users", "id", user_id)
     grant_ai_plus(direct_db, user_id)
-    with direct_db.session() as session:
-        model_id = create_test_model(session)
 
     create_response = auth_client.post(
         "/media/from_url",
@@ -110,9 +107,8 @@ def test_real_web_article_reingest_replaces_active_index_and_hides_stale_evidenc
         json={
             "conversation_id": conversation_id,
             "content": "Use this stale evidence.",
-            "model_id": str(model_id),
-            "reasoning": "none",
-            "key_mode": "platform_only",
+            "profile_id": "balanced",
+            "reasoning_option_id": "none",
             "contexts": [
                 {
                     "kind": "object_ref",
@@ -265,11 +261,11 @@ def test_real_web_article_library_removal_hides_scope_without_deleting_evidence(
     direct_db.register_cleanup("libraries", "id", library_id)
 
     add_response = auth_client.post(
-        f"/libraries/{library_id}/media",
-        json={"media_id": str(media_id)},
+        f"/media/{media_id}/libraries",
+        json={"library_ids": [str(library_id)]},
         headers=headers,
     )
-    assert add_response.status_code == 201, add_response.text
+    assert add_response.status_code == 204, add_response.text
 
     scoped_search = auth_client.get(
         "/search",

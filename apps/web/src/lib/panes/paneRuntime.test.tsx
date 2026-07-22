@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
@@ -6,7 +6,7 @@ import {
   PaneRuntimeProvider,
   usePaneRuntime,
   usePaneRouter,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { PaneViewTransitionIntent } from "@/lib/ui/viewTransitions";
 
@@ -15,8 +15,8 @@ const LIBRARY_ID = "33333333-3333-4333-8333-333333333333";
 const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
 const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
 
-function Publisher({ title }: { title: string }) {
-  useSetPaneTitle(title);
+function Publisher({ label }: { label: string }) {
+  useSetPaneLabel(label);
   return null;
 }
 
@@ -34,7 +34,7 @@ function NavigateOnMount({
 }) {
   const router = usePaneRouter();
   useEffect(() => {
-    router[action](MEDIA_HREF_1, { titleHint: "Library Row Title", viewTransition });
+    router[action](MEDIA_HREF_1, { labelHint: "Library Row Label", viewTransition });
   }, [action, router, viewTransition]);
   return null;
 }
@@ -47,7 +47,7 @@ function OpenInNewPaneOnMount() {
     }
     runtime.openInNewPane(
       MEDIA_HREF_1,
-      "Library Row Title",
+      "Library Row Label",
       "reader-evidence",
     );
   }, [runtime]);
@@ -69,15 +69,18 @@ function PublishLayoutOnMount() {
 
 function SecondaryCommandsOnMount() {
   const runtime = usePaneRuntime();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.requestSecondarySurface("reader-evidence");
+    runtime.requestSecondarySurface("reader-evidence", {
+      returnFocusTo: triggerRef.current,
+    });
     runtime.setSecondarySurface("reader-evidence");
     runtime.closeSecondaryPane();
   }, [runtime]);
-  return null;
+  return <button ref={triggerRef}>Options</button>;
 }
 
 function RuntimeShapeProbe({ onValue }: { onValue: (value: unknown) => void }) {
@@ -182,10 +185,10 @@ afterEach(() => {
 
 function runtime(
   href: string,
-  onSetPaneTitle: (input: {
+  onSetPaneLabel: (input: {
     paneId: string;
     routeKey: string;
-    title: string | null;
+    label: string | null;
   }) => void,
 ) {
   const identity = resolvePaneRouteIdentity(href);
@@ -200,40 +203,40 @@ function runtime(
       onNavigatePane={vi.fn()}
       onReplacePane={vi.fn()}
       onOpenInNewPane={vi.fn()}
-      onSetPaneTitle={onSetPaneTitle}
+      onSetPaneLabel={onSetPaneLabel}
     >
-      <Publisher title="Same title" />
+      <Publisher label="Same label" />
     </PaneRuntimeProvider>
   );
 }
 
-describe("useSetPaneTitle", () => {
-  it("does not republish the same title for the same route key", async () => {
-    const onSetPaneTitle = vi.fn();
-    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
+describe("useSetPaneLabel", () => {
+  it("does not republish the same label for the same route key", async () => {
+    const onSetPaneLabel = vi.fn();
+    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneLabel));
 
-    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onSetPaneLabel).toHaveBeenCalledTimes(1));
 
-    rerender(runtime(MEDIA_HREF_1, onSetPaneTitle));
+    rerender(runtime(MEDIA_HREF_1, onSetPaneLabel));
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
-    expect(onSetPaneTitle).toHaveBeenCalledTimes(1);
+    expect(onSetPaneLabel).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes again when the route key changes even if the title string matches", async () => {
-    const onSetPaneTitle = vi.fn();
-    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneTitle));
+  it("publishes again when the route key changes even if the label string matches", async () => {
+    const onSetPaneLabel = vi.fn();
+    const { rerender } = render(runtime(MEDIA_HREF_1, onSetPaneLabel));
 
-    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onSetPaneLabel).toHaveBeenCalledTimes(1));
 
     const nextHref = `${MEDIA_HREF_1}?loc=chapter-2`;
-    rerender(runtime(nextHref, onSetPaneTitle));
+    rerender(runtime(nextHref, onSetPaneLabel));
 
-    await waitFor(() => expect(onSetPaneTitle).toHaveBeenCalledTimes(2));
-    expect(onSetPaneTitle).toHaveBeenLastCalledWith({
+    await waitFor(() => expect(onSetPaneLabel).toHaveBeenCalledTimes(2));
+    expect(onSetPaneLabel).toHaveBeenLastCalledWith({
       paneId: "pane-1",
       routeKey: resolvePaneRouteIdentity(nextHref).routeKey,
-      title: "Same title",
+      label: "Same label",
     });
   });
 });
@@ -242,7 +245,7 @@ describe("PaneRuntimeProvider", () => {
   it.each([
     ["push", "onNavigatePane"],
     ["replace", "onReplacePane"],
-  ] as const)("passes title hints through router.%s", async (action, callbackName) => {
+  ] as const)("passes label hints through router.%s", async (action, callbackName) => {
     const onNavigatePane = vi.fn();
     const onReplacePane = vi.fn();
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
@@ -267,12 +270,12 @@ describe("PaneRuntimeProvider", () => {
       expect({ onNavigatePane, onReplacePane }[callbackName]).toHaveBeenCalledWith(
         "pane-1",
         MEDIA_HREF_1,
-        { titleHint: "Library Row Title" },
+        { labelHint: "Library Row Label" },
       );
     });
   });
 
-  it("passes title hints through openInNewPane", async () => {
+  it("passes label hints through openInNewPane", async () => {
     const onOpenInNewPane = vi.fn();
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
@@ -295,7 +298,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(onOpenInNewPane).toHaveBeenCalledWith(
         MEDIA_HREF_1,
-        "Library Row Title",
+        "Library Row Label",
         "reader-evidence",
       );
     });
@@ -326,7 +329,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
-        titleHint: "Library Row Title",
+        labelHint: "Library Row Label",
       });
     });
   });
@@ -356,7 +359,7 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(startViewTransition).not.toHaveBeenCalled();
       expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
-        titleHint: "Library Row Title",
+        labelHint: "Library Row Label",
       });
     });
   });
@@ -549,6 +552,7 @@ describe("PaneRuntimeProvider", () => {
       expect(onRequestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
         "reader-evidence",
+        screen.getByRole("button", { name: "Options" }),
       );
       expect(onSetSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",

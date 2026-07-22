@@ -98,7 +98,13 @@ function PaneSwitchConsumer() {
   const setPane = (paneId: string) =>
     setPaneChrome({
       paneId,
-      standingHead: paneId,
+      identityId: `${paneId}-identity`,
+      header: {
+        kind: "section",
+        standingHead: paneId,
+        folio: { kind: "none" },
+        pending: false,
+      },
       navigation: { canGoBack: false, canGoForward: false, onBack: () => {}, onForward: () => {} },
       options: [],
     });
@@ -154,7 +160,7 @@ describe("MobileChromeProvider", () => {
 
   it("reveals after a deliberate upward scroll of >= 16px once hidden", async () => {
     // 0,1: hide (down 100 -> 130). 2: records "up" direction (start = 120).
-    // 3: accumulates |100 - 120| = 20 >= REVEAL_TOLERANCE_PX (16). Still > 52.
+    // 3: accumulates |100 - 120| = 20 >= REVEAL_TOLERANCE_PX (16). Still > 60.
     renderConsumer([100, 130, 120, 100]);
 
     scrollTo(0);
@@ -170,8 +176,8 @@ describe("MobileChromeProvider", () => {
     );
   });
 
-  it("always shows when scrollTop is within the top reveal zone (<= 52)", async () => {
-    // Hide first, then a scroll into the top zone (40 <= 52) forces visible.
+  it("always shows when scrollTop is within the independent top zone (<= 60)", async () => {
+    // Hide first, then a scroll into the top zone (40 <= 60) forces visible.
     renderConsumer([100, 130, 40]);
 
     scrollTo(0);

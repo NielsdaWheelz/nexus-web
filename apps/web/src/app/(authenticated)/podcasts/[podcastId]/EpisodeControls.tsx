@@ -15,44 +15,48 @@ type EpisodeTranscriptController = ReturnType<
   typeof useEpisodeTranscriptController
 >;
 
+interface EpisodeTranscriptControls {
+  transcriptReasonByMediaId: EpisodeTranscriptController[
+    "transcriptReasonByMediaId"
+  ];
+  transcriptRequestForecastByMediaId: EpisodeTranscriptController[
+    "transcriptRequestForecastByMediaId"
+  ];
+  requestingTranscriptMediaIds: Pick<
+    EpisodeTranscriptController["requestingTranscriptMediaIds"],
+    "ids"
+  >;
+  expandedTranscriptMediaIds: Pick<
+    EpisodeTranscriptController["expandedTranscriptMediaIds"],
+    "ids"
+  >;
+  setTranscriptReasonByMediaId: EpisodeTranscriptController[
+    "setTranscriptReasonByMediaId"
+  ];
+  handleRequestTranscript: EpisodeTranscriptController[
+    "handleRequestTranscript"
+  ];
+}
+
 interface EpisodeControlsProps {
   episode: PodcastEpisodeMedia;
-  /** Whether this episode is audio-playable (playerDescriptor Present). */
-  isAudioEpisode: boolean;
-  /** Whether this episode is currently On Lectern. */
-  onLectern: boolean;
-  /** Disable "Play next" when it would target the active Lectern origin. */
-  playNextDisabled: boolean;
-  /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
-  lecternReady: boolean;
-  transcriptionAllowed: boolean;
-  billingDisabled: boolean;
   showNotesExpanded: boolean;
-  transcript: EpisodeTranscriptController;
-  onToggleShowNotes: (mediaId: string) => void;
-  onPlayNext: (mediaId: string) => void;
-  onAddToLectern: (mediaId: string) => void;
+  transcript: EpisodeTranscriptControls;
+  transcriptionAllowed: boolean;
 }
 
 /**
  * Pane-owned controls for one episode row, rendered in the row's expanded
  * region beneath the presenter-driven chrome. Owns only what the episode
- * presenter cannot emit: the show-notes toggle + preview, the transcript
- * request form (reason + submit + quota hint + status), and the queue actions.
+ * presenter cannot emit: expanded show notes and the transcript request form
+ * (reason + submit + quota hint + provisioning status). Stable commands live
+ * in the row ActionMenu.
  */
 export default function EpisodeControls({
   episode,
-  isAudioEpisode,
-  onLectern,
-  playNextDisabled,
-  lecternReady,
-  transcriptionAllowed,
-  billingDisabled,
   showNotesExpanded,
   transcript,
-  onToggleShowNotes,
-  onPlayNext,
-  onAddToLectern,
+  transcriptionAllowed,
 }: EpisodeControlsProps) {
   const canRequestTranscript =
     transcriptionAllowed && canRequestTranscriptForEpisode(episode);
@@ -75,18 +79,7 @@ export default function EpisodeControls({
   const showNotesText = episode.description_text?.trim() ?? "";
 
   return (
-    <div className={styles.episodeActions}>
-      {showNotesText ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          className={styles.showNotesToggleButton}
-          aria-label={`${showNotesExpanded ? "Hide" : "Show"} notes for ${episode.title}`}
-          onClick={() => onToggleShowNotes(episode.id)}
-        >
-          {showNotesExpanded ? "Hide notes" : "Show notes"}
-        </Button>
-      ) : null}
+    <div id={`episode-panel-${episode.id}`} className={styles.episodeActions}>
       {showNotesText && showNotesExpanded && (
         <span className={styles.episodeShowNotes}>
           <span className={styles.episodeShowNotesPreview} data-expanded="true">
@@ -94,46 +87,6 @@ export default function EpisodeControls({
           </span>
         </span>
       )}
-      {isAudioEpisode && (
-        <>
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-label={`Play next for ${episode.title}`}
-            disabled={playNextDisabled || !lecternReady}
-            onClick={() => {
-              onPlayNext(episode.id);
-            }}
-          >
-            Play next
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-label={`Add ${episode.title} to Lectern`}
-            disabled={!lecternReady}
-            onClick={() => {
-              onAddToLectern(episode.id);
-            }}
-          >
-            Add to Lectern
-          </Button>
-          {onLectern && <span className={styles.queueBadge}>On Lectern</span>}
-        </>
-      )}
-      {canRequestTranscript &&
-        !transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              transcript.expandedTranscriptMediaIds.add(episode.id);
-            }}
-            aria-label={`Request transcript for ${episode.title}`}
-          >
-            Request transcript...
-          </Button>
-        )}
       {canRequestTranscript &&
         transcript.expandedTranscriptMediaIds.ids.has(episode.id) && (
           <>
@@ -190,24 +143,9 @@ export default function EpisodeControls({
               )}
           </>
         )}
-      {!canRequestTranscript && !transcriptionAllowed && (
-        <span className={styles.transcriptQuotaWarning}>
-          {billingDisabled
-            ? "Billing is temporarily unavailable, so transcription upgrades are unavailable right now."
-            : "Transcription is included with AI Plus and AI Pro."}
-        </span>
-      )}
-      {!canRequestTranscript && transcriptionAllowed && (
+      {!canRequestTranscript && transcriptProvisioningInProgress && (
         <span className={styles.transcriptStatus}>
-          {episode.transcript_state === "ready"
-            ? "Transcript ready"
-            : episode.transcript_state === "partial"
-              ? "Transcript partially ready"
-              : transcriptProvisioningInProgress
-                ? "Transcript request in progress"
-                : episode.transcript_state === "unavailable"
-                  ? "Transcript unavailable"
-                  : "Transcript state unavailable"}
+          Transcript request in progress
         </span>
       )}
     </div>

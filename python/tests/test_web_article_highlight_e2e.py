@@ -354,21 +354,8 @@ class TestSharedHighlightVisibility:
         direct_db.register_cleanup("media", "id", media_id)
 
         # Bootstrap both users
-        me_a = e2e_client.get("/me", headers=auth_headers(user_a))
-        lib_a_id = me_a.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_a_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_a),
-        )
-
-        me_b = e2e_client.get("/me", headers=auth_headers(user_b))
-        lib_b_id = me_b.json()["data"]["default_library_id"]
-        e2e_client.post(
-            f"/libraries/{lib_b_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_b),
-        )
+        e2e_client.get("/me", headers=auth_headers(user_a))
+        e2e_client.get("/me", headers=auth_headers(user_b))
 
         # Create shared non-default library with both users and media
         shared_lib_id = uuid4()

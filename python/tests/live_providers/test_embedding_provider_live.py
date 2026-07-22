@@ -26,7 +26,7 @@ def test_live_embedding_provider_returns_configured_real_vectors(tmp_path):
     settings = get_settings()
     if settings.nexus_env.value == "test":
         pytest.fail("live provider gate must run with NEXUS_ENV=local, staging, or prod")
-    if not settings.enable_openai:
+    if not settings.openai_api_key:
         pytest.fail("ENABLE_OPENAI must be true for the live embedding provider gate")
     if not os.environ.get("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY must be set for the live embedding provider gate")

@@ -7,12 +7,13 @@ envelope. All paths are `/media/{media_id}/...`.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.media import MediaEvidenceResponse
 from nexus.schemas.reader import CursorWrite
@@ -72,19 +73,22 @@ def get_media_navigation(
 
 @router.get("/media/{media_id}/document-map")
 def get_reader_document_map(
+    request: Request,
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    include_unanchored: bool = Query(default=True),
-    limit: int = Query(default=500, ge=1, le=1000),
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """Get the reader Document Map aggregate."""
+    unsupported_params = sorted(request.query_params)
+    if unsupported_params:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Unsupported Document Map params: {', '.join(unsupported_params)}",
+        )
     result = reader_document_map.get_reader_document_map(
         db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        include_unanchored=include_unanchored,
-        limit=limit,
     )
     return ok(result)
 

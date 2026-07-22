@@ -3,7 +3,7 @@
 import {
   forwardRef,
   useImperativeHandle,
-  useMemo,
+  useLayoutEffect,
   useRef,
   type ReactNode,
 } from "react";
@@ -34,6 +34,7 @@ interface ChatSurfaceProps {
   /** Forwarded to each MessageRow for the Walk-the-sources entry verb. */
   onStartWalk?: (citations: CitationOut[], text: string) => void;
   historyLoading?: boolean;
+  initialTargetMessageId?: string | null;
   olderCursor?: string | null;
   onLoadOlder?: () => void;
   emptyState?: ReactNode;
@@ -41,10 +42,10 @@ interface ChatSurfaceProps {
   switchableLeafIds?: Set<string>;
   onSelectFork?: (fork: ForkOption) => void;
   onReplyToAssistant?: (draft: BranchDraft) => void;
-  onRetryAssistantResponse?: (assistantMessageId: string) => void;
-  retryingAssistantMessageIds?: Set<string>;
-  onResendAssistantResponse?: (assistantMessageId: string) => void;
-  resendingAssistantMessageIds?: Set<string>;
+  onRerunAssistantResponse?: (assistantMessageId: string) => void;
+  rerunningAssistantMessageIds?: Set<string>;
+  connectionLostAssistantIds?: Set<string>;
+  onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
@@ -60,6 +61,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       docentOverlay,
       onStartWalk,
       historyLoading = false,
+      initialTargetMessageId = null,
       olderCursor,
       onLoadOlder,
       emptyState,
@@ -67,10 +69,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       switchableLeafIds,
       onSelectFork,
       onReplyToAssistant,
-      onRetryAssistantResponse,
-      retryingAssistantMessageIds,
-      onResendAssistantResponse,
-      resendingAssistantMessageIds,
+      onRerunAssistantResponse,
+      rerunningAssistantMessageIds,
+      connectionLostAssistantIds,
+      onReconnectAssistant,
       onReaderSourceActivate,
     },
     ref,
@@ -87,26 +89,40 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       captureAnchor,
       scrollToMessage,
     } = useChatScroll(scrollportRef, transcriptRef, messages, historyLoading);
+    const requestedTargetMessageIdRef = useRef<string | null>(null);
+    const activatedTargetMessageIdRef = useRef<string | null>(null);
 
-    useImperativeHandle(
-      ref,
-      () => ({ captureAnchor, scrollToMessage }),
-      [captureAnchor, scrollToMessage],
-    );
-
-    const retryAssistantIdByUserId = useMemo(() => {
-      const retryByUserId = new Map<string, string>();
-      for (const message of messages) {
-        if (
-          message.role === "assistant" &&
-          message.can_retry_response === true &&
-          message.parent_message_id
-        ) {
-          retryByUserId.set(message.parent_message_id, message.id);
-        }
+    useLayoutEffect(() => {
+      if (requestedTargetMessageIdRef.current !== initialTargetMessageId) {
+        requestedTargetMessageIdRef.current = initialTargetMessageId;
+        activatedTargetMessageIdRef.current = null;
       }
-      return retryByUserId;
-    }, [messages]);
+      if (initialTargetMessageId === null) {
+        return;
+      }
+      const targetExists = messages.some(
+        (message) => message.id === initialTargetMessageId,
+      );
+      if (!targetExists) {
+        // An active-path mutation is optimistic. If it rolls back, forget the
+        // prior activation so a later successful retry can scroll again.
+        activatedTargetMessageIdRef.current = null;
+        return;
+      }
+      if (
+        historyLoading ||
+        activatedTargetMessageIdRef.current === initialTargetMessageId
+      ) {
+        return;
+      }
+      scrollToMessage(initialTargetMessageId);
+      activatedTargetMessageIdRef.current = initialTargetMessageId;
+    }, [historyLoading, initialTargetMessageId, messages, scrollToMessage]);
+
+    useImperativeHandle(ref, () => ({ captureAnchor, scrollToMessage }), [
+      captureAnchor,
+      scrollToMessage,
+    ]);
 
     return (
       <div className={styles.surface}>
@@ -150,11 +166,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 switchableLeafIds={switchableLeafIds}
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}
-                retryAssistantMessageId={retryAssistantIdByUserId.get(msg.id)}
-                retryingAssistantMessageIds={retryingAssistantMessageIds}
-                onRetryAssistantResponse={onRetryAssistantResponse}
-                resendingAssistantMessageIds={resendingAssistantMessageIds}
-                onResendAssistantResponse={onResendAssistantResponse}
+                onRerunAssistantResponse={onRerunAssistantResponse}
+                rerunningAssistantMessageIds={rerunningAssistantMessageIds}
+                connectionLostAssistantIds={connectionLostAssistantIds}
+                onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}
               />

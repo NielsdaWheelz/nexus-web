@@ -11,9 +11,9 @@ import {
   type ReactNode,
 } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
-import type { Folio } from "@/lib/ui/folio";
 
 export type PaneMobileChromeLockReason =
   | "reader-restore"
@@ -36,11 +36,10 @@ export interface PaneMobileChromeController {
 /** The active pane's chrome, published by the mounted PaneShell for the mobile top bar. */
 export interface MobilePaneChrome {
   paneId: string;
-  standingHead: string;
-  folio?: Folio;
-  folioPending?: boolean;
+  identityId: string;
+  header: PaneHeaderModel;
   navigation: SurfaceHeaderNavigation;
-  options: ActionMenuOption[];
+  options: readonly ActionDescriptor[];
 }
 
 /**
@@ -66,7 +65,8 @@ const VolatileChromeContext = createContext<VolatileChromeState | null>(null);
 const SCROLL_DELTA_EPSILON_PX = 1;
 const HIDE_TOLERANCE_PX = 24;
 const REVEAL_TOLERANCE_PX = 16;
-const TOP_REVEAL_ZONE_PX = 52; // = --appnav-bar-height; keep the bar shown near the top.
+// Scroll policy, deliberately independent from the CSS top-bar height.
+const TOP_ALWAYS_VISIBLE_SCROLL_PX = 60;
 
 export function MobileChromeProvider({ children }: { children: ReactNode }) {
   const isMobile = useIsMobileViewport();
@@ -117,7 +117,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
       const delta = scrollTop - lastScrollTopRef.current;
       lastScrollTopRef.current = scrollTop;
 
-      if (scrollTop <= TOP_REVEAL_ZONE_PX) {
+      if (scrollTop <= TOP_ALWAYS_VISIBLE_SCROLL_PX) {
         setHidden(false);
         scrollDirectionRef.current = null;
         directionStartRef.current = scrollTop;

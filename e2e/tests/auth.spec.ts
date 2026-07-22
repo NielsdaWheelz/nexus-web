@@ -6,6 +6,10 @@ import {
 } from "./provider-roundtrip";
 import { bootstrapMagicLinkSession } from "./auth-bootstrap";
 import { signOutViaAccountMenu } from "./app-nav";
+import {
+  AUTHENTICATED_HOME_PATH,
+  isAuthenticatedHome,
+} from "./app-routes";
 
 async function expectLoginControls(page: Page) {
   await expect(
@@ -22,13 +26,13 @@ async function expectLoginControls(page: Page) {
 test.describe("authentication", () => {
   test("authenticated user lands in the app", async ({ page }) => {
     await page.goto("/");
-    await expect(page).not.toHaveURL(/login/);
-    await expect(page.getByRole("link", { name: /libraries/i })).toBeVisible();
+    await expect(page).toHaveURL(isAuthenticatedHome);
+    await expect(page.getByRole("link", { name: /lectern/i })).toBeVisible();
   });
 
   test("authenticated user is redirected away from login", async ({ page }) => {
     await page.goto("/login");
-    await expect(page).toHaveURL(/\/libraries/);
+    await expect(page).toHaveURL(isAuthenticatedHome);
   });
 
   test("session persistence across reload", async ({ page }) => {
@@ -69,7 +73,7 @@ test.describe("authentication", () => {
     });
     const page = await context.newPage();
     try {
-      await page.goto("/libraries");
+      await page.goto(AUTHENTICATED_HOME_PATH);
       await expect(page).toHaveURL(/\/login/);
       const redirectedLoginUrl = new URL(page.url());
       expect(redirectedLoginUrl.pathname).toBe("/login");

@@ -1,39 +1,29 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "@/lib/api/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  addMediaFromUrl,
+  decodeFromUrlResponse,
+  decodeIngestResponse,
   getFileUploadError,
-  refreshMediaSource,
-  retryMediaMetadata,
-  retryMediaSource,
+  matchesAcceptedUploadIdentity,
+  MediaIngestionContractDefect,
+  projectUploadInitResponse,
+  projectUploadReference,
   uploadIngestFile,
 } from "./ingestionClient";
 
-vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
-    "@/lib/api/client",
-  );
+afterEach(() => vi.restoreAllMocks());
+
+function acceptedFields(overrides: Record<string, unknown> = {}) {
   return {
-    ...actual,
-    apiFetch: vi.fn(),
+    media_id: "media-1",
+    source_attempt_id: "attempt-1",
+    source_type: "uploaded_pdf_file",
+    source_attempt_status: "queued",
+    idempotency_outcome: "created",
+    processing_status: "pending",
+    ingest_enqueued: true,
+    ...overrides,
   };
-});
-
-const apiFetchMock = vi.mocked(apiFetch);
-const fetchMock = vi.spyOn(globalThis, "fetch");
-
-const capabilities = {
-  can_read: false,
-  can_highlight: false,
-  can_quote: false,
-  can_search: false,
-  can_play: false,
-  can_download_file: false,
-  can_delete: true,
-  can_retry: false,
-  can_refresh_source: false,
-  can_retry_metadata: false,
-};
+}
 
 describe("getFileUploadError", () => {
   it("accepts PDF and EPUB files inside the upload limits", () => {
@@ -51,16 +41,21 @@ describe("getFileUploadError", () => {
     ).toBeNull();
   });
 
-  it("rejects unsupported files before upload initialization", () => {
+  it("rejects unsupported and empty files before upload initialization", () => {
     expect(
       getFileUploadError(
         new File(["hello"], "notes.txt", { type: "text/plain" }),
       ),
     ).toBe("Only PDF and EPUB files are supported.");
+    expect(
+      getFileUploadError(
+        new File([], "empty.pdf", { type: "application/pdf" }),
+      ),
+    ).toBe("PDF files must not be empty.");
   });
 
   it("rejects files above the product upload caps", () => {
-    const file = new File([""], "book.epub", { type: "application/epub+zip" });
+    const file = new File(["x"], "book.epub", { type: "application/epub+zip" });
     Object.defineProperty(file, "size", { value: 50 * 1024 * 1024 + 1 });
 
     expect(getFileUploadError(file)).toBe(
@@ -69,155 +64,318 @@ describe("getFileUploadError", () => {
   });
 });
 
-describe("source ingest actions", () => {
-  beforeEach(() => {
-    apiFetchMock.mockReset();
-    fetchMock.mockReset();
-  });
-
-  it("posts the source retry stage and maps the shared source response", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      data: {
-        media_id: "media-1",
-        source_attempt_id: "attempt-1",
-        source_type: "generic_web_url",
-        source_attempt_status: "queued",
-        idempotency_outcome: "retrying",
-        processing_status: "extracting",
-        ingest_enqueued: true,
-        capabilities,
-      },
-    });
-
-    await expect(
-      retryMediaSource("media-1", { idempotencyKey: "retry-key-1" }),
-    ).resolves.toMatchObject({
+describe("source ingest response decoding", () => {
+  it("derives URL reuse from the idempotency outcome", () => {
+    expect(
+      decodeFromUrlResponse({
+        data: acceptedFields({ idempotency_outcome: "reused" }),
+      }),
+    ).toMatchObject({
       mediaId: "media-1",
       sourceAttemptId: "attempt-1",
-      sourceAttemptStatus: "queued",
-      idempotencyOutcome: "retrying",
-      processingStatus: "extracting",
-      ingestEnqueued: true,
-      capabilities,
-    });
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/media/media-1/retry", {
-      method: "POST",
-      headers: { "Idempotency-Key": "retry-key-1" },
-      body: JSON.stringify({ from_stage: "source" }),
+      idempotencyOutcome: "reused",
+      duplicate: true,
+      processingStatus: "pending",
     });
   });
 
-  it("posts refresh through the shared source endpoint contract", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      data: {
-        media_id: "media-1",
-        source_attempt_id: "attempt-2",
-        source_type: "generic_web_url",
-        source_attempt_status: "failed",
-        idempotency_outcome: "refreshed",
-        processing_status: "failed",
-        ingest_enqueued: false,
-        capabilities: { ...capabilities, can_retry: true },
-      },
-    });
+  it("takes upload deduplication from the confirm response", () => {
+    expect(
+      decodeIngestResponse({ data: acceptedFields({ duplicate: true }) }),
+    ).toMatchObject({ duplicate: true, ingestEnqueued: true });
+  });
 
-    await expect(
-      refreshMediaSource("media-1", { idempotencyKey: "refresh-key-1" }),
-    ).resolves.toMatchObject({
+  it("defects on invalid same-system response fields", () => {
+    expect(() =>
+      decodeFromUrlResponse({
+        data: acceptedFields({ processing_status: "invented" }),
+      }),
+    ).toThrow(MediaIngestionContractDefect);
+    expect(() =>
+      decodeFromUrlResponse({
+        data: acceptedFields({ source_attempt_status: "invented" }),
+      }),
+    ).toThrow("unsupported source_attempt_status");
+    expect(() => decodeIngestResponse({ data: acceptedFields() })).toThrow(
+      "duplicate must be a boolean",
+    );
+  });
+});
+
+describe("upload init outcome projection", () => {
+  it("requires upload when init returns a signed URL", () => {
+    expect(
+      projectUploadInitResponse({
+        data: acceptedFields({
+          source_attempt_status: "accepted",
+          ingest_enqueued: false,
+          upload_url: "https://uploads.example/paper.pdf",
+        }),
+      }),
+    ).toEqual({
+      kind: "UploadRequired",
       mediaId: "media-1",
-      sourceAttemptId: "attempt-2",
-      sourceAttemptStatus: "failed",
-      idempotencyOutcome: "refreshed",
-      processingStatus: "failed",
-      ingestEnqueued: false,
-      capabilities: { ...capabilities, can_retry: true },
-    });
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/media/media-1/refresh", {
-      method: "POST",
-      headers: { "Idempotency-Key": "refresh-key-1" },
+      sourceAttemptId: "attempt-1",
+      uploadUrl: "https://uploads.example/paper.pdf",
     });
   });
 
-  it("keeps metadata retry separate from source ingest", async () => {
-    apiFetchMock.mockResolvedValueOnce({ data: { ok: true } });
-
-    await retryMediaMetadata("media-1");
-
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/media/media-1/retry", {
-      method: "POST",
-      body: JSON.stringify({ from_stage: "metadata" }),
-    });
-  });
-
-  it("generates an idempotency key for URL source ingest by default", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      data: {
-        media_id: "media-1",
-        source_attempt_id: "attempt-1",
-        source_type: "generic_web_url",
-        source_attempt_status: "queued",
-        idempotency_outcome: "created",
-        processing_status: "pending",
-        ingest_enqueued: true,
+  it("preserves the actual accepted processing failure when signing failed", () => {
+    expect(
+      projectUploadInitResponse({
+        data: acceptedFields({
+          source_attempt_status: "failed",
+          processing_status: "failed",
+          ingest_enqueued: false,
+          upload_url: null,
+        }),
+      }),
+    ).toMatchObject({
+      kind: "Accepted",
+      result: {
+        mediaId: "media-1",
+        sourceAttemptStatus: "failed",
+        processingStatus: "failed",
+        ingestEnqueued: false,
       },
     });
+  });
 
-    await addMediaFromUrl({
-      url: "https://example.com/article",
-      libraryIds: ["library-1"],
+  it("preserves reused acceptance when init replays after upload confirmation", () => {
+    expect(
+      projectUploadInitResponse({
+        data: acceptedFields({
+          source_attempt_status: "queued",
+          idempotency_outcome: "reused",
+          upload_url: null,
+        }),
+      }),
+    ).toMatchObject({
+      kind: "Accepted",
+      result: {
+        idempotencyOutcome: "reused",
+        duplicate: true,
+      },
     });
+  });
 
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/media/from-url", {
-      method: "POST",
-      headers: { "Idempotency-Key": expect.stringMatching(/^media-url-/) },
-      body: JSON.stringify({
-        url: "https://example.com/article",
-        library_ids: ["library-1"],
+  it("keeps accepted identity uncertain while confirmation is in progress", () => {
+    expect(
+      projectUploadInitResponse({
+        data: acceptedFields({
+          source_attempt_status: "accepted",
+          ingest_enqueued: false,
+          upload_url: null,
+        }),
+      }),
+    ).toMatchObject({
+      kind: "AcceptedUncertain",
+      mediaId: "media-1",
+      sourceAttemptId: "attempt-1",
+      feedback: { severity: "warning" },
+    });
+  });
+});
+
+describe("upload reference projection", () => {
+  const processingFailureFeedback = {
+    severity: "warning" as const,
+    title: "Attachment was added, but source processing failed.",
+  };
+
+  it("projects settled, processing-failed, and uncertain accepted identities", () => {
+    const settled = decodeIngestResponse({
+      data: acceptedFields({
+        duplicate: false,
+        processing_status: "ready_for_reading",
       }),
     });
+    const failed = decodeIngestResponse({
+      data: acceptedFields({ duplicate: false, processing_status: "failed" }),
+    });
+    const uncertainFeedback = {
+      severity: "warning" as const,
+      title: "Upload status could not be confirmed.",
+    };
+
+    expect(
+      projectUploadReference({
+        result: { kind: "Accepted", result: settled },
+        processingFailureFeedback,
+      }),
+    ).toEqual({ mediaId: "media-1", warning: null });
+    expect(
+      projectUploadReference({
+        result: { kind: "Accepted", result: failed },
+        processingFailureFeedback,
+      }),
+    ).toEqual({ mediaId: "media-1", warning: processingFailureFeedback });
+    expect(
+      projectUploadReference({
+        result: {
+          kind: "AcceptedUncertain",
+          mediaId: "media-uncertain",
+          sourceAttemptId: "attempt-uncertain",
+          feedback: uncertainFeedback,
+        },
+        processingFailureFeedback,
+      }),
+    ).toEqual({ mediaId: "media-uncertain", warning: uncertainFeedback });
   });
 
-  it("maps a saved upload-init signing failure without direct upload", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      data: {
-        media_id: "media-1",
-        source_attempt_id: "attempt-1",
-        source_type: "uploaded_pdf_file",
-        source_attempt_status: "failed",
-        idempotency_outcome: "created",
-        processing_status: "failed",
-        ingest_enqueued: false,
-        upload_url: null,
-        expires_at: "2026-06-04T12:00:00Z",
-      },
+  it("matches both durable upload identity fields", () => {
+    const accepted = {
+      kind: "Accepted" as const,
+      result: decodeIngestResponse({
+        data: acceptedFields({ duplicate: false }),
+      }),
+    };
+    const uncertain = {
+      kind: "AcceptedUncertain" as const,
+      mediaId: "media-1",
+      sourceAttemptId: "attempt-1",
+      feedback: { severity: "warning" as const, title: "Status unknown" },
+    };
+
+    for (const result of [accepted, uncertain]) {
+      expect(
+        matchesAcceptedUploadIdentity(result, {
+          mediaId: "media-1",
+          sourceAttemptId: "attempt-1",
+        }),
+      ).toBe(true);
+      expect(
+        matchesAcceptedUploadIdentity(result, {
+          mediaId: "media-other",
+          sourceAttemptId: "attempt-1",
+        }),
+      ).toBe(false);
+      expect(
+        matchesAcceptedUploadIdentity(result, {
+          mediaId: "media-1",
+          sourceAttemptId: "attempt-other",
+        }),
+      ).toBe(false);
+    }
+  });
+});
+
+describe("signed upload failure classification", () => {
+  const file = new File(["%PDF-1.7"], "paper.pdf", {
+    type: "application/pdf",
+  });
+
+  function installUploadFailure(error: unknown) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/media/upload/init")) {
+        return Response.json({
+          data: acceptedFields({
+            source_attempt_status: "accepted",
+            ingest_enqueued: false,
+            upload_url: "https://uploads.example/paper.pdf",
+            expires_at: "2026-01-01T00:00:00Z",
+          }),
+        });
+      }
+      if (url === "https://uploads.example/paper.pdf") throw error;
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  }
+
+  it("publishes accepted identity and defects on an unclassified PUT failure", async () => {
+    installUploadFailure(new Error("programmer failure"));
+    const onAcceptedIdentity = vi.fn();
+
+    await expect(
+      uploadIngestFile({ file, libraryIds: [], onAcceptedIdentity }),
+    ).rejects.toBeInstanceOf(MediaIngestionContractDefect);
+    expect(onAcceptedIdentity).toHaveBeenCalledWith({
+      mediaId: "media-1",
+      sourceAttemptId: "attempt-1",
+    });
+  });
+
+  it("defects on a definitive signed-PUT HTTP rejection", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/media/upload/init")) {
+        return Response.json({
+          data: acceptedFields({
+            source_attempt_status: "accepted",
+            ingest_enqueued: false,
+            upload_url: "https://uploads.example/paper.pdf",
+          }),
+        });
+      }
+      if (url === "https://uploads.example/paper.pdf") {
+        return new Response(null, { status: 503 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await expect(uploadIngestFile({ file, libraryIds: [] })).rejects.toThrow(
+      "Signed upload returned unexpected status 503",
+    );
+  });
+
+  it.each([
+    ["TypeError", new TypeError("network failed")],
+    [
+      "non-abort DOMException",
+      new DOMException("network failed", "NetworkError"),
+    ],
+  ])("keeps accepted identity uncertain for %s", async (_name, error) => {
+    installUploadFailure(error);
+
+    await expect(
+      uploadIngestFile({ file, libraryIds: [] }),
+    ).resolves.toMatchObject({
+      kind: "AcceptedUncertain",
+      mediaId: "media-1",
+      sourceAttemptId: "attempt-1",
+    });
+  });
+});
+
+describe("upload confirmation identity", () => {
+  it("defects when confirmation changes the durable init identity", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/media/upload/init")) {
+        return Response.json({
+          data: acceptedFields({
+            source_attempt_status: "accepted",
+            ingest_enqueued: false,
+            upload_url: "https://uploads.example/paper.pdf",
+          }),
+        });
+      }
+      if (
+        url === "https://uploads.example/paper.pdf" &&
+        init?.method === "PUT"
+      ) {
+        return new Response(null, { status: 200 });
+      }
+      if (url.endsWith("/api/media/media-1/ingest")) {
+        return Response.json({
+          data: acceptedFields({
+            media_id: "media-other",
+            duplicate: false,
+          }),
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
     });
 
     await expect(
       uploadIngestFile({
-        file: new File(["%PDF-1.7"], "paper.pdf", { type: "application/pdf" }),
+        file: new File(["%PDF-1.7"], "paper.pdf", {
+          type: "application/pdf",
+        }),
         libraryIds: [],
-        idempotencyKey: "upload-key-1",
+        idempotencyKey: "upload-key",
       }),
-    ).resolves.toMatchObject({
-      mediaId: "media-1",
-      sourceAttemptId: "attempt-1",
-      sourceAttemptStatus: "failed",
-      processingStatus: "failed",
-      ingestEnqueued: false,
-    });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/media/upload/init", {
-      method: "POST",
-      headers: { "Idempotency-Key": "upload-key-1" },
-      body: JSON.stringify({
-        kind: "pdf",
-        filename: "paper.pdf",
-        content_type: "application/pdf",
-        size_bytes: 8,
-        library_ids: [],
-      }),
-    });
+    ).rejects.toThrow("changed the accepted upload identity");
   });
 });

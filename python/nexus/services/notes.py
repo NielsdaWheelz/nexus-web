@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +17,6 @@ from nexus.db.models import (
     DailyNotePage,
     NoteBlock,
     Page,
-    PinnedObjectRef,
     ResourceEdge,
 )
 from nexus.db.retries import retry_serializable
@@ -31,7 +31,7 @@ from nexus.schemas.notes import (
     QuickCaptureRequest,
     UpdatePageRequest,
 )
-from nexus.services import note_bodies
+from nexus.services import note_bodies, passage_anchors
 from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
@@ -57,6 +57,71 @@ from nexus.services.resource_mutation_replay import (
 pm_doc_from_text = note_bodies.pm_doc_from_text
 pm_doc_from_markdown_projection = note_bodies.pm_doc_from_markdown_projection
 text_from_pm_json = note_bodies.text_from_pm_json
+
+
+@dataclass(frozen=True, slots=True)
+class RecentNoteAnchorFact:
+    """One exact Page or NoteBlock edit fact."""
+
+    ref: ResourceRef
+    activity_at: datetime
+
+
+def recent_note_anchor_facts(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> tuple[RecentNoteAnchorFact, ...]:
+    """Recent viewer-owned NoteBlock and Page edits in one bounded read.
+
+    Each source contributes at most ``limit`` rows so the contextual consumer
+    can apply its own cross-source priority without either source crowding the
+    other out before composition. Returned refs stay exact; note/page facts do
+    not normalize to media.
+    """
+    if limit < 1:
+        return ()
+    rows = db.execute(
+        text(
+            """
+            WITH recent_note_blocks AS (
+                SELECT
+                    'note_block'::text AS resource_scheme,
+                    id AS resource_id,
+                    updated_at AS activity_at
+                FROM note_blocks
+                WHERE user_id = :viewer_id
+                ORDER BY updated_at DESC, id ASC
+                LIMIT :limit
+            ),
+            recent_pages AS (
+                SELECT
+                    'page'::text AS resource_scheme,
+                    id AS resource_id,
+                    updated_at AS activity_at
+                FROM pages
+                WHERE user_id = :viewer_id
+                ORDER BY updated_at DESC, id ASC
+                LIMIT :limit
+            )
+            SELECT resource_scheme, resource_id, activity_at
+            FROM recent_note_blocks
+            UNION ALL
+            SELECT resource_scheme, resource_id, activity_at
+            FROM recent_pages
+            ORDER BY activity_at DESC, resource_scheme ASC, resource_id ASC
+            """
+        ),
+        {"viewer_id": viewer_id, "limit": limit},
+    ).mappings()
+    return tuple(
+        RecentNoteAnchorFact(
+            ref=ResourceRef(
+                scheme=cast(ResourceScheme, str(row["resource_scheme"])),
+                id=UUID(str(row["resource_id"])),
+            ),
+            activity_at=row["activity_at"],
+        )
+        for row in rows
+    )
 
 
 def list_pages(db: Session, viewer_id: UUID) -> list[NotePageSummaryOut]:
@@ -110,13 +175,6 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     ref = _page_ref(page.id)
     delete_edges_for_deleted_resource(db, ref=ref)
-    db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "page",
-            PinnedObjectRef.object_id == page.id,
-        )
-    )
     db.execute(
         delete(DailyNotePage).where(
             DailyNotePage.user_id == viewer_id,
@@ -364,6 +422,9 @@ def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
         return
     ref = _note_ref(block.id)
     delete_edges_for_deleted_resource(db, ref=ref)
+    # True owner deletion: passage anchors owned by this block (and edges/view
+    # states touching them) die with it. Refresh/reindex never runs this.
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=block.id)
     delete_content_index(db, owner=IndexOwner("note_block", block.id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(block)
@@ -456,13 +517,8 @@ def delete_highlight_note(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     ref = _note_ref(existing.id)
     delete_edges_for_deleted_resource(db, ref=ref)
-    db.execute(
-        delete(PinnedObjectRef).where(
-            PinnedObjectRef.user_id == viewer_id,
-            PinnedObjectRef.object_type == "note_block",
-            PinnedObjectRef.object_id == existing.id,
-        )
-    )
+    # True owner deletion: passage anchors owned by this block die with it.
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(existing)
     db.commit()

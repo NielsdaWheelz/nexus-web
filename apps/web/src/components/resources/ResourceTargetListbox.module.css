@@ -1,0 +1,111 @@
+/* Shared target-search result list (Connections, LinkTargetDialog, notes
+   autocomplete). Text-forward rows, no per-row border/card. */
+
+.list {
+  max-height: 20rem;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+/* While a caller's commit is in flight: dim the settled rows and stop pointer
+   interaction so a second click can't fire a duplicate submit. */
+.list[data-busy] {
+  opacity: 0.6;
+  pointer-events: none;
+  cursor: progress;
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.option[data-active="true"] {
+  background: var(--accent-muted);
+}
+
+.icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--ink-muted);
+}
+
+.body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.label {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.meta b {
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+}
+
+.linkedBadge {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.status {
+  padding: var(--space-3);
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.errorRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.errorText {
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.tryAgain {
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.tryAgain:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.tryAgain:focus-visible {
+  outline: var(--focus-ring-width) solid var(--ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-xs);
+}

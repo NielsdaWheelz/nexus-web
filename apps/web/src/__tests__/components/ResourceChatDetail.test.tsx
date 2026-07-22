@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResourceChatDetail from "@/components/chat/ResourceChatDetail";
+import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import type { ConversationMessage } from "@/lib/conversations/types";
 
@@ -19,36 +20,21 @@ vi.mock("@/components/chat/useChatRunTail", () => ({
 
 const timestamp = "2026-01-01T00:00:00Z";
 
-const MODELS = [
-  {
-    id: "gpt-5-mini",
-    provider: "openai",
-    provider_display_name: "OpenAI",
-    model_name: "gpt-5-mini",
-    model_display_name: "GPT-5 mini",
-    model_tier: "light",
-    reasoning_modes: ["default"],
-    max_context_tokens: 128000,
-    available_via: "platform",
-    provider_rank: 0,
-    model_rank: 0,
-    is_default: true,
-    available_key_modes: ["auto", "platform_only"],
-    capabilities: {
-      prompt_cache: {
-        mode: "keyed_ttl",
-        supported: true,
-        key_required: true,
-        ttl_options: ["5m", "1h"],
-      },
-      streaming: true,
-      tool_calling: true,
-      structured_output: true,
-      structured_output_streaming: false,
-      reasoning_continuation: true,
+const LLM_PROFILES = {
+  default_profile_id: "balanced",
+  profiles: [
+    {
+      id: "balanced",
+      label: "Balanced",
+      description: "Everyday balanced profile",
+      provider_label: "Nexus AI",
+      model_label: "Sonnet",
+      reasoning_options: [{ id: "default", label: "Default" }],
+      default_reasoning_option_id: "default",
+      privacy_notice: "Processed by Nexus AI.",
     },
-  },
-];
+  ],
+};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -108,8 +94,7 @@ function message(
           }
         : null,
     status,
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -162,8 +147,8 @@ function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessa
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, _init?: RequestInit) => {
       const path = pathOf(input);
-      if (path === "/api/models") {
-        return jsonResponse({ data: MODELS });
+      if (path === "/api/llm-profiles") {
+        return jsonResponse({ data: LLM_PROFILES });
       }
       if (path === `/api/conversations/${CID}`) {
         return jsonResponse({
@@ -192,12 +177,15 @@ function stubFetch(history: ConversationMessage[] = [userMessage, assistantMessa
 
 describe("ResourceChatDetail", () => {
   beforeEach(() => {
+    __resetChatProfilesCacheForTests();
     tailMocks.tailChatRun.mockReset();
     tailMocks.abortAll.mockReset();
     tailMocks.useChatRunTail.mockReset();
     tailMocks.useChatRunTail.mockReturnValue({
       tailChatRun: tailMocks.tailChatRun,
       abortAll: tailMocks.abortAll,
+      lostConnections: {},
+      reconnectRun: vi.fn(),
     });
     stubFetch();
   });
@@ -325,8 +313,8 @@ describe("ResourceChatDetail", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
         const method = init?.method ?? "GET";
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === `/api/conversations/${CID}` && method === "GET") {
           return jsonResponse({
@@ -368,8 +356,8 @@ describe("ResourceChatDetail", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
         const method = init?.method ?? "GET";
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === `/api/conversations/${CID}` && method === "GET") {
           return jsonResponse({
@@ -522,8 +510,8 @@ describe("ResourceChatDetail", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
         const method = init?.method ?? "GET";
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === `/api/conversations/${CID}` && method === "GET") {
           return jsonResponse({
@@ -627,8 +615,8 @@ describe("ResourceChatDetail", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
         const method = init?.method ?? "GET";
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === `/api/conversations/${CID}` && method === "GET") {
           return jsonResponse({
@@ -754,8 +742,8 @@ describe("ResourceChatDetail", () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
         const method = init?.method ?? "GET";
-        if (path === "/api/models") {
-          return jsonResponse({ data: MODELS });
+        if (path === "/api/llm-profiles") {
+          return jsonResponse({ data: LLM_PROFILES });
         }
         if (path === `/api/conversations/${CID}` && method === "GET") {
           return jsonResponse({

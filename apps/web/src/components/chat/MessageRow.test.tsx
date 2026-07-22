@@ -73,8 +73,7 @@ function message(
           }
         : null,
     status,
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };

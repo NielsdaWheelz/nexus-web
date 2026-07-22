@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { isAuthenticatedHome } from "./app-routes";
 
 const GITHUB_USERNAME = process.env.E2E_GITHUB_USERNAME;
 const GITHUB_PASSWORD = process.env.E2E_GITHUB_PASSWORD;
@@ -72,18 +73,25 @@ async function approveGitHubOAuthAppIfPrompted(page: Page) {
 
 export async function runGitHubProviderRoundTrip(page: Page) {
   await page.getByRole("button", { name: /continue with github/i }).click();
-  await page.waitForURL(/github\.com|\/auth\/callback|\/libraries/, {
-    timeout: 120_000,
-  });
+  await page.waitForURL(
+    (url) =>
+      url.hostname === "github.com" ||
+      url.pathname === "/auth/callback" ||
+      isAuthenticatedHome(url),
+    { timeout: 120_000 },
+  );
 
   await submitGitHubLoginForm(page);
   await submitGitHubOtpIfNeeded(page);
   await approveGitHubOAuthAppIfPrompted(page);
 
-  await page.waitForURL(/\/auth\/callback|\/libraries/, { timeout: 120_000 });
+  await page.waitForURL(
+    (url) => url.pathname === "/auth/callback" || isAuthenticatedHome(url),
+    { timeout: 120_000 },
+  );
   if (page.url().includes("/auth/callback")) {
-    await page.waitForURL(/\/libraries/, { timeout: 120_000 });
+    await page.waitForURL(isAuthenticatedHome, { timeout: 120_000 });
   }
 
-  await expect(page).toHaveURL(/\/libraries/);
+  await expect(page).toHaveURL(isAuthenticatedHome);
 }

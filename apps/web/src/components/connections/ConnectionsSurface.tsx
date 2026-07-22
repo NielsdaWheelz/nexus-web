@@ -1,13 +1,16 @@
 "use client";
 
 import {
+  Component,
+  createRef,
   useCallback,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
+  type KeyboardEvent,
 } from "react";
 import { Link, Paperclip, Sparkles, Trash2, X } from "lucide-react";
 import {
@@ -15,33 +18,39 @@ import {
   toFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import ObjectRefAutocomplete from "@/components/notes/ObjectRefAutocomplete";
+import ResourceTargetListbox, {
+  resourceTargetKey,
+  resourceTargetOptionId,
+} from "@/components/resources/ResourceTargetListbox";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
+import { isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isAbortError } from "@/lib/errors";
 import {
   getFileUploadError,
-  isFailedSourceIngest,
+  isMediaIngestionDefect,
+  projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
 import {
-  createUserEdge,
-  deleteUserEdge,
-  type EdgeKind,
-  type EdgeOrigin,
-} from "@/lib/resourceGraph/edges";
-import {
   queryConnections,
   type ConnectionOut,
+  type EdgeKind,
+  type EdgeOrigin,
 } from "@/lib/resourceGraph/connections";
 import {
+  createLink,
+  deleteLink,
+  type LinkTarget,
+} from "@/lib/resourceGraph/links";
+import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
+import {
   formatResourceRef,
-  parseResourceRef,
+  type ResourceRef,
 } from "@/lib/resourceGraph/resourceRef";
 import {
   activateResource,
@@ -50,17 +59,14 @@ import {
 } from "@/lib/resources/activation";
 import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities.generated";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
+import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
+import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import {
   dismissSynapseEdge,
   fetchSynapseScanStatus,
   requestSynapseScan,
 } from "@/lib/synapse";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
-import {
-  searchObjectRefs,
-  type HydratedObjectRef,
-  type ObjectRef,
-} from "@/lib/objectRefs";
 import styles from "./ConnectionsSurface.module.css";
 
 /** The endpoint of a connection that is NOT the object being viewed. */
@@ -103,19 +109,16 @@ const CONNECTION_PANEL_KINDS: EdgeKind[] = [
 ];
 
 export default function ConnectionsSurface({
-  objectRef,
+  resourceRef,
   onOpenRoute,
 }: {
-  objectRef: ObjectRef;
+  resourceRef: ResourceRef;
   onOpenRoute?: (href: string, openInNewPane: boolean) => void;
 }) {
   const composerId = useId();
   const [composerOpen, setComposerOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
-  const selfRef = formatResourceRef({
-    scheme: objectRef.objectType,
-    id: objectRef.objectId,
-  });
+  const selfRef = formatResourceRef(resourceRef);
   const connectionsResource = useResource<{ data: ConnectionOut[] }>({
     cacheKey: `${selfRef}:${refreshTick}`,
     load: async (signal) => ({
@@ -174,7 +177,7 @@ export default function ConnectionsSurface({
   }, []);
 
   const scannable = (SYNAPSE_SOURCE_SCHEMES as readonly string[]).includes(
-    objectRef.objectType,
+    resourceRef.scheme,
   );
   const [scanVoice, setScanVoice] = useState<string | null>(null);
   const scanBaselineRef = useRef<number | null>(null);
@@ -222,7 +225,7 @@ export default function ConnectionsSurface({
   const openConnection = useCallback(
     (connection: Connection, openInNewPane: boolean) => {
       activateResource(connection.activation, {
-        label: connection.label,
+        labelHint: connection.label,
         openInNewPane: (href) => onOpenRoute?.(href, true),
         navigate: (href) => onOpenRoute?.(href, false),
         newPane: openInNewPane,
@@ -243,7 +246,7 @@ export default function ConnectionsSurface({
             aria-controls={composerId}
             onClick={() => setComposerOpen((open) => !open)}
           >
-            ＋ Connect
+            ＋ Link
           </button>
           {scannable ? (
             <Button
@@ -270,14 +273,13 @@ export default function ConnectionsSurface({
       ) : scanVoice ? (
         <p className={styles.scanVoice}>{scanVoice}</p>
       ) : null}
-      {composerOpen ? (
-        <ConnectionComposer
-          id={composerId}
-          selfRef={selfRef}
-          onChanged={reloadConnections}
-          autoFocus
-        />
-      ) : null}
+      <ConnectionComposer
+        key={selfRef}
+        id={composerId}
+        selfRef={selfRef}
+        onChanged={reloadConnections}
+        active={composerOpen}
+      />
       {loading ? (
         <FeedbackNotice severity="info" title="Loading connections..." />
       ) : null}
@@ -337,6 +339,7 @@ export default function ConnectionsSurface({
                 {connection.origin === "user" ? (
                   <DeleteConnectionButton
                     edgeId={connection.edgeId}
+                    kind={connection.kind}
                     label={connection.label}
                     onChanged={reloadConnections}
                   />
@@ -356,81 +359,138 @@ export default function ConnectionsSurface({
   );
 }
 
+function toLinkTarget(target: ResourceTarget): LinkTarget {
+  return target.kind === "resource"
+    ? { kind: "resource", ref: target.item.ref }
+    : { kind: "passage", candidate_ref: target.candidateRef };
+}
+
+function targetLabel(target: ResourceTarget): string {
+  return target.kind === "resource" ? target.item.label : target.label;
+}
+
+function targetRefOf(target: ResourceTarget): string {
+  return target.kind === "resource" ? target.item.ref : target.candidateRef;
+}
+
 function ConnectionComposer({
   id,
   selfRef,
   onChanged,
-  autoFocus = false,
+  active,
 }: {
   id: string;
   selfRef: string;
   onChanged: () => void;
-  autoFocus?: boolean;
+  active: boolean;
 }) {
-  const autocompleteId = useId();
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const listboxId = useId();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<EdgeKind>("context");
-  const [selected, setSelected] = useState<HydratedObjectRef | null>(null);
-  const [results, setResults] = useState<HydratedObjectRef[]>([]);
-  const [activeResultKey, setActiveResultKey] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ResourceTarget | null>(null);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const trimmedQuery = query.trim();
-  const rawRef = useMemo(() => parseResourceRef(trimmedQuery), [trimmedQuery]);
 
-  // The composer only mounts when the "＋ Connect" disclosure opens it, so focus
+  // Once a target is picked the field shows its label but the picker closes —
+  // an empty search key disables `useResourceTargetSearch` entirely.
+  const {
+    targets: fetchedTargets,
+    loading,
+    error: searchError,
+  } = useResourceTargetSearch({
+    purpose: "link",
+    query: selected ? "" : query,
+    sourceRef: selfRef,
+  });
+
+  // A stance (supports/contradicts) requires a *direct* resource target: its
+  // `PutStanceRequest.target_ref` has no passage-materialization union the way a
+  // Link's target does. The shared `purpose="link"` search may emit passage
+  // candidates regardless of `kind`, so filter them out of the listbox for a
+  // stance kind — the impossible combination is never selectable up front.
+  const targets =
+    kind === "context"
+      ? fetchedTargets
+      : fetchedTargets.filter((target) => target.kind === "resource");
+
+  // Derived during render (never via an effect) so an in-flight Arrow move
+  // can't be clobbered by a stale "initialize" effect: an explicit `activeKey`
+  // wins while it still names a live target, otherwise the first target is
+  // active by default.
+  const effectiveActiveKey =
+    activeKey &&
+    targets.some((target) => resourceTargetKey(target) === activeKey)
+      ? activeKey
+      : targets[0]
+        ? resourceTargetKey(targets[0])
+        : null;
+
+  // The composer only mounts when the "＋ Link" disclosure opens it, so focus
   // the first field on mount to keep the keyboard on the reveal (AC-7).
   useEffect(() => {
-    if (autoFocus) searchInputRef.current?.focus();
-  }, [autoFocus]);
+    if (active) searchInputRef.current?.focus();
+  }, [active]);
 
-  useEffect(() => {
-    if (trimmedQuery.length < 2 || rawRef !== null || selected !== null) {
-      setResults([]);
-      setActiveResultKey(null);
+  const targetRef = selected ? targetRefOf(selected) : null;
+
+  function pickTarget(target: ResourceTarget | undefined) {
+    if (!target) return;
+    setSelected(target);
+    setQuery(targetLabel(target));
+    setActiveKey(null);
+    setFeedback(null);
+  }
+
+  function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (selected || targets.length === 0) return;
+    if (
+      event.key === "ArrowDown" ||
+      event.key === "ArrowUp" ||
+      event.key === "Home" ||
+      event.key === "End"
+    ) {
+      event.preventDefault();
+      const current = targets.findIndex(
+        (target) => resourceTargetKey(target) === effectiveActiveKey,
+      );
+      const start = current >= 0 ? current : 0;
+      const last = targets.length - 1;
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? last
+            : event.key === "ArrowDown"
+              ? Math.min(last, start + 1)
+              : Math.max(0, start - 1);
+      setActiveKey(resourceTargetKey(targets[next]!));
       return;
     }
-    const controller = new AbortController();
-    const searchTimer = window.setTimeout(() => {
-      void searchObjectRefs(trimmedQuery, 6, { signal: controller.signal })
-        .then((objects) => {
-          if (!controller.signal.aborted) setResults(objects);
-        })
-        .catch((err) => {
-          if (isAbortError(err) || controller.signal.aborted) return;
-          setResults([]);
-          setActiveResultKey(null);
-        });
-    }, 150);
-    return () => {
-      controller.abort();
-      window.clearTimeout(searchTimer);
-    };
-  }, [rawRef, selected, trimmedQuery]);
-
-  useEffect(() => {
-    setActiveResultKey(results[0] ? objectRefKey(results[0]) : null);
-  }, [results]);
-
-  const targetRef = selected
-    ? formatResourceRef({
-        scheme: selected.objectType,
-        id: selected.objectId,
-      })
-    : rawRef !== null
-      ? formatResourceRef(rawRef)
-      : null;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      pickTarget(
+        targets.find(
+          (target) => resourceTargetKey(target) === effectiveActiveKey,
+        ) ?? targets[0],
+      );
+    }
+  }
 
   async function submitConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFeedback(null);
-    if (targetRef === null) {
+    if (targetRef === null || selected === null) {
       setFeedback({
         severity: "warning",
-        title: "Choose a result or paste a resource ref.",
+        title: "Choose a result from the search.",
       });
       return;
     }
@@ -441,17 +501,35 @@ function ConnectionComposer({
       });
       return;
     }
+    if (kind !== "context" && selected.kind === "passage") {
+      setFeedback({
+        severity: "warning",
+        title: "A stance needs a resource target, not a passage.",
+      });
+      return;
+    }
     setSubmitting(true);
     try {
-      await createUserEdge({ sourceRef: selfRef, targetRef, kind });
+      if (kind === "context") {
+        await createLink({
+          source: { kind: "resource", ref: selfRef },
+          target: toLinkTarget(selected),
+        });
+      } else {
+        await putStance({ sourceRef: selfRef, targetRef, kind });
+      }
       setQuery("");
       setSelected(null);
-      setResults([]);
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       setFeedback(
-        toFeedback(err, { fallback: "Connection could not be created." }),
+        toFeedback(err, {
+          fallback:
+            kind === "context"
+              ? "Link could not be created."
+              : "Stance could not be recorded.",
+        }),
       );
     } finally {
       setSubmitting(false);
@@ -464,29 +542,102 @@ function ConnectionComposer({
     }
     setFeedback(null);
     setAttaching(true);
+    let changed = false;
     try {
       for (const file of files) {
         const uploadError = getFileUploadError(file);
         if (uploadError) {
-          throw new Error(uploadError);
+          setFeedback({ severity: "error", title: uploadError });
+          continue;
         }
-        const result = await uploadIngestFile({ file, libraryIds: [] });
-        if (isFailedSourceIngest(result)) {
-          throw new Error("Attachment could not be uploaded.");
+        const accepted: {
+          pending: PendingAttachment | null;
+          edge: Promise<AttachmentEdgeOutcome> | null;
+        } = { pending: null, edge: null };
+        let upload;
+        try {
+          upload = await uploadIngestFile({
+            file,
+            libraryIds: [],
+            onAcceptedIdentity: ({ mediaId, sourceAttemptId }) => {
+              const pending: PendingAttachment = {
+                mediaId,
+                sourceAttemptId,
+                label: file.name,
+                warning: null,
+              };
+              accepted.pending = pending;
+              setPendingAttachments((current) =>
+                upsertPending(current, pending),
+              );
+              accepted.edge = createAttachmentLink(selfRef, pending).then(
+                () => ({ kind: "Fulfilled" as const }),
+                (error: unknown) => ({ kind: "Rejected" as const, error }),
+              );
+            },
+          });
+        } catch (error) {
+          if (accepted.edge && accepted.pending) {
+            const edge = await accepted.edge;
+            if (edge.kind === "Fulfilled") {
+              setPendingAttachments((current) =>
+                current.filter(
+                  (item) => item.mediaId !== accepted.pending?.mediaId,
+                ),
+              );
+              changed = true;
+            }
+          }
+          if (isMediaIngestionDefect(error)) {
+            setDefect({ error });
+            return;
+          }
+          if (handleUnauthenticatedApiError(error)) return;
+          setFeedback(
+            toFeedback(error, { fallback: "Attachment could not be added." }),
+          );
+          continue;
         }
-        await createUserEdge({
-          sourceRef: selfRef,
-          targetRef: `media:${result.mediaId}`,
-          kind: "context",
+        if (!accepted.pending || !accepted.edge) {
+          setDefect({
+            error: new Error(
+              "Accepted attachment did not publish its durable identity.",
+            ),
+          });
+          return;
+        }
+        const { warning } = projectUploadReference({
+          result: upload,
+          processingFailureFeedback: {
+            severity: "warning",
+            title: "Attachment was added, but source processing failed.",
+          },
         });
+        const pending = { ...accepted.pending, warning };
+        setPendingAttachments((current) => upsertPending(current, pending));
+        const edge = await accepted.edge;
+        if (edge.kind === "Rejected") {
+          if (isSameSystemApiDefect(edge.error)) {
+            setDefect({ error: edge.error });
+            return;
+          }
+          if (handleUnauthenticatedApiError(edge.error)) return;
+          setFeedback(
+            toFeedback(edge.error, {
+              fallback:
+                "File was saved, but its connection could not be created.",
+            }),
+          );
+          continue;
+        }
+        setPendingAttachments((current) =>
+          current.filter((item) => item.mediaId !== pending.mediaId),
+        );
+        changed = true;
+        if (warning) setFeedback(warning);
       }
-      onChanged();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, { fallback: "Attachment could not be added." }),
-      );
     } finally {
+      if (changed) onChanged();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -494,107 +645,294 @@ function ConnectionComposer({
     }
   }
 
+  async function retryAttachment(pending: PendingAttachment) {
+    setFeedback(null);
+    setAttaching(true);
+    try {
+      await createAttachmentLink(selfRef, pending);
+      setPendingAttachments((current) =>
+        current.filter((item) => item.mediaId !== pending.mediaId),
+      );
+      if (pending.warning) setFeedback(pending.warning);
+      onChanged();
+    } catch (error) {
+      if (isSameSystemApiDefect(error)) {
+        setDefect({ error });
+        return;
+      }
+      if (handleUnauthenticatedApiError(error)) return;
+      setFeedback(
+        toFeedback(error, {
+          fallback: "File was saved, but its connection could not be created.",
+        }),
+      );
+    } finally {
+      setAttaching(false);
+    }
+  }
+
   return (
-    <form
-      id={id}
-      className={styles.composer}
-      onSubmit={(event) => void submitConnection(event)}
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-      }}
-      onDrop={(event) => {
-        const files = Array.from(event.dataTransfer.files);
-        if (files.length === 0) return;
-        event.preventDefault();
-        void attachFiles(files);
-      }}
+    <ConnectionComposerDefectBoundary
+      active={active}
+      activeDefect={defect !== null}
+      onContinue={() => setDefect(null)}
     >
-      <div className={styles.composerControls}>
-        <div className={styles.searchWrap}>
-          <Input
-            ref={searchInputRef}
-            size="sm"
-            value={query}
-            placeholder="Search or paste resource ref"
-            aria-label="Connection target"
-            onChange={(event) => {
-              setSelected(null);
-              setFeedback(null);
-              setQuery(event.currentTarget.value);
-            }}
-          />
-          <div className={styles.autocomplete}>
-            <ObjectRefAutocomplete
-              id={autocompleteId}
-              objects={results}
-              activeObjectKey={activeResultKey}
-              optionIdForObject={(object) =>
-                `${autocompleteId}-option-${objectRefKey(object)}`
-              }
-              onActiveChange={setActiveResultKey}
-              onPick={(object) => {
-                setSelected(object);
-                setQuery(object.label);
-                setResults([]);
-                setActiveResultKey(null);
-                setFeedback(null);
+      <ConnectionComposerProjection defect={defect}>
+        <form
+          id={id}
+          hidden={!active}
+          className={styles.composer}
+          onSubmit={(event) => void submitConnection(event)}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files"))
+              event.preventDefault();
+          }}
+          onDrop={(event) => {
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length === 0) return;
+            event.preventDefault();
+            void attachFiles(files);
+          }}
+        >
+          <div className={styles.composerControls}>
+            <div className={styles.searchWrap}>
+              <Input
+                ref={searchInputRef}
+                size="sm"
+                value={query}
+                role="combobox"
+                aria-expanded={!selected && targets.length > 0}
+                aria-controls={listboxId}
+                aria-autocomplete="list"
+                aria-activedescendant={
+                  !selected && effectiveActiveKey
+                    ? resourceTargetOptionId(
+                        listboxId,
+                        targets.find(
+                          (target) =>
+                            resourceTargetKey(target) === effectiveActiveKey,
+                        )!,
+                      )
+                    : undefined
+                }
+                placeholder="Search to link…"
+                aria-label="Connection target"
+                onChange={(event) => {
+                  setSelected(null);
+                  setFeedback(null);
+                  setQuery(event.currentTarget.value);
+                }}
+                onKeyDown={onSearchKeyDown}
+              />
+              {!selected && query.trim().length > 0 ? (
+                <div className={styles.autocomplete}>
+                  <ResourceTargetListbox
+                    id={listboxId}
+                    ariaLabel="Link targets"
+                    targets={targets}
+                    activeKey={effectiveActiveKey}
+                    loading={loading}
+                    error={searchError}
+                    onHover={(target) =>
+                      setActiveKey(resourceTargetKey(target))
+                    }
+                    onPick={pickTarget}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <Select
+              size="sm"
+              value={kind}
+              aria-label="Connection kind"
+              onChange={(event) => {
+                const nextKind = event.currentTarget.value as EdgeKind;
+                setKind(nextKind);
+                // Passage anchors are Links; Stances require a resource.
+                if (nextKind !== "context" && selected?.kind === "passage") {
+                  setSelected(null);
+                  setFeedback(null);
+                }
               }}
+            >
+              <option value="context">context</option>
+              <option value="supports">supports</option>
+              <option value="contradicts">contradicts</option>
+            </Select>
+            <Button
+              type="submit"
+              size="sm"
+              variant="secondary"
+              loading={submitting}
+              leadingIcon={<Link size={14} />}
+            >
+              {kind === "context" ? "Link" : "Record stance"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              leadingIcon={<Paperclip size={14} />}
+              loading={attaching}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Attach
+            </Button>
+            <input
+              ref={fileInputRef}
+              className={styles.fileInput}
+              type="file"
+              multiple
+              accept="application/pdf,application/epub+zip,.pdf,.epub"
+              aria-label="Attach files"
+              tabIndex={-1}
+              onChange={(event) =>
+                void attachFiles(Array.from(event.currentTarget.files ?? []))
+              }
             />
           </div>
-        </div>
-        <Select
-          size="sm"
-          value={kind}
-          aria-label="Connection kind"
-          onChange={(event) => setKind(event.currentTarget.value as EdgeKind)}
-        >
-          <option value="context">context</option>
-          <option value="supports">supports</option>
-          <option value="contradicts">contradicts</option>
-        </Select>
+          {pendingAttachments.length > 0 ? (
+            <ul
+              className={styles.pendingAttachments}
+              aria-label="Pending attachments"
+            >
+              {pendingAttachments.map((pending) => (
+                <li key={pending.mediaId} className={styles.pendingAttachment}>
+                  <span>
+                    {pending.label} was saved and still needs its connection.
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={attaching}
+                    onClick={() => void retryAttachment(pending)}
+                  >
+                    Retry attachment
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+        </form>
+      </ConnectionComposerProjection>
+    </ConnectionComposerDefectBoundary>
+  );
+}
+
+function ConnectionComposerProjection({
+  defect,
+  children,
+}: {
+  defect: { error: unknown } | null;
+  children: ReactNode;
+}) {
+  if (defect) throw defect.error;
+  return children;
+}
+
+interface ConnectionComposerDefectBoundaryProps {
+  active: boolean;
+  activeDefect: boolean;
+  onContinue(): void;
+  children: ReactNode;
+}
+
+class ConnectionComposerDefectBoundary extends Component<
+  ConnectionComposerDefectBoundaryProps,
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  private readonly actionRef = createRef<HTMLButtonElement>();
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Connection composer contract defect:", error);
+    if (this.props.active) this.actionRef.current?.focus();
+  }
+
+  componentDidUpdate(
+    previous: Readonly<ConnectionComposerDefectBoundaryProps>,
+  ) {
+    if (
+      this.state.hasError &&
+      previous.activeDefect &&
+      !this.props.activeDefect
+    ) {
+      this.setState({ hasError: false });
+      return;
+    }
+    if (this.state.hasError && !previous.active && this.props.active) {
+      this.actionRef.current?.focus();
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div hidden={!this.props.active} className={styles.composer}>
+        <FeedbackNotice
+          severity="error"
+          title="Connections need attention"
+          message="Nexus preserved any accepted file identity. Continue to review its connection."
+        />
         <Button
-          type="submit"
-          size="sm"
-          variant="secondary"
-          loading={submitting}
-          leadingIcon={<Link size={14} />}
-        >
-          Connect
-        </Button>
-        <Button
+          ref={this.actionRef}
           type="button"
           size="sm"
-          variant="ghost"
-          leadingIcon={<Paperclip size={14} />}
-          loading={attaching}
-          onClick={() => fileInputRef.current?.click()}
+          variant="secondary"
+          onClick={this.props.onContinue}
         >
-          Attach
+          Continue connections
         </Button>
-        <input
-          ref={fileInputRef}
-          className={styles.fileInput}
-          type="file"
-          multiple
-          accept="application/pdf,application/epub+zip,.pdf,.epub"
-          aria-label="Attach files"
-          tabIndex={-1}
-          onChange={(event) =>
-            void attachFiles(Array.from(event.currentTarget.files ?? []))
-          }
-        />
       </div>
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
-    </form>
-  );
+    );
+  }
+}
+
+interface PendingAttachment {
+  mediaId: string;
+  sourceAttemptId: string;
+  label: string;
+  warning: FeedbackContent | null;
+}
+
+type AttachmentEdgeOutcome =
+  | { kind: "Fulfilled" }
+  | { kind: "Rejected"; error: unknown };
+
+function upsertPending(
+  current: PendingAttachment[],
+  pending: PendingAttachment,
+): PendingAttachment[] {
+  return [
+    ...current.filter((item) => item.mediaId !== pending.mediaId),
+    pending,
+  ];
+}
+
+function createAttachmentLink(
+  sourceRef: string,
+  pending: PendingAttachment,
+): Promise<unknown> {
+  return createLink({
+    source: { kind: "resource", ref: sourceRef },
+    target: { kind: "resource", ref: `media:${pending.mediaId}` },
+  });
 }
 
 function DeleteConnectionButton({
   edgeId,
+  kind,
   label,
   onChanged,
 }: {
   edgeId: string;
+  kind: EdgeKind;
   label: string;
   onChanged: () => void;
 }) {
@@ -605,7 +943,11 @@ function DeleteConnectionButton({
     setDeleting(true);
     setFeedback(null);
     try {
-      await deleteUserEdge(edgeId);
+      if (kind === "context") {
+        await deleteLink(edgeId);
+      } else {
+        await deleteStance(edgeId);
+      }
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
@@ -633,10 +975,6 @@ function DeleteConnectionButton({
       {feedback ? <FeedbackNotice feedback={feedback} /> : null}
     </div>
   );
-}
-
-function objectRefKey(object: HydratedObjectRef): string {
-  return `${object.objectType}:${object.objectId}`;
 }
 
 function DismissConnectionButton({

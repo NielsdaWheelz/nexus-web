@@ -1,4 +1,8 @@
-"""Reader Document Map aggregate response schemas."""
+"""Canonical Reader Document Map aggregate schemas.
+
+Evidence is projected as typed facts grouped by exact reader locus.  Domain
+owner payloads never leak through this boundary.
+"""
 
 from __future__ import annotations
 
@@ -6,177 +10,269 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.schemas.conversation import ConversationOut
-from nexus.schemas.highlights import HIGHLIGHT_COLORS, TypedHighlightOut
-from nexus.schemas.media import MediaNavigationOut
-from nexus.schemas.reader import ReaderConnectionAnchorOut, ReaderConnectionPageOut
+from nexus.schemas.highlights import HIGHLIGHT_COLORS
+from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
+from nexus.schemas.presence import Presence
 from nexus.schemas.reader_apparatus import (
     ReaderApparatusConfidence,
     ReaderApparatusItemKind,
-    ReaderApparatusLocatorStatus,
-    ReaderApparatusResponse,
 )
 from nexus.schemas.resource_graph import EdgeKind, EdgeOrigin
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.resource_graph.schemas import ConnectionDirection
+from nexus.schemas.retrieval import MediaRetrievalLocator
 
-ReaderDocumentMapLensId = Literal[
-    "contents", "embeds", "highlights", "citations", "connections", "chat"
+ReaderDocumentMapStatus = Literal["ready", "empty", "partial"]
+ReaderEvidenceUnavailableReason = Literal["Missing", "Unanchorable", "Stale"]
+ReaderDocumentMapMarkerKind = Literal[
+    "Contents",
+    "Embed",
+    "Highlight",
+    "SourceReference",
+    "GeneratedCitation",
+    "Link",
+    "Synapse",
 ]
-ReaderDocumentMapStatus = Literal["ready", "empty", "resolving", "partial", "unsupported", "failed"]
-ReaderDocumentMapTargetStatus = Literal[
-    "exact",
-    "container",
-    "missing",
-    "forbidden",
-    "unanchorable",
-    "stale",
-    "unsupported",
-    "partial",
-]
-ReaderDocumentMapAnchorPrecision = Literal["exact", "container"]
 ReaderDocumentMapMarkerTone = Literal[
-    "neutral",
-    "highlight",
-    "citation",
-    "connection",
-    "chat",
-    "warning",
+    "Neutral", "Highlight", "Citation", "Link", "Synapse", "Warning"
 ]
 
 
-class ReaderDocumentMapLensOut(BaseModel):
-    id: ReaderDocumentMapLensId
-    label: str
-    status: ReaderDocumentMapStatus
-    item_count: int = Field(ge=0)
-    anchored_count: int = Field(ge=0)
-    unanchored_count: int = Field(ge=0)
+class ReaderEvidenceAnchorOut(BaseModel):
+    locator: MediaRetrievalLocator
+    passage_anchor_id: UUID | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
-class ReaderDocumentMapAnchorOut(ReaderConnectionAnchorOut):
-    precision: ReaderDocumentMapAnchorPrecision
-
-
-class ReaderDocumentMapItemBaseOut(BaseModel):
-    id: str
-    lens_ids: list[ReaderDocumentMapLensId]
-    title: str
-    subtitle: str | None = None
-    excerpt: str | None = None
-    activation: ResourceActivationOut | None = None
-    href: str | None = None
-    anchor: ReaderDocumentMapAnchorOut | None = None
-    document_order_key: str | None = None
-    document_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
-    target_status: ReaderDocumentMapTargetStatus
-    provenance: dict[str, JsonValue] = Field(default_factory=dict)
-    actions: list[str] = Field(default_factory=list)
+class ReaderEvidenceResolvedOut(BaseModel):
+    kind: Literal["Resolved"] = "Resolved"
+    anchor: ReaderEvidenceAnchorOut
+    order_key: str
 
     model_config = ConfigDict(extra="forbid")
 
 
-class ReaderDocumentMapSectionItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["section"]
-    source_domain: Literal["navigation"]
-    section_id: str | None = None
-    level: int | None = None
-    parent_id: str | None = None
+class ReaderEvidenceUnavailableOut(BaseModel):
+    kind: Literal["Unavailable"] = "Unavailable"
+    reason: ReaderEvidenceUnavailableReason
+    sort_order_key: str | None = Field(default=None, exclude=True)
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class ReaderDocumentMapHighlightItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["highlight"]
-    source_domain: Literal["highlight"]
-    highlight_id: UUID
-    color: HIGHLIGHT_COLORS
-    exact: str
-    note_block_count: int = Field(ge=0)
-    linked_conversation_count: int = Field(ge=0)
-
-
-class ReaderDocumentMapEmbedItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["document_embed"]
-    source_domain: Literal["document_embeds"]
-    document_embed_id: UUID
-    occurrence_key: str
-    provider: str
-    embed_kind: str
-    resolution_status: str
-
-
-class ReaderDocumentMapApparatusItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["apparatus"]
-    source_domain: Literal["reader_apparatus"]
-    resource_ref: str
-    stable_key: str
-    apparatus_kind: ReaderApparatusItemKind
-    confidence: ReaderApparatusConfidence
-    locator_status: ReaderApparatusLocatorStatus
-    target_stable_keys: list[str] = Field(default_factory=list)
-
-
-class ReaderDocumentMapConnectionItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["connection"]
-    source_domain: Literal["resource_graph", "generated_citation"]
-    edge_id: UUID
-    direction: ConnectionDirection
-    origin: EdgeOrigin
-    edge_kind: EdgeKind
-    source_category: str
-    other_ref: str
-
-
-class ReaderDocumentMapChatThreadItemOut(ReaderDocumentMapItemBaseOut):
-    kind: Literal["chat_thread"]
-    source_domain: Literal["chat"]
-    conversation_id: UUID
-    latest_message_at: datetime | None = None
-    attached_ref: str | None = None
-
-
-ReaderDocumentMapItemOut = Annotated[
-    ReaderDocumentMapSectionItemOut
-    | ReaderDocumentMapHighlightItemOut
-    | ReaderDocumentMapEmbedItemOut
-    | ReaderDocumentMapApparatusItemOut
-    | ReaderDocumentMapConnectionItemOut
-    | ReaderDocumentMapChatThreadItemOut,
+ReaderEvidenceResolutionOut = Annotated[
+    ReaderEvidenceResolvedOut | ReaderEvidenceUnavailableOut,
     Field(discriminator="kind"),
 ]
 
 
+class ReaderEvidenceObjectBaseOut(BaseModel):
+    ref: str
+    label: str
+    excerpt: Presence[str]
+    activation: ResourceActivationOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceChatObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Chat"] = "Chat"
+    conversation_id: UUID
+    message_ref: Presence[str]
+
+
+class ReaderEvidenceNoteObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Note"] = "Note"
+    note_block_id: UUID
+    body_pm_json: dict[str, object]
+
+
+class ReaderEvidenceDossierObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Dossier"] = "Dossier"
+
+
+class ReaderEvidenceOracleObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Oracle"] = "Oracle"
+
+
+class ReaderEvidenceMediaObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Media"] = "Media"
+
+
+class ReaderEvidenceOtherObjectOut(ReaderEvidenceObjectBaseOut):
+    kind: Literal["Other"] = "Other"
+
+
+ReaderEvidenceObjectOut = Annotated[
+    ReaderEvidenceChatObjectOut
+    | ReaderEvidenceNoteObjectOut
+    | ReaderEvidenceDossierObjectOut
+    | ReaderEvidenceOracleObjectOut
+    | ReaderEvidenceMediaObjectOut
+    | ReaderEvidenceOtherObjectOut,
+    Field(discriminator="kind"),
+]
+
+
+class ReaderEvidenceAuthoredInOut(BaseModel):
+    relationship: Literal["AuthoredIn"] = "AuthoredIn"
+    object: ReaderEvidenceObjectOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceDirectlyAttachedOut(BaseModel):
+    relationship: Literal["DirectlyAttached"] = "DirectlyAttached"
+    object: ReaderEvidenceObjectOut
+    edge_id: UUID
+    role: EdgeKind
+    origin: EdgeOrigin
+    direction: Literal["Outgoing", "Incoming"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ReaderEvidenceAssociationOut = Annotated[
+    ReaderEvidenceAuthoredInOut | ReaderEvidenceDirectlyAttachedOut,
+    Field(discriminator="relationship"),
+]
+
+
+class ReaderEvidenceAlsoReferenceOut(BaseModel):
+    relationship: Literal["AlsoReferences"] = "AlsoReferences"
+    object: ReaderEvidenceObjectOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceItemBaseOut(BaseModel):
+    id: str
+    label: str
+    excerpt: Presence[str]
+    associations: list[ReaderEvidenceAssociationOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceHighlightOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["Highlight"] = "Highlight"
+    highlight_id: UUID
+    quote: str
+    prefix: str
+    suffix: str
+    color: HIGHLIGHT_COLORS
+    created_at: datetime
+    updated_at: datetime
+    author_user_id: UUID
+    is_owner: bool
+
+
+class ReaderEvidenceSourceTargetOut(BaseModel):
+    ref: str
+    stable_key: str
+    apparatus_kind: ReaderApparatusItemKind
+    label: Presence[str]
+    body: Presence[str]
+    activation: ResourceActivationOut
+    resolution: ReaderEvidenceResolutionOut
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceSourceReferenceOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["SourceReference"] = "SourceReference"
+    stable_key: str
+    apparatus_kind: ReaderApparatusItemKind
+    confidence: ReaderApparatusConfidence
+    targets: list[ReaderEvidenceSourceTargetOut] = Field(default_factory=list)
+
+
+class ReaderEvidenceGeneratedCitationOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["GeneratedCitation"] = "GeneratedCitation"
+    edge_id: UUID
+    role: EdgeKind
+
+
+class ReaderEvidenceLinkOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["Link"] = "Link"
+    edge_id: UUID
+    role: EdgeKind
+    origin: EdgeOrigin
+    object: ReaderEvidenceObjectOut
+
+
+class ReaderEvidenceSynapseOut(ReaderEvidenceItemBaseOut):
+    kind: Literal["Synapse"] = "Synapse"
+    edge_id: UUID
+    role: EdgeKind
+    rationale: str
+    object: ReaderEvidenceObjectOut
+
+
+ReaderEvidenceItemOut = Annotated[
+    ReaderEvidenceHighlightOut
+    | ReaderEvidenceSourceReferenceOut
+    | ReaderEvidenceGeneratedCitationOut
+    | ReaderEvidenceLinkOut
+    | ReaderEvidenceSynapseOut,
+    Field(discriminator="kind"),
+]
+
+
+class ReaderEvidencePassageGroupOut(BaseModel):
+    locus_ref: str
+    resolution: ReaderEvidenceResolutionOut
+    target_excerpt: Presence[str]
+    items: list[ReaderEvidenceItemOut]
+    also_references: list[ReaderEvidenceAlsoReferenceOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceCountsOut(BaseModel):
+    highlights: int = Field(ge=0)
+    citations: int = Field(ge=0)
+    links: int = Field(ge=0)
+    synapses: int = Field(ge=0)
+    passages: int = Field(ge=0)
+    document: int = Field(ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReaderEvidenceOut(BaseModel):
+    counts: ReaderEvidenceCountsOut
+    passage_groups: list[ReaderEvidencePassageGroupOut] = Field(default_factory=list)
+    document_items: list[ReaderEvidenceItemOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ReaderDocumentMapMarkerOut(BaseModel):
     id: str
+    kind: ReaderDocumentMapMarkerKind
     item_id: str
-    lens_id: ReaderDocumentMapLensId
-    lane: ReaderDocumentMapLensId
     position: float = Field(ge=0.0, le=1.0)
-    status: ReaderDocumentMapTargetStatus
     tone: ReaderDocumentMapMarkerTone
     label: str
-    preview: str | None = None
+    preview: Presence[str]
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ReaderDocumentMapSourceVersionOut(BaseModel):
-    media_updated_at: datetime | None = None
-    content_fingerprint: str | None = None
-    apparatus_source_fingerprint: str | None = None
-    graph_max_updated_at: datetime | None = None
-    highlights_max_updated_at: datetime | None = None
+    media_updated_at: Presence[datetime]
+    apparatus_source_fingerprint: Presence[str]
+    graph_max_updated_at: Presence[datetime]
+    highlights_max_updated_at: Presence[datetime]
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ReaderDocumentMapDiagnosticsOut(BaseModel):
     omitted_item_counts: dict[str, int] = Field(default_factory=dict)
-    partial_lenses: list[str] = Field(default_factory=list)
-    owner_warnings: list[dict[str, JsonValue]] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -187,14 +283,10 @@ class ReaderDocumentMapOut(BaseModel):
     title: str
     status: ReaderDocumentMapStatus
     source_version: ReaderDocumentMapSourceVersionOut
-    lenses: list[ReaderDocumentMapLensOut]
-    items: list[ReaderDocumentMapItemOut]
-    markers: list[ReaderDocumentMapMarkerOut]
-    navigation: MediaNavigationOut | None = None
-    highlights: list[TypedHighlightOut] = Field(default_factory=list)
-    apparatus: ReaderApparatusResponse
-    connections: ReaderConnectionPageOut
-    chat_threads: list[ConversationOut] = Field(default_factory=list)
+    navigation: Presence[MediaNavigationOut]
+    embeds: list[DocumentEmbedOut] = Field(default_factory=list)
+    evidence: ReaderEvidenceOut
+    markers: list[ReaderDocumentMapMarkerOut] = Field(default_factory=list)
     diagnostics: ReaderDocumentMapDiagnosticsOut = Field(
         default_factory=ReaderDocumentMapDiagnosticsOut
     )

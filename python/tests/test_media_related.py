@@ -10,15 +10,13 @@ request-time provider call happens on this path.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
-import nexus.services.media_related as media_related
+import nexus.services.llm_execution as llm_execution
 import nexus.services.semantic_chunks as semantic_chunks
-import nexus.services.structured_synthesis as structured_synthesis
 from nexus.services import contributors as contributors_service
 from nexus.services.contributor_taxonomy import ContributorObservation, ObservedRoleSlices
 from tests.factories import create_searchable_media
@@ -29,15 +27,6 @@ pytestmark = pytest.mark.integration
 
 RELATED_KEYS = {"peers"}
 PEER_KEYS = {"ref", "scheme", "id", "label", "description", "activation", "href", "missing"}
-
-
-def test_related_similarity_query_uses_single_seed_ann_shape():
-    source = inspect.getsource(media_related._similar_media)
-
-    assert "JOIN target_vectors tv ON true" not in source
-    assert "target_vector AS" in source
-    assert "ORDER BY ce.embedding_vector <=> tv.vec ASC" in source
-    assert "LIMIT :candidate_limit" in source
 
 
 def _seed_media(direct_db: DirectSessionManager, user_id: UUID, *, title: str, text: str) -> UUID:
@@ -82,7 +71,7 @@ def _ban_provider_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every LLM/provider entrypoint raise for the rest of the test.
 
     The related path must touch none of these: ``build_text_embeddings`` is an
-    ingest-time call and ``run_structured_synthesis`` is the one LLM-synthesis
+    ingest-time call and ``llm_execution`` is the sole provider-execution
     substrate. Seeding must happen BEFORE this installs (seeding embeds).
     """
 
@@ -91,7 +80,8 @@ def _ban_provider_calls(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(semantic_chunks, "build_text_embeddings", _boom)
     monkeypatch.setattr(semantic_chunks, "build_text_embedding", _boom)
-    monkeypatch.setattr(structured_synthesis, "run_structured_synthesis", _boom)
+    monkeypatch.setattr(llm_execution, "execute_generation", _boom)
+    monkeypatch.setattr(llm_execution, "execute_generation_stream", _boom)
 
 
 def _related(auth_client, user_id: UUID, media_id: UUID, **params):

@@ -42,13 +42,6 @@ def _enforce_epub_read_guards(
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
 
-def _compute_word_count(canonical_text: str) -> int:
-    stripped = canonical_text.strip()
-    if not stripped:
-        return 0
-    return len(stripped.split())
-
-
 def _load_toc_rows(db: Session, media_id: UUID) -> list[tuple]:
     return db.execute(
         text("""
@@ -238,6 +231,7 @@ def get_epub_section_for_viewer(
                        f.id AS fragment_id,
                        f.html_sanitized,
                        f.canonical_text,
+                       f.canonical_text_word_count,
                        f.created_at
                 FROM epub_nav_locations n
                 JOIN fragments f
@@ -248,7 +242,8 @@ def get_epub_section_for_viewer(
             SELECT location_id, label, fragment_id, fragment_idx, href_path,
                    href_fragment, source_node_id, source, ordinal,
                    prev_section_id, next_section_id,
-                   html_sanitized, canonical_text, created_at
+                   html_sanitized, canonical_text,
+                   canonical_text_word_count, created_at
             FROM ordered_sections
             WHERE location_id = :section_id
         """),
@@ -276,6 +271,6 @@ def get_epub_section_for_viewer(
         html_sanitized=row[11],
         canonical_text=canonical_text,
         char_count=len(canonical_text),
-        word_count=_compute_word_count(canonical_text),
-        created_at=row[13],
+        word_count=int(row[13]),
+        created_at=row[14],
     )

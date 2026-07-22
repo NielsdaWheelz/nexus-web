@@ -2,9 +2,17 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
-import { EditorState, Plugin, PluginKey, Selection, TextSelection } from "prosemirror-state";
+import {
+  EditorState,
+  Plugin,
+  PluginKey,
+  Selection,
+  TextSelection,
+} from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
+import { isApiError } from "@/lib/api/client";
+import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   createMarkdownPastePlugin,
   createObjectRefSyntaxPlugin,
@@ -13,18 +21,26 @@ import {
 import { extractUrls } from "@/lib/extractUrls";
 import {
   getFileUploadError,
-  isFailedSourceIngest,
+  isMediaIngestionDefect,
+  projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
-import { captureSourceUrl } from "@/lib/media/sourceUrlCapture";
+import {
+  captureSourceUrl,
+  isSourceUrlCaptureDefect,
+} from "@/lib/media/sourceUrlCapture";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 import { codepointLength, codepointToUtf16 } from "@/lib/highlights/codepoints";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
-  searchObjectRefs,
-  type HydratedObjectRef,
-  type ObjectRefSearchOptions,
-} from "@/lib/objectRefs";
-import ObjectRefAutocomplete from "@/components/notes/ObjectRefAutocomplete";
+  parseResourceRef,
+  type ResourceScheme,
+} from "@/lib/resourceGraph/resourceRef";
+import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
+import type { ResourceTarget } from "@/lib/resources/resourceTargets";
+import ResourceTargetListbox, {
+  resourceTargetKey,
+} from "@/components/resources/ResourceTargetListbox";
 import "prosemirror-view/style/prosemirror.css";
 import styles from "./ProseMirrorOutlineEditor.module.css";
 
@@ -36,15 +52,16 @@ interface ProseMirrorOutlineEditorProps {
   createBlockId?: () => string;
   singleBlock?: boolean;
   compact?: boolean;
-  searchObjects?: (
-    query: string,
-    options?: ObjectRefSearchOptions
-  ) => Promise<HydratedObjectRef[]>;
   onDocChange?: (doc: ProseMirrorNode) => void;
   onFocusChange?: (focused: boolean) => void;
   onBlurFlush?: (doc: ProseMirrorNode) => void;
   onOpenBlock?: (blockId: string, openInNewPane: boolean) => void;
-  onOpenObject?: (objectType: string, objectId: string, openInNewPane: boolean) => void;
+  onOpenObject?: (
+    objectType: string,
+    objectId: string,
+    openInNewPane: boolean,
+  ) => void;
+  onFeedback?: (feedback: FeedbackContent) => void;
   onError?: (error: unknown) => void;
   notePulseTarget?: NotePulseEditorTarget | null;
   focusRequest?: number;
@@ -57,10 +74,33 @@ interface ObjectRefTextRange {
   filter: "all" | "page_note";
 }
 
-interface ObjectRefMenuState extends ObjectRefTextRange {
+interface ObjectRefTrigger extends ObjectRefTextRange {
   left: number;
   top: number;
-  objects: HydratedObjectRef[];
+}
+
+interface AttachmentInsertionTarget {
+  blockId: string;
+  block: ProseMirrorNode;
+}
+
+class MediaAttachmentContractDefect extends Error {
+  constructor(message: string) {
+    // justify-defect: losing the stable editor insertion target after durable
+    // media acceptance violates the attachment transaction contract.
+    super(message);
+    this.name = "MediaAttachmentContractDefect";
+  }
+}
+
+function isMediaAttachmentDefect(error: unknown): boolean {
+  return (
+    error instanceof MediaAttachmentContractDefect ||
+    isMediaIngestionDefect(error) ||
+    (!isApiError(error) &&
+      !(error instanceof TypeError) &&
+      !(error instanceof DOMException))
+  );
 }
 
 export interface NotePulseEditorTarget {
@@ -74,9 +114,13 @@ const OBJECT_REF_SEARCH_QUERY_MAX_LENGTH = 200;
 const NOTE_PULSE_RANGE_DURATION_MS = 2400;
 const notePulseDecorationKey = new PluginKey<DecorationSet>("notePulseRange");
 
-function searchEditorObjectRefs(query: string, options?: ObjectRefSearchOptions) {
-  return searchObjectRefs(query, 8, options);
-}
+// The `[[` trigger references pages and note blocks only; `@`/Mod-K reference any
+// direct note-reference target. Both go through the lexical `purpose=reference`
+// target-search path (1-char, never embeds).
+const PAGE_NOTE_SCHEMES = [
+  "page",
+  "note_block",
+] as const satisfies readonly ResourceScheme[];
 
 export default function ProseMirrorOutlineEditor({
   resourceKey,
@@ -86,12 +130,12 @@ export default function ProseMirrorOutlineEditor({
   createBlockId,
   singleBlock = false,
   compact = false,
-  searchObjects = searchEditorObjectRefs,
   onDocChange,
   onFocusChange,
   onBlurFlush,
   onOpenBlock,
   onOpenObject,
+  onFeedback,
   onError,
   notePulseTarget,
   focusRequest = 0,
@@ -107,17 +151,28 @@ export default function ProseMirrorOutlineEditor({
   const onBlurFlushRef = useRef(onBlurFlush);
   const onOpenBlockRef = useRef(onOpenBlock);
   const onOpenObjectRef = useRef(onOpenObject);
+  const onFeedbackRef = useRef(onFeedback);
   const onErrorRef = useRef(onError);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const editableRef = useRef(editable);
-  const searchObjectsRef = useRef(searchObjects);
-  const searchRequestRef = useRef(0);
+  const attachmentBusyRef = useRef(false);
   const notePulseTargetRef = useRef(notePulseTarget);
   const focusRequestRef = useRef(focusRequest);
   const notePulseTimeoutRef = useRef<number | null>(null);
-  const [objectRefMenu, setObjectRefMenu] = useState<ObjectRefMenuState | null>(null);
-  const [activeObjectRefKey, setActiveObjectRefKey] = useState<string | null>(null);
-  const objectRefMenuRef = useRef<ObjectRefMenuState | null>(null);
-  const activeObjectRefKeyRef = useRef<string | null>(null);
+  const [trigger, setTrigger] = useState<ObjectRefTrigger | null>(null);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
+  const triggerRef = useRef<ObjectRefTrigger | null>(null);
+  const targetsRef = useRef<ResourceTarget[]>([]);
+  const activeKeyRef = useRef<string | null>(null);
+
+  const schemes =
+    trigger?.filter === "page_note" ? PAGE_NOTE_SCHEMES : undefined;
+  const { targets, loading, error } = useResourceTargetSearch({
+    purpose: "reference",
+    query: trigger?.query ?? "",
+    schemes,
+  });
 
   if (initialDocResourceKeyRef.current !== resourceKey) {
     initialDocResourceKeyRef.current = resourceKey;
@@ -130,20 +185,35 @@ export default function ProseMirrorOutlineEditor({
   onBlurFlushRef.current = onBlurFlush;
   onOpenBlockRef.current = onOpenBlock;
   onOpenObjectRef.current = onOpenObject;
+  onFeedbackRef.current = onFeedback;
   onErrorRef.current = onError;
-  searchObjectsRef.current = searchObjects;
-  objectRefMenuRef.current = objectRefMenu;
-  activeObjectRefKeyRef.current = activeObjectRefKey;
+  triggerRef.current = trigger;
+  targetsRef.current = targets;
+  activeKeyRef.current = activeKey;
   notePulseTargetRef.current = notePulseTarget;
   focusRequestRef.current = focusRequest;
 
+  // Keep the active option in sync with the live result set: preserve the user's
+  // hovered/arrowed choice if it survives, otherwise fall back to the first row.
+  useEffect(() => {
+    if (!trigger) {
+      setActiveKey(null);
+      return;
+    }
+    const keys = targets.map(resourceTargetKey);
+    setActiveKey((current) =>
+      current && keys.includes(current) ? current : (keys[0] ?? null),
+    );
+  }, [trigger, targets]);
+
   useEffect(() => {
     editableRef.current = editable;
-    viewRef.current?.setProps({ editable: () => editableRef.current });
+    viewRef.current?.setProps({
+      editable: () => editableRef.current && !attachmentBusyRef.current,
+    });
     if (!editable) {
-      searchRequestRef.current += 1;
-      setObjectRefMenu(null);
-      setActiveObjectRefKey(null);
+      setTrigger(null);
+      setActiveKey(null);
     }
   }, [editable]);
 
@@ -153,26 +223,31 @@ export default function ProseMirrorOutlineEditor({
     }
   }, [focusRequest]);
 
-  const applyNotePulseTarget = useCallback((target: NotePulseEditorTarget | null) => {
-    if (notePulseTimeoutRef.current !== null) {
-      window.clearTimeout(notePulseTimeoutRef.current);
-      notePulseTimeoutRef.current = null;
-    }
-    const view = viewRef.current;
-    if (!view) {
-      return;
-    }
-    view.dispatch(view.state.tr.setMeta(notePulseDecorationKey, target));
-    if (!target) {
-      return;
-    }
-    notePulseTimeoutRef.current = window.setTimeout(() => {
-      notePulseTimeoutRef.current = null;
-      const latestView = viewRef.current;
-      if (!latestView) return;
-      latestView.dispatch(latestView.state.tr.setMeta(notePulseDecorationKey, null));
-    }, NOTE_PULSE_RANGE_DURATION_MS);
-  }, []);
+  const applyNotePulseTarget = useCallback(
+    (target: NotePulseEditorTarget | null) => {
+      if (notePulseTimeoutRef.current !== null) {
+        window.clearTimeout(notePulseTimeoutRef.current);
+        notePulseTimeoutRef.current = null;
+      }
+      const view = viewRef.current;
+      if (!view) {
+        return;
+      }
+      view.dispatch(view.state.tr.setMeta(notePulseDecorationKey, target));
+      if (!target) {
+        return;
+      }
+      notePulseTimeoutRef.current = window.setTimeout(() => {
+        notePulseTimeoutRef.current = null;
+        const latestView = viewRef.current;
+        if (!latestView) return;
+        latestView.dispatch(
+          latestView.state.tr.setMeta(notePulseDecorationKey, null),
+        );
+      }, NOTE_PULSE_RANGE_DURATION_MS);
+    },
+    [],
+  );
 
   useEffect(() => {
     const view = viewRef.current;
@@ -182,51 +257,57 @@ export default function ProseMirrorOutlineEditor({
     applyNotePulseTarget(notePulseTarget ?? null);
   }, [applyNotePulseTarget, notePulseTarget]);
 
-  function insertObjectRef(object: HydratedObjectRef) {
+  // Insertion is note-owned: a chosen resource target becomes an atomic
+  // `object_ref` node. Only direct-resource targets reach here (`purpose=reference`
+  // never returns passage candidates), so a non-resource target is ignored.
+  function insertObjectRef(target: ResourceTarget) {
     const view = viewRef.current;
-    const menu = objectRefMenuRef.current;
-    if (!view || !menu) {
+    const activeTrigger = triggerRef.current;
+    if (!view || !activeTrigger || target.kind !== "resource") {
+      return;
+    }
+    const parsed = parseResourceRef(target.item.ref);
+    if (!parsed) {
       return;
     }
 
     const node = outlineSchema.nodes.object_ref!.create({
-      objectType: object.objectType,
-      objectId: object.objectId,
-      label: object.label,
+      objectType: parsed.scheme,
+      objectId: parsed.id,
+      label: target.item.label,
     });
     const space = outlineSchema.text(" ");
     const tr = view.state.tr.replaceWith(
-      menu.from,
-      menu.to,
-      Fragment.fromArray([node, space])
+      activeTrigger.from,
+      activeTrigger.to,
+      Fragment.fromArray([node, space]),
     );
-    tr.setSelection(TextSelection.create(tr.doc, menu.from + node.nodeSize + space.nodeSize));
-    searchRequestRef.current += 1;
-    setObjectRefMenu(null);
-    setActiveObjectRefKey(null);
+    tr.setSelection(
+      TextSelection.create(
+        tr.doc,
+        activeTrigger.from + node.nodeSize + space.nodeSize,
+      ),
+    );
+    setTrigger(null);
+    setActiveKey(null);
     view.dispatch(tr.scrollIntoView());
     view.focus();
   }
 
   function closeObjectRefMenu() {
-    searchRequestRef.current += 1;
-    setObjectRefMenu(null);
-    setActiveObjectRefKey(null);
+    setTrigger(null);
+    setActiveKey(null);
   }
 
-  function activateObjectRefOption(objectKey: string) {
-    setActiveObjectRefKey(objectKey);
-  }
-
+  const menuOpen = Boolean(trigger && targets.length > 0);
   const activeOptionId =
-    objectRefMenu && activeObjectRefKey
-      ? `${autocompleteListboxId}-option-${activeObjectRefKey}`
+    trigger && activeKey
+      ? `${autocompleteListboxId}-option-${activeKey}`
       : undefined;
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const menuOpen = Boolean(objectRefMenu && objectRefMenu.objects.length > 0);
     view.setProps({
       attributes: editorAttributes({
         ariaLabel,
@@ -236,7 +317,7 @@ export default function ProseMirrorOutlineEditor({
         activeOptionId,
       }),
     });
-  }, [activeOptionId, ariaLabel, autocompleteListboxId, compact, objectRefMenu]);
+  }, [activeOptionId, ariaLabel, autocompleteListboxId, compact, menuOpen]);
 
   const attachFiles = useCallback(
     async (view: EditorView, files: File[]) => {
@@ -247,31 +328,80 @@ export default function ProseMirrorOutlineEditor({
         onErrorRef.current?.(new Error("This note cannot attach files."));
         return;
       }
+      if (singleBlock && files.length > 1) {
+        onErrorRef.current?.(new Error("Attach one file at a time here."));
+        return;
+      }
+      const target = attachmentInsertionTarget(view);
+      if (!target) {
+        onErrorRef.current?.(new Error("Choose a note block first."));
+        return;
+      }
 
-      for (const file of files) {
-        const uploadError = getFileUploadError(file);
-        if (uploadError) {
-          onErrorRef.current?.(new Error(uploadError));
-          continue;
-        }
-
-        try {
-          const result = await uploadIngestFile({ file, libraryIds: [] });
-          if (isFailedSourceIngest(result)) {
-            throw new Error("File could not be attached.");
+      attachmentBusyRef.current = true;
+      view.setProps({
+        editable: () => editableRef.current && !attachmentBusyRef.current,
+      });
+      try {
+        for (const file of files) {
+          const uploadError = getFileUploadError(file);
+          if (uploadError) {
+            onErrorRef.current?.(new Error(uploadError));
+            continue;
           }
-          insertMediaAttachment(view, {
-            mediaId: result.mediaId,
-            label: file.name,
-            createBlockId,
-            singleBlock,
-          });
-        } catch (error: unknown) {
-          onErrorRef.current?.(error);
+
+          try {
+            let referenced = false;
+            const upload = await uploadIngestFile({
+              file,
+              libraryIds: [],
+              onAcceptedIdentity: ({ mediaId }) => {
+                referenced = insertMediaAttachment(view, {
+                  mediaId,
+                  label: file.name,
+                  createBlockId,
+                  singleBlock,
+                  target,
+                });
+                if (!referenced) {
+                  throw new MediaAttachmentContractDefect(
+                    "The accepted attachment target changed unexpectedly.",
+                  );
+                }
+              },
+            });
+            const { mediaId, warning } = projectUploadReference({
+              result: upload,
+              processingFailureFeedback: {
+                severity: "warning",
+                title: "File was attached, but source processing failed.",
+              },
+            });
+            if (!referenced) {
+              throw new MediaAttachmentContractDefect(
+                `Accepted media ${mediaId} was not referenced by the note.`,
+              );
+            }
+            if (warning) onFeedbackRef.current?.(warning);
+          } catch (error: unknown) {
+            if (handleUnauthenticatedApiError(error)) {
+              return;
+            }
+            if (isMediaAttachmentDefect(error)) {
+              setDefect({ error });
+              return;
+            }
+            onErrorRef.current?.(error);
+          }
         }
+      } finally {
+        attachmentBusyRef.current = false;
+        view.setProps({
+          editable: () => editableRef.current && !attachmentBusyRef.current,
+        });
       }
     },
-    [createBlockId, singleBlock]
+    [createBlockId, handleUnauthenticatedApiError, singleBlock],
   );
 
   const attachUrls = useCallback(
@@ -283,25 +413,70 @@ export default function ProseMirrorOutlineEditor({
         onErrorRef.current?.(new Error("This note cannot attach URLs."));
         return;
       }
+      if (singleBlock && urls.length > 1) {
+        onErrorRef.current?.(new Error("Attach one URL at a time here."));
+        return;
+      }
+      const target = attachmentInsertionTarget(view);
+      if (!target) {
+        onErrorRef.current?.(new Error("Choose a note block first."));
+        return;
+      }
 
-      for (const url of urls) {
-        const result = await captureSourceUrl({ url, libraryIds: [] });
-        if (!result.ok) {
-          onErrorRef.current?.(new Error(result.feedback.title));
-          continue;
+      attachmentBusyRef.current = true;
+      view.setProps({
+        editable: () => editableRef.current && !attachmentBusyRef.current,
+      });
+      try {
+        for (const url of urls) {
+          let result;
+          try {
+            result = await captureSourceUrl({ url, libraryIds: [] });
+          } catch (error) {
+            if (handleUnauthenticatedApiError(error)) {
+              return;
+            }
+            if (isSourceUrlCaptureDefect(error)) {
+              setDefect({ error });
+              return;
+            }
+            onErrorRef.current?.(error);
+            continue;
+          }
+          if (!result.ok) {
+            onErrorRef.current?.(new Error(result.feedback.title));
+            continue;
+          }
+          const referenced = insertMediaAttachment(view, {
+            mediaId: result.mediaId,
+            label: result.label,
+            createBlockId,
+            singleBlock,
+            target,
+          });
+          if (!referenced) {
+            setDefect({
+              error: new MediaAttachmentContractDefect(
+                "The accepted URL attachment target changed unexpectedly.",
+              ),
+            });
+            return;
+          }
+          if (result.sourceFailed) {
+            onFeedbackRef.current?.({
+              severity: "warning",
+              title: "URL was attached, but source processing failed.",
+            });
+          }
         }
-        insertMediaAttachment(view, {
-          mediaId: result.mediaId,
-          label: result.label,
-          createBlockId,
-          singleBlock,
+      } finally {
+        attachmentBusyRef.current = false;
+        view.setProps({
+          editable: () => editableRef.current && !attachmentBusyRef.current,
         });
-        if (result.sourceFailed) {
-          onErrorRef.current?.(new Error("URL was attached, but source processing failed."));
-        }
       }
     },
-    [createBlockId, singleBlock]
+    [createBlockId, handleUnauthenticatedApiError, singleBlock],
   );
 
   useEffect(() => {
@@ -311,63 +486,31 @@ export default function ProseMirrorOutlineEditor({
       return;
     }
 
-    async function openObjectRefMenu(
-      view: EditorView,
-      trigger: ObjectRefTextRange,
-      readLatestTrigger: (state: EditorState) => ObjectRefTextRange | null
-    ) {
+    // Position the menu at the caret and open it for `range`. Callers pass the
+    // trigger derived from the doc (`[[`/`@`) or from the selection (Mod-K).
+    function openObjectRefMenu(view: EditorView, range: ObjectRefTextRange) {
       if (!shell || !editableRef.current) {
-        searchRequestRef.current += 1;
-        setObjectRefMenu(null);
-        setActiveObjectRefKey(null);
+        setTrigger(null);
+        setActiveKey(null);
         return;
       }
-
-      const request = searchRequestRef.current + 1;
-      searchRequestRef.current = request;
-      const caret = view.coordsAtPos(trigger.to);
+      const caret = view.coordsAtPos(range.to);
       const shellBox = shell.getBoundingClientRect();
-      const objects = await searchObjectsRef.current(
-        trigger.query,
-        objectRefSearchOptions(trigger.filter)
-      );
-      if (searchRequestRef.current !== request) {
-        return;
-      }
-
-      const latest = readLatestTrigger(view.state);
-      if (
-        !latest ||
-        latest.from !== trigger.from ||
-        latest.to !== trigger.to ||
-        latest.query !== trigger.query ||
-        latest.filter !== trigger.filter
-      ) {
-        setObjectRefMenu(null);
-        return;
-      }
-
-      const filteredObjects = filterObjectRefResults(objects, trigger.filter);
-      setObjectRefMenu({
-        ...trigger,
-        objects: filteredObjects,
+      setTrigger({
+        ...range,
         left: Math.max(0, caret.left - shellBox.left),
         top: Math.max(0, caret.bottom - shellBox.top + 6),
       });
-      setActiveObjectRefKey(filteredObjects[0] ? objectRefKey(filteredObjects[0]) : null);
     }
 
-    async function refreshObjectRefMenu(nextState: EditorState) {
-      const view = viewRef.current;
-      const trigger = objectRefTriggerFromState(nextState);
-      if (!view || !trigger) {
-        searchRequestRef.current += 1;
-        setObjectRefMenu(null);
-        setActiveObjectRefKey(null);
+    function refreshObjectRefMenu(view: EditorView, nextState: EditorState) {
+      const range = objectRefTriggerFromState(nextState);
+      if (!range) {
+        setTrigger(null);
+        setActiveKey(null);
         return;
       }
-
-      await openObjectRefMenu(view, trigger, objectRefTriggerFromState);
+      openObjectRefMenu(view, range);
     }
 
     const view = new EditorView(host, {
@@ -391,7 +534,7 @@ export default function ProseMirrorOutlineEditor({
           activeOptionId: undefined,
         }),
       },
-      editable: () => editableRef.current,
+      editable: () => editableRef.current && !attachmentBusyRef.current,
       handleDOMEvents: {
         focus() {
           onFocusChangeRef.current?.(true);
@@ -407,20 +550,27 @@ export default function ProseMirrorOutlineEditor({
             return false;
           }
           const target = event.target;
-          const objectRef = target.closest<HTMLElement>("[data-object-type][data-object-id]");
+          const objectRef = target.closest<HTMLElement>(
+            "[data-object-type][data-object-id]",
+          );
           if (objectRef && host.contains(objectRef)) {
             event.preventDefault();
             onOpenObjectRef.current?.(
               objectRef.dataset.objectType ?? "",
               objectRef.dataset.objectId ?? "",
-              event.shiftKey
+              event.shiftKey,
             );
             return true;
           }
-          const blockHandle = target.closest<HTMLElement>("[data-note-block-open]");
+          const blockHandle = target.closest<HTMLElement>(
+            "[data-note-block-open]",
+          );
           if (blockHandle && host.contains(blockHandle)) {
             event.preventDefault();
-            onOpenBlockRef.current?.(blockHandle.dataset.noteBlockOpen ?? "", event.shiftKey);
+            onOpenBlockRef.current?.(
+              blockHandle.dataset.noteBlockOpen ?? "",
+              event.shiftKey,
+            );
             return true;
           }
           return false;
@@ -433,14 +583,21 @@ export default function ProseMirrorOutlineEditor({
           event.preventDefault();
           if (singleBlock && !canReplaceSingleBlockWithAttachment(view)) {
             onErrorRef.current?.(
-              new Error("Select the note body or empty it before attaching files.")
+              new Error(
+                "Select the note body or empty it before attaching files.",
+              ),
             );
             return true;
           }
-          const position = view.posAtCoords({ left: event.clientX, top: event.clientY });
+          const position = view.posAtCoords({
+            left: event.clientX,
+            top: event.clientY,
+          });
           if (position) {
             view.dispatch(
-              view.state.tr.setSelection(Selection.near(view.state.doc.resolve(position.pos)))
+              view.state.tr.setSelection(
+                Selection.near(view.state.doc.resolve(position.pos)),
+              ),
             );
           }
           void attachFiles(view, files);
@@ -452,7 +609,9 @@ export default function ProseMirrorOutlineEditor({
             event.preventDefault();
             if (singleBlock && !canReplaceSingleBlockWithAttachment(view)) {
               onErrorRef.current?.(
-                new Error("Select the note body or empty it before attaching files.")
+                new Error(
+                  "Select the note body or empty it before attaching files.",
+                ),
               );
               return true;
             }
@@ -477,15 +636,17 @@ export default function ProseMirrorOutlineEditor({
           if (!(event.target instanceof HTMLElement)) {
             return false;
           }
-          const handledAutocompleteKey = handleObjectRefMenuKeydown(event, {
-            menu: objectRefMenuRef.current,
-            activeObjectKey: activeObjectRefKeyRef.current,
-            setActiveObjectKey: setActiveObjectRefKey,
-            close: closeObjectRefMenu,
-            pick: insertObjectRef,
-          });
-          if (handledAutocompleteKey) {
-            return true;
+          if (triggerRef.current) {
+            const handledAutocompleteKey = handleObjectRefMenuKeydown(event, {
+              targets: targetsRef.current,
+              activeKey: activeKeyRef.current,
+              setActiveKey,
+              close: closeObjectRefMenu,
+              pick: insertObjectRef,
+            });
+            if (handledAutocompleteKey) {
+              return true;
+            }
           }
           if (
             (event.metaKey || event.ctrlKey) &&
@@ -493,12 +654,12 @@ export default function ProseMirrorOutlineEditor({
             !event.shiftKey &&
             event.key.toLowerCase() === "k"
           ) {
-            const trigger = objectRefSelectionFromState(_view.state);
-            if (!trigger) {
+            const range = objectRefSelectionFromState(_view.state);
+            if (!range) {
               return false;
             }
             event.preventDefault();
-            void openObjectRefMenu(_view, trigger, objectRefSelectionFromState);
+            openObjectRefMenu(_view, range);
             return true;
           }
           if (event.key !== "Enter" && event.key !== " ") {
@@ -506,21 +667,28 @@ export default function ProseMirrorOutlineEditor({
           }
 
           const target = event.target;
-          const objectRef = target.closest<HTMLElement>("[data-object-type][data-object-id]");
+          const objectRef = target.closest<HTMLElement>(
+            "[data-object-type][data-object-id]",
+          );
           if (objectRef && host.contains(objectRef)) {
             event.preventDefault();
             onOpenObjectRef.current?.(
               objectRef.dataset.objectType ?? "",
               objectRef.dataset.objectId ?? "",
-              event.shiftKey
+              event.shiftKey,
             );
             return true;
           }
 
-          const blockHandle = target.closest<HTMLElement>("[data-note-block-open]");
+          const blockHandle = target.closest<HTMLElement>(
+            "[data-note-block-open]",
+          );
           if (blockHandle && host.contains(blockHandle)) {
             event.preventDefault();
-            onOpenBlockRef.current?.(blockHandle.dataset.noteBlockOpen ?? "", event.shiftKey);
+            onOpenBlockRef.current?.(
+              blockHandle.dataset.noteBlockOpen ?? "",
+              event.shiftKey,
+            );
             return true;
           }
           return false;
@@ -532,7 +700,7 @@ export default function ProseMirrorOutlineEditor({
         if (transaction.docChanged) {
           onDocChangeRef.current?.(nextState.doc);
         }
-        void refreshObjectRefMenu(nextState);
+        refreshObjectRefMenu(view, nextState);
       },
     });
 
@@ -565,22 +733,24 @@ export default function ProseMirrorOutlineEditor({
     singleBlock,
   ]);
 
+  if (defect) throw defect.error;
+
   return (
     <div ref={shellRef} className={styles.editorShell}>
       <div ref={hostRef} className={styles.editorHost} />
-      {objectRefMenu && objectRefMenu.objects.length > 0 ? (
+      {trigger && targets.length > 0 ? (
         <div
           className={styles.autocomplete}
-          style={{ left: objectRefMenu.left, top: objectRefMenu.top }}
+          style={{ left: trigger.left, top: trigger.top }}
         >
-          <ObjectRefAutocomplete
+          <ResourceTargetListbox
             id={autocompleteListboxId}
-            objects={objectRefMenu.objects}
-            activeObjectKey={activeObjectRefKey}
-            optionIdForObject={(object) =>
-              `${autocompleteListboxId}-option-${objectRefKey(object)}`
-            }
-            onActiveChange={activateObjectRefOption}
+            ariaLabel="Object references"
+            targets={targets}
+            activeKey={activeKey}
+            loading={loading}
+            error={error}
+            onHover={(target) => setActiveKey(resourceTargetKey(target))}
             onPick={insertObjectRef}
           />
         </div>
@@ -596,8 +766,9 @@ function insertMediaAttachment(
     label: string;
     createBlockId: () => string;
     singleBlock: boolean;
-  }
-) {
+    target: AttachmentInsertionTarget;
+  },
+): boolean {
   const embed = outlineSchema.nodes.object_embed!.create({
     objectType: "media",
     objectId: input.mediaId,
@@ -605,45 +776,63 @@ function insertMediaAttachment(
     relationType: "embeds",
     displayMode: "compact",
   });
-  const { $from } = view.state.selection;
-  let blockDepth = -1;
-  for (let depth = $from.depth; depth > 0; depth -= 1) {
-    if ($from.node(depth).type === outlineSchema.nodes.outline_block) {
-      blockDepth = depth;
-      break;
-    }
-  }
-  if (blockDepth < 0) {
-    return;
-  }
-
-  const block = $from.node(blockDepth);
-  const blockPos = $from.before(blockDepth);
-  if (input.singleBlock) {
-    if (!canReplaceSingleBlockWithAttachment(view)) {
+  const matches: Array<{ block: ProseMirrorNode; blockPos: number }> = [];
+  view.state.doc.descendants((node, pos) => {
+    if (
+      matches.length === 0 &&
+      node.type === outlineSchema.nodes.outline_block &&
+      node.attrs.id === input.target.blockId
+    ) {
+      matches.push({ block: node, blockPos: pos });
       return false;
     }
+    return matches.length === 0;
+  });
+  const match = matches[0];
+  if (!match) return false;
+  const { block, blockPos } = match;
+  if (input.singleBlock) {
+    if (!block.eq(input.target.block)) return false;
     const body = block.firstChild;
     if (!body) {
       return false;
     }
-    const bodyFrom = $from.start(blockDepth);
+    const bodyFrom = blockPos + 1;
     const bodyTo = bodyFrom + body.nodeSize;
     view.dispatch(
       view.state.tr
         .setNodeMarkup(blockPos, undefined, block.attrs)
         .replaceWith(bodyFrom, bodyTo, embed)
-        .scrollIntoView()
+        .scrollIntoView(),
     );
     return true;
   }
 
   const attachmentBlock = outlineSchema.nodes.outline_block!.create(
     { id: input.createBlockId(), collapsed: false },
-    [embed]
+    [embed],
   );
-  view.dispatch(view.state.tr.insert(blockPos + block.nodeSize, attachmentBlock).scrollIntoView());
+  view.dispatch(
+    view.state.tr
+      .insert(blockPos + block.nodeSize, attachmentBlock)
+      .scrollIntoView(),
+  );
   return true;
+}
+
+function attachmentInsertionTarget(
+  view: EditorView,
+): AttachmentInsertionTarget | null {
+  const { $from } = view.state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const block = $from.node(depth);
+    if (block.type !== outlineSchema.nodes.outline_block) continue;
+    const blockId = block.attrs.id;
+    return typeof blockId === "string" && blockId.length > 0
+      ? { blockId, block }
+      : null;
+  }
+  return null;
 }
 
 function canReplaceSingleBlockWithAttachment(view: EditorView): boolean {
@@ -671,7 +860,11 @@ function canReplaceSingleBlockWithAttachment(view: EditorView): boolean {
   const bodyContentFrom = bodyFrom + 1;
   const bodyContentTo = bodyTo - 1;
   const selection = view.state.selection;
-  return !selection.empty && selection.from <= bodyContentFrom && selection.to >= bodyContentTo;
+  return (
+    !selection.empty &&
+    selection.from <= bodyContentFrom &&
+    selection.to >= bodyContentTo
+  );
 }
 
 function createNotePulseDecorationPlugin(): Plugin<DecorationSet> {
@@ -685,7 +878,9 @@ function createNotePulseDecorationPlugin(): Plugin<DecorationSet> {
           | null
           | undefined;
         if (meta !== undefined) {
-          return meta ? notePulseDecorations(transaction.doc, meta) : DecorationSet.empty;
+          return meta
+            ? notePulseDecorations(transaction.doc, meta)
+            : DecorationSet.empty;
         }
         return decorations.map(transaction.mapping, transaction.doc);
       },
@@ -700,7 +895,7 @@ function createNotePulseDecorationPlugin(): Plugin<DecorationSet> {
 
 function notePulseDecorations(
   doc: ProseMirrorNode,
-  target: NotePulseEditorTarget
+  target: NotePulseEditorTarget,
 ): DecorationSet {
   const fromOffset = Math.max(0, Math.floor(target.startOffset));
   const toOffset = Math.max(fromOffset, Math.floor(target.endOffset));
@@ -710,7 +905,10 @@ function notePulseDecorations(
 
   const decorations: Decoration[] = [];
   doc.descendants((node, pos) => {
-    if (node.type !== outlineSchema.nodes.outline_block || node.attrs.id !== target.blockId) {
+    if (
+      node.type !== outlineSchema.nodes.outline_block ||
+      node.attrs.id !== target.blockId
+    ) {
       return true;
     }
     const body = node.firstChild;
@@ -737,16 +935,21 @@ function notePulseDecorations(
       if (child.isText) {
         const text = child.text ?? "";
         decorationFrom =
-          childFrom + codepointToUtf16(text, Math.max(0, fromOffset - logicalFrom));
+          childFrom +
+          codepointToUtf16(text, Math.max(0, fromOffset - logicalFrom));
         decorationTo =
-          childFrom + codepointToUtf16(text, Math.min(logicalLength, toOffset - logicalFrom));
+          childFrom +
+          codepointToUtf16(
+            text,
+            Math.min(logicalLength, toOffset - logicalFrom),
+          );
       }
       if (decorationTo > decorationFrom) {
         decorations.push(
           Decoration.inline(decorationFrom, decorationTo, {
             class: "nexus-note-range-pulse",
             "data-note-pulse-range": "true",
-          })
+          }),
         );
       }
     });
@@ -769,13 +972,18 @@ function notePulseLogicalLength(node: ProseMirrorNode): number {
   ) {
     return codepointLength(node.attrs.label);
   }
-  if (node.type === outlineSchema.nodes.image && typeof node.attrs.alt === "string") {
+  if (
+    node.type === outlineSchema.nodes.image &&
+    typeof node.attrs.alt === "string"
+  ) {
     return codepointLength(node.attrs.alt);
   }
   return 0;
 }
 
-function objectRefTriggerFromState(state: EditorState): ObjectRefTextRange | null {
+function objectRefTriggerFromState(
+  state: EditorState,
+): ObjectRefTextRange | null {
   if (!state.selection.empty) {
     return null;
   }
@@ -784,8 +992,15 @@ function objectRefTriggerFromState(state: EditorState): ObjectRefTextRange | nul
     return null;
   }
 
-  const textBefore = $from.parent.textBetween(0, $from.parentOffset, "\n", "\n");
-  const pageMatch = /(^|\s)\[\[([A-Za-z0-9][A-Za-z0-9 _.'-]{0,79})$/.exec(textBefore);
+  const textBefore = $from.parent.textBetween(
+    0,
+    $from.parentOffset,
+    "\n",
+    "\n",
+  );
+  const pageMatch = /(^|\s)\[\[([A-Za-z0-9][A-Za-z0-9 _.'-]{0,79})$/.exec(
+    textBefore,
+  );
   if (pageMatch) {
     const query = pageMatch[2]!.trim();
     if (!query) {
@@ -818,7 +1033,9 @@ function objectRefTriggerFromState(state: EditorState): ObjectRefTextRange | nul
   };
 }
 
-function objectRefSelectionFromState(state: EditorState): ObjectRefTextRange | null {
+function objectRefSelectionFromState(
+  state: EditorState,
+): ObjectRefTextRange | null {
   if (state.selection.empty) {
     return null;
   }
@@ -839,29 +1056,6 @@ function objectRefSelectionFromState(state: EditorState): ObjectRefTextRange | n
   return { from, to, query, filter: "all" };
 }
 
-function filterObjectRefResults(
-  objects: HydratedObjectRef[],
-  filter: ObjectRefTextRange["filter"]
-): HydratedObjectRef[] {
-  if (filter === "page_note") {
-    return objects.filter(
-      (object) => object.objectType === "page" || object.objectType === "note_block"
-    );
-  }
-  return objects;
-}
-
-function objectRefSearchOptions(filter: ObjectRefTextRange["filter"]): ObjectRefSearchOptions {
-  if (filter === "page_note") {
-    return { objectTypes: ["page", "note_block"] };
-  }
-  return {};
-}
-
-function objectRefKey(object: HydratedObjectRef): string {
-  return `${object.objectType}:${object.objectId}`;
-}
-
 function editorAttributes(input: {
   ariaLabel: string;
   compact: boolean;
@@ -870,7 +1064,9 @@ function editorAttributes(input: {
   activeOptionId: string | undefined;
 }): Record<string, string> {
   return {
-    class: input.compact ? `${styles.editorView} ${styles.compact}` : styles.editorView,
+    class: input.compact
+      ? `${styles.editorView} ${styles.compact}`
+      : styles.editorView,
     role: "textbox",
     "aria-label": input.ariaLabel,
     "aria-multiline": "true",
@@ -879,7 +1075,9 @@ function editorAttributes(input: {
       ? {
           "aria-autocomplete": "list",
           "aria-controls": input.autocompleteListboxId,
-          ...(input.activeOptionId ? { "aria-activedescendant": input.activeOptionId } : {}),
+          ...(input.activeOptionId
+            ? { "aria-activedescendant": input.activeOptionId }
+            : {}),
         }
       : {}),
   };
@@ -888,25 +1086,27 @@ function editorAttributes(input: {
 function handleObjectRefMenuKeydown(
   event: KeyboardEvent,
   input: {
-    menu: ObjectRefMenuState | null;
-    activeObjectKey: string | null;
-    setActiveObjectKey: (objectKey: string | null) => void;
+    targets: ResourceTarget[];
+    activeKey: string | null;
+    setActiveKey: (key: string | null) => void;
     close: () => void;
-    pick: (object: HydratedObjectRef) => void;
-  }
+    pick: (target: ResourceTarget) => void;
+  },
 ): boolean {
-  const objects = input.menu?.objects ?? [];
-  if (objects.length === 0) {
+  const { targets } = input;
+  if (targets.length === 0) {
     return false;
   }
   const currentIndex = Math.max(
     0,
-    objects.findIndex((object) => objectRefKey(object) === input.activeObjectKey)
+    targets.findIndex(
+      (target) => resourceTargetKey(target) === input.activeKey,
+    ),
   );
   const setIndex = (index: number) => {
-    const object = objects[(index + objects.length) % objects.length];
-    if (object) {
-      input.setActiveObjectKey(objectRefKey(object));
+    const target = targets[(index + targets.length) % targets.length];
+    if (target) {
+      input.setActiveKey(resourceTargetKey(target));
     }
   };
 
@@ -925,14 +1125,15 @@ function handleObjectRefMenuKeydown(
       return true;
     case "End":
       event.preventDefault();
-      setIndex(objects.length - 1);
+      setIndex(targets.length - 1);
       return true;
     case "Enter":
     case "Tab": {
       event.preventDefault();
       const selected =
-        objects.find((object) => objectRefKey(object) === input.activeObjectKey) ??
-        objects[0];
+        targets.find(
+          (target) => resourceTargetKey(target) === input.activeKey,
+        ) ?? targets[0];
       if (selected) {
         input.pick(selected);
       }

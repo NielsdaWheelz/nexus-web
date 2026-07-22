@@ -8,16 +8,14 @@ const { applySupabasePublicEnv, buildE2eAppRuntimeEnv, loadRootFileEnv } =
 const ROOT_DIR = path.resolve(__dirname, "..");
 // Keep this env preamble in parity with playwright.config.ts: hydrate process.env from the
 // root env file (local runs) before resolving Supabase env, then apply the same test-only
-// defaults. The seed step (global-setup) and both web servers below inherit these; omitting
-// NEXUS_KEY_ENCRYPTION_KEY here previously crashed seeding. The only intentional differences
-// from the base config are the enforced-CSP production web server and the *.csp.* projects.
+// defaults. The seed step (global-setup) and both web servers below inherit these. The only
+// intentional differences from the base config are the enforced-CSP production web server and
+// the *.csp.* projects.
 for (const [key, value] of Object.entries(loadRootFileEnv(ROOT_DIR))) {
   process.env[key] ??= String(value);
 }
 applySupabasePublicEnv(ROOT_DIR, process.env);
 
-process.env.NEXUS_KEY_ENCRYPTION_KEY ??=
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 process.env.RATE_LIMIT_RPM ??= "240";
 process.env.RATE_LIMIT_CONCURRENT ??= "8";
 

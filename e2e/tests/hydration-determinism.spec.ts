@@ -28,7 +28,7 @@ async function coldLoad(page: Page, testInfo: TestInfo, href: string): Promise<v
 }
 
 test.describe("hydration determinism", () => {
-  for (const href of ["/libraries", "/notes", "/settings/keys", "/settings/billing"]) {
+  for (const href of ["/libraries", "/notes", "/settings/appearance", "/settings/billing"]) {
     test(`desktop cold-load ${href}`, async ({ page }, testInfo) => {
       await coldLoad(page, testInfo, href);
     });

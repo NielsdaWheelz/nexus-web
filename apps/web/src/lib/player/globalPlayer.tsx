@@ -43,7 +43,7 @@ import type {
   LecternSnapshot,
   MediaId,
   PlayerDescriptor,
-} from "@/lib/lectern/client";
+} from "@/lib/lectern/contract";
 import {
   AUDIO_EFFECTS_DEFAULTS,
   COMPRESSOR_DEFAULTS,

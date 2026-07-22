@@ -5,14 +5,12 @@ import json
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import jwt
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from provider_runtime.types import ModelStreamEvent, TokenUsage
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
@@ -40,7 +38,6 @@ from nexus.stream_paths import is_stream_path
 from tests.factories import (
     create_test_conversation,
     create_test_message,
-    create_test_model,
 )
 from tests.utils.db import DirectSessionManager
 
@@ -68,7 +65,6 @@ def _insert_terminal_run(
     run_id = uuid4()
     with direct_db.session() as session:
         ensure_user_and_default_library(session, owner_user_id)
-        model_id = create_test_model(session)
         conversation_id = create_test_conversation(session, owner_user_id)
         user_message_id = create_test_message(
             session,
@@ -84,7 +80,6 @@ def _insert_terminal_run(
             role="assistant",
             content="Hi",
             status=status,
-            model_id=model_id,
         )
         session.execute(
             text(
@@ -92,12 +87,12 @@ def _insert_terminal_run(
                 INSERT INTO chat_runs (
                     id, owner_user_id, conversation_id, user_message_id,
                     assistant_message_id, idempotency_key, payload_hash, status,
-                    model_id, reasoning, key_mode, completed_at
+                    profile_id, reasoning_option_id, completed_at
                 )
                 VALUES (
                     :id, :owner_user_id, :conversation_id, :user_message_id,
                     :assistant_message_id, :idempotency_key, :payload_hash, :status,
-                    :model_id, 'none', 'auto', :completed_at
+                    'balanced', 'medium', :completed_at
                 )
                 """
             ),
@@ -110,7 +105,6 @@ def _insert_terminal_run(
                 "idempotency_key": f"stream-run-{run_id}",
                 "payload_hash": f"payload-{run_id}",
                 "status": status,
-                "model_id": model_id,
                 "completed_at": datetime.now(UTC),
             },
         )
@@ -135,8 +129,8 @@ def _insert_terminal_run(
                         "conversation_id": str(conversation_id),
                         "user_message_id": str(user_message_id),
                         "assistant_message_id": str(assistant_message_id),
-                        "model_id": str(model_id),
-                        "provider": "openai",
+                        "profile_id": "balanced",
+                        "reasoning_option_id": "medium",
                         "chat_subject": None,
                     }
                 ),
@@ -175,99 +169,6 @@ def _seed_ai_plus_billing(direct_db: DirectSessionManager, user_id: UUID) -> Non
             expires_at=None,
             reason="chat stream test access",
             actor_label="test",
-        )
-
-
-class _StreamingAnswerRouter:
-    def __init__(self, *deltas: str) -> None:
-        self.deltas = deltas
-
-    async def stream(self, _req, *, key, timeout_s, cancel=None):
-        del cancel
-        for delta in self.deltas:
-            yield ModelStreamEvent(
-                type="text_delta",
-                provider="openai",
-                model="gpt-5.4-mini",
-                text=delta,
-            )
-        yield ModelStreamEvent(
-            type="completed",
-            provider="openai",
-            model="gpt-5.4-mini",
-            usage=TokenUsage(input_tokens=10, output_tokens=20, total_tokens=30),
-            provider_request_id="resp_source_backed_test",
-            status="completed",
-        )
-
-    async def generate(self, request, *, key, timeout_s):
-        answer = "".join(self.deltas)
-        first = self.deltas[0].rstrip()
-        second_start = len(first) + 1
-        second = answer[second_start:]
-        if "Generate one concise artifact" in request.messages[0].content:
-            payload = json.loads(request.messages[1].content)
-            return SimpleNamespace(
-                text=json.dumps(
-                    {
-                        "artifact_kind": payload["requested_artifact_kind"],
-                        "title": "Source timeline",
-                        "preview_text": "A source-backed timeline was generated.",
-                        "parts": [
-                            {
-                                "part_key": "event-1",
-                                "part_type": "event",
-                                "text": first,
-                                "evidence_ordinals": [0],
-                                "support_state": "source_grounded",
-                            }
-                        ],
-                    }
-                )
-            )
-        if "Extract every atomic factual claim" in request.messages[0].content:
-            return SimpleNamespace(
-                text=json.dumps(
-                    {
-                        "claims": [
-                            {
-                                "text": first,
-                                "answer_start_offset": 0,
-                                "answer_end_offset": len(first),
-                            },
-                            {
-                                "text": second,
-                                "answer_start_offset": second_start,
-                                "answer_end_offset": second_start + len(second),
-                            },
-                        ]
-                    }
-                )
-            )
-        return SimpleNamespace(
-            text=json.dumps(
-                {
-                    "claims": [
-                        {
-                            "ordinal": 0,
-                            "answer_start_offset": 0,
-                            "answer_end_offset": len(first),
-                            "support_status": "supported",
-                            "evidence_ordinals": [0],
-                            "confidence": 0.98,
-                        },
-                        {
-                            "ordinal": 1,
-                            "answer_start_offset": second_start,
-                            "answer_end_offset": second_start + len(second),
-                            "support_status": "not_enough_evidence",
-                            "evidence_ordinals": [],
-                            "unsupported_reason": "not in selected evidence",
-                            "confidence": 0.1,
-                        },
-                    ]
-                }
-            )
         )
 
 

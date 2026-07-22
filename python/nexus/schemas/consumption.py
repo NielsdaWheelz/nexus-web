@@ -28,7 +28,7 @@ _OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra=
 
 ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
-
+ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
 _NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
 
 
@@ -102,6 +102,7 @@ class LecternItemOut(BaseModel):
 
     item_id: UUID
     media_id: UUID
+    kind: ConsumptionMediaKind
     title: str
     subtitle: Presence[str]
     href: str

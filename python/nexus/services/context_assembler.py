@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime.types import ModelCall, ModelMessage
+from provider_runtime import CanonicalTool, ChatModelContract, GenerateIntent, ReasoningLevel
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -21,19 +21,18 @@ from nexus.db.models import (
     Highlight,
     Message,
     MessageRetrieval,
-    Model,
 )
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.llm_catalog import model_max_context_tokens
 from nexus.services.chat_prompt import (
     PromptPlan,
-    build_llm_request_from_plan,
+    build_generate_intent_from_plan,
     build_prompt_plan,
     render_system_prompt_block,
     validate_prompt_plan_budget,
     validate_prompt_size,
 )
 from nexus.services.chat_quote import render_quote_block
+from nexus.services.llm_profiles import LlmProfile
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,
@@ -68,9 +67,15 @@ CACHE_POLICY_5M: Mapping[str, object] = {"type": "ephemeral", "ttl_seconds": 300
 
 
 @dataclass(frozen=True)
+class HistoryTurn:
+    role: Literal["user", "assistant"]
+    content: str
+
+
+@dataclass(frozen=True)
 class HistoryUnit:
     key: str
-    turns: tuple[ModelMessage, ...]
+    turns: tuple[HistoryTurn, ...]
     message_ids: tuple[UUID, ...]
     first_seq: int
     last_seq: int
@@ -94,9 +99,9 @@ class AssemblyLedger:
 
 @dataclass(frozen=True)
 class ContextAssembly:
-    llm_request: ModelCall
+    generate_intent: GenerateIntent
     prompt_plan: PromptPlan
-    history: tuple[ModelMessage, ...]
+    history: tuple[HistoryTurn, ...]
     context_blocks: tuple[str, ...]
     context_types: frozenset[str]
     tool_call_events: tuple[Mapping[str, object], ...]
@@ -112,8 +117,11 @@ def assemble_chat_context(
     db: Session,
     *,
     run: ChatRun,
-    model: Model,
+    profile: LlmProfile,
+    reasoning: ReasoningLevel,
+    contract: ChatModelContract,
     max_output_tokens: int,
+    tools: tuple[CanonicalTool, ...],
 ) -> ContextAssembly:
     """Assemble the provider-neutral chat request for a durable chat run."""
 
@@ -224,13 +232,12 @@ def assemble_chat_context(
         text=user_message.content,
         source_refs=[{"type": "message", "id": str(user_message.id)}],
     )
-    max_context_tokens = model_max_context_tokens(model.provider, model.model_name)
+    max_context_tokens = contract.context_limit
     budget = build_prompt_budget(
         max_context_tokens=max_context_tokens,
         max_output_tokens=max_output_tokens,
-        provider=model.provider,
-        model_name=model.model_name,
-        reasoning=run.reasoning,
+        reasoning=reasoning,
+        reasoning_reserve_tokens=contract.pricing.reasoning_reserve_tokens,
     )
     budget_items: list[BudgetItem] = [
         BudgetItem(
@@ -314,12 +321,12 @@ def assemble_chat_context(
     estimated_input_tokens = validate_prompt_plan_budget(prompt_plan, budget.input_budget_tokens)
     validate_prompt_size(prompt_plan)
 
-    llm_request = build_llm_request_from_plan(
+    generate_intent = build_generate_intent_from_plan(
         plan=prompt_plan,
-        provider=model.provider,
-        model_name=model.model_name,
-        max_tokens=max_output_tokens,
-        reasoning_effort=run.reasoning,
+        target=profile.target,
+        max_output_tokens=max_output_tokens,
+        reasoning=reasoning,
+        tools=tools,
     )
     included_context_refs: list[Mapping[str, object]] = [
         metadata for key, _text, metadata in mandatory_blocks if key in included_keys
@@ -332,12 +339,11 @@ def assemble_chat_context(
         selection,
         prompt_plan=prompt_plan,
         estimated_input_tokens=estimated_input_tokens,
-        model=model,
         included_history_units=selected_history_units,
         included_context_refs=included_context_refs,
     )
     return ContextAssembly(
-        llm_request=llm_request,
+        generate_intent=generate_intent,
         prompt_plan=prompt_plan,
         history=tuple(history),
         context_blocks=tuple(context_blocks),
@@ -355,7 +361,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "chat_run_id": run.id,
         "conversation_id": run.conversation_id,
         "assistant_message_id": run.assistant_message_id,
-        "model_id": run.model_id,
         "cacheable_input_tokens_estimate": ledger.cacheable_input_tokens_estimate,
         "prompt_block_manifest": dict(ledger.prompt_block_manifest),
         "max_context_tokens": ledger.max_context_tokens,
@@ -392,7 +397,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 chat_run_id,
                 conversation_id,
                 assistant_message_id,
-                model_id,
                 cacheable_input_tokens_estimate,
                 prompt_block_manifest,
                 max_context_tokens,
@@ -410,7 +414,6 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
                 :chat_run_id,
                 :conversation_id,
                 :assistant_message_id,
-                :model_id,
                 :cacheable_input_tokens_estimate,
                 :prompt_block_manifest,
                 :max_context_tokens,
@@ -751,8 +754,8 @@ def load_recent_history_units(
                 HistoryUnit(
                     key=f"history_pair:{row[1]}:{next_row[1]}",
                     turns=(
-                        ModelMessage(role="user", content=row[3]),
-                        ModelMessage(role="assistant", content=next_row[3]),
+                        HistoryTurn(role="user", content=row[3]),
+                        HistoryTurn(role="assistant", content=next_row[3]),
                     ),
                     message_ids=(row[0], next_row[0]),
                     first_seq=row[1],
@@ -764,7 +767,9 @@ def load_recent_history_units(
         units.append(
             HistoryUnit(
                 key=f"history_single:{row[1]}",
-                turns=(ModelMessage(role=row[2], content=row[3]),),
+                turns=(
+                    HistoryTurn(role=cast(Literal["user", "assistant"], row[2]), content=row[3]),
+                ),
                 message_ids=(row[0],),
                 first_seq=row[1],
                 last_seq=row[1],
@@ -891,8 +896,8 @@ def _history_blocks(
     return tuple(blocks)
 
 
-def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[ModelMessage]:
-    turns: list[ModelMessage] = []
+def _history_turns_from_units(units: Sequence[HistoryUnit]) -> list[HistoryTurn]:
+    turns: list[HistoryTurn] = []
     for unit in sorted(units, key=lambda candidate: candidate.first_seq):
         turns.extend(unit.turns)
     return turns
@@ -903,7 +908,6 @@ def _build_ledger(
     *,
     prompt_plan: PromptPlan,
     estimated_input_tokens: int,
-    model: Model,
     included_history_units: Sequence[HistoryUnit],
     included_context_refs: Sequence[Mapping[str, object]],
 ) -> AssemblyLedger:

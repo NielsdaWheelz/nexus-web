@@ -1,20 +1,29 @@
-"""Provider-neutral structured prompt plans for durable chat runs."""
+"""Provider-neutral structured prompt plans for durable chat runs, and their
+translation into the runtime's ``GenerateIntent``."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
-from provider_runtime import PromptCacheTTL
-from provider_runtime.types import (
-    ModelCall,
-    ModelMessage,
-    ModelRef,
-    ProviderName,
-    ReasoningConfig,
-    ReasoningEffort,
+from provider_runtime import (
+    Absent,
+    AssistantMessage,
+    BlockStability,
+    CanonicalTool,
+    Dynamic,
+    GenerateIntent,
+    GlobalScope,
+    PromptMessage,
+    ProviderTarget,
+    ReasoningLevel,
+    Stable,
+    SystemMessage,
+    TextOutput,
+    UserMessage,
 )
+from provider_runtime import PromptBlock as RuntimePromptBlock
 
 from nexus.services.prompt_budget import (
     ContextBudgetError,
@@ -145,46 +154,54 @@ def build_prompt_plan(
     )
 
 
-def build_llm_request_from_plan(
+def build_generate_intent_from_plan(
     *,
     plan: PromptPlan,
-    provider: str,
-    model_name: str,
-    max_tokens: int,
-    reasoning_effort: str,
-) -> ModelCall:
-    """Derive the provider request from the prompt plan exactly once."""
+    target: ProviderTarget,
+    max_output_tokens: int,
+    reasoning: ReasoningLevel,
+    tools: tuple[CanonicalTool, ...],
+) -> GenerateIntent:
+    """Derive the runtime ``GenerateIntent`` from the prompt plan exactly once.
 
-    messages: list[ModelMessage] = []
+    C1 stability table (adjudicated): the invariant system prompt block is
+    ``Stable(GlobalScope())`` (its ``privacy_scope="global"``); every other
+    block — subject, reader_selection, branch_anchor, resources, history,
+    current user — is ``Dynamic()``.
+    """
+    messages: list[PromptMessage] = []
     for turn in plan.turns:
-        for block in turn.blocks:
-            cache_ttl = cache_ttl_from_policy(block.cache_policy) or "none"
+        blocks = tuple(_runtime_block(block) for block in turn.blocks)
+        if turn.role == "system":
+            messages.append(SystemMessage(blocks=blocks))
+        elif turn.role == "user":
+            messages.append(UserMessage(blocks=blocks))
+        else:
+            # Prior assistant turns from history carry no live tool_calls or
+            # continuation — those exist only for the current turn's live loop.
             messages.append(
-                ModelMessage(
-                    role=turn.role,
-                    content=block.text,
-                    cache_ttl=cache_ttl,
+                AssistantMessage(
+                    text="\n".join(block.text for block in turn.blocks),
+                    tool_calls=(),
+                    continuation=Absent(),
                 )
             )
-
-    return ModelCall(
-        model=ModelRef(provider=cast(ProviderName, provider), model=model_name),
-        messages=messages,
-        max_output_tokens=max_tokens,
-        temperature=0.7,
-        reasoning=ReasoningConfig(effort=cast(ReasoningEffort, reasoning_effort)),
+    return GenerateIntent(
+        target=target,
+        messages=tuple(messages),
+        max_output_tokens=max_output_tokens,
+        reasoning=reasoning,
+        tools=tools,
+        tool_choice="auto" if tools else "none",
+        output=TextOutput(),
     )
 
 
-def cache_ttl_from_policy(cache_policy: object) -> PromptCacheTTL | None:
-    if not isinstance(cache_policy, dict):
-        return None
-    ttl_seconds = cache_policy.get("ttl_seconds")
-    if ttl_seconds == 300:
-        return "5m"
-    if ttl_seconds == 3600:
-        return "1h"
-    return None
+def _runtime_block(block: PromptBlock) -> RuntimePromptBlock:
+    stability: BlockStability = (
+        Stable(GlobalScope()) if block.privacy_scope == "global" else Dynamic()
+    )
+    return RuntimePromptBlock(text=block.text, stability=stability)
 
 
 def validate_prompt_plan_budget(plan: PromptPlan, input_budget_tokens: int) -> int:

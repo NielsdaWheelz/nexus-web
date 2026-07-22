@@ -1,172 +1,59 @@
 "use client";
 
 import {
-  createContext,
-  memo,
   useCallback,
-  useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
-import type { ActionMenuOption } from "@/components/ui/ActionMenu";
 import SurfaceHeader, {
   type SurfaceHeaderNavigation,
 } from "@/components/ui/SurfaceHeader";
-import {
-  secondaryPublicationIncludesSurface,
-  type PaneFixedChromePublication,
-  type PaneSecondaryPublication,
-} from "@/lib/panes/panePublications";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
-import { useMobileChrome } from "@/lib/workspace/mobileChrome";
-import { copyText } from "@/lib/ui/copyText";
-import { stripCoarseReaderQuery } from "@/lib/reader/readerLocationHref";
-import type { Folio } from "@/lib/ui/folio";
-import { standingHeadForRoute } from "@/lib/navigation/standingHead";
 import {
-  resolvePaneRouteModel,
-  type PaneBodyMode,
-} from "@/lib/panes/paneRouteModel";
-import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+  paneHeaderAccessibleName,
+  resolvePaneHeaderModel,
+} from "@/lib/panes/paneHeaderModel";
+import {
+  arePanePrimaryChromePublicationsEqual,
+  secondaryPublicationIncludesSurface,
+  type PaneFixedChromePublication,
+  type PanePrimaryChromePublication,
+  type PanePrimaryChromePublicationUpdate,
+  type PaneSecondaryPublication,
+} from "@/lib/panes/panePublications";
 import type {
-  WorkspaceSecondarySizing,
-  WorkspaceSecondarySurfaceId,
+  PaneBodyMode,
+  PaneRouteHeaderContract,
+} from "@/lib/panes/paneRouteModel";
+import { stripCoarseReaderQuery } from "@/lib/reader/readerLocationHref";
+import { copyText } from "@/lib/ui/copyText";
+import type {
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
+import { useMobileChrome } from "@/lib/workspace/mobileChrome";
+import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import {
+  isPaneSecondaryRegionId,
+  paneSecondaryRegionId,
+  type WorkspaceSecondarySizing,
+  type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
 import styles from "./PaneShell.module.css";
 
-// ---------------------------------------------------------------------------
-// Chrome override — lets body components push toolbar/options/folio into the
-// PaneShell chrome without routing through the workspace store.
-// ---------------------------------------------------------------------------
-
-export interface PaneChromeOverrides {
-  toolbar?: React.ReactNode;
-  actions?: React.ReactNode;
-  options?: ActionMenuOption[];
-  folio?: Folio;
-  folioPending?: boolean;
-}
-
-const EMPTY_PANE_CHROME_OVERRIDES: PaneChromeOverrides = {};
-
-export const PaneChromeOverrideContext = createContext<
-  ((overrides: PaneChromeOverrides) => void) | null
->(null);
-
-function arePaneChromeOverridesEqual(
-  left: PaneChromeOverrides,
-  right: PaneChromeOverrides,
-): boolean {
-  return (
-    left.toolbar === right.toolbar &&
-    left.actions === right.actions &&
-    areActionMenuOptionsEqual(left.options, right.options) &&
-    areFoliosEqual(left.folio, right.folio) &&
-    left.folioPending === right.folioPending
-  );
-}
-
-function areFoliosEqual(
-  left: Folio | undefined,
-  right: Folio | undefined,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right || left.kind !== right.kind) return false;
-  switch (left.kind) {
-    case "count":
-      return (
-        right.kind === "count" &&
-        left.value === right.value &&
-        left.unit === right.unit
-      );
-    case "date":
-      return right.kind === "date" && left.iso === right.iso;
-    case "title":
-      return right.kind === "title" && left.value === right.value;
-    case "none":
-      return true;
-  }
-}
-
-function areActionMenuOptionsEqual(
-  left: ActionMenuOption[] | undefined,
-  right: ActionMenuOption[] | undefined,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right || left.length !== right.length) return false;
-  return left.every((option, index) => {
-    const other = right[index];
-    return (
-      other?.id === option.id &&
-      other.label === option.label &&
-      other.render === option.render &&
-      other.onSelect === option.onSelect &&
-      other.href === option.href &&
-      other.disabled === option.disabled &&
-      other.tone === option.tone &&
-      other.restoreFocusOnClose === option.restoreFocusOnClose &&
-      other.separatorBefore === option.separatorBefore
-    );
-  });
-}
-
 const noopResizeSecondaryPane = () => {};
 const noopCloseSecondary = () => {};
 const noopSetActiveSecondarySurface = () => {};
-
-/**
- * Call from a body component rendered inside PaneShell to push toolbar,
- * options, folio, or actions into the pane chrome.
- */
-export function usePaneChromeOverride(overrides: PaneChromeOverrides): void {
-  const setOverrides = useContext(PaneChromeOverrideContext);
-  const { actions, folio, folioPending, options, toolbar } = overrides;
-  const lastPublishedRef = useRef<PaneChromeOverrides | null>(null);
-  useEffect(() => {
-    if (!setOverrides) {
-      return;
-    }
-    const next = { actions, folio, folioPending, options, toolbar };
-    if (
-      lastPublishedRef.current &&
-      arePaneChromeOverridesEqual(lastPublishedRef.current, next)
-    ) {
-      return;
-    }
-    lastPublishedRef.current = next;
-    setOverrides(next);
-  }, [actions, folio, folioPending, options, setOverrides, toolbar]);
-
-  useEffect(() => {
-    if (!setOverrides) {
-      return;
-    }
-    return () => {
-      lastPublishedRef.current = null;
-      setOverrides(EMPTY_PANE_CHROME_OVERRIDES);
-    };
-  }, [setOverrides]);
-}
-
-const PaneShellBodyProviders = memo(function PaneShellBodyProviders({
-  children,
-  setChromeOverrides,
-}: {
-  children: React.ReactNode;
-  setChromeOverrides: (overrides: PaneChromeOverrides) => void;
-}) {
-  return (
-    <PaneChromeOverrideContext.Provider value={setChromeOverrides}>
-      {children}
-    </PaneChromeOverrideContext.Provider>
-  );
-});
+const EMPTY_HEADER_ACTIONS: readonly PaneHeaderAction[] = [];
+const EMPTY_OPTIONS: readonly ActionDescriptor[] = [];
 
 type PaneShellStyle = CSSProperties & {
   "--mobile-pane-chrome-height"?: string;
@@ -174,14 +61,11 @@ type PaneShellStyle = CSSProperties & {
 
 interface PaneShellProps {
   paneId: string;
+  routeKey: string;
+  routeHeader: PaneRouteHeaderContract;
   href?: string;
-  // Retained for the resize-handle aria-label and the document-mode folio
-  // auto-derive (D-8); no longer forwarded to the chrome header as a title.
-  title: string;
-  titlePending?: boolean;
-  toolbar?: React.ReactNode;
-  actions?: React.ReactNode;
-  options?: ActionMenuOption[];
+  label: string;
+  labelPending?: boolean;
   navigation: SurfaceHeaderNavigation;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
@@ -204,12 +88,11 @@ interface PaneShellProps {
 
 export default function PaneShell({
   paneId,
+  routeKey,
+  routeHeader,
   href = "/",
-  title,
-  titlePending,
-  toolbar,
-  actions,
-  options,
+  label,
+  labelPending = false,
   navigation,
   sizing,
   bodyMode,
@@ -234,48 +117,97 @@ export default function PaneShell({
     onResize: onResizePrimaryPane,
   });
   const chromeRef = useRef<HTMLDivElement>(null);
+  const currentRouteKeyRef = useRef(routeKey);
+  currentRouteKeyRef.current = routeKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
-  const [chromeOverrides, setChromeOverrides] = useState<PaneChromeOverrides>(
-    EMPTY_PANE_CHROME_OVERRIDES
-  );
-  const publishChromeOverrides = useCallback((overrides: PaneChromeOverrides) => {
-    setChromeOverrides((current) =>
-      arePaneChromeOverridesEqual(current, overrides) ? current : overrides
-    );
-  }, []);
+  const [primaryChromeRecord, setPrimaryChromeRecord] = useState<{
+    readonly routeKey: string;
+    readonly publication: PanePrimaryChromePublication;
+  } | null>(null);
   const { hidden, setPaneChrome } = useMobileChrome();
+  const identityId = useId();
+  const landmarkLabelId = useId();
 
-  const effectiveToolbar = chromeOverrides.toolbar ?? toolbar;
-  const effectiveActions = chromeOverrides.actions ?? actions;
-  const effectiveOptions = chromeOverrides.options ?? options;
-  const mobileChromeHidden = isMobile && hidden;
-
-  // Running head: the section standing head derives from the route; the folio
-  // comes from a body override, else auto-derives a title folio for document
-  // (reader) panes from the resolved pane title — one owner, no per-body edit
-  // (D-8). An explicit override always wins (e.g. a detail surface publishing a
-  // count).
-  const standingHead = useMemo(() => {
-    const routeId = resolvePaneRouteModel(href).id;
-    return routeId === "unsupported" ? "" : standingHeadForRoute(routeId);
-  }, [href]);
-  const overrideFolio = chromeOverrides.folio;
-  const folio = useMemo<Folio>(
-    () =>
-      overrideFolio ??
-      (bodyMode === "document"
-        ? { kind: "title", value: title }
-        : { kind: "none" }),
-    [overrideFolio, bodyMode, title],
+  const publishPrimaryChrome = useCallback(
+    (update: PanePrimaryChromePublicationUpdate) => {
+      setPrimaryChromeRecord((current) => {
+        if (update.routeKey !== currentRouteKeyRef.current) return current;
+        if (!update.publication) {
+          return current?.routeKey === update.routeKey ? null : current;
+        }
+        if (
+          current?.routeKey === update.routeKey &&
+          arePanePrimaryChromePublicationsEqual(
+            current.publication,
+            update.publication,
+          )
+        ) {
+          return current;
+        }
+        return { routeKey: update.routeKey, publication: update.publication };
+      });
+    },
+    [],
   );
-  const folioPending =
-    overrideFolio != null
-      ? chromeOverrides.folioPending ?? false
-      : bodyMode === "document"
-        ? titlePending ?? false
-        : false;
 
-  // Measure the mobile toolbar bar so document readers can reserve top space.
+  const acceptedPrimaryChrome =
+    primaryChromeRecord !== null && primaryChromeRecord.routeKey === routeKey
+      ? primaryChromeRecord.publication
+      : null;
+  // The mobile chrome provider re-renders active PaneShell consumers when a pane
+  // publishes. Keep this projection referentially stable across that feedback render;
+  // otherwise the publication effect below sees a new header, republishes, and can
+  // starve the lazy pane body behind its Suspense fallback.
+  const header = useMemo(
+    () =>
+      resolvePaneHeaderModel({
+        currentRouteKey: routeKey,
+        routeHeader,
+        paneLabel: label,
+        paneLabelPending: labelPending,
+        publication: primaryChromeRecord
+          ? {
+              routeKey: primaryChromeRecord.routeKey,
+              header: primaryChromeRecord.publication.header,
+            }
+          : null,
+      }),
+    [label, labelPending, primaryChromeRecord, routeHeader, routeKey],
+  );
+  const accessibleName = paneHeaderAccessibleName(header);
+  const effectiveToolbar = acceptedPrimaryChrome?.toolbar;
+  const effectiveActions =
+    acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
+  const effectiveOptions = acceptedPrimaryChrome?.options ?? EMPTY_OPTIONS;
+  const mobileChromeHidden = isMobile && hidden;
+  const secondaryPresentation =
+    secondaryPane &&
+    secondaryPublication?.groupId === secondaryPane.groupId &&
+    secondaryPublicationIncludesSurface(
+      secondaryPublication,
+      secondaryPane.activeSurfaceId,
+    )
+      ? { state: secondaryPane, publication: secondaryPublication }
+      : null;
+  const secondaryRegionId = secondaryPresentation
+    ? paneSecondaryRegionId(paneId, secondaryPresentation.publication.groupId)
+    : null;
+  const reconciledActions = useMemo(
+    () =>
+      effectiveActions.filter((action) => {
+        if (
+          action.kind !== "command" ||
+          action.state?.kind !== "disclosure" ||
+          !action.state.expanded ||
+          !isPaneSecondaryRegionId(paneId, action.state.controls)
+        ) {
+          return true;
+        }
+        return action.state.controls === secondaryRegionId;
+      }),
+    [effectiveActions, paneId, secondaryRegionId],
+  );
+
   useLayoutEffect(() => {
     if (!isMobile || !chromeRef.current) {
       setMobileChromeHeight(0);
@@ -283,17 +215,17 @@ export default function PaneShell({
     }
     const node = chromeRef.current;
     const update = () => {
-      setMobileChromeHeight(Math.max(0, Math.round(node.getBoundingClientRect().height)));
+      setMobileChromeHeight(
+        Math.max(0, Math.round(node.getBoundingClientRect().height)),
+      );
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isMobile, effectiveToolbar]);
+  }, [effectiveToolbar, isMobile]);
 
   const copyPaneLink = useCallback(() => {
-    // Copied pane URLs are entry links, not progress permalinks: strip only
-    // the coarse reader fields while preserving feature-owned query and hash.
     const repaired = stripCoarseReaderQuery(href);
     const link =
       typeof window === "undefined"
@@ -301,61 +233,78 @@ export default function PaneShell({
         : new URL(repaired, window.location.origin).toString();
     copyText(link);
   }, [href]);
-  const paneMenuOptions = useMemo<ActionMenuOption[]>(() => {
-    const routeOptions = effectiveOptions ?? [];
-    const contextualOptions = routeOptions.map((option, index) =>
-      index === 0
-        ? { ...option, separatorBefore: option.separatorBefore ?? true }
-        : option
+  const paneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
+    const copyOption: ActionDescriptor = {
+      kind: "command",
+      id: "copy-pane-link",
+      label: "Copy pane link",
+      onSelect: copyPaneLink,
+    };
+    const contextualOptions: ActionDescriptor[] = effectiveOptions.map(
+      (option, index) =>
+        index === 0 && option.separatorBefore === undefined
+          ? { ...option, separatorBefore: true }
+          : option,
     );
-    return [
-      {
-        id: "copy-pane-link",
-        label: "Copy pane link",
-        onSelect: copyPaneLink,
-      },
+    const ordinaryOptions: ActionDescriptor[] = [
+      copyOption,
       ...contextualOptions,
     ];
+    return ordinaryOptions;
   }, [copyPaneLink, effectiveOptions]);
+  const mobilePaneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
+    if (reconciledActions.length === 0) return paneMenuOptions;
+    const [firstOption, ...remainingOptions] = paneMenuOptions;
+    if (!firstOption) return reconciledActions;
+    return [
+      ...reconciledActions,
+      { ...firstOption, separatorBefore: true },
+      ...remainingOptions,
+    ];
+  }, [paneMenuOptions, reconciledActions]);
 
-  // Publish the active pane's chrome to the lifted mobile top bar.
   useEffect(() => {
     if (!isMobile) return;
     setPaneChrome({
       paneId,
-      standingHead,
-      folio,
-      folioPending,
+      identityId,
+      header,
       navigation,
-      options: paneMenuOptions,
+      options: mobilePaneMenuOptions,
     });
     return () => setPaneChrome(null);
   }, [
+    header,
+    identityId,
     isMobile,
-    paneId,
-    standingHead,
-    folio,
-    folioPending,
     navigation,
-    paneMenuOptions,
+    paneId,
+    mobilePaneMenuOptions,
     setPaneChrome,
   ]);
 
   const shellClass = mobileChromeHidden
     ? `${styles.paneShell} ${styles.mobileChromeHidden}`
     : styles.paneShell;
-
   const bodyId = `${paneId}-body`;
+  const expandedActionRetainsSecondary = reconciledActions.some(
+    (action) =>
+      action.kind === "command" &&
+      action.state?.kind === "disclosure" &&
+      action.state.expanded &&
+      action.state.controls === secondaryRegionId,
+  );
   const visibleSecondary =
     !isMobile &&
-    secondaryPane?.visibility === "visible" &&
-    secondarySizing &&
-    secondaryPublication?.groupId === secondaryPane.groupId &&
-    secondaryPublicationIncludesSurface(
-      secondaryPublication,
-      secondaryPane.activeSurfaceId,
-    )
-      ? { state: secondaryPane, sizing: secondarySizing, publication: secondaryPublication }
+    secondaryPresentation &&
+    (secondaryPresentation.state.visibility === "visible" ||
+      expandedActionRetainsSecondary) &&
+    secondarySizing
+      ? {
+          state: secondaryPresentation.state,
+          sizing: secondarySizing,
+          publication: secondaryPresentation.publication,
+        }
       : null;
   const visibleSecondaryWidthPx = visibleSecondary?.sizing.widthPx ?? 0;
   const visibleFixedChrome = !isMobile ? fixedChromePublication : null;
@@ -383,14 +332,6 @@ export default function PaneShell({
       };
       break;
     case "document":
-      bodyStyle = {
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-        ...(isMobile && { overscrollBehavior: "contain" }),
-      };
-      break;
     case "contained":
       bodyStyle = {
         display: "flex",
@@ -400,22 +341,23 @@ export default function PaneShell({
         ...(isMobile && { overscrollBehavior: "contain" }),
       };
       break;
-    default: {
-      const exhaustive: never = bodyMode;
-      throw new Error(`Unhandled pane body mode: ${exhaustive}`);
-    }
   }
 
   return (
     <section
       className={shellClass}
+      aria-labelledby={landmarkLabelId}
       data-testid="pane-shell-root"
       data-pane-shell="true"
+      data-header-kind={header.kind}
       data-active={isActive ? "true" : "false"}
       data-mobile-chrome-hidden={mobileChromeHidden ? "true" : "false"}
       data-mobile={isMobile ? "true" : "false"}
       style={shellStyle}
     >
+      <span id={landmarkLabelId} className="sr-only">
+        {accessibleName}
+      </span>
       <div
         className={styles.primaryPane}
         style={{
@@ -438,11 +380,10 @@ export default function PaneShell({
         >
           {!isMobile ? (
             <SurfaceHeader
-              standingHead={standingHead}
-              folio={folio}
-              folioPending={folioPending}
+              header={header}
+              identityId={identityId}
               options={paneMenuOptions}
-              actions={effectiveActions}
+              actions={reconciledActions}
               navigation={navigation}
             />
           ) : null}
@@ -456,8 +397,8 @@ export default function PaneShell({
             gridTemplateColumns: isMobile
               ? "minmax(0, 1fr)"
               : visibleFixedChrome
-              ? `${sizing.primaryWidthPx}px ${visibleFixedChrome.widthPx}px`
-              : `${sizing.primaryWidthPx}px`,
+                ? `${sizing.primaryWidthPx}px ${visibleFixedChrome.widthPx}px`
+                : `${sizing.primaryWidthPx}px`,
           }}
         >
           <div
@@ -468,9 +409,9 @@ export default function PaneShell({
             data-pane-content="true"
             style={bodyStyle}
           >
-            <PaneShellBodyProviders setChromeOverrides={publishChromeOverrides}>
+            <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
               {children}
-            </PaneShellBodyProviders>
+            </PanePrimaryChromeProvider>
           </div>
           {visibleFixedChrome ? (
             <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">
@@ -482,7 +423,7 @@ export default function PaneShell({
           <div
             className={styles.resizeHandle}
             role="separator"
-            aria-label={`Resize pane ${title}`}
+            aria-label={`Resize pane ${label}`}
             aria-controls={bodyId}
             aria-orientation="vertical"
             aria-valuemin={sizing.primaryMinWidthPx}
@@ -496,6 +437,7 @@ export default function PaneShell({
       </div>
       {visibleSecondary ? (
         <SecondaryPaneShell
+          primaryPaneId={paneId}
           secondaryPaneId={visibleSecondary.state.id}
           publication={visibleSecondary.publication}
           state={visibleSecondary.state}

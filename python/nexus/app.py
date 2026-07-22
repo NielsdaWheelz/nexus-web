@@ -31,8 +31,12 @@ Actual execution order per request:
 9. RequestIDMiddleware (logs, sets response header)
 
 LLM client lifecycle:
-- httpx.AsyncClient is created at startup, stored in app.state
-- ModelRuntime wraps the shared client for connection pooling
+- httpx.AsyncClient is created at startup, stored in app.state, and shared by
+  the web-search provider; the LLM provider runtime itself is constructed
+  per-task by the worker (tasks/llm_task.py), not by this app
+- validate_profiles() runs at startup to fail fast on any drift between the
+  product profile portfolio and the provider_runtime catalog (mirrors the
+  worker-startup call)
 - Client is closed gracefully at shutdown
 """
 
@@ -47,7 +51,6 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from provider_runtime import ModelRuntime
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from web_search_tool.brave import BraveSearchProvider
@@ -69,6 +72,7 @@ from nexus.responses import (
     unhandled_exception_handler,
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.llm_profiles import validate_profiles
 
 logger = get_logger(__name__)
 
@@ -168,27 +172,23 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
     Lifecycle behavior:
-    - Creates shared httpx.AsyncClient for connection pooling
-    - Initializes ModelRuntime with feature flags
+    - Fails fast on any drift between the product LLM profile portfolio and
+      the provider_runtime catalog (validate_profiles); config.py's
+      validate_required_settings already enforces the platform keys and the
+      Fable retention assertion at Settings construction
+    - Creates shared httpx.AsyncClient for connection pooling (web search)
     - Cleans up on shutdown
     """
     settings = get_settings()
 
-    # Create shared HTTP client for LLM calls
+    validate_profiles()
+
+    # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0, connect=10.0),
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
     )
 
-    app.state.llm_router = ModelRuntime(
-        app.state.httpx_client,
-        enable_openai=settings.enable_openai,
-        enable_anthropic=settings.enable_anthropic,
-        enable_gemini=settings.enable_gemini,
-        enable_openrouter=settings.enable_openrouter,
-        enable_cloudflare=settings.enable_cloudflare,
-        cloudflare_account_id=settings.cloudflare_ai_account_id,
-    )
     app.state.web_search_provider = (
         BraveSearchProvider(
             app.state.httpx_client,
@@ -201,12 +201,7 @@ async def lifespan(app: FastAPI):
     )
 
     logger.info(
-        "llm_router_initialized",
-        enable_openai=settings.enable_openai,
-        enable_anthropic=settings.enable_anthropic,
-        enable_gemini=settings.enable_gemini,
-        enable_openrouter=settings.enable_openrouter,
-        enable_cloudflare=settings.enable_cloudflare,
+        "app_lifespan_started",
         web_search_provider="brave" if settings.brave_search_api_key else None,
     )
 

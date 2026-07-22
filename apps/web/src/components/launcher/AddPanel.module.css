@@ -1,20 +1,15 @@
-/*
- * AddPanel renders inside the Launcher surface (LauncherSurface / LauncherSheet),
- * which owns the dialog/sheet shell, focus trap, positioning, and dismissal. These
- * styles cover only the panel's own content (header + add UI), minus the
- * modal-shell rules that the Launcher surface owns.
- */
-
 .panel {
   display: flex;
-  flex-direction: column;
   min-height: 0;
+  flex: 1;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .header {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--space-3);
   padding: var(--space-4);
   border-bottom: 1px solid var(--edge-subtle);
@@ -27,7 +22,12 @@
 
 .heading h2 {
   margin: 0;
+  color: var(--ink);
   font-size: var(--text-base);
+}
+
+.heading h2:focus {
+  outline: none;
 }
 
 .heading p {
@@ -36,70 +36,17 @@
   font-size: var(--text-sm);
 }
 
-.iconButton {
-  flex-shrink: 0;
-}
-
-.modeTabs {
-  padding: var(--space-3) var(--space-4) 0;
-}
-
 .body {
   display: flex;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4);
   overflow-y: auto;
 }
 
-.libraryField {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.libraryHelp {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.dropzone {
-  width: 100%;
-  height: auto;
-  min-height: 150px;
-  padding: var(--space-5);
-  border-style: dashed;
-  border-width: 2px;
-  text-align: center;
-  white-space: normal;
-}
-
-.dropzone:hover,
-.dropzoneActive {
-  border-color: var(--accent);
-}
-
-.dropzoneInner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-.dropzoneInner > span {
-  font-weight: var(--weight-semibold);
-}
-
-.dropzoneInner > small {
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-}
-
-.fileInput {
-  display: none;
-}
-
+.sourceEntry,
 .urlForm {
   display: flex;
   flex-direction: column;
@@ -113,89 +60,239 @@
 }
 
 .urlTextarea {
-  min-height: 74px;
+  min-height: 76px;
 }
 
-.urlActions {
+.sourceActions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
 
-.urlActions span {
+.sourceActions p {
+  margin: 0;
   color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.fileDrop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-block: 1px solid transparent;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.fileDropActive {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.fileInput {
+  display: none;
+}
+
+.opmlLink {
+  align-self: flex-start;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.opmlLink:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.addMore {
+  align-self: flex-start;
+}
+
+.draftToolbar,
+.acceptedSummary {
+  padding-block: var(--space-1);
+  border-block: 1px solid var(--edge-subtle);
+}
+
+.intakeFeedback {
+  margin: 0;
+  color: var(--danger);
   font-size: var(--text-xs);
 }
 
 .queue {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  outline: none;
 }
 
 .queueItem {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
+  align-items: start;
   gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--edge-subtle);
 }
 
 .itemIcon {
   display: flex;
-  align-items: center;
-  justify-content: center;
   width: var(--size-sm);
   height: var(--size-sm);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
+  align-items: center;
+  justify-content: center;
   color: var(--ink-muted);
 }
 
-.itemText {
-  min-width: 0;
+.itemMain {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
-.itemText span {
+.itemLabel {
+  display: -webkit-box;
   overflow: hidden;
   color: var(--ink);
   font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.itemText small {
-  overflow: hidden;
+.itemStatus,
+.membershipStatus,
+.itemFeedback {
   color: var(--ink-faint);
   font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.membershipStatus {
+  color: var(--accent);
+}
+
+.itemFeedback {
+  color: var(--danger);
+}
+
+.itemFeedback[data-severity="warning"] {
+  color: var(--warning);
 }
 
 .itemActions {
   display: flex;
-  align-items: center;
+  max-width: 240px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: var(--space-2);
 }
 
-.successIcon {
-  color: var(--success);
+.itemActions > :global(div) {
+  min-width: 180px;
 }
 
-.errorIcon {
-  color: var(--danger);
+.acceptedSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.acceptedSummary p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.acceptedSummary > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.liveStatus {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--edge-subtle);
+  background: var(--surface-2);
+}
+
+.confirmationBody {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.confirmationBody p {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+}
+
+.confirmationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 @media (max-width: 900px) {
-  .urlActions {
+  .sourceActions,
+  .fileDrop,
+  .acceptedSummary {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .queueItem {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .itemActions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: none;
+    justify-content: stretch;
+  }
+
+  .itemActions > * {
+    width: 100%;
+  }
+
+  .itemActions > button[aria-label^="Remove "] {
+    width: auto;
+    justify-self: end;
+  }
+
+  .acceptedSummary > div,
+  .confirmationActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .footer > button {
+    width: 100%;
   }
 }

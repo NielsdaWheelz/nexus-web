@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toFeedback } from "@/components/feedback/Feedback";
+import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
-  addMediaToLibrary,
+  ensureMediaAbsentFromLibrary,
+  ensureMediaInLibraries,
   fetchMediaLibraryMemberships,
   patchLibraryMembership,
-  removeMediaFromLibrary,
   type LibraryTargetPickerItem,
 } from "@/lib/media/mediaLibraries";
-import { usePaneRouter } from "@/lib/panes/paneRuntime";
 
 interface LibraryMembership {
   libraries: LibraryTargetPickerItem[];
@@ -22,16 +22,23 @@ interface LibraryMembership {
   removeFromLibrary: (libraryId: string) => Promise<void>;
 }
 
-/**
- * Library picker state and CRUD for the active media — load the user's
- * non-default libraries, add/remove the media from them, and clear when the
- * media changes. Removal that hard-deletes the media navigates back to the
- * library list since the route no longer resolves.
- */
+function libraryMembershipErrorMessage(
+  error: unknown,
+  fallback: string,
+): string {
+  if (
+    isApiError(error) ||
+    error instanceof TypeError ||
+    error instanceof DOMException
+  ) {
+    return toFeedback(error, { fallback }).title;
+  }
+  throw error;
+}
+
 export function useLibraryMembership(
   mediaId: string | null | undefined,
 ): LibraryMembership {
-  const router = usePaneRouter();
   const [libraries, setLibraries] = useState<LibraryTargetPickerItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,13 +60,11 @@ export function useLibraryMembership(
     setLoading(true);
     setError(null);
     try {
-      setLibraries(
-        await fetchMediaLibraryMemberships(mediaId, { excludeDefault: true }),
-      );
+      setLibraries(await fetchMediaLibraryMemberships(mediaId));
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       setLibraries([]);
-      setError(toFeedback(err, { fallback: "Failed to load libraries" }).title);
+      setError(libraryMembershipErrorMessage(err, "Failed to load libraries"));
     } finally {
       setLoading(false);
     }
@@ -73,14 +78,14 @@ export function useLibraryMembership(
       setBusy(true);
       setError(null);
       try {
-        await addMediaToLibrary(mediaId, libraryId);
+        await ensureMediaInLibraries({ mediaId, libraryIds: [libraryId] });
         setLibraries((current) =>
           patchLibraryMembership(current, libraryId, true),
         );
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(
-          toFeedback(err, { fallback: "Failed to add media to library" }).title,
+          libraryMembershipErrorMessage(err, "Failed to add media to library"),
         );
       } finally {
         setBusy(false);
@@ -97,27 +102,23 @@ export function useLibraryMembership(
       setBusy(true);
       setError(null);
       try {
-        const result = await removeMediaFromLibrary(mediaId, libraryId);
-        if (result.kind === "Deleting") {
-          // Last reference removed: the media is being deleted server-side, so
-          // this pane's subject is gone — leave it.
-          router.push("/libraries");
-          return;
-        }
+        await ensureMediaAbsentFromLibrary({ mediaId, libraryId });
         setLibraries((current) =>
           patchLibraryMembership(current, libraryId, false),
         );
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setError(
-          toFeedback(err, { fallback: "Failed to remove media from library" })
-            .title,
+          libraryMembershipErrorMessage(
+            err,
+            "Failed to remove media from library",
+          ),
         );
       } finally {
         setBusy(false);
       }
     },
-    [busy, mediaId, router],
+    [busy, mediaId],
   );
 
   return {

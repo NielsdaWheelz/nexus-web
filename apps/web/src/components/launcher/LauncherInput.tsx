@@ -13,7 +13,11 @@ import {
 import type { LauncherController } from "./useLauncherController";
 import styles from "./launcher.module.css";
 
-export default function LauncherInput({ controller }: { controller: LauncherController }) {
+export default function LauncherInput({
+  controller,
+}: {
+  controller: LauncherController;
+}) {
   const { view, input, lane, query, activeId } = controller;
   const composingRef = useRef(false);
   // A sigil-lane shows the text without its sigil and re-prefixes on change; a chip-selected
@@ -33,7 +37,8 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
         return;
       }
       if (view.state === "actions") {
-        const action = view.actions.find((a) => a.id === activeId) ?? view.actions[0];
+        const action =
+          view.actions.find((a) => a.id === activeId) ?? view.actions[0];
         if (action) controller.runAction(action);
       } else {
         const item = activeLauncherItem(view, activeId);
@@ -42,7 +47,12 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
       return;
     }
 
-    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+    if (
+      key === "ArrowDown" ||
+      key === "ArrowUp" ||
+      key === "Home" ||
+      key === "End"
+    ) {
       event.preventDefault();
       const ids = launcherRowIds(view);
       if (ids.length === 0) return;
@@ -81,7 +91,8 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
     }
 
     const atStart =
-      event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0;
+      event.currentTarget.selectionStart === 0 &&
+      event.currentTarget.selectionEnd === 0;
     if (key === "Backspace" && atStart) {
       if (view.state === "actions") {
         event.preventDefault();
@@ -105,7 +116,9 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
   return (
     <>
       <div className={styles.inputRow}>
-        {lane !== "all" ? <span className={styles.laneChip}>{LANE_LABEL[lane]} ›</span> : null}
+        {lane !== "all" ? (
+          <span className={styles.laneChip}>{LANE_LABEL[lane]} ›</span>
+        ) : null}
         <Input
           variant="bare"
           role="combobox"
@@ -113,7 +126,9 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
           aria-expanded="true"
           aria-controls={LAUNCHER_LISTBOX_ID}
           aria-autocomplete="list"
-          aria-activedescendant={activeId ? `${LAUNCHER_OPTION_ID_PREFIX}${activeId}` : undefined}
+          aria-activedescendant={
+            activeId ? `${LAUNCHER_OPTION_ID_PREFIX}${activeId}` : undefined
+          }
           className={styles.input}
           value={value}
           placeholder="Search, add, or ask…"
@@ -122,7 +137,9 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
           autoCorrect="off"
           spellCheck={false}
           onChange={(event) =>
-            controller.setQuery(sigil ? sigil + event.target.value : event.target.value)
+            controller.setQuery(
+              sigil ? sigil + event.target.value : event.target.value,
+            )
           }
           onCompositionStart={() => {
             composingRef.current = true;
@@ -143,9 +160,6 @@ export default function LauncherInput({ controller }: { controller: LauncherCont
           </div>
           <div className={styles.legendRow}>
             <kbd className={styles.kbd}>?</kbd> Ask AI
-          </div>
-          <div className={styles.legendRow}>
-            <kbd className={styles.kbd}>+</kbd> Add content
           </div>
         </div>
       ) : null}

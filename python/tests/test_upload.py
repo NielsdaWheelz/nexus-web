@@ -346,6 +346,7 @@ class TestUploadInit:
         assert second_data["idempotency_outcome"] == "reused"
         assert second_data["source_attempt_status"] == "accepted"
         assert second_data["upload_url"]
+        assert _upload_storage_path(first_data, "pdf") in second_data["upload_url"]
 
         with direct_db.session() as session:
             row = session.execute(
@@ -359,6 +360,80 @@ class TestUploadInit:
                 {"idempotency_key": headers["Idempotency-Key"]},
             ).one()
         assert row == (1, 1)
+
+    def test_upload_init_replay_does_not_sign_promoted_final_object(
+        self,
+        upload_client,
+        fake_storage: FakeStorageClient,
+        direct_db: DirectSessionManager,
+    ):
+        user_id = create_test_user_id()
+        upload_client.get("/me", headers=auth_headers(user_id))
+        headers = {**auth_headers(user_id), "Idempotency-Key": f"upload-init-{uuid4()}"}
+        body = {
+            "kind": "pdf",
+            "filename": "promoted.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(PDF_CONTENT),
+        }
+
+        first = upload_client.post("/media/upload/init", json=body, headers=headers)
+
+        assert first.status_code == 200
+        first_data = first.json()["data"]
+        media_id = first_data["media_id"]
+        attempt_id = first_data["source_attempt_id"]
+        staging_path = _upload_storage_path(first_data, "pdf")
+        final_path = _final_storage_path(first_data, "pdf")
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media_file", "media_id", media_id)
+        direct_db.register_cleanup("media_source_attempts", "id", attempt_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        fake_storage.put_object(staging_path, PDF_CONTENT, "application/pdf")
+        with direct_db.session() as session:
+            result = confirm_upload_ingest(session, user_id, UUID(media_id))
+        assert result == {"media_id": media_id, "duplicate": False}
+        assert fake_storage.get_object(staging_path) is None
+        assert fake_storage.get_object(final_path) == PDF_CONTENT
+
+        # Model the replay-eligible lifecycle state independently from storage
+        # ownership. A promoted final object must never become a direct-upload target,
+        # even when the media/attempt states would otherwise allow a replayed URL.
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE media
+                    SET processing_status = 'pending', processing_started_at = NULL
+                    WHERE id = :media_id
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE media_source_attempts
+                    SET status = 'queued'
+                    WHERE id = :attempt_id
+                    """
+                ),
+                {"attempt_id": attempt_id},
+            )
+            session.commit()
+
+        replay = upload_client.post("/media/upload/init", json=body, headers=headers)
+
+        assert replay.status_code == 200
+        replay_data = replay.json()["data"]
+        assert replay_data["media_id"] == media_id
+        assert replay_data["source_attempt_id"] == attempt_id
+        assert replay_data["idempotency_outcome"] == "reused"
+        assert replay_data["processing_status"] == "pending"
+        assert replay_data["source_attempt_status"] == "queued"
+        assert replay_data["upload_url"] is None
+        assert fake_storage.get_object(final_path) == PDF_CONTENT
 
     def test_upload_init_idempotency_key_rejects_parameter_mismatch(
         self, upload_client, direct_db: DirectSessionManager

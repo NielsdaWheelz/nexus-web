@@ -313,6 +313,26 @@ def test_revision_routes_read_historical_citations_after_head_moves(
                 ),
             ]
         )
+        # Attribution join coverage: a succeeded `library_dossier` generation
+        # ledger row for the FIRST revision only. Guards the read model against
+        # the stale-`llm_operation`-literal regression (a wrong literal blanked
+        # every dossier revision's model_provider/model_name/total_tokens while
+        # the read-model tests still passed). The second revision stays
+        # unattributed, proving the join is per-revision and outcome-scoped.
+        session.execute(
+            text("""
+                INSERT INTO llm_calls (
+                    owner_kind, owner_id, call_seq, provider, model_name,
+                    llm_operation, streaming, reasoning_effort, cost_status,
+                    outcome, total_tokens
+                ) VALUES (
+                    'artifact_revision', :revision_id, 1, 'anthropic',
+                    'claude-sonnet-5', 'library_dossier', false, 'medium',
+                    'estimated', 'succeeded', 4242
+                )
+            """),
+            {"revision_id": first_revision_id},
+        )
         session.commit()
 
     direct_db.register_cleanup("resource_edges", "user_id", owner_id)
@@ -334,7 +354,17 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     assert {row["source_count"] for row in rows} == {0}
     assert {row["covered_source_count"] for row in rows} == {0}
     assert {row["omitted_source_count"] for row in rows} == {0}
-    assert {row["model_provider"] for row in rows} == {None}
+    # The first revision carries its succeeded-generation attribution; the
+    # second (no ledger row) stays unattributed.
+    rows_by_ref = {row["revision_ref"]: row for row in rows}
+    first_row = rows_by_ref[f"artifact_revision:{first_revision_id}"]
+    second_row = rows_by_ref[f"artifact_revision:{second_revision_id}"]
+    assert first_row["model_provider"] == "anthropic"
+    assert first_row["model_name"] == "claude-sonnet-5"
+    assert first_row["total_tokens"] == 4242
+    assert second_row["model_provider"] is None
+    assert second_row["model_name"] is None
+    assert second_row["total_tokens"] is None
     assert {row["revision_id"]: row["is_current"] for row in rows} == {
         str(first_revision_id): False,
         str(second_revision_id): True,
@@ -352,7 +382,9 @@ def test_revision_routes_read_historical_citations_after_head_moves(
     assert data["citations"][0]["snapshot"]["title"] == "First Source"
     assert data["citation_count"] == 1
     assert data["source_count"] == 0
-    assert data["model_provider"] is None
+    assert data["model_provider"] == "anthropic"
+    assert data["model_name"] == "claude-sonnet-5"
+    assert data["total_tokens"] == 4242
 
     promoted = auth_client.post(
         f"/libraries/{library_id}/intelligence/revisions/{first_revision_id}/promote",

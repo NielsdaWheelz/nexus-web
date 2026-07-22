@@ -30,11 +30,17 @@ EdgeOrigin = Literal[
     "synapse",
     "document_embed",
     "assistant",
+    "link_note",
 ]
 
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
+# The *query* direction (a request parameter) and the *result* direction (a
+# per-connection output field) are distinct types (D7). Neutral user/context
+# Links carry ``undirected``; only the read model decides it, once, in
+# ``connections._connection_for_row``.
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
+ConnectionResultDirection = Literal["incoming", "outgoing", "undirected"]
 ConnectionRollup = Literal["exact", "owner"]
 ConnectionTargetStatus = Literal["current", "missing", "forbidden", "unanchorable"]
 
@@ -98,6 +104,33 @@ class EdgeOut:
     ordinal: int | None
     snapshot: CitationSnapshot | None
     created_at: datetime
+
+
+def is_neutral_link_shape(
+    *,
+    origin: str,
+    kind: str,
+    ordinal: int | None,
+    snapshot: object | None,
+    source_order_key: str | None,
+    target_order_key: str | None,
+) -> bool:
+    """The exact canonical neutral-Link predicate (§ Graph Shapes).
+
+    Matches ``uq_resource_edges_user_context_link_pair``: a user context Link
+    with no ordinal, snapshot, or order keys. Stance (non-context kind) and
+    ordered adjacency (order key set) are deliberately excluded. This is the one
+    definition the graph writer, the Link service, and the connection read all
+    share, so a change to the neutral-Link shape can never drift between them.
+    """
+    return (
+        origin == "user"
+        and kind == "context"
+        and ordinal is None
+        and snapshot is None
+        and source_order_key is None
+        and target_order_key is None
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,9 +201,21 @@ class ConnectionCitation:
 
 
 @dataclass(frozen=True, slots=True)
+class ConnectionLinkNote:
+    """The one ordinary note folded onto a user/context Link (§ Graph Shapes).
+
+    Resolved from the two structural ``origin='link_note'`` attachment edges;
+    the structural rows never render as their own connections (Invariant 12).
+    """
+
+    ref: ResourceRef
+    preview: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class Connection:
     edge_id: UUID
-    direction: Literal["incoming", "outgoing"]
+    direction: ConnectionResultDirection
     kind: EdgeKind
     origin: EdgeOrigin
     snapshot: CitationSnapshot | None
@@ -183,6 +228,7 @@ class Connection:
     target: ConnectionEndpoint
     other: ConnectionEndpoint
     citation: ConnectionCitation | None
+    link_note: ConnectionLinkNote | None
     created_at: datetime
 
 

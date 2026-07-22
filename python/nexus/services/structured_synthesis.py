@@ -1,6 +1,6 @@
-"""Structured (non-streamed) LLM synthesis: shared scaffold + one validated call.
+"""Structured (non-streamed) LLM synthesis: shared scaffold for one strict-JSON call.
 
-A *structured synthesis* is an ``llm.generate`` call whose response text is a
+A *structured synthesis* is an ``execute_generation`` call whose response is a
 strict JSON object that validates into a caller-supplied pydantic schema. The
 generic mechanics are owned here once:
 
@@ -9,50 +9,61 @@ generic mechanics are owned here once:
   output rule. The shared index-grounding wording lives in
   :data:`INDEX_GROUNDING_RULE`; call sites whose prompts ground by index pass
   it (verbatim or extended) as their first domain rule.
-- :func:`build_synthesis_request` — the shared two-turn request shape
-  (cached system turn, candidates + closing instruction user turn).
+- :func:`build_synthesis_intent` — the shared two-block ``GenerateIntent``
+  shape: a ``Stable(GlobalScope())`` system block (the assembled prompt) plus
+  a ``Dynamic`` user block (the caller-rendered candidates/instruction), with
+  ``output=StrictJsonOutput`` derived from the caller's schema via the
+  canonical-subset parser. The caller wraps this in one
+  ``GenerationRequest`` and calls ``llm_execution.execute_generation`` itself
+  (structured_synthesis is not a ledger caller).
 - :func:`ground_indices` — THE grounding invariant: a model-emitted integer
   index must denote an offered candidate.
-- :func:`run_structured_synthesis` — issue the call, parse the strict JSON,
-  validate into the schema, run the caller's semantic ``validate`` hook, and on
-  a first failure re-issue ONE bounded repair round before failing.
+- :func:`decode_structured_synthesis` — validate a ``Succeeded`` outcome's
+  strict-JSON payload into the schema and run the caller's semantic
+  ``validate`` hook.
 
 **Domain stays with the caller**: the prompt text (persona/preamble/domain
 rules/JSON shape), per-candidate rendering, the schema fields, the semantic
-judgement inside ``validate``, and mapping any propagated ``ModelCallError`` to its
-domain error codes; this primitive does not catch ``ModelCallError`` so that per-code
-distinctions survive intact (provider failures are never repaired).
+judgement inside ``validate``, the ``GenerationRequest``/``execute_generation``
+call, and mapping a non-``Succeeded`` ``CallOutcome`` to a domain failure —
+this module never calls ``execute_generation`` and never inspects anything but
+a ``Succeeded`` outcome.
 
-Failure of the parse/validate step (unparseable, schema-mismatch, not a bare
-``{...}`` object, or a ``validate`` rejection) raises
-:class:`StructuredSynthesisError` once the repair round is spent.
+There is no repair round: the runtime enforces strict JSON at the provider
+boundary (``StrictJsonOutput``), so a decode/schema/semantic-validate failure
+here is terminal — :func:`decode_structured_synthesis` raises
+:class:`StructuredSynthesisError` once, and the caller maps it to its own
+domain failure code.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
-from typing import Literal, Protocol, cast
+from typing import Literal
 
-from provider_runtime.types import (
-    ModelCall,
-    ModelMessage,
-    ModelRef,
-    ModelResponse,
-    ProviderName,
-    ReasoningConfig,
-    TokenUsage,
+from provider_runtime import (
+    Cancelled,
+    Dynamic,
+    Failed,
+    GenerateIntent,
+    GlobalScope,
+    Incomplete,
+    InvalidToolArguments,
+    Present,
+    PromptBlock,
+    Refused,
+    Stable,
+    StrictJsonOutput,
+    StructuredContent,
+    Succeeded,
+    SystemMessage,
+    UserMessage,
+    failure_code,
+    parse_canonical_schema,
 )
 from pydantic import BaseModel, ValidationError
 
-
-class SynthesisLLM(Protocol):
-    """The one call shape synthesis needs: ``ModelRuntime`` or a ledgered wrapper
-    (``llm_ledger.LedgeredLLM``, which writes one ``llm_calls`` row per attempt)."""
-
-    async def generate(self, req: ModelCall, *, key: str, timeout_s: int) -> ModelResponse: ...
-
+from nexus.services.llm_profiles import LlmProfile
 
 # The shared index-grounding rule. Call sites pass it as their first domain
 # rule (oracle verbatim; media-unit appends its no-invent sentence) so the
@@ -61,37 +72,14 @@ INDEX_GROUNDING_RULE = "Refer to candidate passages only by their integer index.
 
 
 class StructuredSynthesisError(Exception):
-    """The model output failed strict-JSON validation or the caller's ``validate``.
+    """The strict-JSON payload failed ``schema.model_validate`` or the
+    caller's semantic ``validate`` hook.
 
-    Raised when the response text is not a bare ``{...}`` JSON object, is not
-    valid JSON, fails ``schema.model_validate``, or is rejected by the caller's
-    semantic ``validate`` hook — from :func:`run_structured_synthesis` only
-    after the one repair round is spent. The caller maps this to its own domain
-    failure (e.g. Oracle's E_LLM_BAD_REQUEST).
+    Raised by :func:`decode_structured_synthesis` only — never for a
+    non-``Succeeded`` outcome (Refused/Incomplete/Cancelled/Failed), which the
+    caller matches on the raw ``CallOutcome`` itself (exhaustively, incl.
+    ``Failed(TransientExhausted)`` requeue/skip contracts).
     """
-
-
-@dataclass(frozen=True)
-class SynthesisRequest:
-    """A fully-rendered structured-synthesis request (the prompt is domain-built)."""
-
-    provider: str
-    llm_request: ModelCall
-    api_key: str
-    timeout_s: int
-
-
-@dataclass(frozen=True)
-class SynthesisResult[T: BaseModel]:
-    """The validated typed object plus its usage attribution.
-
-    ``usage`` is summed across attempts when a repair round ran; the
-    non-summable per-call ``provider_usage`` dict is dropped from a summed
-    usage.
-    """
-
-    value: T
-    usage: TokenUsage | None
 
 
 def build_synthesis_prompt(
@@ -116,35 +104,55 @@ def build_synthesis_prompt(
     return "\n\n".join([*head, "RULES.\n" + "\n".join(rules)])
 
 
-def build_synthesis_request(
+def build_synthesis_user_content(
     *,
-    provider: str,
-    system_prompt: str,
     candidates_header: str,
     rendered_candidates: str,
     extra_user_block: str | None,
-    model_name: str,
-    max_tokens: int,
-) -> ModelCall:
-    """Assemble the shared two-turn synthesis request.
-
-    Cached system turn (``cache_ttl="5m"``) + one user turn:
-    ``{candidates_header}:`` + the caller-rendered candidates + an optional
-    extra block (e.g. oracle's ``QUESTION: …``) + the closing instruction.
-    ``reasoning_effort="none"`` always (synthesis is a single structured call).
-    """
+) -> str:
+    """Assemble the shared user-turn text: ``{candidates_header}:`` + the
+    caller-rendered candidates + an optional extra block (e.g. oracle's
+    ``QUESTION: …``) + the closing instruction."""
     user_content = f"{candidates_header}:\n{rendered_candidates}\n\n"
     if extra_user_block is not None:
         user_content += f"{extra_user_block}\n\n"
     user_content += "Respond with the strict JSON object as instructed."
-    return ModelCall(
-        model=ModelRef(provider=cast(ProviderName, provider), model=model_name),
-        messages=[
-            ModelMessage(role="system", content=system_prompt, cache_ttl="5m"),
-            ModelMessage(role="user", content=user_content, cache_ttl="none"),
-        ],
-        max_output_tokens=max_tokens,
-        reasoning=ReasoningConfig(effort="none"),
+    return user_content
+
+
+def build_synthesis_intent(
+    *,
+    profile: LlmProfile,
+    system_prompt: str,
+    user_content: str,
+    max_output_tokens: int,
+    schema: type[BaseModel],
+) -> GenerateIntent:
+    """Assemble the shared two-block structured-synthesis intent.
+
+    The system prompt is the sole ``Stable(GlobalScope())`` block (caching has
+    no off state — the planner requires a non-empty stable prefix); the
+    rendered candidates/instruction is one ``Dynamic`` user block.
+    ``reasoning`` is always the profile's default (structured synthesis offers
+    no reasoning choice); ``tools``/``tool_choice`` are empty — synthesis never
+    calls tools.
+    """
+    return GenerateIntent(
+        target=profile.target,
+        messages=(
+            SystemMessage(
+                blocks=(PromptBlock(text=system_prompt, stability=Stable(GlobalScope())),)
+            ),
+            UserMessage(blocks=(PromptBlock(text=user_content, stability=Dynamic()),)),
+        ),
+        max_output_tokens=max_output_tokens,
+        reasoning=profile.default_reasoning_option_id,
+        tools=(),
+        tool_choice="none",
+        output=StrictJsonOutput(
+            name=schema.__name__,
+            schema=parse_canonical_schema(schema.model_json_schema()),
+        ),
     )
 
 
@@ -173,48 +181,29 @@ def ground_indices[E, C](
     return grounded
 
 
-async def run_structured_synthesis[T: BaseModel](
+def decode_structured_synthesis[T: BaseModel](
+    outcome: Succeeded,
     *,
-    llm: SynthesisLLM,
-    request: SynthesisRequest,
     schema: type[T],
     validate: Callable[[T], str | None] | None = None,
-) -> SynthesisResult[T]:
-    """Make a structured call, with one bounded repair round, into ``schema``.
-
-    ``llm.generate`` → ``response.text`` → require a bare ``{...}`` object →
-    ``json.loads`` → ``schema.model_validate`` → optional caller ``validate``
-    (returns a rejection reason, or ``None`` to accept). On the first failure
-    of any of those steps the call is re-issued ONCE with the bad output
-    appended as an assistant turn plus a user turn naming the reason; a second
-    failure raises :class:`StructuredSynthesisError` exactly as the first
-    would have. The provider-call failure (``ModelCallError``) propagates unchanged
-    from either attempt so the caller keeps its per-code mapping.
-    """
-    response = await llm.generate(
-        request.llm_request,
-        key=request.api_key,
-        timeout_s=request.timeout_s,
-    )
-    try:
-        value = _validated_value(response.text, schema=schema, validate=validate)
-        return SynthesisResult(value=value, usage=response.usage)
-    except StructuredSynthesisError as exc:
-        first_usage = response.usage
-        repair_request = _repair_request(request.llm_request, raw=response.text, reason=str(exc))
-    response = await llm.generate(
-        repair_request,
-        key=request.api_key,
-        timeout_s=request.timeout_s,
-    )
-    value = _validated_value(response.text, schema=schema, validate=validate)
-    return SynthesisResult(value=value, usage=_sum_usage(first_usage, response.usage))
-
-
-def _validated_value[T: BaseModel](
-    raw: str, *, schema: type[T], validate: Callable[[T], str | None] | None
 ) -> T:
-    value = _validate_strict_json(raw, schema=schema)
+    """Validate a ``Succeeded`` strict-JSON outcome into ``schema``.
+
+    Runs the caller's semantic ``validate`` hook (returns a rejection reason,
+    or ``None`` to accept) after the schema validates. Either failure raises
+    :class:`StructuredSynthesisError` — no repair round; the runtime already
+    enforced strict JSON at the wire.
+    """
+    content = outcome.response.content
+    if not isinstance(content, StructuredContent):
+        # justify-defect: the intent's output=StrictJsonOutput plans
+        # output_kind="strict_json", which the runtime promotes to
+        # StructuredContent on every Succeeded outcome.
+        raise AssertionError("strict-json outcome decoded as TextContent")
+    try:
+        value = schema.model_validate(content.payload)
+    except ValidationError as exc:
+        raise StructuredSynthesisError(f"response JSON does not match the schema: {exc}") from exc
     if validate is not None:
         reason = validate(value)
         if reason is not None:
@@ -222,54 +211,31 @@ def _validated_value[T: BaseModel](
     return value
 
 
-def _validate_strict_json[T: BaseModel](raw: str, *, schema: type[T]) -> T:
-    cleaned = raw.strip()
-    if not cleaned.startswith("{") or not cleaned.endswith("}"):
-        raise StructuredSynthesisError("response is not a bare JSON object")
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise StructuredSynthesisError("response is not valid JSON") from exc
-    try:
-        return schema.model_validate(parsed)
-    except ValidationError as exc:
-        raise StructuredSynthesisError("response JSON does not match the schema") from exc
+def outcome_failure_facts(
+    outcome: Refused | Incomplete | Cancelled | Failed,
+) -> tuple[str, str | None]:
+    """The ``(code, detail)`` a background owner records for any non-``Succeeded``
+    terminal ``CallOutcome`` — shared across every background owner (structured-JSON
+    or plain text), since the mapping from the runtime's closed outcome union to a
+    domain error floor is the same everywhere. ``Failed`` (incl.
+    ``TransientExhausted``) uses the runtime's own fixed failure code; an owner that
+    must distinguish a transient cause for a requeue-vs-skip decision matches
+    ``outcome`` itself before calling this.
+    """
+    if isinstance(outcome, Refused):
+        return "refused", outcome.safe_detail
+    if isinstance(outcome, Incomplete):
+        code = "refused" if outcome.status == "refused" else "incomplete"
+        detail = outcome.safe_detail.value if isinstance(outcome.safe_detail, Present) else None
+        return code, detail
+    if isinstance(outcome, Cancelled):
+        return "cancelled", None
+    if isinstance(outcome, Failed):
+        return failure_code(outcome.failure), _failure_detail(outcome.failure)
+    raise AssertionError(f"unhandled outcome variant: {outcome!r}")  # justify-defect: closed union
 
 
-def _repair_request(original: ModelCall, *, raw: str, reason: str) -> ModelCall:
-    return replace(
-        original,
-        messages=[
-            *original.messages,
-            ModelMessage(role="assistant", content=raw),
-            ModelMessage(
-                role="user",
-                content=(
-                    f"Your previous response was invalid: {reason}. "
-                    "Respond again with only the corrected strict JSON object as instructed."
-                ),
-            ),
-        ],
-    )
-
-
-def _sum_usage(first: TokenUsage | None, second: TokenUsage | None) -> TokenUsage | None:
-    if first is None:
-        return second
-    if second is None:
-        return first
-
-    def add(x: int | None, y: int | None) -> int | None:
-        return None if x is None and y is None else (x or 0) + (y or 0)
-
-    return TokenUsage(
-        input_tokens=add(first.input_tokens, second.input_tokens),
-        output_tokens=add(first.output_tokens, second.output_tokens),
-        total_tokens=add(first.total_tokens, second.total_tokens),
-        reasoning_tokens=add(first.reasoning_tokens, second.reasoning_tokens),
-        cache_creation_input_tokens=add(
-            first.cache_creation_input_tokens, second.cache_creation_input_tokens
-        ),
-        cache_read_input_tokens=add(first.cache_read_input_tokens, second.cache_read_input_tokens),
-        cached_tokens=add(first.cached_tokens, second.cached_tokens),
-    )
+def _failure_detail(failure: object) -> str | None:
+    if isinstance(failure, InvalidToolArguments):
+        return failure.safe_detail
+    return None

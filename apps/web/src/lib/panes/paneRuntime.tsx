@@ -9,14 +9,14 @@ import {
   useRef,
 } from "react";
 import {
-  normalizePaneTitle,
+  normalizePaneLabel,
   type WorkspaceAttachedSecondaryPaneState,
 } from "@/lib/workspace/schema";
 import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
 } from "@/lib/workspace/workspaceHref";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/ui/viewTransitions";
 
 export interface PaneRouterOptions {
-  titleHint?: string;
+  labelHint?: string;
   viewTransition?: PaneViewTransitionIntent;
 }
 
@@ -58,6 +58,10 @@ export type PaneResourceStatus =
   | "invalid"
   | "error";
 
+export interface PaneSecondarySurfaceRequestOptions {
+  readonly returnFocusTo?: HTMLElement | null;
+}
+
 interface PaneRuntimeContextValue {
   paneId: string;
   /** Workspace-host pane activity; owners use it for adoption-versus-handoff. */
@@ -76,12 +80,15 @@ interface PaneRuntimeContextValue {
   router: PaneScopedRouter;
   openInNewPane: (
     href: string,
-    titleHint?: string,
+    labelHint?: string,
     secondarySurfaceId?: WorkspaceSecondarySurfaceId,
   ) => void;
-  setPaneTitle: (title: string | null) => void;
+  setPaneLabel: (label: string | null) => void;
   setPaneLayout: (layout: PaneRuntimeLayout) => void;
-  requestSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => void;
+  requestSecondarySurface: (
+    surfaceId: WorkspaceSecondarySurfaceId,
+    options?: PaneSecondarySurfaceRequestOptions,
+  ) => void;
   closeSecondaryPane: () => void;
   setSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => void;
 }
@@ -107,29 +114,30 @@ interface PaneRuntimeProviderProps {
   onNavigatePane: (
     paneId: string,
     href: string,
-    options?: { titleHint?: string },
+    options?: { labelHint?: string },
   ) => void;
   onReplacePane: (
     paneId: string,
     href: string,
-    options?: { titleHint?: string },
+    options?: { labelHint?: string },
   ) => void;
   onOpenInNewPane: (
     href: string,
-    titleHint?: string,
+    labelHint?: string,
     secondarySurfaceId?: WorkspaceSecondarySurfaceId,
   ) => void;
   onGoBackPane: (paneId: string) => void;
   onGoForwardPane: (paneId: string) => void;
-  onSetPaneTitle?: (input: {
+  onSetPaneLabel?: (input: {
     paneId: string;
     routeKey: string;
-    title: string | null;
+    label: string | null;
   }) => void;
   onSetPaneLayout?: (input: PaneRuntimeLayoutPublication) => void;
   onRequestSecondarySurface?: (
     primaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
+    returnFocusTo?: HTMLElement | null,
   ) => void;
   onCloseSecondaryPane?: (secondaryPaneId: string) => void;
   onSetSecondarySurface?: (
@@ -207,7 +215,7 @@ export function PaneRuntimeProvider({
   onOpenInNewPane,
   onGoBackPane,
   onGoForwardPane,
-  onSetPaneTitle,
+  onSetPaneLabel,
   onSetPaneLayout,
   onRequestSecondarySurface,
   onCloseSecondaryPane,
@@ -233,7 +241,7 @@ export function PaneRuntimeProvider({
     onOpenInNewPane,
     onGoBackPane,
     onGoForwardPane,
-    onSetPaneTitle,
+    onSetPaneLabel,
     onSetPaneLayout,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
@@ -248,7 +256,7 @@ export function PaneRuntimeProvider({
     onOpenInNewPane,
     onGoBackPane,
     onGoForwardPane,
-    onSetPaneTitle,
+    onSetPaneLabel,
     onSetPaneLayout,
     onRequestSecondarySurface,
     onCloseSecondaryPane,
@@ -274,8 +282,8 @@ export function PaneRuntimeProvider({
           return;
         }
         const current = commandsRef.current;
-        const navigationOptions = options?.titleHint
-          ? { titleHint: options.titleHint }
+        const navigationOptions = options?.labelHint
+          ? { labelHint: options.labelHint }
           : undefined;
         runPaneNavigation(normalized, options?.viewTransition, () => {
           current.onNavigatePane(current.paneId, normalized, navigationOptions);
@@ -287,8 +295,8 @@ export function PaneRuntimeProvider({
           return;
         }
         const current = commandsRef.current;
-        const navigationOptions = options?.titleHint
-          ? { titleHint: options.titleHint }
+        const navigationOptions = options?.labelHint
+          ? { labelHint: options.labelHint }
           : undefined;
         runPaneNavigation(normalized, options?.viewTransition, () => {
           current.onReplacePane(current.paneId, normalized, navigationOptions);
@@ -308,24 +316,24 @@ export function PaneRuntimeProvider({
   const openInNewPane = useCallback(
     (
       nextHref: string,
-      titleHint?: string,
+      labelHint?: string,
       secondarySurfaceId?: WorkspaceSecondarySurfaceId,
     ) => {
       const normalized = normalizeWorkspaceHref(nextHref);
       if (!normalized) {
         return;
       }
-      commandsRef.current.onOpenInNewPane(normalized, titleHint, secondarySurfaceId);
+      commandsRef.current.onOpenInNewPane(normalized, labelHint, secondarySurfaceId);
     },
     [],
   );
-  const setPaneTitle = useCallback(
-    (title: string | null) => {
+  const setPaneLabel = useCallback(
+    (label: string | null) => {
       const current = commandsRef.current;
-      current.onSetPaneTitle?.({
+      current.onSetPaneLabel?.({
         paneId: current.paneId,
         routeKey: current.routeKey,
-        title,
+        label,
       });
     },
     [],
@@ -342,9 +350,16 @@ export function PaneRuntimeProvider({
     [],
   );
   const requestSecondarySurface = useCallback(
-    (surfaceId: WorkspaceSecondarySurfaceId) => {
+    (
+      surfaceId: WorkspaceSecondarySurfaceId,
+      options?: PaneSecondarySurfaceRequestOptions,
+    ) => {
       const current = commandsRef.current;
-      current.onRequestSecondarySurface?.(current.paneId, surfaceId);
+      current.onRequestSecondarySurface?.(
+        current.paneId,
+        surfaceId,
+        options?.returnFocusTo,
+      );
     },
     [],
   );
@@ -380,7 +395,7 @@ export function PaneRuntimeProvider({
       searchParams: parsed.searchParams,
       router,
       openInNewPane,
-      setPaneTitle,
+      setPaneLabel,
       setPaneLayout,
       requestSecondarySurface,
       closeSecondaryPane,
@@ -390,7 +405,7 @@ export function PaneRuntimeProvider({
       href,
       router,
       openInNewPane,
-      setPaneTitle,
+      setPaneLabel,
       setPaneLayout,
       requestSecondarySurface,
       closeSecondaryPane,
@@ -451,32 +466,32 @@ export function usePaneParam(paramName: string): string | null {
     : null;
 }
 
-export function useSetPaneTitle(title: string | null | undefined): void {
+export function useSetPaneLabel(label: string | null | undefined): void {
   const paneRuntime = usePaneRuntime();
-  const normalizedTitle = normalizePaneTitle(title);
-  const lastPublishedTitleRef = useRef<{
+  const normalizedLabel = normalizePaneLabel(label);
+  const lastPublishedLabelRef = useRef<{
     paneId: string;
     routeKey: string;
-    title: string | null;
+    label: string | null;
   } | null>(null);
   const paneId = paneRuntime?.paneId ?? null;
   const routeKey = paneRuntime?.routeKey ?? null;
-  const setPaneTitle = paneRuntime?.setPaneTitle;
+  const setPaneLabel = paneRuntime?.setPaneLabel;
 
   useEffect(() => {
-    if (!paneId || !routeKey || !setPaneTitle) {
+    if (!paneId || !routeKey || !setPaneLabel) {
       return;
     }
-    const lastPublished = lastPublishedTitleRef.current;
+    const lastPublished = lastPublishedLabelRef.current;
     if (
       lastPublished &&
       lastPublished.paneId === paneId &&
       lastPublished.routeKey === routeKey &&
-      lastPublished.title === normalizedTitle
+      lastPublished.label === normalizedLabel
     ) {
       return;
     }
-    setPaneTitle(normalizedTitle);
-    lastPublishedTitleRef.current = { paneId, routeKey, title: normalizedTitle };
-  }, [normalizedTitle, paneId, routeKey, setPaneTitle]);
+    setPaneLabel(normalizedLabel);
+    lastPublishedLabelRef.current = { paneId, routeKey, label: normalizedLabel };
+  }, [normalizedLabel, paneId, routeKey, setPaneLabel]);
 }

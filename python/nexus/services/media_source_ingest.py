@@ -1913,7 +1913,30 @@ def _supersede_source_media(
     )
     if attempt is not None:
         _raise_if_artifact_bearing_attempt_transfer(attempt)
+        media_ids = [loser_media_id, winner_media_id]
+        locked_media_ids = library_entries.lock_media_rows_in_order(db, media_ids)
+        if set(locked_media_ids) != set(media_ids):
+            # justify-service-invariant-check: the caller supplies the accepted loser
+            # and decoded winner identities that this transaction must supersede.
+            # justify-defect: supersession cannot transfer from or to missing media.
+            raise AssertionError("source media changed before supersession")
         if attempt.created_by_user_id is not None:
+            target_library_ids = library_governance.resolve_writable_non_default_library_ids(
+                db,
+                attempt.created_by_user_id,
+                _library_ids_from_payload(attempt.source_payload),
+            )
+            default_library_id = library_governance.default_library_id_for_user(
+                db, attempt.created_by_user_id
+            )
+            library_governance.lock_library_rows_in_order(
+                db,
+                [
+                    *library_entries.library_ids_for_media(db, loser_media_id),
+                    default_library_id,
+                    *target_library_ids,
+                ],
+            )
             library_entries.assign_libraries_for_media_in_current_transaction(
                 db,
                 attempt.created_by_user_id,
@@ -3324,9 +3347,14 @@ def _upload_init_response(
     capped_ttl = min(int(expires_in_seconds), 300, int(get_settings().signed_url_expiry_s))
     expires_at = datetime.now(UTC) + timedelta(seconds=capped_ttl)
     media_file = media.media_file or db.get(MediaFile, media.id)
+    expected_staging_path = build_upload_staging_storage_path(
+        media.id,
+        get_file_extension(str(media.kind)),
+    )
     upload_url: str | None = None
     can_sign_upload = (
         media_file is not None
+        and media_file.storage_path == expected_staging_path
         and media.processing_status == ProcessingStatus.pending
         and media.processing_started_at is None
         and attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED}

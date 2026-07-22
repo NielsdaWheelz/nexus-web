@@ -118,9 +118,8 @@ def test_reader_selection_requires_attached_highlight_reference(
 def test_reader_selection_changes_idempotency_hash():
     common = {
         "content": "where does this word come from?",
-        "model_id": uuid4(),
-        "reasoning": "default",
-        "key_mode": "auto",
+        "profile_id": "balanced",
+        "reasoning_option_id": "medium",
         "conversation_id": uuid4(),
         "parent_message_id": None,
         "branch_anchor": NoBranchAnchorRequest(),
@@ -157,9 +156,8 @@ def test_reader_selection_changes_idempotency_hash():
 def test_chat_subject_changes_idempotency_hash():
     common = {
         "content": "summarize this",
-        "model_id": uuid4(),
-        "reasoning": "default",
-        "key_mode": "auto",
+        "profile_id": "balanced",
+        "reasoning_option_id": "medium",
         "conversation_id": uuid4(),
         "parent_message_id": None,
         "branch_anchor": NoBranchAnchorRequest(),

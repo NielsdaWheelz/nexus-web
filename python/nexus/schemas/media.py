@@ -17,6 +17,15 @@ from nexus.schemas.presence import Presence
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
 
+MediaSourceAttemptStatus = Literal[
+    "accepted",
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "superseded",
+]
+
 MediaUnitStatus = Literal["building", "ready", "failed"]
 
 MediaReadState = Literal["unread", "in_progress", "finished"]
@@ -221,11 +230,12 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state. Populated post-hoc by the consumption
+    # Derived per-viewer read-state. The explicit consumption override wins;
+    # otherwise documents derive from retained reader engagement and podcast
+    # episodes from listening state. Populated post-hoc by the consumption
     # projection (`services.consumption.media_read_states`, applied in
     # `services.media`) for viewer-scoped listings; absent (None) only on contexts
-    # that never derive it (e.g. SSE snapshots). For documents, "unread" means no
-    # reading session yet.
+    # that never derive it (e.g. SSE snapshots).
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     last_engaged_at: datetime | None = None
@@ -350,7 +360,7 @@ class ArticleCaptureResponse(BaseModel):
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
-    source_attempt_status: str
+    source_attempt_status: MediaSourceAttemptStatus
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: MediaProcessingStatus
     ingest_enqueued: bool
@@ -475,7 +485,7 @@ class FromUrlResponse(BaseModel):
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
-    source_attempt_status: str
+    source_attempt_status: MediaSourceAttemptStatus
     idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
     processing_status: MediaProcessingStatus
     ingest_enqueued: bool
@@ -485,13 +495,6 @@ class MediaLibrariesRequest(BaseModel):
     """Request schema for POST /media/{id}/libraries."""
 
     library_ids: list[UUID] = Field(default_factory=list)
-
-
-class MediaLibrariesResponse(BaseModel):
-    """Response schema for POST /media/{id}/libraries."""
-
-    media_id: UUID
-    library_ids_added: list[UUID]
 
 
 class MediaEvidenceTextQuoteOut(BaseModel):

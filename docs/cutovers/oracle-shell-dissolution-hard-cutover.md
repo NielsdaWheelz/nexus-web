@@ -29,7 +29,7 @@ The Oracle lives at `app/(oracle)/` — a route group that owns its own `layout.
 
 ### 1.3 The shell also steals the sticky headline
 
-`OracleShell.tsx` exports `useStickyHeadline` — an `IntersectionObserver` hook that watches a page element and floats its text into the shell's top-bar `<div aria-live="polite">`. Both `OracleReadingPaneBody.tsx:419` and `AtlasPaneBody.tsx:248` depend on this hook via import path `"../../OracleShell"`. The pane shell (`PaneShell.tsx`) already provides a `SurfaceHeader` that owns the pane title. The sticky-headline mechanism is redundant; deleting it removes a duplicated scroll-observation concern.
+`OracleShell.tsx` exports `useStickyHeadline` — an `IntersectionObserver` hook that watches a page element and floats its text into the shell's top-bar `<div aria-live="polite">`. Both `OracleReadingPaneBody.tsx:419` and `AtlasPaneBody.tsx:248` depend on this hook via import path `"../../OracleShell"`. The pane shell (`PaneShell.tsx`) already projects the route's typed header through `SurfaceHeader`. The sticky-headline mechanism is redundant; deleting it removes a duplicated scroll-observation concern.
 
 ### 1.4 The font landmine
 
@@ -63,7 +63,10 @@ The Oracle lives at `app/(oracle)/` — a route group that owns its own `layout.
 - **N2.** No change to the oracle data model, oracle generation job, or the `useGenerationRun` hook.
 - **N3.** No change to `oracle.module.css`, `atlas.module.css`, `IlluminatedCapital`, `BorderFrame`, `Sidenote` — the manuscript elements are preserved verbatim.
 - **N4.** No secondary pane groups for oracle — oracle is `bodyMode: "document"`, no `secondaryGroups`, no reader tools.
-- **N5.** Dynamic pane title via `PaneFixedChromePublication` — the pane chrome shows a static title ("Reading" or "The Atlas"); the folio motto continues to render inline in the manuscript, not in the chrome bar. A follow-up can publish the motto dynamically.
+- **N5.** Dynamic section folio publication — the pane header uses its declared
+  destination and pane-label folio; the manuscript motto remains inline. A
+  follow-up may publish a typed section-header folio through
+  `usePanePrimaryChrome`, without changing the pane label.
 
 ---
 
@@ -102,11 +105,11 @@ The three pane body entry points (`OracleLandingPaneBody`, `OracleReadingPaneBod
 
 Three new `PaneRouteId` values and route model entries added to `paneRouteModel.ts`:
 
-| id | pattern | staticTitle | titleMode | bodyMode |
-|---|---|---|---|---|
-| `oracle` | `["oracle"]` | `"Oracle"` | `static` | `document` |
-| `oracleAtlas` | `["oracle", "atlas"]` | `"The Atlas"` | `static` | `document` |
-| `oracleReading` | `["oracle", ":readingId"]` | `"Reading"` | `static` | `document` |
+| id | pattern | defaultLabel | labelMode | header | bodyMode |
+|---|---|---|---|---|---|
+| `oracle` | `["oracle"]` | `"Oracle"` | `static` | section / Oracle / pane-label folio | `document` |
+| `oracleAtlas` | `["oracle", "atlas"]` | `"The Atlas"` | `static` | section / Oracle / pane-label folio | `document` |
+| `oracleReading` | `["oracle", ":readingId"]` | `"Reading"` | `static` | section / Oracle / pane-label folio | `document` |
 
 `oracleAtlas` MUST precede `oracleReading` in the `PANE_ROUTE_MODELS` array — `atlas` is a literal segment that must not be captured by `:readingId`. Both use `STANDARD_WIDTH_CONTRACT`. No `secondaryGroups`.
 
@@ -153,7 +156,9 @@ No API changes. Explicitly confirmed unaffected:
 - Add three `route({...})` entries to `PANE_ROUTE_MODELS` array (oracle, then oracleAtlas BEFORE oracleReading).
 
 **Pane route table** `lib/panes/paneRouteTable.ts`:
-- Add `Sparkles` to the `lucide-react` import list at line 4 of `paneRouteTable.ts` (it is not currently imported there; it lives in `destinations.ts` and `resourceKind.ts`). Add three entries to `PANE_ROUTE_META` with `icon: Sparkles` and `getChrome` returning appropriate static titles.
+- Add `Sparkles` to the `lucide-react` import list and add the three
+  `PANE_ROUTE_META` icon entries. Their typed section-header contracts live in
+  `paneRouteModel.ts` and resolve identity from the destination registry.
 
 **Pane render registry** `lib/panes/paneRenderRegistry.tsx`:
 - Add three entries to `PANE_LOADERS` pointing to `(authenticated)/oracle/` paths.
@@ -193,7 +198,12 @@ No API changes. Explicitly confirmed unaffected:
 - `const headlineRef = useStickyHeadline(...)` call.
 - `ref={headlineRef as React.RefObject<HTMLDivElement>}` on the observed element.
 
-The folio motto continues to render inline in the manuscript; the pane `SurfaceHeader` shows the static pane title. The `aria-live="polite"` region in `OracleShell` that announced the sticky folio motto to screen readers is intentionally removed. The pane `SurfaceHeader` provides a static landmark title. A follow-up using `PaneFixedChromePublication` (noted in N5) can restore dynamic announcement once implemented — that follow-up should include an aria-live region in the chrome or a visually-hidden live region in `OracleReadingPaneBody`.
+The folio motto continues to render inline in the manuscript; the pane
+`SurfaceHeader` projects the route's typed section header. The
+`aria-live="polite"` region in `OracleShell` that announced the sticky folio
+motto to screen readers is intentionally removed. A follow-up may publish a
+typed folio through `usePanePrimaryChrome` (N5) and must retain an accessible
+announcement inside the header or `OracleReadingPaneBody`.
 
 ### 7.4 `router.push` → pane-native navigation
 
@@ -249,7 +259,11 @@ The root layout already applies this pattern for JetBrains Mono (`app/layout.tsx
 The pane shell (`PaneShell.tsx`) does not expose a `data-*` slot on its DOM boundary. Threading `data-theme="oracle"` through the pane shell's `style`/`className` props would couple the pane system to a single surface's theme. A thin wrapper in the oracle pane body file is self-contained and follows the principle that oracle owns its own scope.
 
 **D-3. Delete `useStickyHeadline` (rejected: move to OracleThemeWrapper).**
-The pane `SurfaceHeader` already provides a title bar. Re-implementing the sticky-headline scroll-observation just to float text into an oracle-specific header that no longer exists would be dead code with a live observer. The `titleMode: "static"` pane chrome is sufficient for V1; a follow-up can publish the folio motto via `PaneFixedChromePublication` if desired.
+The pane `SurfaceHeader` already provides a title bar. Re-implementing the
+sticky-headline scroll-observation just to float text into an oracle-specific
+header that no longer exists would be dead code with a live observer. The
+route's static pane label and typed section header are sufficient for V1; a
+follow-up can publish the folio motto through `usePanePrimaryChrome` if desired.
 
 **D-4. Three pane routes (rejected: one `oracle` route with a param).**
 The reading and atlas are distinct surfaces with different layouts, scroll behaviors, and future secondary-pane affordances. Collapsing them to one route with a query param would complicate route resolution and obscure intent. Three named routes follow the existing pattern (`conversation` / `conversationNew`).

@@ -1,11 +1,12 @@
 import { type ApiPath, apiFetch } from "@/lib/api/client";
 import { parseContributorHandle } from "@/lib/contributors/handle";
+import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
+import { expectArray, expectNullableString } from "@/lib/validation";
 import type {
   ContributorDetail,
   ContributorRenameBody,
   ContributorSearchItem,
   ContributorSearchPage,
-  ContributorWorkItem,
   ContributorWorkPage,
   MediaAuthorCredit,
   MediaAuthors,
@@ -59,29 +60,6 @@ function decodeDetail(raw: unknown): ContributorDetail {
     displayName: detail.displayName,
     otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
     canRename: Boolean(detail.canRename),
-  };
-}
-
-function decodeWorkItem(raw: unknown): ContributorWorkItem {
-  const work = raw as {
-    title: string;
-    href: string;
-    contentKind: string;
-    date?: string | null;
-    roleFacts?: Array<{ creditedName: string; role: string; rawRole?: string | null }> | null;
-  };
-  return {
-    title: work.title,
-    href: work.href,
-    contentKind: work.contentKind,
-    date: work.date ?? null,
-    roleFacts: Array.isArray(work.roleFacts)
-      ? work.roleFacts.map((fact) => ({
-          creditedName: fact.creditedName,
-          role: fact.role,
-          rawRole: fact.rawRole ?? null,
-        }))
-      : [],
   };
 }
 
@@ -162,12 +140,19 @@ export async function fetchContributorWorks(
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const suffix = params.toString();
   const path = `/api/contributors/${encode(handle)}/works${suffix ? `?${suffix}` : ""}` as ApiPath;
-  const response = await apiFetch<Envelope<{ works?: unknown[]; nextCursor?: string | null }>>(path, {
+  const response = await apiFetch<Envelope<{ works: unknown; nextCursor: unknown }>>(path, {
     cache: "no-store",
   });
   return {
-    works: Array.isArray(response.data.works) ? response.data.works.map(decodeWorkItem) : [],
-    nextCursor: response.data.nextCursor ?? null,
+    works: expectArray(
+      response.data.works,
+      decodeContributorWorkItem,
+      "ContributorWorkPage.works",
+    ),
+    nextCursor: expectNullableString(
+      response.data.nextCursor,
+      "ContributorWorkPage.nextCursor",
+    ),
   };
 }
 

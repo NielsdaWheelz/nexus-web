@@ -46,8 +46,8 @@ interface SecondarySurfaceTabsProps {
  * secondary sheet. It owns the icon map, tab markup, keyboard model
  * (ArrowLeft/ArrowRight/Home/End), and focus-follows-selection so both surfaces
  * expose the same tab capability contract. Panel linkage ids are produced by the
- * exported helpers so the owning shell can label its single tabpanel against the
- * active tab.
+ * exported helpers; `SecondarySurfacePanels` keeps one target per tab while
+ * mounting publication content only in the active panel.
  */
 export default function SecondarySurfaceTabs({
   baseId,

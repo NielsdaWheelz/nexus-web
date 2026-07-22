@@ -14,28 +14,18 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  projectActionControlState,
+  type ActionDescriptor,
+} from "@/lib/ui/actionDescriptor";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import { useDismissOnOutsideOrEscape } from "@/lib/ui/useDismissOnOutsideOrEscape";
+import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
+import {
+  useContainingModalLayer,
+  useIsModalLayerTopmost,
+} from "@/lib/ui/useModalLayer";
 import styles from "./ActionMenu.module.css";
-
-export interface ActionMenuOption {
-  id: string;
-  label: string;
-  /** Leading glyph; the accessible name / tooltip in icon-only renderers (ActionBar). */
-  icon?: ReactNode;
-  /** Toggle state; ActionBar maps to aria-pressed + active styling. */
-  pressed?: boolean;
-  render?: (controls: {
-    closeMenu: () => void;
-    triggerEl: HTMLButtonElement | null;
-  }) => ReactNode;
-  onSelect?: (detail: { triggerEl: HTMLButtonElement | null }) => void;
-  href?: string;
-  disabled?: boolean;
-  tone?: "default" | "danger";
-  restoreFocusOnClose?: boolean;
-  separatorBefore?: boolean;
-}
 
 /** Wiring a custom trigger must spread onto its focusable element. */
 type ActionMenuTriggerAttributes = Pick<
@@ -44,9 +34,12 @@ type ActionMenuTriggerAttributes = Pick<
 > &
   Partial<Record<`data-${string}`, string | undefined>>;
 
-export interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
+interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
   ref: Ref<HTMLButtonElement>;
+  type: "button";
+  className: string;
   id: string;
+  "aria-label": string;
   "aria-haspopup": "menu";
   "aria-controls": string | undefined;
   "aria-expanded": boolean;
@@ -55,7 +48,7 @@ export interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
 }
 
 interface ActionMenuProps {
-  options: ActionMenuOption[];
+  options: readonly ActionDescriptor[];
   /** Label for the trigger button (screen readers). Default: "Actions" */
   label?: string;
   /** Optional class name for the container. */
@@ -69,10 +62,13 @@ interface ActionMenuProps {
   renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
   /** Extra attributes for composite widgets that keep their trigger programmatic. */
   triggerAttributes?: ActionMenuTriggerAttributes;
+  /** Shares the native trigger node with another behavior such as drag activation. */
+  triggerRef?: (node: HTMLButtonElement | null) => void;
 }
 
 const MENU_ITEM_SELECTOR =
-  '[role="menuitem"]:not([aria-disabled="true"]):not([disabled])';
+  '[role="menuitem"]:not([aria-disabled="true"]):not([disabled]), ' +
+  '[role="menuitemcheckbox"]:not([aria-disabled="true"]):not([disabled])';
 const TABBABLE_SELECTOR = [
   'a[href]:not([aria-disabled="true"])',
   "button:not([disabled])",
@@ -81,6 +77,20 @@ const TABBABLE_SELECTOR = [
   "select:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
+
+function resolvePortalContainer(
+  trigger: HTMLButtonElement | null,
+  modalOwned: boolean,
+): HTMLElement {
+  if (!modalOwned) return document.body;
+  const modal = trigger?.closest<HTMLElement>('[role="dialog"]');
+  if (!modal) {
+    throw new Error(
+      "A modal-owned ActionMenu requires a containing dialog element.",
+    );
+  }
+  return modal;
+}
 
 export default function ActionMenu({
   options,
@@ -91,6 +101,7 @@ export default function ActionMenu({
   align = "end",
   renderTrigger,
   triggerAttributes,
+  triggerRef,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -98,6 +109,15 @@ export default function ActionMenu({
   const menuContainerRef = useRef<HTMLDivElement>(null);
   const triggerId = useId();
   const menuId = useId();
+  const modalToken = useContainingModalLayer();
+  const modalIsTopmost = useIsModalLayerTopmost(modalToken);
+  const setToggleNode = useCallback(
+    (node: HTMLButtonElement | null) => {
+      toggleRef.current = node;
+      triggerRef?.(node);
+    },
+    [triggerRef],
+  );
   const {
     ref: menuRef,
     style: menuStyle,
@@ -152,6 +172,14 @@ export default function ActionMenu({
     refs: [menuRef, menuContainerRef],
     onDismiss: (reason) => closeMenu(reason === "escape"),
   });
+  useHistoryDismiss(
+    menuOpen && modalToken !== null,
+    () => {
+      closeMenu();
+      return "accepted";
+    },
+    { isTopmost: modalIsTopmost },
+  );
 
   useEffect(() => {
     if (!menuOpen || !anchorRect) return;
@@ -269,27 +297,35 @@ export default function ActionMenu({
         onKeyDown={handleMenuKeyDown}
       >
         {options.map((option, index) => {
-          const optionHref = option.href;
+          const control = projectActionControlState(
+            option.label,
+            option.kind === "command" ? option.state : undefined,
+          );
+          const itemClassName = `${styles.menuItem} ${
+            option.tone === "danger" ? styles.menuItemDanger : ""
+          }`;
           return (
             <Fragment key={option.id}>
               {option.separatorBefore && index > 0 ? (
                 <li role="separator" className={styles.separator} />
               ) : null}
-              {option.render ? (
+              {option.kind === "custom" ? (
                 <li role="none">
                   <div role="group" aria-label={option.label}>
-                    {option.render({ closeMenu, triggerEl: toggleRef.current })}
+                    {option.render({
+                      closeMenu,
+                      closeMenuWithoutFocus: () => closeMenu(false),
+                      triggerEl: toggleRef.current,
+                    })}
                   </div>
                 </li>
               ) : (
                 <li role="none">
-                  {optionHref ? (
+                  {option.kind === "link" ? (
                     <a
-                      href={optionHref}
+                      href={option.href}
                       role="menuitem"
-                      className={`${styles.menuItem} ${
-                        option.tone === "danger" ? styles.menuItemDanger : ""
-                      }`}
+                      className={itemClassName}
                       aria-disabled={option.disabled || undefined}
                       tabIndex={option.disabled ? -1 : undefined}
                       onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
@@ -306,27 +342,28 @@ export default function ActionMenu({
                           event.preventDefault();
                           return;
                         }
-                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        const triggerEl = toggleRef.current;
                         closeMenu(option.restoreFocusOnClose !== false);
+                        option.onSelect?.({ triggerEl });
                       }}
                     >
-                      {option.label}
+                      {control.menuLabel}
                     </a>
                   ) : (
                     <button
                       type="button"
-                      role="menuitem"
-                      className={`${styles.menuItem} ${
-                        option.tone === "danger" ? styles.menuItemDanger : ""
-                      }`}
+                      role={control.menuRole}
+                      aria-checked={control.menuChecked}
+                      className={itemClassName}
                       disabled={option.disabled}
                       onClick={(e) => {
                         e.stopPropagation();
-                        option.onSelect?.({ triggerEl: toggleRef.current });
+                        const triggerEl = toggleRef.current;
                         closeMenu(option.restoreFocusOnClose !== false);
+                        option.onSelect({ triggerEl });
                       }}
                     >
-                      {option.label}
+                      {control.menuLabel}
                     </button>
                   )}
                 </li>
@@ -339,8 +376,11 @@ export default function ActionMenu({
 
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
-    ref: toggleRef,
+    ref: setToggleNode,
+    type: "button",
+    className: styles.trigger,
     id: triggerId,
+    "aria-label": label,
     "aria-haspopup": "menu",
     "aria-controls": menuOpen ? menuId : undefined,
     "aria-expanded": menuOpen,
@@ -373,12 +413,15 @@ export default function ActionMenu({
       {renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
-        <button {...triggerProps} type="button" className={styles.trigger} aria-label={label}>
+        <button {...triggerProps}>
           &hellip;
         </button>
       )}
       {menu && typeof document !== "undefined"
-        ? createPortal(menu, document.body)
+        ? createPortal(
+            menu,
+            resolvePortalContainer(toggleRef.current, modalToken !== null),
+          )
         : null}
     </div>
   );

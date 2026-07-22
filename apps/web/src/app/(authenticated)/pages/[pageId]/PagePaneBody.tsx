@@ -12,7 +12,6 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
   toFeedback,
-  useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
@@ -21,16 +20,16 @@ import ProseMirrorOutlineEditor, {
   type NotePulseEditorTarget,
 } from "@/components/notes/ProseMirrorOutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   usePaneParam,
   usePaneRouter,
   usePaneRuntime,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { createRandomId } from "@/lib/createRandomId";
-import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
-import { pinObjectToNavbar } from "@/lib/pinnedObjects";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import { useResource } from "@/lib/api/useResource";
 import {
   useNotePulseHighlight,
@@ -55,6 +54,7 @@ import {
 } from "@/lib/notes/api";
 import DawnWriteBlock from "@/components/notes/DawnWriteBlock";
 import { shiftLocalDate } from "@/lib/localDate";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { NoteBlock } from "@/lib/notes/normalize";
 import {
   draftBlocksById,
@@ -130,10 +130,8 @@ export default function PagePaneBody({
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPaneCommand = paneRuntime?.openInNewPane;
-  const toast = useFeedback();
   const pageId = pageIdOverride ?? routePageId;
   if (!pageId) throw new Error("page route requires a page id");
-  const pinPageId = pageId;
 
   const [page, setPage] = useState<NotePage | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -249,8 +247,8 @@ export default function PagePaneBody({
   }, [editorReady, pageId]);
 
   const fallbackTitle = focusBlockId ? "Note" : "Page";
-  const paneTitle = titleDraft.trim() || page?.title || fallbackTitle;
-  useSetPaneTitle(page ? paneTitle : feedback ? fallbackTitle : null);
+  const paneLabel = titleDraft.trim() || page?.title || fallbackTitle;
+  useSetPaneLabel(page ? paneLabel : feedback ? fallbackTitle : null);
 
   currentSaveScopeRef.current = saveScope;
   editorLoadKeyRef.current = editorLoadKey;
@@ -627,11 +625,14 @@ export default function PagePaneBody({
 
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
-      if (!isObjectType(objectType)) return;
+      const ref = `${objectType}:${objectId}`;
+      if (!parseResourceRef(ref)) return;
       let href: string | null = null;
       try {
-        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-        href = resolved?.route ?? null;
+        const [resolved] = await resolveResourceLocators([
+          { kind: "resource_ref", ref },
+        ]);
+        href = resolved?.resourceItem.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
         setFeedback(
@@ -662,70 +663,47 @@ export default function PagePaneBody({
     [router],
   );
 
-  const pinCurrentObject = useCallback(async () => {
-    try {
-      if (focusBlockId) {
-        await pinObjectToNavbar("note_block", focusBlockId);
-        toast.show({ severity: "success", title: "Note pinned to navbar." });
-        return;
-      }
-      await pinObjectToNavbar("page", pinPageId);
-      toast.show({ severity: "success", title: "Page pinned to navbar." });
-    } catch (error: unknown) {
-      if (handleUnauthenticatedApiError(error)) return;
-      toast.show(
-        toFeedback(error, {
-          fallback: focusBlockId
-            ? "Note could not be pinned."
-            : "Page could not be pinned.",
-        }),
-      );
-    }
-  }, [focusBlockId, pinPageId, toast]);
-
   const dailyLocalDate = page?.dailyNote?.localDate ?? null;
-  const paneOptions = useMemo(
+  const paneOptions = useMemo<ActionDescriptor[]>(
     () => [
       ...(dailyLocalDate
         ? [
             {
+              kind: "command" as const,
               id: "daily-open-yesterday",
               label: "Open yesterday",
-              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
+              onSelect: () =>
+                void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
             },
             {
+              kind: "command" as const,
               id: "daily-open-tomorrow",
               label: "Open tomorrow",
-              onSelect: () => void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
+              onSelect: () =>
+                void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
             },
           ]
         : []),
-      {
-        id: focusBlockId ? "pin-current-note" : "pin-current-page",
-        label: focusBlockId ? "Pin current note" : "Pin current page",
-        onSelect: () => {
-          void pinCurrentObject();
-        },
-      },
     ],
-    [dailyLocalDate, focusBlockId, openDatedPage, pinCurrentObject],
+    [dailyLocalDate, openDatedPage],
   );
-  usePaneChromeOverride({ options: paneOptions });
+  usePanePrimaryChrome({ options: paneOptions });
 
   // Dawn write: fetch for daily note pages only (not focused-block views).
   // cacheKey is null until the page loads and confirms a dailyNote — the fetch
   // never blocks the editor or the early-return loading path.
   const dawnWriteResource = useResource<DawnWrite | null>({
-    cacheKey: dailyLocalDate && !focusBlockId ? `dawn-write:${dailyLocalDate}` : null,
+    cacheKey:
+      dailyLocalDate && !focusBlockId ? `dawn-write:${dailyLocalDate}` : null,
     load: () => fetchDawnWrite(dailyLocalDate!),
   });
   const dawnWrite =
     dawnWriteResource.status === "ready" ? dawnWriteResource.data : null;
 
-  const backlinkObjectRef = useMemo(
+  const backlinkResourceRef = useMemo(
     () => ({
-      objectType: focusBlockId ? ("note_block" as const) : ("page" as const),
-      objectId: focusBlockId ?? pageId,
+      scheme: focusBlockId ? ("note_block" as const) : ("page" as const),
+      id: focusBlockId ?? pageId,
     }),
     [focusBlockId, pageId],
   );
@@ -737,40 +715,44 @@ export default function PagePaneBody({
     <>
       {dawnWrite && <DawnWriteBlock write={dawnWrite} />}
       <div className={styles.editorShell} ref={shellRef}>
-      <input
-        ref={titleInputRef}
-        className={styles.titleInput}
-        value={titleDraft}
-        onChange={onTitleChange}
-        onBlur={flushTitle}
-        aria-label="Page title"
-      />
-      <NoteDraftRecovery
-        status={saveStatus}
-        hasRecoveredDraft={hasRecoveredDraft}
-        onRetry={retrySession}
-        onDiscard={discardRecoveredDraft}
-      />
-      {feedback ? <FeedbackNotice {...feedback} /> : null}
-      <ProseMirrorOutlineEditor
-        resourceKey={renderedEditorResourceKey}
-        initialDoc={initialDoc}
-        createBlockId={createRandomId}
-        onDocChange={onEditorDocChange}
-        onBlurFlush={onEditorBlurFlush}
-        onOpenBlock={openBlock}
-        onOpenObject={openObject}
-        notePulseTarget={notePulseTarget}
-        focusRequest={bodyFocusRequest}
-        onError={(error) => {
-          if (handleUnauthenticatedApiError(error)) return;
-          setFeedback(
-            toFeedback(error, { fallback: "Attachment could not be added." }),
-          );
-        }}
-      />
-      <ConnectionsSurface objectRef={backlinkObjectRef} onOpenRoute={openRoute} />
-    </div>
+        <input
+          ref={titleInputRef}
+          className={styles.titleInput}
+          value={titleDraft}
+          onChange={onTitleChange}
+          onBlur={flushTitle}
+          aria-label="Page title"
+        />
+        <NoteDraftRecovery
+          status={saveStatus}
+          hasRecoveredDraft={hasRecoveredDraft}
+          onRetry={retrySession}
+          onDiscard={discardRecoveredDraft}
+        />
+        {feedback ? <FeedbackNotice {...feedback} /> : null}
+        <ProseMirrorOutlineEditor
+          resourceKey={renderedEditorResourceKey}
+          initialDoc={initialDoc}
+          createBlockId={createRandomId}
+          onDocChange={onEditorDocChange}
+          onBlurFlush={onEditorBlurFlush}
+          onOpenBlock={openBlock}
+          onOpenObject={openObject}
+          notePulseTarget={notePulseTarget}
+          focusRequest={bodyFocusRequest}
+          onFeedback={setFeedback}
+          onError={(error) => {
+            if (handleUnauthenticatedApiError(error)) return;
+            setFeedback(
+              toFeedback(error, { fallback: "Attachment could not be added." }),
+            );
+          }}
+        />
+        <ConnectionsSurface
+          resourceRef={backlinkResourceRef}
+          onOpenRoute={openRoute}
+        />
+      </div>
     </>
   );
 }

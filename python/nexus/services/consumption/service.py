@@ -94,6 +94,40 @@ def get_lectern(db: Session, viewer_id: UUID) -> LecternSnapshot:
     return _projection.build_snapshot(db, viewer_id=viewer_id, rows=rows)
 
 
+def engagement_fact_rows_sql() -> str:
+    """Canonical consumption-fact relation; binds ``:viewer_id``.
+
+    Columns: ``media_id``, ``read_state``, ``progress_fraction``, and
+    ``last_engaged_at``.
+    """
+    return _projection.engagement_fact_rows_sql()
+
+
+def lectern_membership_rows_sql() -> str:
+    """Complete Lectern membership relation; binds ``:viewer_id``.
+
+    Columns: ``media_id``. Hidden rows are intentionally included.
+    """
+    return _projection.lectern_membership_rows_sql()
+
+
+def lectern_item_count(db: Session, *, viewer_id: UUID) -> int:
+    """Count every Lectern row, including hidden rows."""
+    return _projection.lectern_item_count(db, viewer_id=viewer_id)
+
+
+def lectern_has_capacity(db: Session, *, viewer_id: UUID) -> bool:
+    """Whether the complete Lectern membership is below its owned row cap."""
+    return lectern_item_count(db, viewer_id=viewer_id) < _lectern_store.LECTERN_MAX_ITEMS
+
+
+def recent_engagement_anchor_facts(
+    db: Session, *, viewer_id: UUID, limit: int
+) -> tuple[_projection.RecentEngagementAnchorFact, ...]:
+    """Newest distinct visible media engagement facts, capped by ``limit``."""
+    return _projection.recent_engagement_anchor_facts(db, viewer_id=viewer_id, limit=limit)
+
+
 def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> ListeningStateOut:
     """Per-media listening state; zeros/Absent defaults when no row exists."""
     if not can_read_media(db, viewer_id, media_id):
@@ -182,11 +216,9 @@ def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) 
     )
 
 
-def listening_recency_max_subquery_sql(*, user_param: str, podcast_expr: str) -> str:
-    """Scalar subquery -> MAX listening recency across a podcast's episodes."""
-    return _projection.listening_recency_max_subquery_sql(
-        user_param=user_param, podcast_expr=podcast_expr
-    )
+def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
+    """Scalar subquery -> MAX listening recency across visible podcast episodes."""
+    return _projection.listening_recency_max_subquery_sql(podcast_expr=podcast_expr)
 
 
 # ---------------------------------------------------------------------------

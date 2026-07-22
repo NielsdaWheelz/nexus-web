@@ -8,6 +8,7 @@ import {
 } from "@/__tests__/helpers/fetch";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
 import MediaPaneBody from "./MediaPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the media pane's primary
@@ -19,6 +20,10 @@ import MediaPaneBody from "./MediaPaneBody";
 
 const MEDIA_ID = "ac4-media";
 const MEDIA_TITLE = "AC-4 Seeded Media";
+
+const primaryChromeMocks = vi.hoisted(() => ({
+  usePanePrimaryChrome: vi.fn(),
+}));
 
 // Static reader/player/document hooks: stubbed so MediaPaneBody mounts without
 // their own network. They are orthogonal to the hydration-hit under test.
@@ -74,8 +79,8 @@ vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
 }));
 
-vi.mock("@/components/workspace/PaneShell", () => ({
-  usePaneChromeOverride: vi.fn(),
+vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
+  usePanePrimaryChrome: primaryChromeMocks.usePanePrimaryChrome,
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
@@ -111,6 +116,7 @@ function seededMedia() {
 
 describe("MediaPaneBody AC-4 hydration hit", () => {
   beforeEach(() => {
+    primaryChromeMocks.usePanePrimaryChrome.mockReset();
     vi.stubGlobal(
       "ResizeObserver",
       class ResizeObserverMock {
@@ -158,7 +164,7 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     });
 
     const href = `/media/${MEDIA_ID}`;
-    const { onSetPaneTitle } = renderHydratedPane({
+    const { onSetPaneLabel } = renderHydratedPane({
       href,
       resources: { [MEDIA_ID]: { media: seededMedia(), fragments: [] } },
       children: (
@@ -176,11 +182,24 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
       await screen.findByText("This media cannot be opened right now."),
     ).toBeInTheDocument();
 
-    // Seed surfaced: the pane title is published from the seeded media title.
+    // Seed surfaced: the pane label is published from the seeded media title.
     await waitFor(() => {
-      expect(onSetPaneTitle).toHaveBeenCalledWith(
-        expect.objectContaining({ title: MEDIA_TITLE }),
+      expect(onSetPaneLabel).toHaveBeenCalledWith(
+        expect.objectContaining({ label: MEDIA_TITLE }),
       );
+    });
+    await waitFor(() => {
+      const publication = primaryChromeMocks.usePanePrimaryChrome.mock.calls.at(
+        -1,
+      )?.[0] as PanePrimaryChromePublication | undefined;
+      expect(publication?.header).toEqual({
+        kind: "resource",
+        resource: {
+          status: "ready",
+          title: MEDIA_TITLE,
+          creditGroups: [],
+        },
+      });
     });
 
     // The hydration hit: the primary media GET never fired.

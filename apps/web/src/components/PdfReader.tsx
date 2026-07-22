@@ -8,6 +8,7 @@ import {
   useState,
   type UIEvent,
   type MutableRefObject,
+  type ReactNode,
 } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -86,11 +87,11 @@ export interface PdfHighlightOut {
   author_user_id: string;
   is_owner: boolean;
   linked_conversations?: { conversation_id: string; title: string }[];
-	  linked_note_blocks?: {
-	    note_block_id: string;
-	    body_pm_json?: Record<string, unknown>;
-	    body_text: string;
-	  }[];
+  linked_note_blocks?: {
+    note_block_id: string;
+    body_pm_json?: Record<string, unknown>;
+    body_text: string;
+  }[];
 }
 
 export interface PdfHighlightNavigationRequest {
@@ -165,11 +166,13 @@ export interface PdfReaderIntrinsicWidthState {
 
 interface PdfReaderProps {
   mediaId: string;
+  beforeContent?: ReactNode;
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
   onIntrinsicWidthChange?: (state: PdfReaderIntrinsicWidthState) => void;
   focusedHighlightId?: string | null;
+  hoveredHighlightId?: string | null;
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
   onPageHighlightsChange?: (
@@ -180,6 +183,7 @@ interface PdfReaderProps {
   onHighlightNavigationComplete?: () => void;
   onHighlightsMutated?: () => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
+  onHighlightHover?: (highlightId: string | null) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
   onQuoteToNewChat?: (
     highlightId: string,
@@ -193,6 +197,17 @@ interface PdfReaderProps {
     quote: string;
     anchorRect: DOMRect;
     creation: Promise<{ id: string } | null>;
+  }) => void;
+  /**
+   * Open a Link over a FRESH PDF selection using its true page-space quads. Unlike
+   * highlight/note creation this performs no write — the Link service creates the
+   * Highlight atomically on confirmation (invariant 6). The caller mints the
+   * client-stable `highlight_id`.
+   */
+  onLink?: (selection: {
+    pageNumber: number;
+    quads: PdfHighlightQuad[];
+    exact: string;
   }) => void;
   /** Resume seed: page (1-based) to open when this media loads */
   startPageNumber?: number;
@@ -496,11 +511,13 @@ function applyViewerPageNumber(
 
 export default function PdfReader({
   mediaId,
+  beforeContent,
   contentRef,
   onControlsStateChange,
   onControlsReady,
   onIntrinsicWidthChange,
   focusedHighlightId = null,
+  hoveredHighlightId = null,
   editingHighlightId = null,
   highlightRefreshToken = 0,
   onPageHighlightsChange,
@@ -508,10 +525,12 @@ export default function PdfReader({
   onHighlightNavigationComplete,
   onHighlightsMutated,
   onHighlightTap,
+  onHighlightHover,
   temporaryHighlight = null,
   onQuoteToNewChat,
   onQuoteToExtantChat,
   onAddNote,
+  onLink,
   startPageNumber,
   startPageProgression,
   startZoom,
@@ -577,7 +596,9 @@ export default function PdfReader({
   const recoveringFromRenderErrorRef = useRef(false);
   const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
   const onHighlightTapRef = useRef(onHighlightTap);
+  const onHighlightHoverRef = useRef(onHighlightHover);
   const hasHighlightTapHandler = Boolean(onHighlightTap);
+  const hasHighlightHoverHandler = Boolean(onHighlightHover);
   const selectionSnapshotKeyRef = useRef<string | null>(null);
   const selectionVisibleRef = useRef(false);
   const mobileSelectionTimerRef = useRef<number | null>(null);
@@ -605,6 +626,7 @@ export default function PdfReader({
   // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
   onPageHighlightsChangeRef.current = onPageHighlightsChange;
   onHighlightTapRef.current = onHighlightTap;
+  onHighlightHoverRef.current = onHighlightHover;
   isMobileRef.current = isMobile;
 
   useEffect(() => {
@@ -1747,6 +1769,28 @@ export default function PdfReader({
     });
   }, [handleCreateHighlight, onAddNote, selection]);
 
+  // Link verb over a fresh selection: compute the true page-space quads/quote
+  // WITHOUT persisting a Highlight (invariant 6); the Link service materializes
+  // the source Highlight on confirmation. Gated on reliable text geometry, like
+  // note/quote, so `exact` carries real quote identity.
+  const handleLink = useCallback(() => {
+    const activeSelection = selection ?? selectionSnapshotRef.current;
+    if (!activeSelection) return;
+    const exact = activeSelection.range.toString().trim();
+    const quads = buildSelectionQuads(
+      activeSelection.range,
+      activeSelection.pageNumber,
+    );
+    if (quads.length === 0) {
+      setSelectionError(
+        "No selectable text geometry was found for this selection.",
+      );
+      clearSelection();
+      return;
+    }
+    onLink?.({ pageNumber: activeSelection.pageNumber, quads, exact });
+  }, [buildSelectionQuads, clearSelection, onLink, selection]);
+
   useHighlightNoteChord({
     enabled: Boolean(onAddNote && selection && textGeometryReliable),
     onTrigger: handleAddNote,
@@ -1877,36 +1921,39 @@ export default function PdfReader({
     scrollToProjectedHighlight,
   });
 
-  const pulseHighlightOverlay = useCallback((target: PdfPulseNavigationTarget) => {
-    if (pulseTimerRef.current != null) {
-      window.clearTimeout(pulseTimerRef.current);
-    }
-
-    const pulseId = target.highlightId ?? target.transientPulseId;
-    if (!pulseId) {
-      return;
-    }
-
-    if (target.transientPulseId) {
-      setTransientPulseHighlight({
-        id: target.transientPulseId,
-        pageNumber: target.pageNumber,
-        quads: target.quads,
-      });
-    }
-    setPulsingHighlightId(pulseId);
-    pulseTimerRef.current = window.setTimeout(() => {
-      pulseTimerRef.current = null;
-      setPulsingHighlightId((current) =>
-        current === pulseId ? null : current,
-      );
-      if (target.transientPulseId) {
-        setTransientPulseHighlight((current) =>
-          current?.id === target.transientPulseId ? null : current,
-        );
+  const pulseHighlightOverlay = useCallback(
+    (target: PdfPulseNavigationTarget) => {
+      if (pulseTimerRef.current != null) {
+        window.clearTimeout(pulseTimerRef.current);
       }
-    }, PDF_PULSE_DURATION_MS);
-  }, []);
+
+      const pulseId = target.highlightId ?? target.transientPulseId;
+      if (!pulseId) {
+        return;
+      }
+
+      if (target.transientPulseId) {
+        setTransientPulseHighlight({
+          id: target.transientPulseId,
+          pageNumber: target.pageNumber,
+          quads: target.quads,
+        });
+      }
+      setPulsingHighlightId(pulseId);
+      pulseTimerRef.current = window.setTimeout(() => {
+        pulseTimerRef.current = null;
+        setPulsingHighlightId((current) =>
+          current === pulseId ? null : current,
+        );
+        if (target.transientPulseId) {
+          setTransientPulseHighlight((current) =>
+            current?.id === target.transientPulseId ? null : current,
+          );
+        }
+      }, PDF_PULSE_DURATION_MS);
+    },
+    [],
+  );
 
   usePdfScrollToTarget({
     target: useMemo(
@@ -1962,7 +2009,9 @@ export default function PdfReader({
           if (pageNumber !== pageNumberRef.current) {
             await goToPage(pageNumber);
           }
-          window.requestAnimationFrame(() => pulseHighlightOverlay(pulseTarget));
+          window.requestAnimationFrame(() =>
+            pulseHighlightOverlay(pulseTarget),
+          );
         };
         void navigate();
       },
@@ -2244,6 +2293,9 @@ export default function PdfReader({
       if (focusedHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.highlightOverlayRectFocused);
       }
+      if (hoveredHighlightId === rect.highlightId) {
+        rectEl.classList.add(styles.highlightOverlayRectHovered);
+      }
       if (pulsingHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.pulsing);
       }
@@ -2262,8 +2314,49 @@ export default function PdfReader({
       rectEl.style.height = `${rect.height}px`;
       rectEl.style.backgroundColor = OVERLAY_COLOR_MAP[rect.color];
       rectEl.style.mixBlendMode = "multiply";
-      if (hasHighlightTapHandler && !rect.isTemporary) {
+      if (
+        (hasHighlightTapHandler || hasHighlightHoverHandler) &&
+        !rect.isTemporary
+      ) {
         rectEl.style.pointerEvents = "auto";
+      }
+      if (hasHighlightHoverHandler && !rect.isTemporary) {
+        rectEl.addEventListener("pointerenter", () => {
+          onHighlightHoverRef.current?.(rect.highlightId);
+        });
+        rectEl.addEventListener("pointerleave", (event) => {
+          const relatedHighlightId =
+            event.relatedTarget instanceof HTMLElement
+              ? event.relatedTarget.dataset.highlightId
+              : null;
+          const focusedHighlightId =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement.dataset.highlightId
+              : null;
+          if (
+            relatedHighlightId !== rect.highlightId &&
+            focusedHighlightId !== rect.highlightId
+          ) {
+            onHighlightHoverRef.current?.(null);
+          }
+        });
+        rectEl.addEventListener("focus", () => {
+          onHighlightHoverRef.current?.(rect.highlightId);
+        });
+        rectEl.addEventListener("blur", (event) => {
+          const relatedHighlightId =
+            event.relatedTarget instanceof HTMLElement
+              ? event.relatedTarget.dataset.highlightId
+              : null;
+          if (
+            relatedHighlightId !== rect.highlightId &&
+            !rectEl.matches(":hover")
+          ) {
+            onHighlightHoverRef.current?.(null);
+          }
+        });
+      }
+      if (hasHighlightTapHandler && !rect.isTemporary) {
         rectEl.setAttribute("role", "button");
         rectEl.setAttribute("tabindex", "0");
         rectEl.setAttribute("aria-label", `Open highlight ${rect.highlightId}`);
@@ -2293,9 +2386,11 @@ export default function PdfReader({
   }, [
     focusedHighlightId,
     getPageElement,
+    hasHighlightHoverHandler,
     hasHighlightTapHandler,
     pageNumber,
     projectedHighlightRects,
+    hoveredHighlightId,
     pulsingHighlightId,
     removeOverlayLayers,
   ]);
@@ -2425,11 +2520,16 @@ export default function PdfReader({
   return (
     <div className={styles.viewer}>
       {recovering && (
-        <div className={styles.notice}>Refreshing secure file access…</div>
+        <div className={`${styles.notice} ${styles.mobileTopState}`}>
+          Refreshing secure file access…
+        </div>
       )}
 
       {error ? (
-        <div className={styles.error} role="alert">
+        <div
+          className={`${styles.error} ${styles.mobileTopState}`}
+          role="alert"
+        >
           {error}
         </div>
       ) : (
@@ -2460,6 +2560,7 @@ export default function PdfReader({
               aria-label="PDF document"
               onScroll={handleViewerContainerScroll}
             >
+              {beforeContent}
               <div
                 ref={setContentNode}
                 className={`pdfViewer ${styles.viewerHost}`}
@@ -2507,6 +2608,7 @@ export default function PdfReader({
           onAddNote={
             onAddNote && textGeometryReliable ? handleAddNote : undefined
           }
+          onLink={onLink && textGeometryReliable ? handleLink : undefined}
           onDismiss={clearSelection}
           isCreating={isCreating}
         />

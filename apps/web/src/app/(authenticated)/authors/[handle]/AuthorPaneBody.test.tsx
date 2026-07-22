@@ -13,7 +13,7 @@ describe("AuthorPaneBody", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the canonical heading, other names, and work role facts", async () => {
+  it("renders canonical work rows with dates and role context but not the page contributor", async () => {
     stubRoutes({
       detail: detail({ otherNames: ["Ursula Kroeber"] }),
       works: worksPage([
@@ -43,18 +43,18 @@ describe("AuthorPaneBody", () => {
       "/media/earthsea",
     );
     expect(screen.getByRole("link", { name: "Kalpa Imperial" })).toBeVisible();
+    expect(screen.getByRole("list", { name: "Works" })).toBeVisible();
 
     // Dates rendered at their known precision.
     expect(screen.getByText("1968")).toBeVisible();
     expect(screen.getByText("November 1983")).toBeVisible();
 
-    // The Earthsea credit equals the heading → the role stands alone; the Kalpa
-    // credit differs → it names the exact credited spelling. Only one row shows a
-    // "credited as" fact.
+    // Role facts explain why each work appears here, but the page contributor is
+    // not repeated in every row and contentKind is not promoted to row chrome.
     expect(screen.getByText("Author")).toBeVisible();
-    expect(screen.getByText(/Translator · credited as/)).toBeVisible();
-    expect(screen.getByText("U. K. Le Guin")).toBeVisible();
-    expect(screen.getAllByText(/credited as/)).toHaveLength(1);
+    expect(screen.getByText("Translator")).toBeVisible();
+    expect(screen.queryByText("U. K. Le Guin")).not.toBeInTheDocument();
+    expect(screen.queryByText("epub")).not.toBeInTheDocument();
   });
 
   it("omits the Other names section when there are none", async () => {
@@ -72,6 +72,19 @@ describe("AuthorPaneBody", () => {
     expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
     expect(screen.getByText("No works yet.")).toBeVisible();
     expect(screen.queryByText(/0 works/)).not.toBeInTheDocument();
+  });
+
+  it("shows initial-load feedback without rendering stale author content", async () => {
+    stubRoutes({
+      detail: errorResponse(500, "E_INTERNAL", "boom"),
+      works: worksPage([work({ title: "Must not render" })]),
+    });
+    render(authorPane());
+
+    expect(await screen.findByText("Couldn't load this author.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: CANONICAL })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Works" })).toBeNull();
+    expect(screen.queryByText("Must not render")).toBeNull();
   });
 
   it("appends the next page when Load more is pressed", async () => {
@@ -93,7 +106,9 @@ describe("AuthorPaneBody", () => {
     expect(await screen.findByRole("link", { name: "First Page Work" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
 
-    expect(await screen.findByRole("link", { name: "Second Page Work" })).toBeVisible();
+    const secondPageWork = await screen.findByRole("link", { name: "Second Page Work" });
+    expect(secondPageWork).toBeVisible();
+    await waitFor(() => expect(secondPageWork).toHaveFocus());
     expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
     expect(cursors).toEqual([null, "cursor-2"]);

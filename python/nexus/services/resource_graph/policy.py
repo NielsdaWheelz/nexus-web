@@ -160,6 +160,20 @@ EDGE_SHAPE_POLICIES: dict[EdgeOrigin, EdgeShapePolicy] = {
         search_activation="allowlisted_only",
         rendering="source-authored embedded media",
     ),
+    "link_note": EdgeShapePolicy(
+        origin="link_note",
+        writer="resource_graph.user_relations Link-note attachment (service-written only)",
+        allowed_kinds=("context",),
+        source_schemes=("note_block",),
+        target_schemes="any",
+        ordinal="forbidden",
+        snapshot="forbidden",
+        source_order="forbidden",
+        target_order="forbidden",
+        cleanup="delete with Link removal, note deletion, or endpoint deletion",
+        search_activation="allowlisted_only",
+        rendering="link note attachment (folded into its Link's connection, never rendered bare)",
+    ),
 }
 
 

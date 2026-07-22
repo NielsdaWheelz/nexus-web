@@ -26,7 +26,7 @@ function paneForwardButton(page: Page, paneId: string) {
 }
 
 // The tab activator for a named pane in the workspace strip. Static routes
-// resolve their title immediately, so the label tracks the pane's current
+// resolve their label immediately, so it tracks the pane's current
 // href — which lets us assert a pane navigated without decoding any URL state.
 function workspacePaneButton(page: Page, name: RegExp | string) {
   return page
@@ -100,7 +100,7 @@ test.describe("workspace pane history", () => {
 
     await expect(paneWrap(page, "pane-notes")).toBeVisible();
     await expect(paneWrap(page, "pane-search")).toBeVisible();
-    // Both panes show their resolved static titles in the strip; the active
+    // Both panes show their resolved static labels in the strip; the active
     // pane's href is the address bar, with no encoded layout params.
     await expect(workspacePaneButton(page, /^Notes\b/)).toBeVisible();
     await expect(workspacePaneButton(page, /^Search\b/)).toBeVisible();

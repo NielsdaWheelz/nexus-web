@@ -4,15 +4,15 @@
  * Reads its own id from the pane route (`usePaneParam("id")`, null on the
  * `new` route), drives the shared `useConversation` engine (which owns all
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
- * (which owns scroll). This adapter only holds pane CHROME: title, the
- * chrome toolbar toggles and action menu, the
+ * (which owns scroll). This adapter only holds pane chrome: typed section
+ * publication, toolbar toggles and action menu, the
  * conversation-context secondary panes (context refs + forks), and the open-resource /
  * reader-source navigation wiring.
  */
 
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitBranch, Link2 } from "lucide-react";
 import DocentOverlay from "@/components/chat/DocentOverlay";
 import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
@@ -48,9 +48,9 @@ import {
   usePaneRouter,
   usePaneRuntime,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 
@@ -72,6 +72,7 @@ export default function Conversation() {
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
   const distillateForceOpen = searchParams.get("distillate") === "1";
+  const initialTargetMessageId = searchParams.get("message");
 
   const [deleting, setDeleting] = useState(false);
   const [distilling, setDistilling] = useState(false);
@@ -117,6 +118,106 @@ export default function Conversation() {
     onConversationCreated,
   });
   activeConversationIdRef.current = convo.conversationId;
+  const routeTargetKey = initialTargetMessageId
+    ? `${conversationId ?? "new"}:${initialTargetMessageId}`
+    : null;
+  const currentRouteTargetKeyRef = useRef<string | null>(routeTargetKey);
+  currentRouteTargetKeyRef.current = routeTargetKey;
+  const revealedRouteTargetRef = useRef<string | null>(null);
+  const failedRouteTargetRef = useRef<string | null>(null);
+  const revealingRouteTargetsRef = useRef<Set<string>>(new Set());
+  const retryingRouteTargetRef = useRef<string | null>(null);
+  const [failedRouteTarget, setFailedRouteTarget] = useState<string | null>(
+    null,
+  );
+  const [retryingRouteTarget, setRetryingRouteTarget] = useState<string | null>(
+    null,
+  );
+
+  const revealRouteTarget = useCallback(
+    (targetKey: string, messageId: string) => {
+      if (
+        !convo.branch ||
+        revealedRouteTargetRef.current === targetKey ||
+        failedRouteTargetRef.current === targetKey ||
+        revealingRouteTargetsRef.current.has(targetKey) ||
+        retryingRouteTargetRef.current === targetKey
+      ) {
+        return;
+      }
+
+      revealingRouteTargetsRef.current.add(targetKey);
+      void convo.branch
+        .revealMessage(messageId)
+        .then((revealed) => {
+          if (currentRouteTargetKeyRef.current !== targetKey) return;
+          if (revealed) {
+            // Do not mark a route target complete while its optimistic active-
+            // path mutation is still pending. A false result has already
+            // restored the prior path and must remain retryable.
+            revealedRouteTargetRef.current = targetKey;
+            if (failedRouteTargetRef.current === targetKey) {
+              failedRouteTargetRef.current = null;
+              setFailedRouteTarget(null);
+            }
+            return;
+          }
+          failedRouteTargetRef.current = targetKey;
+          setFailedRouteTarget(targetKey);
+        })
+        .catch(() => {
+          if (currentRouteTargetKeyRef.current !== targetKey) return;
+          // revealMessage owns API feedback. This guard still makes an
+          // unexpected rejection visible and retryable at the route boundary.
+          failedRouteTargetRef.current = targetKey;
+          setFailedRouteTarget(targetKey);
+        })
+        .finally(() => {
+          revealingRouteTargetsRef.current.delete(targetKey);
+        });
+    },
+    [convo.branch],
+  );
+
+  useEffect(() => {
+    if (!initialTargetMessageId || !routeTargetKey) {
+      revealedRouteTargetRef.current = null;
+      failedRouteTargetRef.current = null;
+      setFailedRouteTarget(null);
+      return;
+    }
+    if (convo.loading) return;
+    revealRouteTarget(routeTargetKey, initialTargetMessageId);
+  }, [
+    convo.loading,
+    initialTargetMessageId,
+    revealRouteTarget,
+    routeTargetKey,
+  ]);
+
+  const retryRouteTarget = useCallback(async () => {
+    const targetKey = routeTargetKey;
+    const branch = convo.branch;
+    if (!targetKey || !branch || retryingRouteTargetRef.current === targetKey) {
+      return;
+    }
+
+    retryingRouteTargetRef.current = targetKey;
+    setRetryingRouteTarget(targetKey);
+    try {
+      // Refresh the complete branch cache before retrying. This makes Retry
+      // meaningful both for a transient active-path POST failure and for a
+      // message that was absent from the previously loaded tree.
+      const reloaded = await branch.reload();
+      if (reloaded && currentRouteTargetKeyRef.current === targetKey) {
+        failedRouteTargetRef.current = null;
+        setFailedRouteTarget(null);
+      }
+    } finally {
+      retryingRouteTargetRef.current = null;
+      setRetryingRouteTarget(null);
+    }
+  }, [convo.branch, routeTargetKey]);
 
   const { contextRefs, removeContextRef, upsertContextRef } =
     useConversationContextRefs(convo.conversationId);
@@ -124,9 +225,7 @@ export default function Conversation() {
 
   const branch = convo.branch;
 
-  useSetPaneTitle(
-    convo.conversationId ? `Chat: ${convo.title}` : "New chat",
-  );
+  useSetPaneLabel(convo.conversationId ? `Chat: ${convo.title}` : "New chat");
 
   // --------------------------------------------------------------------------
   // Composer wiring
@@ -206,7 +305,9 @@ export default function Conversation() {
       setDistillNonce((n) => n + 1);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setDeleteError(toFeedback(err, { fallback: "Failed to distill conversation" }));
+      setDeleteError(
+        toFeedback(err, { fallback: "Failed to distill conversation" }),
+      );
     } finally {
       setDistilling(false);
     }
@@ -225,7 +326,7 @@ export default function Conversation() {
       if (target) dispatchReaderSourceActivation(target);
       if (event?.shiftKey) {
         activateResource(activation, {
-          label: target?.label,
+          labelHint: target?.label,
           openInNewPane,
           newPane: true,
         });
@@ -233,7 +334,7 @@ export default function Conversation() {
       }
       if (resourceRef === activation.resourceRef) return;
       activateResource(activation, {
-        label: target?.label,
+        labelHint: target?.label,
         navigate: (href) => router.push(href),
       });
     },
@@ -243,7 +344,7 @@ export default function Conversation() {
   const handleOpenResource = useCallback(
     (contextRef: ContextRefOut) => {
       activateResource(contextRef.activation, {
-        label: contextRef.label,
+        labelHint: contextRef.label,
         openInNewPane,
         newPane: true,
       });
@@ -337,7 +438,7 @@ export default function Conversation() {
     ],
   );
 
-  usePaneChromeOverride({ toolbar: chatToolbar, options: paneOptions });
+  usePanePrimaryChrome({ toolbar: chatToolbar, options: paneOptions });
 
   const secondaryDescriptor = useMemo(
     () => ({
@@ -399,19 +500,43 @@ export default function Conversation() {
   // Render
   // --------------------------------------------------------------------------
 
-  const error = convo.error ?? deleteError;
+  const routeTargetFailed =
+    routeTargetKey !== null && failedRouteTarget === routeTargetKey;
+  const routeTargetFailureNotice = routeTargetFailed ? (
+    <FeedbackNotice
+      feedback={
+        convo.error ?? {
+          severity: "error",
+          title: "Failed to open the requested message.",
+        }
+      }
+    >
+      <Button
+        variant="secondary"
+        size="sm"
+        loading={retryingRouteTarget === routeTargetKey}
+        onClick={() => void retryRouteTarget()}
+      >
+        Retry
+      </Button>
+    </FeedbackNotice>
+  ) : null;
+  const error = routeTargetFailed ? deleteError : (convo.error ?? deleteError);
 
   // Existing-route error gating: a not-found/error state without history cannot
   // safely render a continuation composer. Loading stays on the normal chat
   // surface so the composer can show its disabled reason.
   if (conversationId !== null && convo.messages.length === 0 && convo.error) {
-    return <FeedbackNotice feedback={convo.error} />;
+    return (
+      routeTargetFailureNotice ?? <FeedbackNotice feedback={convo.error} />
+    );
   }
 
   return (
     <div className={styles.chatSplitLayout}>
       <div className={styles.chatPrimaryColumn}>
         <div className={styles.paneContentChat}>
+          {routeTargetFailureNotice}
           {error ? <FeedbackNotice feedback={error} /> : null}
           {convo.conversationId ? (
             <ConversationDistillate
@@ -425,9 +550,12 @@ export default function Conversation() {
             ref={convo.scrollRef}
             messages={convo.messages}
             historyLoading={convo.loading}
+            initialTargetMessageId={initialTargetMessageId}
             emptyState={
               convo.loading ? (
-                <FeedbackNotice severity="info">Loading conversation...</FeedbackNotice>
+                <FeedbackNotice severity="info">
+                  Loading conversation...
+                </FeedbackNotice>
               ) : null
             }
             docentOverlay={
@@ -444,10 +572,10 @@ export default function Conversation() {
             switchableLeafIds={branch?.switchableLeafIds}
             onSelectFork={branch ? handleSelectFork : undefined}
             onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
-            onRetryAssistantResponse={convo.retryAssistantResponse}
-            retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
-            onResendAssistantResponse={convo.resendAssistantResponse}
-            resendingAssistantMessageIds={convo.resendingAssistantMessageIds.ids}
+            onRerunAssistantResponse={convo.rerunAssistantResponse}
+            rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds.ids}
+            connectionLostAssistantIds={convo.connectionLostAssistantIds}
+            onReconnectAssistant={convo.reconnectAssistantResponse}
             composer={
               <ChatComposer
                 conversationId={convo.conversationId}

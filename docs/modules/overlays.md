@@ -5,7 +5,7 @@
 The overlays module owns mobile bottom-sheet presentation and the overlay
 behavior primitives it composes. Owners live under
 `apps/web/src/components/ui/MobileSheet.tsx` (+ `MobileSheet.module.css`) and
-`apps/web/src/lib/ui/{useDialogOverlay,useHistoryDismiss,useKeyboardInset}.ts`.
+`apps/web/src/lib/ui/{useDialogOverlay,useModalLayer,useEscapeKey,useBodyOverflowLock,useHistoryDismiss,useKeyboardInset}.ts`.
 
 Established by `docs/cutovers/mobile-sheet-keyboard-unification-hard-cutover.md`.
 
@@ -38,6 +38,37 @@ never with new geometry.
 doc comment) must observe `active` going false to pop its synthetic history
 entry; conditional rendering breaks back-button dismissal.
 
+## Shared Overlay-Layer Contract
+
+`useDialogOverlay` is the only modal behavior facade. Active modals register
+with `useModalLayer`; only the activation-topmost modal carries `aria-modal`,
+accepts focus, traps Tab, and owns Escape. Every lower modal panel is `inert`,
+and every modal backdrop consumes the shared `modalBackdropProjection`, which
+suppresses its lower scrim and pointer handling with stateful inline styles
+that cannot lose to component stylesheet order. A stable optional layer scope
+lets feature commands identify their
+own top interaction layer without mistaking a nested modal or menu for it.
+
+The supporting registries are browser-local and composition-safe:
+
+- `useEscapeKey` has one document listener; transient owners are associated
+  with and outrank only their containing modal, peers are LIFO, and a transient
+  in a suspended modal cannot steal Escape from a newer modal;
+- `useBodyOverflowLock` changes body overflow only on zero-to-one and
+  one-to-zero owner transitions;
+- `useHistoryDismiss` keeps one marker/listener for the nonempty history-owner
+  stack, dismisses only its topmost eligible owner, and safely handles blocked,
+  nested, non-LIFO, simultaneous, delayed-pop, and owner-handoff closes;
+- return focus is permitted only for the layer being exposed and is deferred
+  while its explicit target remains inside an inert underlay.
+
+A modal-local `ActionMenu` derives that ownership from modal context, portals
+into its containing dialog, becomes a transient Escape/history owner, and does
+not claim `aria-modal`. Escape closes the top menu or modal one layer at a
+time. Back closes a modal-local menu and then the top history-enabled sheet or
+drawer; `Dialog` intentionally does not consume browser history, so an
+intervening Dialog is Escape-dismissed before Back can reach its underlay.
+
 ## Keyboard Geometry Ownership
 
 `useKeyboardInset` is the single keyboard-occlusion source and is importable
@@ -59,8 +90,8 @@ Scrim is a two-value semantic choice:
 
 - `soft` (`--overlay-scrim-soft`): in-context companion sheets — workspace
   secondary surfaces, model settings
-- `default` (`--overlay-scrim`): app-level modals — Add Content tray, expanded
-  player, palette
+- `default` (`--overlay-scrim`): app-level modals — Launcher (including its Add
+  workbench), expanded player
 
 ## Out Of Family
 
@@ -71,10 +102,12 @@ itself. Do not fold it into `MobileSheet`.
 ## Underlying Primitives
 
 - `useDialogOverlay` is the modal contract for all modal overlays, mobile and
-  desktop. Backdrop-click dismissal stays caller-side (portal-safe pattern;
-  `MobileSheet` is that caller for bottom sheets).
-- `useHistoryDismiss` owns back-button dismissal, including the
-  navigating-close microtask guard. It carries the stay-mounted contract above.
+  desktop. It owns modal-stack projection, shared scroll locking, focus entry,
+  trapping/return, and topmost Escape. Backdrop-click dismissal stays
+  caller-side (`MobileSheet` is that caller for bottom sheets).
+- `useHistoryDismiss` owns the one shared synthetic history marker, topmost
+  Back dismissal, blocked-dismiss rearming, delayed-pop drain, and
+  navigating-close guard. It carries the stay-mounted contract above.
 
 ## Rejected Hacks
 
@@ -95,3 +128,6 @@ Keep these tests aligned with this module contract:
 - `apps/web/src/lib/ui/useKeyboardInset.test.tsx`
 - `apps/web/src/lib/ui/useDialogOverlay.test.tsx`
 - `apps/web/src/lib/ui/useHistoryDismiss.test.tsx`
+- `apps/web/src/lib/ui/useEscapeKey.test.tsx`
+- `apps/web/src/components/ui/HoverPreview.test.tsx`
+- `apps/web/src/components/contributors/AuthorSearchField.test.tsx`

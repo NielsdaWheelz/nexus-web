@@ -1,7 +1,21 @@
 # Reader Sidecar: Six Surfaces Become Two — Hard Cutover
 
-**Status:** Spec · Rev 1 · 2026-07-07
+**Status:** BUILT · outer-surface consolidation complete · 2026-07-20
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
+
+## Current state and supersession
+
+The surviving reader-tools surfaces are exactly `reader-contents` and
+`reader-evidence`; the five retired surface ids in this document remain dead.
+`EvidencePaneSurface` and `MarginRail` are the current presenters.
+
+The approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md)
+supersedes this document's storage-shaped `EvidenceRow` union, three coarse
+filters, and sidecar alignment behavior. This document remains authoritative
+only for the completed outer-surface consolidation and deleted surface ids.
+Prerequisite language and deleted component names below are historical cutover
+context, not current implementation guidance.
 
 ## One-line
 

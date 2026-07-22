@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Keyboard } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -15,26 +14,38 @@ import {
 } from "@/lib/keybindings";
 import { useKeybindingsController } from "@/lib/keybindingsProvider";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
-import styles from "./page.module.css";
+import {
+  getDestination,
+  type DestinationId,
+} from "@/lib/navigation/destinations";
 
 interface BindableAction {
   id: string;
   label: string;
 }
 
-// Bindable ids match the launcher's resolvable actions: "open-launcher" + the shared
-// destination registry ids (lib/navigation/destinations.ts) + workspace pane navigation.
+const BINDABLE_DESTINATION_IDS = [
+  "lectern",
+  "libraries",
+  "podcasts",
+  "chats",
+  "notes",
+  "atlas",
+  "oracle",
+  "authors",
+  "search",
+  "settings",
+] as const satisfies readonly DestinationId[];
+
+// Bindable ids match the launcher's resolvable actions: "open-launcher" + a
+// deliberate projection of the shared destination registry + workspace actions.
 const BINDABLE_ACTIONS: BindableAction[] = [
   { id: "open-launcher", label: "Open launcher" },
-  { id: "libraries", label: "Go to Libraries" },
-  { id: "authors", label: "Go to Authors" },
-  { id: "podcasts", label: "Go to Podcasts" },
-  { id: "chats", label: "Go to Chats" },
-  { id: "notes", label: "Go to Notes" },
+  ...BINDABLE_DESTINATION_IDS.map((id) => ({
+    id,
+    label: `Go to ${getDestination(id).label}`,
+  })),
   { id: "today", label: "Go to Today" },
-  { id: "oracle", label: "Go to Oracle" },
-  { id: "search", label: "Go to Search" },
-  { id: "settings", label: "Go to Settings" },
   { id: "pane-next", label: "Next pane" },
   { id: "pane-previous", label: "Previous pane" },
 ];
@@ -129,55 +140,53 @@ export default function KeybindingsPaneBody() {
                   ? `Already bound to ${conflictLabel}`
                   : undefined,
               meta,
-              icon: Keyboard,
+              actions: isCapturing
+                ? [
+                    {
+                      kind: "command",
+                      id: "cancel-keybinding-capture",
+                      label: "Cancel",
+                      onSelect: cancelCapture,
+                    },
+                  ]
+                : currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id]
+                  ? [
+                      {
+                        kind: "command",
+                        id: "clear-keybinding",
+                        label: "Clear shortcut",
+                        onSelect: () => clearBinding(id),
+                      },
+                    ]
+                  : [],
             });
           })}
-          view="list"
-          density="comfortable"
           status="ready"
           ariaLabel="Keyboard shortcuts"
           surface={false}
           rowControls={Object.fromEntries(
             BINDABLE_ACTIONS.map(({ id }) => {
               const isCapturing = capturing === id;
-              const currentCombo = bindings[id];
 
               return [
                 id,
                 isCapturing ? (
-                  <span className={styles.rowActions}>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={!capturedCombo}
-                      onClick={saveCapture}
-                    >
-                      {conflict ? "Reassign" : "Save"}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={cancelCapture}>
-                      Cancel
-                    </Button>
-                  </span>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!capturedCombo}
+                    onClick={saveCapture}
+                  >
+                    {conflict ? "Reassign" : "Save"}
+                  </Button>
                 ) : (
-                  <span className={styles.rowActions}>
-                    <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
-                      Edit
-                    </Button>
-                    {currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id] ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => clearBinding(id)}
-                      >
-                        Clear
-                      </Button>
-                    ) : null}
-                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
+                    Edit
+                  </Button>
                 ),
               ];
             }),
           )}
-          rowActionsVisibility="always"
         />
       </PaneSection>
     </PaneSurface>

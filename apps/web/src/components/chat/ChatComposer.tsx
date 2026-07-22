@@ -1,8 +1,9 @@
 /**
- * ChatComposer - message input with model picker and chat-run send.
+ * ChatComposer - message input with LLM-profile picker and chat-run send.
  *
- * Security:
- * - Never console.log API key material.
+ * The composer owns NO provider/model/reasoning policy: it holds a
+ * `{ profileId, reasoningOptionId }` selection reported by ChatProfilePicker
+ * (which renders the GET /llm-profiles catalog) and sends it verbatim.
  */
 
 "use client";
@@ -19,9 +20,10 @@ import type {
 } from "@/lib/api/sse/requests";
 import { buildChatRunBody } from "@/lib/conversations/chatRunBody";
 import BranchComposerHeader from "@/components/chat/BranchComposerHeader";
-import ModelSettingsPopover from "@/components/chat/ModelSettingsPopover";
+import ChatProfilePicker, {
+  type ProfileSelection,
+} from "@/components/chat/ChatProfilePicker";
 import { useChatDraft } from "@/components/chat/useChatDraft";
-import { useChatModels } from "@/components/chat/useChatModels";
 import Button from "@/components/ui/Button";
 import Textarea from "@/components/ui/Textarea";
 import type {
@@ -107,9 +109,9 @@ export default function ChatComposer({
   const [sending, setSending] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileSelection, setProfileSelection] =
+    useState<ProfileSelection | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
   const { content, setContent, activeDraftKey, clearDraft } = useChatDraft({
     draftKey,
@@ -118,11 +120,6 @@ export default function ChatComposer({
     conversationId,
     initialContent,
   });
-  const models = useChatModels();
-  const { selectedModel, selectedProvider, selectedReasoning, selectedKeyMode } = models;
-  const modelSelectionReady =
-    selectedModel?.available_key_modes.includes(selectedKeyMode) === true &&
-    selectedModel.reasoning_modes.includes(selectedReasoning);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -139,7 +136,7 @@ export default function ChatComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = content.trim();
-    if (!trimmed || sending || disabledReason || !modelSelectionReady || !selectedModel) return;
+    if (!trimmed || sending || disabledReason || !profileSelection) return;
 
     setSending(true);
     setError(null);
@@ -159,9 +156,8 @@ export default function ChatComposer({
       const body = buildChatRunBody({
         conversationId: targetConversationId,
         content: trimmed,
-        modelId: selectedModel.id,
-        reasoning: selectedReasoning,
-        keyMode: selectedKeyMode,
+        profileId: profileSelection.profileId,
+        reasoningOptionId: profileSelection.reasoningOptionId,
         branchDraft,
         parentMessageId,
         chatSubject,
@@ -190,10 +186,7 @@ export default function ChatComposer({
   }, [
     content,
     sending,
-    selectedModel,
-    selectedReasoning,
-    selectedKeyMode,
-    modelSelectionReady,
+    profileSelection,
     conversationId,
     onResolveConversation,
     chatSubject,
@@ -290,12 +283,10 @@ export default function ChatComposer({
         />
 
         <div className={styles.composerActionRow}>
-          <ModelSettingsPopover
-            open={settingsOpen}
-            setOpen={setSettingsOpen}
-            models={models}
+          <ChatProfilePicker
+            value={profileSelection}
+            onChange={setProfileSelection}
             disabled={composerDisabled}
-            buttonRef={settingsButtonRef}
           />
 
           {activeRunId && onCancelRun ? (
@@ -316,12 +307,7 @@ export default function ChatComposer({
               size="sm"
               className={styles.sendButton}
               onClick={handleSend}
-              disabled={
-                sendDisabled ||
-                !content.trim() ||
-                !selectedProvider ||
-                !modelSelectionReady
-              }
+              disabled={sendDisabled || !content.trim() || !profileSelection}
             >
               {sending ? "SENDING" : "SEND"}
             </Button>

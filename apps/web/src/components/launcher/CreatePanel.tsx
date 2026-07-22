@@ -63,7 +63,9 @@ export default function CreatePanel({
         await saveNoteBody(persisted.id, {
           clientMutationId,
           baseVersion: persisted.versionByLane?.body ?? null,
-          bodyPmJson: firstOutlineBlockFromDoc(createEmptyOutlineDoc(persisted.id))!.bodyPmJson,
+          bodyPmJson: firstOutlineBlockFromDoc(
+            createEmptyOutlineDoc(persisted.id),
+          )!.bodyPmJson,
         });
         persistedBlockRef.current = null;
         return;
@@ -162,6 +164,7 @@ export default function CreatePanel({
             compact
             onDocChange={scheduleSave}
             onBlurFlush={flushSession}
+            onFeedback={setFeedback}
             onError={(error) => {
               if (handleUnauthenticatedApiError(error)) return;
               setFeedback(

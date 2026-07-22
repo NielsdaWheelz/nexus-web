@@ -3,6 +3,14 @@
 **Status:** IMPLEMENTED · Rev 2 · 2026-07-16 (implemented 2026-07-17)
 **Type:** Hard cutover — no legacy paths, fallbacks, dual reads/writes, feature flags, or backward compatibility.
 
+**Resonance supersession (2026-07-21):**
+[`resonance-reading-slate-hard-cutover.md`](resonance-reading-slate-hard-cutover.md)
+removes `viewer_tz`, Surfaced Today, and the root entry engagement field; moves
+non-default Resonance ordering to `services/resonance`; and hard-cuts the cursor
+kind from `library_entries:resonance:v1` to `library_entries:resonance:v2`.
+The default live personal-All and consumption-owner recency facts remain
+canonical.
+
 ## 0. Sequencing — mandatory
 
 This cutover lands **after** merged Lectern (`604dbed6`) and Alembic `0182_lectern_player_lifecycle`.
@@ -128,7 +136,8 @@ The one actor-authorized filing command used by REST and `agent_tools/writes.py`
 5. inserts/checks the physical entry;
 6. clears `user_media_deletions` even when the physical entry already exists;
 7. inserts direct Default intent even when virtual membership already exposes the media;
-8. returns idempotent present/inserted outcome for Undo correctness.
+8. returns an inserted-only boolean outcome (`false` means already present) for
+   Undo correctness.
 
 A narrow trusted system command serves Oracle seeding. Both call one private insertion primitive. For media, that primitive always calls existing `raise_if_media_teardown_pending()` before the library lock; the barrier stays in `library_entries.py`. Closure deletion must not delete or bypass it.
 
@@ -169,7 +178,7 @@ Projection precedence:
 3. reader engagement: `max_total_progression >= 0.95` → finished; any row → in progress;
 4. absent → unread.
 
-Document `last_engaged_at` comes from `reader_engagement_states`; audio recency remains `podcast_listening_states.updated_at`. `MediaOut`, library `surfaced_today`, and non-default resonance consume those owner-level recency queries. This preserves reader-progress AC17 without retaining history.
+Document `last_engaged_at` comes from `reader_engagement_states`; audio recency comes from the heartbeat-only `podcast_listening_states.last_engaged_at`. Migration 0186 copies operational `updated_at` only when post-fencing state proves the latest mutation was a heartbeat (`write_revision > 0`, incomplete, and either positive position or no reset). Pre-fencing, completed, and post-reset zero-position rows stay absent because they prove at most that listening once occurred, not when it occurred. Manual Finished/Unread mutations may advance operational `updated_at` but preserve engagement recency. `MediaOut` and Resonance consume those owner-level recency facts; the removed library `surfaced_today` and Lectern Recent products consumed them before the Resonance cutover. This preserves reader-progress AC17 without retaining history or fabricating engagement from state-only commands.
 
 Post-cut `ListeningHeartbeatIn` remains strict camel-case, all-required, CAS-fenced, and has **no completion field**. It contains exactly:
 

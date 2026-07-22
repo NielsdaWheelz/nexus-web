@@ -466,13 +466,32 @@ def _handle_duplicate(
     ).fetchone()
 
     if library_row:
-        from nexus.services import library_entries
+        from nexus.services import library_entries, library_governance
+
+        media_ids = [winner_id, loser_id] if delete_loser else [winner_id]
+        locked_media_ids = library_entries.lock_media_rows_in_order(db, media_ids)
+        if set(locked_media_ids) != set(media_ids):
+            # justify-service-invariant-check: both ids were just resolved from durable
+            # media rows in this transaction and are the complete mutation set.
+            # justify-defect: canonicalization cannot proceed with a missing participant.
+            raise AssertionError("duplicate media changed before canonicalization")
+        library_ids = [UUID(str(library_row[0]))]
+        if delete_loser:
+            library_ids.extend(library_entries.library_ids_for_media(db, loser_id))
+        ordered_library_ids = sorted(set(library_ids))
+        if (
+            library_governance.lock_library_rows_in_order(db, ordered_library_ids)
+            != ordered_library_ids
+        ):
+            # justify-service-invariant-check: the default destination and every loser
+            # reference were read while all participant media rows were locked.
+            # justify-defect: non-cascading entry FKs require those libraries to exist.
+            raise AssertionError("duplicate media library set contains a missing row")
 
         # The physical entry IS the whole direct-default contract now (no
-        # separate intrinsic/closure provenance). ensure_entry runs the
-        # teardown reference barrier (spec S3/S4.3) itself before the first
-        # lifetime reference; there is no intervening library lock here to
-        # make a separate pre-check load-bearing (unlike add_media_to_library).
+        # separate intrinsic/closure provenance). All media and library rows
+        # are already locked in their global UUID order; ensure_entry reuses the
+        # teardown barrier without introducing an order inversion.
         library_entries.ensure_entry(db, library_row[0], library_entries.media_target(winner_id))
         clear_user_media_deletion(db, actor_user_id, winner_id)
 

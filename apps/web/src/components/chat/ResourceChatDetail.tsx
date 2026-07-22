@@ -122,10 +122,10 @@ export default function ResourceChatDetail({
         historyLoading={convo.loading}
         olderCursor={convo.olderCursor}
         onLoadOlder={convo.loadOlder}
-        onRetryAssistantResponse={convo.retryAssistantResponse}
-        retryingAssistantMessageIds={convo.retryingAssistantMessageIds.ids}
-        onResendAssistantResponse={convo.resendAssistantResponse}
-        resendingAssistantMessageIds={convo.resendingAssistantMessageIds.ids}
+        onRerunAssistantResponse={convo.rerunAssistantResponse}
+        rerunningAssistantMessageIds={convo.rerunningAssistantMessageIds.ids}
+        connectionLostAssistantIds={convo.connectionLostAssistantIds}
+        onReconnectAssistant={convo.reconnectAssistantResponse}
         onReaderSourceActivate={onReaderSourceActivate}
         emptyState={
           convo.loading ? (

@@ -31,14 +31,12 @@ from nexus.db.models import (
     MediaSourceAttemptStatus,
     Membership,
     Message,
-    Model,
     NoteBlock,
     Page,
     PdfPageTextSpan,
     ProcessingStatus,
     ResourceEdge,
 )
-from nexus.llm_catalog import MODEL_CATALOG
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.note_indexing import rebuild_note_content_index
@@ -52,63 +50,6 @@ from nexus.services.resource_items import versions
 # =============================================================================
 # Models
 # =============================================================================
-
-
-def create_test_model(session: Session) -> UUID:
-    """Get or create a test model.
-
-    Uses the migration-seeded gpt-5.4-mini row if it exists,
-    otherwise inserts a complete row with all NOT NULL columns.
-    """
-    existing = (
-        session.query(Model)
-        .filter(Model.provider == "openai", Model.model_name == "gpt-5.4-mini")
-        .first()
-    )
-    if existing:
-        return existing.id
-
-    model = Model(
-        id=uuid4(),
-        provider="openai",
-        model_name="gpt-5.4-mini",
-        max_context_tokens=400000,
-        is_available=True,
-    )
-    session.add(model)
-    session.commit()
-    return model.id
-
-
-def seed_test_models(session: Session) -> None:
-    """Seed the curated test model catalog."""
-    allowed = {(model.provider, model.model_name) for model in MODEL_CATALOG}
-    providers = {model.provider for model in MODEL_CATALOG}
-
-    existing_models = session.query(Model).filter(Model.provider.in_(providers)).all()
-    existing_by_key = {(model.provider, model.model_name): model for model in existing_models}
-
-    for model in existing_models:
-        if (model.provider, model.model_name) not in allowed:
-            model.is_available = False
-
-    for catalog_model in MODEL_CATALOG:
-        existing = existing_by_key.get((catalog_model.provider, catalog_model.model_name))
-        if existing:
-            existing.max_context_tokens = catalog_model.max_context_tokens
-            existing.is_available = True
-            continue
-
-        session.add(
-            Model(
-                provider=catalog_model.provider,
-                model_name=catalog_model.model_name,
-                max_context_tokens=catalog_model.max_context_tokens,
-                is_available=True,
-            )
-        )
-
-    session.commit()
 
 
 # =============================================================================
@@ -193,7 +134,6 @@ def create_test_message(
     role: str = "user",
     content: str = "Test message",
     status: str = "complete",
-    model_id: UUID | None = None,
     parent_message_id: UUID | None = None,
 ) -> UUID:
     """Create a test message and bump the conversation's next_seq."""
@@ -225,7 +165,6 @@ def create_test_message(
         content=content,
         message_document=_message_document(role, content),
         status=status,
-        model_id=model_id,
         parent_message_id=parent_message_id,
         branch_root_message_id=branch_root_message_id,
     )
@@ -297,11 +236,12 @@ def create_test_media(
     *,
     title: str = "Test Article",
     status: str = "ready_for_reading",
+    kind: str = MediaKind.web_article.value,
 ) -> UUID:
     """Create a bare media row (not linked to any library)."""
     media = Media(
         id=uuid4(),
-        kind=MediaKind.web_article.value,
+        kind=kind,
         title=title,
         canonical_source_url="https://example.com/test",
         processing_status=ProcessingStatus(status),

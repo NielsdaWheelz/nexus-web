@@ -14,11 +14,13 @@ import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
 import NavAccount from "./NavAccount";
-import type { NavGroup, NavItem } from "./navModel";
+import type { AppNavActivationResult } from "./navActivation";
+import type { NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 
 export default function NavRail({
-  groups,
+  items,
+  home,
   account,
   settingsActive,
   activeId,
@@ -30,17 +32,18 @@ export default function NavRail({
   onOpenAdd,
   onNavigate,
 }: {
-  groups: NavGroup[];
+  items: readonly NavItem[];
+  home: NavItem;
   account: NavItem;
   settingsActive: boolean;
-  activeId: string | null;
+  activeId: NavItem["id"] | null;
   collapsed: boolean;
   onToggleCollapse: () => void;
   commandHint: string;
   commandCombo: string;
   onOpenCommand: () => void;
   onOpenAdd: () => void;
-  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => void;
+  onNavigate: (event: MouseEvent<HTMLElement>, href: string) => AppNavActivationResult;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -63,7 +66,7 @@ export default function NavRail({
     });
   }, [activeId]);
 
-  useLayoutEffect(() => measure(), [measure, collapsed, groups]);
+  useLayoutEffect(() => measure(), [measure, collapsed, items]);
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -85,10 +88,10 @@ export default function NavRail({
     <nav className={`${styles.rail} ${collapsed ? styles.collapsed : ""}`} aria-label="Primary">
       <div className={styles.brand}>
         <Link
-          href="/libraries"
+          href={home.href}
           className={styles.brandLink}
           aria-label="Nexus — Home"
-          onClick={(event) => onNavigate(event, "/libraries")}
+          onClick={(event) => onNavigate(event, home.href)}
         >
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
@@ -130,45 +133,37 @@ export default function NavRail({
           style={{ height: indicator.height, transform: `translateY(${indicator.top}px)` }}
           aria-hidden="true"
         />
-        {groups.map((group) =>
-          group.items.length === 0 ? null : (
-            <div key={group.id} className={styles.group}>
-              <div className={styles.groupLabel}>{group.label}</div>
-              <ul className={styles.groupList}>
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const active = item.id === activeId;
-                  return (
-                    <li key={item.id}>
-                      <Link
-                        ref={(el) => {
-                          if (el) itemRefs.current.set(item.id, el);
-                          else itemRefs.current.delete(item.id);
-                        }}
-                        href={item.href}
-                        className={`${styles.item} ${active ? styles.active : ""} ${
-                          item.signature === "oracle" ? styles.oracle : ""
-                        }`}
-                        aria-label={item.label}
-                        aria-current={active ? "page" : undefined}
-                        onClick={(event) => onNavigate(event, item.href)}
-                        onMouseEnter={() => setTip(item)}
-                        onMouseLeave={() => setTip((current) => (current === item ? null : current))}
-                        onFocus={() => setTip(item)}
-                        onBlur={() => setTip((current) => (current === item ? null : current))}
-                      >
-                        <span className={styles.itemIcon}>
-                          <Icon size={20} strokeWidth={2} aria-hidden="true" />
-                        </span>
-                        {!collapsed && <span className={styles.itemLabel}>{item.label}</span>}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ),
-        )}
+        <ul className={styles.navList}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.id === activeId;
+            return (
+              <li key={item.id}>
+                <Link
+                  ref={(el) => {
+                    if (el) itemRefs.current.set(item.id, el);
+                    else itemRefs.current.delete(item.id);
+                  }}
+                  href={item.href}
+                  className={`${styles.item} ${active ? styles.active : ""}`}
+                  data-presentation={item.presentation}
+                  aria-label={item.label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={(event) => onNavigate(event, item.href)}
+                  onMouseEnter={() => setTip(item)}
+                  onMouseLeave={() => setTip((current) => (current === item ? null : current))}
+                  onFocus={() => setTip(item)}
+                  onBlur={() => setTip((current) => (current === item ? null : current))}
+                >
+                  <span className={styles.itemIcon}>
+                    <Icon size={20} strokeWidth={2} aria-hidden="true" />
+                  </span>
+                  {!collapsed && <span className={styles.itemLabel}>{item.label}</span>}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       <div className={styles.footer}>

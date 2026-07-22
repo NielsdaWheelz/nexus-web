@@ -368,6 +368,128 @@ def create_pdf_highlight(
     return project_highlight(highlight, viewer_id)
 
 
+def create_pdf_highlight_in_txn(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    highlight_id: UUID,
+    media_id: UUID,
+    page_number: int,
+    quads: list,
+    exact: str,
+    color: str,
+) -> Highlight:
+    """Create a fresh PDF geometry Highlight with a client-stable id; flush-only.
+
+    Composes inside the Link service's caller-owned (retryable) transaction: it
+    never commits, and a first-insert race on ``highlights_pkey`` is left to the
+    caller's retry allowlist. Reusing the client-stable id for a *different*
+    selection is ``E_HIGHLIGHT_CONFLICT`` (§ Mutation APIs); reusing it for the
+    same page/quads returns the existing row so an in-flight retry converges.
+    """
+    media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
+    _require_pdf_media_ready_or_409(media)
+    _validate_page_number(page_number, media.page_count)
+
+    try:
+        validate_exact_length(exact)
+        canonical = canonicalize_geometry(page_number, [dict(q) for q in quads])
+    except GeometryValidationError as e:
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, e.message) from e
+
+    existing = db.get(Highlight, highlight_id)
+    if existing is not None:
+        _assert_pdf_selection_matches(
+            existing=existing, viewer_id=viewer_id, media_id=media_id, canonical=canonical
+        )
+        return existing
+
+    match_fields = _compute_write_time_match(db, media, page_number, exact, None)
+
+    coord_key = derive_media_coordination_lock_key(media_id)
+    dup_key = derive_duplicate_lock_key(viewer_id, media_id, canonical.page_number, canonical.quads)
+    acquire_ordered_locks(db, coord_key, dup_key)
+
+    if _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical) is not None:
+        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
+
+    highlight = Highlight(
+        id=highlight_id,
+        user_id=viewer_id,
+        anchor_kind="pdf_page_geometry",
+        anchor_media_id=media_id,
+        color=color,
+        exact=exact,
+        prefix=match_fields["prefix"],
+        suffix=match_fields["suffix"],
+    )
+    db.add(highlight)
+    db.flush()
+
+    db.add(
+        HighlightPdfAnchor(
+            highlight_id=highlight.id,
+            media_id=media_id,
+            page_number=canonical.page_number,
+            sort_top=canonical.sort_top,
+            sort_left=canonical.sort_left,
+            plain_text_match_status=match_fields["match_status"],
+            plain_text_start_offset=match_fields["start_offset"],
+            plain_text_end_offset=match_fields["end_offset"],
+            rect_count=canonical.rect_count,
+        )
+    )
+    db.flush()
+    for idx, cq in enumerate(canonical.quads):
+        db.add(
+            HighlightPdfQuad(
+                highlight_id=highlight.id,
+                quad_idx=idx,
+                x1=cq.x1,
+                y1=cq.y1,
+                x2=cq.x2,
+                y2=cq.y2,
+                x3=cq.x3,
+                y3=cq.y3,
+                x4=cq.x4,
+                y4=cq.y4,
+            )
+        )
+    db.flush()
+
+    from nexus.services import synapse
+
+    synapse.queue_synapse_scan(
+        db,
+        user_id=viewer_id,
+        ref=ResourceRef(scheme="highlight", id=highlight.id),
+        reason="highlight_create",
+    )
+    return highlight
+
+
+def _assert_pdf_selection_matches(
+    *,
+    existing: Highlight,
+    viewer_id: UUID,
+    media_id: UUID,
+    canonical: CanonicalGeometry,
+) -> None:
+    """Guard a client-stable Highlight id against naming a different PDF selection."""
+    anchor = existing.pdf_anchor
+    if (
+        existing.user_id != viewer_id
+        or existing.anchor_kind != "pdf_page_geometry"
+        or anchor is None
+        or anchor.media_id != media_id
+        or anchor.page_number != canonical.page_number
+        or not _stored_quads_match(existing.pdf_quads, canonical.quads)
+    ):
+        raise ApiError(
+            ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight id names a different selection"
+        )
+
+
 def list_pdf_highlights(
     db: Session,
     viewer_id: UUID,

@@ -22,6 +22,7 @@ describe("SecondaryPaneShell", () => {
   it("links tabs to their own panel ids", () => {
     render(
       <SecondaryPaneShell
+        primaryPaneId="pane-1"
         secondaryPaneId="secondary-1"
         publication={publication}
         state={state}
@@ -45,9 +46,21 @@ describe("SecondaryPaneShell", () => {
     expect(contentsTab.getAttribute("aria-controls")).not.toBe(
       evidenceTab.getAttribute("aria-controls"),
     );
+    const contentsPanel = screen.getByRole("tabpanel", { name: "Contents" });
+    const evidencePanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.id === evidenceTab.getAttribute("aria-controls"));
+    expect(evidencePanel).toBeDefined();
+    expect(contentsPanel.id).toBe(contentsTab.getAttribute("aria-controls"));
+    expect(contentsPanel).not.toHaveAttribute("hidden");
+    expect(evidencePanel!).toHaveAttribute("hidden");
     expect(screen.getByRole("tabpanel")).toHaveAttribute(
       "aria-labelledby",
       contentsTab.id,
+    );
+    expect(screen.getByRole("complementary", { name: "Contents" })).toHaveAttribute(
+      "id",
+      "pane-pane-1-secondary-reader-tools",
     );
   });
 
@@ -56,6 +69,7 @@ describe("SecondaryPaneShell", () => {
     const onResize = vi.fn();
     render(
       <SecondaryPaneShell
+        primaryPaneId="pane-1"
         secondaryPaneId="secondary-1"
         publication={publication}
         state={state}

@@ -1,21 +1,16 @@
-/* Editorial index row: borderless, type-forward, calm. A hairline rule gives
-   rhythm; hover/focus is a quiet surface wash, never a bordered card. */
 .row {
   container-type: inline-size;
-  display: flex;
+  display: grid;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: stretch;
-  padding: var(--space-3) var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto auto;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  align-items: center;
+  padding: var(--space-2);
   border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
   transition: background-color var(--duration-fast) var(--ease-glide);
-}
-
-.row[data-density="compact"] {
-  gap: var(--space-2);
-  padding: var(--space-2);
 }
 
 .row:has(a.primary:hover),
@@ -28,19 +23,24 @@
   background: var(--accent-muted);
 }
 
-.main {
-  display: flex;
+.titleCell {
   min-width: 0;
-  flex: 1;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.secondary {
+  display: contents;
+}
+
+.stateSeparator {
+  display: none;
 }
 
 .primary {
-  display: flex;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  flex: 1;
-  gap: var(--space-3);
-  align-items: flex-start;
   border: 0;
   background: transparent;
   color: inherit;
@@ -62,180 +62,129 @@ button.primary:disabled {
   cursor: default;
 }
 
-.leading {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.eyebrow {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-}
-
 .title {
+  display: block;
   min-width: 0;
+  overflow: hidden;
   color: var(--ink);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-snug);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.description {
+.supporting {
   min-width: 0;
+  grid-column: 1;
+  grid-row: 2;
+  overflow: hidden;
   color: var(--ink-muted);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.meta {
-  min-width: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.trailing {
+.state {
   display: inline-flex;
   min-width: 0;
-  flex: none;
+  max-width: min(18rem, 34cqi);
+  grid-column: 2;
+  grid-row: 1 / span 2;
   align-items: center;
-}
-
-.side {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: none;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.secondary {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.contributors {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
   overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primaryControl {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(22rem, 30cqi);
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-items: center;
   justify-content: flex-end;
+}
+
+.primaryControl > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .actions {
-  display: flex;
+  display: inline-flex;
   min-width: 0;
-  max-width: 100%;
-  flex-wrap: wrap;
+  grid-column: 4;
+  grid-row: 1 / span 2;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-1);
-  transition: opacity var(--duration-fast) var(--ease-glide);
-}
-
-.actions > * {
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Reveal-on-hover only where hover exists; always shown on touch. Keyboard
-   focus into the row reveals via :focus-within. The overflow menu is always in
-   the DOM, so every action stays reachable. */
-@media (hover: hover) {
-  .actions {
-    opacity: 0;
-  }
-
-  .row:hover .actions,
-  .row:focus-within .actions,
-  .row.actionsAlwaysVisible .actions {
-    opacity: 1;
-  }
 }
 
 .expanded {
   min-width: 0;
-  flex-basis: 100%;
+  grid-column: 1 / -1;
+  grid-row: 3;
 }
 
 @container (max-width: 520px) {
-  .primary {
-    gap: var(--space-2);
-  }
-
-  .leading [data-view-transition-part="thumb"] {
-    --resource-thumb-size: 32px;
-    border-radius: var(--radius-sm);
-  }
-
-  .title,
-  .meta {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
+  .titleCell {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .title {
+    display: -webkit-box;
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
 
-  .meta {
-    -webkit-line-clamp: 1;
-  }
-
-  .main {
-    flex-basis: 100%;
-  }
-
-  .side {
-    flex: 1 1 100%;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-1) var(--space-2);
-  }
-
-  .actions,
-  .secondary,
-  .contributors {
-    width: auto;
-  }
-
   .secondary {
-    flex: 0 1 auto;
+    display: flex;
+    min-width: 0;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    align-items: baseline;
+    overflow: hidden;
+    white-space: nowrap;
   }
 
-  .contributors {
-    flex: 1 1 min(14rem, 100%);
-    justify-content: flex-start;
+  .supporting {
+    flex: 1 1 auto;
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .state {
+    flex: none;
+    max-width: 50%;
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .stateSeparator {
+    display: inline;
+    flex: none;
+    padding: 0 var(--space-1);
+    color: var(--ink-faint);
+  }
+
+  .primaryControl {
+    max-width: min(12rem, 38cqi);
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .actions {
-    flex: 0 1 auto;
-    justify-content: flex-end;
-    margin-left: auto;
+    grid-column: 3;
+    grid-row: 1;
   }
 }

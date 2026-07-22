@@ -2,16 +2,19 @@
 
 ## Scope
 
-The player module owns two related but distinct concerns: the **Lectern** (the
-one ordered, mixed-media list of outstanding intentions — podcast, video,
-reader, agent, and Launcher actions all address it) and **Now Playing** (one
-device-local audio session, not a second durable list). It is the consumer of
+The player module owns two related but distinct concerns: the **Lectern** (one
+ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
+device-local audio session, not a second durable list). Podcast, video, reader,
+agent, and Launcher actions address the ordered list. The Resonance subsystem's
+read-only **At hand** Slate is adjacent to the Lectern but does not become
+another queue or acquire mutation ownership. The player is the consumer of
 podcast episodes (and YouTube videos) for playback; the
 [podcast module](podcast.md) owns discovery, sync, and transcription, and
 hands episodes to the Lectern via auto-subscription.
 
-Full behavioral contract, wire shapes, and acceptance criteria:
-`docs/cutovers/lectern-player-lifecycle-hard-cutover.md`.
+Full behavioral contracts, wire shapes, and acceptance criteria:
+`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` and
+`docs/cutovers/resonance-reading-slate-hard-cutover.md`.
 
 ## Backend Owners
 
@@ -23,7 +26,9 @@ split one table per store:
   session and own one `retry_serializable` transaction: viewer lock -> replay
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
   facades (`get_lectern` / `get_listening_state`) run on the request-scoped
-  session. Two narrow in-transaction exceptions compose here rather than going
+  session. Policy-neutral engagement, recent-anchor, complete membership, and
+  item-count ports are consumed by Resonance. Two narrow
+  in-transaction exceptions compose here rather than going
   through a command: `ensure_missing_items_in_txn` (the auto-subscription
   watermark step; only caller is `services/podcasts/poll.py`) and
   `delete_media_consumption_state_in_txn` (media teardown; only caller is
@@ -34,7 +39,15 @@ split one table per store:
   `Unread`/`Finished` state).
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/speed, completion flag, and the heartbeat fencing tokens
-  `write_revision`/`reset_epoch`).
+  `write_revision`/`reset_epoch`). `last_engaged_at` is advanced by successful
+  heartbeats only. The separate operational `updated_at` still advances for
+  manual Finished/Unread mutations; those state-only commands preserve
+  `last_engaged_at`, and a new manual-Finished row starts with it absent.
+  Migration 0186 seeds the new clock from operational `updated_at` only when
+  post-fencing state proves the latest mutation was a heartbeat: revision is
+  positive, completion is false, and either position is positive or no reset
+  has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
+  absent because their timestamp is ambiguous.
 - `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`
@@ -55,6 +68,14 @@ split one table per store:
   (`MediaOut.listening_state`, a raw passthrough of position/duration/speed
   distinct from the derived read-state projection).
 
+`python/nexus/services/resonance/` owns the deterministic Reading Slate. It
+combines Consumption-owned Continuity with media- and podcast-owned Arrival
+facts plus policy-neutral graph, contributor, and calibrated semantic evidence,
+then returns at most ten placeable media outside the complete queue. `Finished`
+targets are excluded; finished resources may still serve as anchors. The request
+performs no model or provider call and uses one repeatable-read, read-only
+database snapshot.
+
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
 `consumption_service.delete_media_consumption_state_in_txn` (all users'
@@ -71,14 +92,15 @@ media/podcast DTOs, and the Lectern snapshot so activation derivation
 
 ```http
 GET  /lectern
+GET  /lectern/slate
 POST /lectern/commands
 POST /consumption/commands
 GET  /media/{id}/listening-state
 PUT  /media/{id}/listening-state
 ```
 
-`python/nexus/api/routes/lectern.py` owns the three transport-only routes
-above the two command ports; `python/nexus/api/routes/listening_state.py`
+`python/nexus/api/routes/lectern.py` owns the Lectern reads and two
+transport-only command ports; `python/nexus/api/routes/listening_state.py`
 owns the singular heartbeat GET/PUT (no batch endpoint). The two POST ports
 are bounded aggregate command ports, not a generic command bus: `Lectern`
 commands (`PlaceItems`/`RemoveItem`/`SetOrder`) and `Consumption` commands
@@ -109,11 +131,25 @@ GET) above `GlobalPlayerProvider` (one `PlayerSession`), which wraps
 **Media player** that persists across pane navigation and is never an editor
 (the Lectern pane is the sole full-list editor).
 
-- `apps/web/src/lib/lectern/` — the Lectern capability: `client.ts` (the one
-  transport boundary that decodes every Lectern/consumption wire shape into
-  owned typed data), `LecternProvider.tsx` (the FIFO + optimistic-mutation
-  owner), `useCompletionUndo.ts` (the ten-second Undo toast after explicit
-  exact completion).
+- `apps/web/src/lib/lectern/` — the Lectern capability: `contract.ts` (the one
+  transport-free, isomorphic owner of every Lectern/consumption wire type and
+  strict decoder), `client.ts` (HTTP calls only), `LecternProvider.tsx` (the
+  FIFO + optimistic-mutation owner), and `useCompletionUndo.ts` (the ten-second
+  Undo toast after explicit exact completion). Server pane seeding imports the
+  pure contract directly and never imports the browser transport facade.
+- `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
+  canonical **On the lectern** collection followed by the shared **At hand**
+  Slate. The Slate consumes an optional server first-paint seed, otherwise
+  queries on first active mount and every inactive-to-active transition,
+  delegates Add to `LecternProvider.placeItems`, and never owns a second
+  mutation lane. After success it preserves the exact surviving rows and
+  appends at most one novel canonical replacement. `LecternMutationNotice`
+  remains the sole assertive owner and Retry surface for an unknown Lectern
+  command outcome.
+- `apps/web/src/lib/resonance/` and
+  `components/collections/ReadingSlateSection.tsx` own strict Slate transport,
+  presentation, the destination-keyed read/add/refill state machine, focus,
+  and quiet read recovery. They do not own queue state or write commands.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
   `listeningHeartbeat.ts` (the single-flight, generation-keyed heartbeat

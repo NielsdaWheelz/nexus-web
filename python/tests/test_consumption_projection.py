@@ -134,7 +134,7 @@ def _create_podcast_episode(
 def _add_to_library(direct_db: DirectSessionManager, library_id: UUID, media_id: UUID) -> None:
     """Seed a physical library_entries row directly, bypassing the REST filing
     endpoint's membership-reachability gate: bare factory/direct-INSERT media
-    isn't membership-reachable, so POST /libraries/{id}/media 404s on it.
+    isn't membership-reachable, so actor-authorized filing rejects it.
     Production ingest always auto-files freshly-created media into the
     creator's default library (ensure_media_in_default_library); this mirrors
     that reachability for fixture media created via a bare Media row rather
@@ -206,6 +206,7 @@ def _seed_reader_engagement(
     user_id: UUID,
     media_id: UUID,
     max_total_progression: float | None = None,
+    last_engaged_at: datetime | None = None,
 ) -> None:
     with direct_db.session() as session:
         session.add(
@@ -213,7 +214,7 @@ def _seed_reader_engagement(
                 id=new_uuid7(),
                 user_id=user_id,
                 media_id=media_id,
-                last_engaged_at=datetime.now(UTC),
+                last_engaged_at=last_engaged_at or datetime.now(UTC),
                 max_total_progression=max_total_progression,
             )
         )

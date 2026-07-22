@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Link2 } from "lucide-react";
 import { RESOURCE_SCHEMES } from "@/lib/resourceGraph/resourceRef";
-import {
-  resourceIconForScheme,
-  resourceIconForUri,
-  resourceObjectTypeForScheme,
-} from "./resourceKind";
+import { resourceIconForScheme, resourceIconForUri } from "./resourceKind";
 
 describe("resourceKind", () => {
   it("has a specific icon for every resource scheme", () => {
@@ -20,23 +16,6 @@ describe("resourceKind", () => {
       resourceIconForUri("unknown:11111111-1111-4111-8111-111111111111"),
     ).toBe(Link2);
     expect(resourceIconForUri("not-a-ref")).toBe(Link2);
-  });
-
-  it("maps linkable resource schemes to object-ref types", () => {
-    expect(resourceObjectTypeForScheme("media")).toBe("media");
-    expect(resourceObjectTypeForScheme("library")).toBe("library");
-    expect(resourceObjectTypeForScheme("evidence_span")).toBe("evidence_span");
-    expect(resourceObjectTypeForScheme("content_chunk")).toBe("content_chunk");
-    expect(resourceObjectTypeForScheme("oracle_reading")).toBe(
-      "oracle_reading",
-    );
-    expect(resourceObjectTypeForScheme("artifact_revision")).toBe(
-      "artifact_revision",
-    );
-    expect(resourceObjectTypeForScheme("oracle_passage_anchor")).toBe(
-      "oracle_passage_anchor",
-    );
-    expect(resourceObjectTypeForScheme("external_snapshot")).toBeNull();
   });
 
   it("treats user graph tags as unknown at runtime", () => {

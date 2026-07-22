@@ -249,6 +249,59 @@ describe("normalizeSearchResult happy-path adaptation", () => {
     });
   });
 
+  it("decodes source publication date once without duplicating it in source meta", () => {
+    const row = adapt({
+      type: "media",
+      id: "media-1",
+      score: 0.9,
+      snippet: "",
+      title: "Dated Work",
+      source_label: null,
+      media_id: "media-1",
+      media_kind: "epub",
+      activationHref: "/media/media-1",
+      context_ref: { type: "media", id: "media-1" },
+      source: {
+        media_id: "media-1",
+        media_kind: "epub",
+        title: "Dated Work",
+        contributors: [],
+        published_date: "2025-02",
+      },
+    });
+
+    expect(row.publicationDate).toEqual({
+      kind: "Present",
+      value: "2025-02",
+    });
+    expect(row.sourceMeta).toBe("Dated Work — epub");
+    expect(row.sourceMeta).not.toContain("2025-02");
+  });
+
+  it("rejects an unreal source publication date during row adaptation", () => {
+    expect(() =>
+      adapt({
+        type: "media",
+        id: "media-1",
+        score: 0.9,
+        snippet: "",
+        title: "Impossible Date",
+        source_label: null,
+        media_id: "media-1",
+        media_kind: "epub",
+        activationHref: "/media/media-1",
+        context_ref: { type: "media", id: "media-1" },
+        source: {
+          media_id: "media-1",
+          media_kind: "epub",
+          title: "Impossible Date",
+          contributors: [],
+          published_date: "2025-02-29",
+        },
+      }),
+    ).toThrow(/source.published_date/);
+  });
+
   it("adapts a podcast row and normalizes its contributor credits", () => {
     const row = adapt({
       type: "podcast",
@@ -328,7 +381,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       url: "https://example.com/calypso",
       display_url: "example.com/calypso",
       extra_snippets: [],
-      published_at: null,
+      published_at: "2025-02-03T12:30:00Z",
       source_name: "Example",
       rank: 1,
       provider: "test",
@@ -357,12 +410,57 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       primaryText: "Calypso Archive Source",
       sourceMeta: "Example",
       mediaId: null,
+      publicationDate: {
+        kind: "Present",
+        value: "2025-02-03T12:30:00Z",
+      },
     });
     expect(row.snippetSegments).toEqual([
       { text: "Calypso ", emphasized: false },
       { text: "archive", emphasized: true },
       { text: " public evidence snippet", emphasized: false },
     ]);
+  });
+
+  it("rejects a malformed web-result publication date fact", () => {
+    expect(
+      normalize({
+        type: "web_result",
+        id: "retrieval-web-1",
+        result_type: "web_result",
+        score: 0.77,
+        snippet: "Evidence snippet",
+        source_id: "33333333-3333-4333-8333-333333333333",
+        result_ref: "web:calypso",
+        title: "Calypso Archive Source",
+        url: "https://example.com/calypso",
+        display_url: "example.com/calypso",
+        extra_snippets: [],
+        published_at: 20250203,
+        source_name: "Example",
+        rank: 1,
+        provider: "test",
+        selected: true,
+        source_label: "Example",
+        media_id: null,
+        media_kind: null,
+        resource_ref:
+          "external_snapshot:33333333-3333-4333-8333-333333333333",
+        citation_target:
+          "external_snapshot:33333333-3333-4333-8333-333333333333",
+        activationHref: "https://example.com/calypso",
+        context_ref: {
+          type: "web_result",
+          id: "33333333-3333-4333-8333-333333333333",
+        },
+        locator: {
+          type: "external_url",
+          url: "https://example.com/calypso",
+          title: "Calypso Archive Source",
+          display_url: "example.com/calypso",
+        },
+      }),
+    ).toBeNull();
   });
 
   it("adapts a note_block row exposing the note body", () => {
@@ -393,6 +491,65 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       sourceMeta: "note",
       noteBody: "note body text",
     });
+  });
+});
+
+describe("normalizeSearchResult artifact (distillate) handling", () => {
+  function artifactRow(overrides: Record<string, unknown> = {}) {
+    return {
+      type: "artifact",
+      id: "artifact-1",
+      score: 0.81,
+      snippet: "distilled <b>synthesis</b>",
+      title: "Memory Distillate",
+      source_label: "distillate",
+      media_id: null,
+      media_kind: null,
+      activationHref: "/artifacts/artifact-1",
+      revision_id: "rev-3",
+      subject_ref: "media:media-1",
+      kind: "library_intelligence",
+      context_ref: { type: "artifact", id: "artifact-1" },
+      ...overrides,
+    };
+  }
+
+  it("adapts an artifact row as a distillate result and carries its identity", () => {
+    const row = adapt(artifactRow());
+    expect(row).toMatchObject({
+      key: "artifact-artifact-1",
+      type: "artifact",
+      typeLabel: "distillate",
+      primaryText: "Memory Distillate",
+      sourceMeta: "distillate",
+      resourceRef: "artifact:artifact-1",
+      contextRef: { type: "artifact", id: "artifact-1", evidenceSpanIds: [] },
+    });
+    expect(normalize(artifactRow())).toMatchObject({
+      type: "artifact",
+      revision_id: "rev-3",
+      subject_ref: "media:media-1",
+      kind: "library_intelligence",
+    });
+  });
+
+  it("rejects an artifact row with a non-string revision_id", () => {
+    expect(normalize(artifactRow({ revision_id: 3 }))).toBeNull();
+  });
+
+  it("rejects an artifact row missing subject_ref", () => {
+    const { subject_ref: _dropped, ...rest } = artifactRow();
+    expect(normalize(rest)).toBeNull();
+  });
+
+  it("rejects an artifact row with a non-string kind", () => {
+    expect(normalize(artifactRow({ kind: null }))).toBeNull();
+  });
+
+  it("rejects an artifact row whose context_ref type drifts from artifact", () => {
+    expect(
+      normalize(artifactRow({ context_ref: { type: "page", id: "artifact-1" } })),
+    ).toBeNull();
   });
 });
 

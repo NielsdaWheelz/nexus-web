@@ -88,10 +88,8 @@ function inlineHighlight(page: Page, highlightId: string): Locator {
     .first();
 }
 
-function railMarker(page: Page, highlightId: string): Locator {
-  return activeWorkspacePane(page).getByTestId(
-    `reader-document-map-marker-marker:highlights:highlight:${highlightId}`,
-  );
+function railMarker(rail: Locator, label: string): Locator {
+  return rail.getByRole("button", { name: label, exact: true });
 }
 
 // There is no clear/delete semantics under the new contract (a cursor row can
@@ -123,7 +121,7 @@ async function resetReaderStateToDocumentStart(
   };
 
   const resetResponse = await page.request.put(`/api/media/${mediaId}/reader-state`, {
-    data: { cursor: { locator, base_revision: baseRevision } },
+    data: { locator, base_revision: baseRevision },
     headers: stateChangingApiHeaders(),
   });
   expect(resetResponse.ok()).toBeTruthy();
@@ -134,7 +132,11 @@ test.describe("reader Document Map overview rail", () => {
     page,
   }, testInfo) => {
     const seed = readReaderDocumentMapSeed();
-    await resetReaderStateToDocumentStart(page, seed.media_id, seed.near_fragment_id);
+    await resetReaderStateToDocumentStart(
+      page,
+      seed.media_id,
+      seed.near_fragment_id,
+    );
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await gotoSinglePaneWorkspace(
@@ -143,33 +145,73 @@ test.describe("reader Document Map overview rail", () => {
       `/media/${seed.media_id}`,
     );
     const activePane = activeWorkspacePane(page);
+    const paneId = await activePane.getAttribute("data-pane-id");
+    expect(paneId).toBeTruthy();
 
     // The reader renders only the first fragment on open: its near highlight is
     // on screen, the far fragment's highlight is not in the DOM at all.
     const nearHighlight = inlineHighlight(page, seed.near_highlight_id);
     await expect(nearHighlight).toBeVisible({ timeout: 15_000 });
-    await expect(
-      inlineHighlight(page, seed.far_highlight_id),
-    ).toHaveCount(0);
+    await expect(inlineHighlight(page, seed.far_highlight_id)).toHaveCount(0);
 
-    // The overview rail is present on desktop, with its Document Map button.
+    // The overview rail is present on desktop but owns no generic opener. The
+    // pane header is the single generic Document Map projection for this pane.
     const rail = activePane.getByTestId("reader-document-map-overview-rail");
     await expect(rail).toBeVisible();
     await expect(
       rail.getByRole("button", { name: "Open Document Map" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(
+      activePane.getByRole("button", {
+        name: "Open Document Map",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const documentMapAction = activePane.getByRole("button", {
+      name: "Document Map",
+      exact: true,
+    });
+    await expect(documentMapAction).toHaveCount(1);
+    await expect(documentMapAction).toHaveAttribute("aria-expanded", "false");
+    await expect(documentMapAction).not.toHaveAttribute("aria-controls");
+
+    await documentMapAction.click();
+    await expect(documentMapAction).toHaveAttribute("aria-expanded", "true");
+    const controlledRegionId =
+      await documentMapAction.getAttribute("aria-controls");
+    expect(controlledRegionId).toBe(`pane-${paneId}-secondary-reader-tools`);
+    const controlledRegion = activePane.locator(
+      `aside[id="${controlledRegionId}"]`,
+    );
+    await expect(controlledRegion).toHaveCount(1);
+    await expect(
+      controlledRegion.getByRole("tab", {
+        name: "Evidence",
+        exact: true,
+        selected: true,
+      }),
+    ).toHaveCount(1);
+    await expect(page.locator(`[id="${controlledRegionId}"]`)).toHaveCount(1);
+    await documentMapAction.click();
+    await expect(documentMapAction).toHaveAttribute("aria-expanded", "false");
+    await expect(documentMapAction).not.toHaveAttribute("aria-controls");
+    await expect(
+      activePane.locator(`aside[id="${controlledRegionId}"]`),
+    ).toHaveCount(0);
 
     // The rail maps the whole media: it renders a marker for the on-screen near
     // highlight and a marker for the far highlight whose fragment is not rendered.
-    await expect(railMarker(page, seed.near_highlight_id)).toBeVisible();
-    const farMarker = railMarker(page, seed.far_highlight_id);
+    const nearMarker = railMarker(rail, seed.near_exact);
+    await expect(nearMarker).toHaveCount(1);
+    await expect(nearMarker).toHaveAccessibleName(seed.near_exact);
+    await expect(nearMarker).toBeVisible();
+    const farMarker = railMarker(rail, seed.far_exact);
+    await expect(farMarker).toHaveCount(1);
+    await expect(farMarker).toHaveAccessibleName(seed.far_exact);
     await expect(farMarker).toBeVisible();
 
     // The far marker sits below the near marker because it is later in the document.
-    const nearMarkerBox = await railMarker(
-      page,
-      seed.near_highlight_id,
-    ).boundingBox();
+    const nearMarkerBox = await nearMarker.boundingBox();
     const farMarkerBox = await farMarker.boundingBox();
     expect(nearMarkerBox).not.toBeNull();
     expect(farMarkerBox).not.toBeNull();

@@ -7,9 +7,10 @@ Provides:
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Request
+from fastapi import Depends, Request
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.engine import get_engine
@@ -69,6 +70,20 @@ def get_db(request: Request) -> Generator[Session, None, None]:
         db.close()
 
 
+def get_repeatable_read_db(
+    db: Annotated[Session, Depends(get_db)],
+) -> Session:
+    """Start one strict read-only snapshot on a fresh request session."""
+
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if db.in_transaction() or in_outer_transaction:
+        raise RuntimeError("repeatable-read dependency requires a fresh session")
+    db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    db.execute(text("SET TRANSACTION READ ONLY"))
+    return db
+
+
 def track_request_db_session(request: Request, db: Session) -> None:
     """Track a request-scoped session for response-start connection release."""
     sessions = getattr(request.state, REQUEST_DB_SESSIONS_STATE_KEY, None)
@@ -104,6 +119,14 @@ def use_serializable_if_available(db: Session) -> None:
     in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
     if not db.in_transaction() and not in_outer_transaction:
         db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
+
+
+def use_read_committed_if_available(db: Session) -> None:
+    """Select READ COMMITTED before an attempt opens its transaction."""
+    bind = db.get_bind()
+    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
+    if not db.in_transaction() and not in_outer_transaction:
+        db.connection(execution_options={"isolation_level": "READ COMMITTED"})
 
 
 @contextmanager

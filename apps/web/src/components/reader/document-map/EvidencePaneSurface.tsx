@@ -1,694 +1,596 @@
 "use client";
 
 import {
-  useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type MouseEvent,
-  type RefObject,
+  type KeyboardEvent,
+  type PointerEvent,
 } from "react";
-import { ExternalLink, X } from "lucide-react";
-import { MessageSquare } from "lucide-react";
+import { LocateFixed } from "lucide-react";
 import {
   FeedbackNotice,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import HighlightActionBar from "@/components/highlights/HighlightActionBar";
-import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
-import type { HighlightColor } from "@/lib/highlights/segmenter";
-import ItemCard from "@/components/items/ItemCard";
-import Pill from "@/components/ui/Pill";
-import MachineText from "@/components/ui/MachineText";
-import { NOTE_LAYOUT_MEASURE_DELAY_MS } from "@/lib/notes/useNoteEditorSession";
-import { resourceIconForUri } from "@/lib/resources/resourceKind";
+import Chip from "@/components/ui/Chip";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import type {
+  ReaderEvidence,
+  ReaderEvidenceItem,
+  ReaderEvidenceLink,
+  ReaderEvidenceObject,
+  ReaderEvidencePassageGroup,
+  ReaderEvidenceSourceTarget,
+} from "@/lib/reader/documentMap";
 import {
-  readerApparatusRowPresentation,
-  type ReaderApparatusResponse,
-  type ReaderApparatusRow,
-} from "@/lib/reader/apparatus";
-import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
-import { anchoredRowFromConnection } from "@/lib/reader/marginItems";
-import type { EvidenceFilters } from "@/lib/reader/useEvidenceFilters";
-import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
-import { useStringIdSet } from "@/lib/useStringIdSet";
-import AnchoredSidecarSurface from "../AnchoredSidecarSurface";
-import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
+  evidenceItemPassesFilters,
+  type EvidenceFilters,
+} from "@/lib/reader/useEvidenceFilters";
 import styles from "./EvidencePaneSurface.module.css";
+import {
+  AssociationDisclosure,
+  EvidenceItemRow,
+  type EvidenceHighlightActions,
+  type EvidenceLinkActions,
+} from "./EvidenceItemRow";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type EvidenceRow =
-  | { kind: "highlight"; id: string; data: AnchoredReaderRow }
-  | {
-      kind: "apparatus";
-      id: string;
-      data: ReaderApparatusRow;
-      anchor: AnchoredReaderRow | null;
-    }
-  | {
-      kind: "connection";
-      id: string;
-      data: ReaderConnectionRow;
-      anchor: AnchoredReaderRow | null;
-    };
+type EvidenceScope = "passages" | "document";
 
 export interface EvidencePaneSurfaceProps {
-  contentRef: RefObject<HTMLElement | null>;
+  evidence: ReaderEvidence | null;
   filters: EvidenceFilters;
-  highlights: AnchoredReaderRow[];
-  readerApparatusRows: ReaderApparatusRow[];
-  connectionRows: ReaderConnectionRow[];
-  readerApparatus: ReaderApparatusResponse | null | undefined;
-  focusedApparatusItemId: string | null;
-  focusedHighlightId: string | null;
-  isReflowable: boolean;
-  isEditingBounds: boolean;
-  hoveredId: string | null;
-  canQuoteToChat: boolean;
+  activeItemId: string | null;
+  followGeneration: number;
+  hoveredItemId: string | null;
   loading: boolean;
   error: FeedbackContent | null;
-  measureKey: string | number;
-  layoutVersion: number;
-  isMobile: boolean;
-  onHighlightClick: (id: string) => void;
-  onFocusHighlight: (highlightId: string) => void;
-  onHoverHighlight: (highlightId: string | null) => void;
-  onQuoteToChat: (highlightId: string) => void;
-  onCite: (target: HighlightActionTarget) => void;
-  onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
-  onDelete: (highlightId: string) => Promise<void>;
-  onStartEditBounds: () => void;
-  onCancelEditBounds: () => void;
-  onNoteSave: (
-    highlightId: string,
-    noteBlockId: string | null,
-    createBlockId: string,
-    bodyPmJson: Record<string, unknown>,
-    clientMutationId: string,
-  ) => Promise<HighlightLinkedNoteBlock>;
-  onNoteDelete: (
-    highlightId: string,
-    noteBlockId: string,
-    clientMutationId: string,
-    shouldApply: () => boolean,
-  ) => Promise<void>;
-  onOpenConversation: (conversationId: string, title: string) => void;
-  onOpenNoteLink: (href: string, options: { newPane: boolean }) => void;
-  onApparatusRowActivate: (row: ReaderApparatusRow) => void;
-  onOpenConnectionSource: (row: ReaderConnectionRow, event?: MouseEvent) => void;
-  onActivateConnectionTarget: (row: ReaderConnectionRow) => void;
+  aggregateStatus: "ready" | "empty" | "partial" | null;
+  highlightActions: EvidenceHighlightActions;
+  onActivatePassage: (group: ReaderEvidencePassageGroup) => boolean;
+  onActivateObject: (
+    object: ReaderEvidenceObject,
+    options: { newPane: boolean },
+  ) => void;
+  onActivateSourceTarget: (
+    target: ReaderEvidenceSourceTarget,
+    options: { newPane: boolean },
+  ) => void;
+  onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => void;
+  /** Remove a stable user Link fact; the caller deletes it via `links.ts`
+   * `deleteLink(item.edge_id)`. */
+  onRemoveLink: (item: ReaderEvidenceLink) => void;
+  /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
+   * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
+  onSaveLinkNote: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  /** Remove the Link's note; mirrors `links.ts` `deleteLinkNote(linkId)`. The Link
+   * itself is preserved. */
+  onDeleteLinkNote: (linkId: string) => Promise<void>;
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
 export default function EvidencePaneSurface({
-  contentRef,
+  evidence,
   filters,
-  highlights,
-  readerApparatusRows,
-  connectionRows,
-  readerApparatus,
-  focusedApparatusItemId,
-  focusedHighlightId,
-  isReflowable,
-  isEditingBounds,
-  hoveredId,
-  canQuoteToChat,
+  activeItemId,
+  followGeneration,
+  hoveredItemId,
   loading,
   error,
-  measureKey,
-  layoutVersion,
-  isMobile,
-  onHighlightClick,
-  onFocusHighlight,
-  onHoverHighlight,
-  onQuoteToChat,
-  onCite,
-  onColorChange,
-  onDelete,
-  onStartEditBounds,
-  onCancelEditBounds,
-  onNoteSave,
-  onNoteDelete,
-  onOpenConversation,
-  onOpenNoteLink,
-  onApparatusRowActivate,
-  onOpenConnectionSource,
-  onActivateConnectionTarget,
+  aggregateStatus,
+  highlightActions,
+  onActivatePassage,
+  onActivateObject,
+  onActivateSourceTarget,
+  onHoverItem,
   onDismissSynapse,
+  onRemoveLink,
+  onSaveLinkNote,
+  onDeleteLinkNote,
 }: EvidencePaneSurfaceProps) {
-  const { filter, toggleFilter } = filters;
-
-  const noteLayoutTimerRef = useRef<number | null>(null);
-  const [noteLayoutVersion, setNoteLayoutVersion] = useState(0);
-  const expandedTextIds = useStringIdSet();
-  const draftNoteEditorKeysRef = useRef(new Map<string, string>());
-  const noteEditorKeysByBlockIdRef = useRef(new Map<string, string>());
-
-  const getDraftNoteEditorKey = useCallback((highlightId: string) => {
-    const existing = draftNoteEditorKeysRef.current.get(highlightId);
-    if (existing) return existing;
-    const key = `draft-note-${highlightId}`;
-    draftNoteEditorKeysRef.current.set(highlightId, key);
-    return key;
-  }, []);
-
-  const getNoteEditorKey = useCallback(
-    (
-      highlightId: string,
-      note: NonNullable<AnchoredReaderRow["linked_note_blocks"]>[number] | null,
-    ) => {
-      if (!note) return getDraftNoteEditorKey(highlightId);
-      const noteKey =
-        noteEditorKeysByBlockIdRef.current.get(note.note_block_id) ??
-        `note-${note.note_block_id}`;
-      if (!draftNoteEditorKeysRef.current.has(highlightId)) {
-        draftNoteEditorKeysRef.current.set(highlightId, noteKey);
-      }
-      return noteKey;
-    },
-    [getDraftNoteEditorKey],
+  const [scope, setScope] = useState<EvidenceScope>("passages");
+  const [openDisclosureIds, setOpenDisclosureIds] = useState<Set<string>>(
+    () => new Set(),
   );
-
-  const scheduleNoteLayoutMeasure = useCallback(() => {
-    if (noteLayoutTimerRef.current !== null) {
-      window.clearTimeout(noteLayoutTimerRef.current);
-    }
-    noteLayoutTimerRef.current = window.setTimeout(() => {
-      noteLayoutTimerRef.current = null;
-      setNoteLayoutVersion((v) => v + 1);
-    }, NOTE_LAYOUT_MEASURE_DELAY_MS);
-  }, []);
-
-  const handleNoteSave = useCallback(
-    async (
-      highlightId: string,
-      noteBlockId: string | null,
-      createBlockId: string,
-      bodyPmJson: Record<string, unknown>,
-      clientMutationId: string,
-    ) => {
-      if (!noteBlockId) {
-        noteEditorKeysByBlockIdRef.current.set(
-          createBlockId,
-          getDraftNoteEditorKey(highlightId),
-        );
-      }
-      return onNoteSave(highlightId, noteBlockId, createBlockId, bodyPmJson, clientMutationId);
-    },
-    [getDraftNoteEditorKey, onNoteSave],
+  const [editingHighlightId, setEditingHighlightId] = useState<string | null>(
+    null,
   );
+  // The one open link-note editor, keyed by the Link's edge id (mirrors
+  // editingHighlightId's single-editor rule for the folded link note).
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+  const [followPaused, setFollowPaused] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
-  const capabilities = readerApparatus?.capabilities ?? null;
+  const visiblePassageGroups = useMemo(
+    () =>
+      (evidence?.passage_groups ?? [])
+        .map((group) => ({
+          group,
+          items: group.items.filter((item) =>
+            evidenceItemPassesFilters(item, filters.filter),
+          ),
+        }))
+        .filter(({ items }) => items.length > 0),
+    [evidence?.passage_groups, filters.filter],
+  );
+  const visibleDocumentItems = useMemo(
+    () =>
+      (evidence?.document_items ?? []).filter((item) =>
+        evidenceItemPassesFilters(item, filters.filter),
+      ),
+    [evidence?.document_items, filters.filter],
+  );
+  const resolvedGroups = visiblePassageGroups.filter(
+    ({ group }) => group.resolution.kind === "Resolved",
+  );
+  const unavailableGroups = visiblePassageGroups.filter(
+    ({ group }) => group.resolution.kind === "Unavailable",
+  );
+  const currentScopeHasRows =
+    scope === "passages"
+      ? visiblePassageGroups.length > 0
+      : visibleDocumentItems.length > 0;
+  const currentScopeFactCount = evidence
+    ? scope === "passages"
+      ? evidence.passage_groups.reduce(
+          (count, group) => count + group.items.length,
+          0,
+        )
+      : evidence.document_items.length
+    : 0;
+  const anyFilterEnabled = Object.values(filters.filter).some(Boolean);
+  const totalFacts = evidence
+    ? evidence.counts.highlights +
+      evidence.counts.citations +
+      evidence.counts.links +
+      evidence.counts.synapses
+    : 0;
 
-  const { allRows, anchoredRows } = useMemo(() => {
-    const merged: EvidenceRow[] = [];
+  // Drop the open link-note editor when its Link fact leaves the evidence set.
+  useEffect(() => {
+    if (!editingLinkId || !evidence) return;
+    const exists = [
+      ...evidence.passage_groups.flatMap((group) => group.items),
+      ...evidence.document_items,
+    ].some((item) => item.kind === "Link" && item.edge_id === editingLinkId);
+    if (!exists) setEditingLinkId(null);
+  }, [editingLinkId, evidence]);
 
-    if (filter.highlight) {
-      // One row per highlight id: a highlight data source can momentarily surface
-      // the same highlight twice, and the sidecar keys rows by id, so collapse
-      // duplicates here rather than emit two nodes with the same test id.
-      const seenHighlightIds = new Set<string>();
-      for (const h of highlights) {
-        if (seenHighlightIds.has(h.id)) continue;
-        seenHighlightIds.add(h.id);
-        merged.push({ kind: "highlight", id: h.id, data: h });
-      }
-    }
+  const linkActions: EvidenceLinkActions = {
+    editingLinkId,
+    onRemoveLink,
+    onEditLink: setEditingLinkId,
+    onSaveLinkNote,
+    onDeleteLinkNote,
+  };
 
-    if (filter.apparatus) {
-      for (const row of readerApparatusRows) {
-        const anchor = toAnchoredApparatusRow(row);
-        merged.push({ kind: "apparatus", id: row.id, data: row, anchor });
-      }
-    }
+  useEffect(() => {
+    if (!activeItemId || followPaused) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(
+        `[data-evidence-item-id="${CSS.escape(activeItemId)}"]`,
+      )
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeItemId, followGeneration, followPaused, scope]);
 
-    if (filter.connection) {
-      for (const row of connectionRows) {
-        const anchor = anchoredRowFromConnection(row);
-        merged.push({ kind: "connection", id: row.id, data: row, anchor });
-      }
-    }
+  useEffect(() => {
+    if (!activeItemId || followGeneration === 0) return;
+    setScope("passages");
+    setFollowPaused(false);
+  }, [activeItemId, followGeneration]);
 
-    merged.sort((a, b) => {
-      const ka = sortKeyForRow(a);
-      const kb = sortKeyForRow(b);
-      if (!ka && !kb) return 0;
-      if (!ka) return 1;
-      if (!kb) return -1;
-      return ka.localeCompare(kb);
+  useEffect(() => {
+    if (!editingHighlightId || !evidence) return;
+    const exists = [
+      ...evidence.passage_groups.flatMap((group) => group.items),
+      ...evidence.document_items,
+    ].some(
+      (item) =>
+        item.kind === "Highlight" && item.highlight_id === editingHighlightId,
+    );
+    if (!exists) setEditingHighlightId(null);
+  }, [editingHighlightId, evidence]);
+
+  const toggleDisclosure = (id: string) => {
+    setOpenDisclosureIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
+  };
 
-    const anchored: AnchoredReaderRow[] = merged
-      .map((row) => anchorForRow(row))
-      .filter((a): a is AnchoredReaderRow => a !== null);
-
-    return { allRows: merged, anchoredRows: anchored };
-  }, [filter, highlights, readerApparatusRows, connectionRows]);
-
-  const sidecarMeasureKey = [measureKey, noteLayoutVersion, layoutVersion].join("|");
+  const pauseFollow = () => setFollowPaused(true);
+  const handleListPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) pauseFollow();
+  };
+  const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      event.target === event.currentTarget &&
+      MANUAL_SCROLL_KEYS.has(event.key)
+    ) {
+      pauseFollow();
+    }
+  };
 
   const header = (
     <header className={styles.header}>
       <h2 className={styles.title}>Evidence</h2>
-      <nav className={styles.filterNav} aria-label="Evidence filter">
+      <TabsList aria-label="Evidence scope" className={styles.scopeTabs}>
+        <TabsTrigger
+          id="evidence-scope-passages"
+          value="passages"
+          aria-controls="evidence-panel-passages"
+        >
+          Passages{" "}
+          <span className={styles.count}>{evidence?.counts.passages ?? 0}</span>
+        </TabsTrigger>
+        <TabsTrigger
+          id="evidence-scope-document"
+          value="document"
+          aria-controls="evidence-panel-document"
+        >
+          Whole document{" "}
+          <span className={styles.count}>{evidence?.counts.document ?? 0}</span>
+        </TabsTrigger>
+      </TabsList>
+      <div className={styles.filters} role="group" aria-label="Evidence types">
+        <Chip
+          pressed={filters.filter.highlight}
+          onPressedChange={() => filters.toggleFilter("highlight")}
+        >
+          Highlights {evidence?.counts.highlights ?? 0}
+        </Chip>
+        <Chip
+          pressed={filters.filter.citation}
+          onPressedChange={() => filters.toggleFilter("citation")}
+        >
+          Citations {evidence?.counts.citations ?? 0}
+        </Chip>
+        <Chip
+          pressed={filters.filter.link}
+          onPressedChange={() => filters.toggleFilter("link")}
+        >
+          Links {evidence?.counts.links ?? 0}
+        </Chip>
+        <Chip
+          pressed={filters.filter.synapse}
+          onPressedChange={() => filters.toggleFilter("synapse")}
+        >
+          Synapses {evidence?.counts.synapses ?? 0}
+        </Chip>
+      </div>
+      {followPaused && activeItemId ? (
         <button
           type="button"
-          className={`${styles.filterToggle} ${filter.highlight ? styles.filterToggleActive : ""}`}
-          aria-pressed={filter.highlight}
-          onClick={() => toggleFilter("highlight")}
+          className={styles.followButton}
+          onClick={() => {
+            setScope("passages");
+            setFollowPaused(false);
+          }}
         >
-          Highlights
+          <LocateFixed size={13} aria-hidden="true" />
+          Return to current passage
         </button>
-        <button
-          type="button"
-          className={`${styles.filterToggle} ${filter.apparatus ? styles.filterToggleActive : ""}`}
-          aria-pressed={filter.apparatus}
-          onClick={() => toggleFilter("apparatus")}
-        >
-          Citations
-        </button>
-        <button
-          type="button"
-          className={`${styles.filterToggle} ${filter.connection ? styles.filterToggleActive : ""}`}
-          aria-pressed={filter.connection}
-          onClick={() => toggleFilter("connection")}
-        >
-          Connections
-        </button>
-      </nav>
+      ) : null}
     </header>
   );
 
-  const renderRow = useCallback(
-    (
-      row: EvidenceRow,
-      props: { className: string; style?: CSSProperties; ref: (el: HTMLElement | null) => void },
-    ) => {
-      if (row.kind === "highlight") {
-        const highlight = row.data;
-        const isFocused = focusedHighlightId === highlight.id;
-        const linkedNotes = highlight.linked_note_blocks ?? [];
-        const notesToRender = linkedNotes.length > 0 ? linkedNotes : [null];
-        return (
-          <ItemCard
-            key={highlight.id}
-            content={{
-              kind: "highlight",
-              snippet: { exact: highlight.exact, color: highlight.color },
-            }}
-            actions={
-              <HighlightActionBar
-                variant="existing"
-                presentation="menu"
-                highlight={highlight}
-                canQuoteToChat={canQuoteToChat}
-                isReflowable={isReflowable}
-                isEditingBounds={isFocused && isEditingBounds}
-                onSelectColor={(color) => onColorChange(highlight.id, color)}
-                onCite={() => onCite({ kind: "existing", highlight })}
-                onDelete={() => onDelete(highlight.id)}
-                onQuoteToNewChat={() => onQuoteToChat(highlight.id)}
-                onQuoteToExistingChat={() => onQuoteToChat(highlight.id)}
-                onToggleEditBounds={() => {
-                  if (isFocused && isEditingBounds) {
-                    onCancelEditBounds();
-                  } else {
-                    onFocusHighlight(highlight.id);
-                    onStartEditBounds();
-                  }
-                }}
-              />
-            }
-            note={notesToRender.map((note) => {
-              const key = getNoteEditorKey(highlight.id, note);
-              return (
-                <div key={key} data-note-editor-key={key}>
-                  <HighlightNoteEditor
-                    highlightId={highlight.id}
-                    note={note}
-                    editable
-                    onSave={handleNoteSave}
-                    onDelete={onNoteDelete}
-                    onLocalChange={scheduleNoteLayoutMeasure}
-                    onOpenLink={onOpenNoteLink}
-                  />
-                </div>
-              );
-            })}
-            linkedItems={highlight.linked_conversations?.map((conv) => ({
-              id: conv.conversation_id,
-              icon: <MessageSquare size={14} aria-hidden="true" />,
-              label: conv.title,
-              onActivate: () => onOpenConversation(conv.conversation_id, conv.title),
-            }))}
-            meta={
-              isFocused && isEditingBounds
-                ? "Select new text in the reader to replace this highlight."
-                : undefined
-            }
-            selected={isFocused}
-            hovered={hoveredId === highlight.id}
-            showFullText={expandedTextIds.ids.has(highlight.id)}
-            onToggleFullText={() => {
-              if (expandedTextIds.has(highlight.id)) {
-                expandedTextIds.remove(highlight.id);
-              } else {
-                expandedTextIds.add(highlight.id);
-              }
-            }}
-            rootRef={props.ref}
-            style={props.style}
-            className={props.className || undefined}
-            highlightId={highlight.id}
-            testId={`evidence-highlight-row-${highlight.id}`}
-            onActivate={() => onHighlightClick(highlight.id)}
-            onMouseEnter={() => onHoverHighlight(highlight.id)}
-            onMouseLeave={() => onHoverHighlight(null)}
-          />
-        );
-      }
-
-      if (row.kind === "apparatus") {
-        const { data: apparatusRow } = row;
-        const presentation = capabilities
-          ? readerApparatusRowPresentation(apparatusRow, capabilities)
-          : null;
-        const canActivate = presentation
-          ? presentation.canActivateMarker || presentation.canActivateTarget
-          : false;
-        return (
-          <button
-            key={apparatusRow.id}
-            ref={(el) => props.ref(el)}
-            type="button"
-            className={`${styles.apparatusCard} ${props.className}`}
-            style={props.style}
-            disabled={!canActivate}
-            data-testid="evidence-apparatus-row"
-            data-active={
-              canActivate && focusedApparatusItemId === apparatusRow.id ? "true" : "false"
-            }
-            onClick={() => {
-              if (canActivate) onApparatusRowActivate(apparatusRow);
-            }}
-          >
-            <div className={styles.apparatusMeta}>
-              <span className={styles.apparatusKind}>
-                {kindLabel(apparatusRow.marker.kind)}
-              </span>
-              {apparatusRow.marker.confidence !== "exact" ? (
-                <Pill tone="warning">{apparatusRow.marker.confidence}</Pill>
-              ) : null}
-            </div>
-            <div className={styles.apparatusLabel}>
-              {apparatusRow.marker.label ?? apparatusRow.target?.label ?? "Citation"}
-            </div>
-            {apparatusRow.targets.some((t) => t.body_text) ? (
-              <div className={styles.apparatusBodyList}>
-                {apparatusRow.targets
-                  .filter((t) => t.body_text)
-                  .map((t, i) => (
-                    <p key={t.stable_key} className={styles.apparatusBody}>
-                      {apparatusRow.targets.length > 1 ? (
-                        <span className={styles.apparatusTargetLabel}>
-                          {t.label ?? `Reference ${i + 1}`}
-                        </span>
-                      ) : null}
-                      {t.body_text}
-                    </p>
-                  ))}
-              </div>
-            ) : presentation ? (
-              <div className={styles.apparatusTargetMissing}>
-                {presentation.targetStatusText}
-              </div>
-            ) : null}
-          </button>
-        );
-      }
-
-      if (row.kind === "connection") {
-        const { data: connRow } = row;
-        const Icon = resourceIconForUri(connRow.connection.other.ref);
-        const isSynapse = connRow.connection.origin === "synapse";
-        const targetState = connectionTargetStatusText(connRow);
-        return (
-          <article
-            key={connRow.id}
-            ref={(el) => props.ref(el as HTMLElement | null)}
-            className={`${styles.connectionCard} ${props.className}`}
-            style={props.style}
-          >
-            <button
-              type="button"
-              className={styles.connectionButton}
-              onClick={(event) => onOpenConnectionSource(connRow, event)}
-            >
-              <span className={styles.connectionMeta}>
-                <span className={styles.connectionCategory}>
-                  <Icon size={14} aria-hidden="true" />
-                  {categoryLabel(connRow.source_category)}
-                </span>
-                <Pill
-                  tone={connRow.connection.origin === "citation" ? "info" : "neutral"}
-                >
-                  {connRow.connection.kind}
-                </Pill>
-              </span>
-              <span className={styles.connectionTitle}>{connRow.title}</span>
-              {connRow.excerpt ? (
-                isSynapse ? (
-                  <MachineText
-                    variant="inline"
-                    origin={{ label: "Synapse" }}
-                    className={styles.connectionExcerpt}
-                  >
-                    {connRow.excerpt}
-                  </MachineText>
-                ) : (
-                  <span className={styles.connectionExcerpt}>{connRow.excerpt}</span>
-                )
-              ) : null}
-              {targetState ? (
-                <span className={styles.connectionTargetState}>{targetState}</span>
-              ) : null}
-            </button>
-            <div className={styles.connectionActions}>
-              {connRow.anchor ? (
-                <button
-                  type="button"
-                  className={styles.connectionTargetButton}
-                  onClick={() => onActivateConnectionTarget(connRow)}
-                  aria-label={`Open target in reader for ${connRow.title}`}
-                >
-                  <ExternalLink size={13} aria-hidden="true" />
-                  Target
-                </button>
-              ) : null}
-              {isSynapse ? (
-                <button
-                  type="button"
-                  className={styles.connectionDismissButton}
-                  onClick={() => onDismissSynapse(connRow.connection.edge_id)}
-                  aria-label={`Dismiss Synapse connection to ${connRow.title}`}
-                >
-                  <X size={13} aria-hidden="true" />
-                </button>
-              ) : null}
-            </div>
-          </article>
-        );
-      }
-
-      return null;
-    },
-    [
-      canQuoteToChat,
-      capabilities,
-      expandedTextIds,
-      focusedApparatusItemId,
-      focusedHighlightId,
-      getNoteEditorKey,
-      handleNoteSave,
-      hoveredId,
-      isEditingBounds,
-      isReflowable,
-      onActivateConnectionTarget,
-      onApparatusRowActivate,
-      onCancelEditBounds,
-      onCite,
-      onColorChange,
-      onDelete,
-      onDismissSynapse,
-      onFocusHighlight,
-      onHighlightClick,
-      onHoverHighlight,
-      onNoteDelete,
-      onOpenConnectionSource,
-      onOpenConversation,
-      onOpenNoteLink,
-      onQuoteToChat,
-      onStartEditBounds,
-      scheduleNoteLayoutMeasure,
-    ],
-  );
-
+  let content;
   if (loading) {
-    return (
-      <section className={styles.root} aria-label="Evidence" data-testid="evidence-pane-surface">
-        {header}
-        <div className={styles.empty}>
-          <FeedbackNotice severity="info" title="Loading evidence..." />
-        </div>
-      </section>
+    content = <FeedbackNotice severity="info" title="Loading evidence..." />;
+  } else if (error) {
+    content = <FeedbackNotice feedback={error} />;
+  } else if (totalFacts === 0) {
+    content = (
+      <FeedbackNotice
+        severity="neutral"
+        title="No highlights, citations, links, or Synapses in this document."
+      />
     );
-  }
-
-  if (error) {
-    return (
-      <section className={styles.root} aria-label="Evidence" data-testid="evidence-pane-surface">
-        {header}
-        <div className={styles.empty}>
-          <FeedbackNotice feedback={error} />
-        </div>
-      </section>
+  } else if (currentScopeFactCount === 0) {
+    content = (
+      <FeedbackNotice
+        severity="neutral"
+        title={
+          scope === "passages"
+            ? "No passage-aligned evidence in this document."
+            : "No whole-document evidence in this document."
+        }
+      />
+    );
+  } else if (!anyFilterEnabled || !currentScopeHasRows) {
+    content = (
+      <div className={styles.filteredEmpty}>
+        <FeedbackNotice
+          severity="neutral"
+          title="No evidence matches these filters."
+        />
+        <button
+          type="button"
+          className={styles.showAllButton}
+          onClick={filters.showAll}
+        >
+          Show all
+        </button>
+      </div>
+    );
+  } else if (scope === "passages") {
+    content = (
+      <>
+        {resolvedGroups.map(({ group, items }) => (
+          <PassageGroup
+            key={group.locus_ref}
+            group={group}
+            items={items}
+            activeItemId={activeItemId}
+            hoveredItemId={hoveredItemId}
+            openDisclosureIds={openDisclosureIds}
+            editingHighlightId={editingHighlightId}
+            highlightActions={highlightActions}
+            onActivate={() => {
+              if (onActivatePassage(group)) setFollowPaused(false);
+            }}
+            onToggleDisclosure={toggleDisclosure}
+            onEditHighlight={setEditingHighlightId}
+            onActivateObject={onActivateObject}
+            onActivateSourceTarget={onActivateSourceTarget}
+            onHoverItem={onHoverItem}
+            onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
+          />
+        ))}
+        {unavailableGroups.length > 0 ? (
+          <section
+            className={styles.attention}
+            aria-labelledby="evidence-needs-attention"
+          >
+            <h3 id="evidence-needs-attention" className={styles.sectionHeading}>
+              Needs attention
+            </h3>
+            {unavailableGroups.map(({ group, items }) => (
+              <PassageGroup
+                key={group.locus_ref}
+                group={group}
+                items={items}
+                activeItemId={activeItemId}
+                hoveredItemId={hoveredItemId}
+                openDisclosureIds={openDisclosureIds}
+                editingHighlightId={editingHighlightId}
+                highlightActions={highlightActions}
+                onActivate={() => {}}
+                onToggleDisclosure={toggleDisclosure}
+                onEditHighlight={setEditingHighlightId}
+                onActivateObject={onActivateObject}
+                onActivateSourceTarget={onActivateSourceTarget}
+                onHoverItem={onHoverItem}
+                onDismissSynapse={onDismissSynapse}
+                linkActions={linkActions}
+              />
+            ))}
+          </section>
+        ) : null}
+      </>
+    );
+  } else {
+    content = (
+      <div className={styles.documentList}>
+        {visibleDocumentItems.map((item) => (
+          <EvidenceItemRow
+            key={item.id}
+            item={item}
+            group={null}
+            active={activeItemId === item.id}
+            hovered={hoveredItemId === item.id}
+            disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
+            editing={
+              item.kind === "Highlight" &&
+              editingHighlightId === item.highlight_id
+            }
+            highlightActions={highlightActions}
+            onToggleDisclosure={() => toggleDisclosure(`item:${item.id}`)}
+            onEditHighlight={setEditingHighlightId}
+            onActivateObject={onActivateObject}
+            onActivateSourceTarget={onActivateSourceTarget}
+            onHoverItem={onHoverItem}
+            onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
+          />
+        ))}
+      </div>
     );
   }
 
   return (
-    <AnchoredSidecarSurface
-      ariaLabel="Evidence"
-      header={header}
-      rows={allRows}
-      anchoredRows={anchoredRows}
-      contentRef={contentRef}
-      measureKey={sidecarMeasureKey}
-      isMobile={isMobile}
-      rowHeight={112}
-      testId="evidence-pane-surface"
-      empty={
+    <Tabs
+      value={scope}
+      onValueChange={(value) => {
+        if (value !== "passages" && value !== "document") {
+          throw new Error(`Unsupported Evidence scope: ${value}`);
+        }
+        setScope(value);
+      }}
+      variant="segmented"
+      className={styles.root}
+      aria-label="Evidence"
+      data-testid="evidence-pane-surface"
+    >
+      {header}
+      {aggregateStatus === "partial" && !loading && !error ? (
         <FeedbackNotice
-          severity="neutral"
-          title="No highlights, citations, or connections in this context."
+          severity="warning"
+          title="Some document evidence is unavailable."
         />
-      }
-      idForRow={(row) => row.id}
-      renderRow={renderRow}
-    />
+      ) : null}
+      <TabsContent
+        id="evidence-panel-passages"
+        value="passages"
+        aria-labelledby="evidence-scope-passages"
+        className={styles.tabPanel}
+      >
+        <div
+          ref={scope === "passages" ? listRef : undefined}
+          className={styles.list}
+          aria-label="Passage evidence"
+          tabIndex={0}
+          onWheel={pauseFollow}
+          onTouchMove={pauseFollow}
+          onPointerDown={handleListPointerDown}
+          onKeyDown={handleListKeyDown}
+        >
+          {scope === "passages" ? content : null}
+        </div>
+      </TabsContent>
+      <TabsContent
+        id="evidence-panel-document"
+        value="document"
+        aria-labelledby="evidence-scope-document"
+        className={styles.tabPanel}
+      >
+        <div
+          ref={scope === "document" ? listRef : undefined}
+          className={styles.list}
+          aria-label="Whole-document evidence"
+          tabIndex={0}
+          onWheel={pauseFollow}
+          onTouchMove={pauseFollow}
+          onPointerDown={handleListPointerDown}
+          onKeyDown={handleListKeyDown}
+        >
+          {scope === "document" ? content : null}
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function sortKeyForRow(row: EvidenceRow): string | null {
-  if (row.kind === "highlight") return row.data.stable_order_key ?? null;
-  if (row.kind === "apparatus") return row.data.sort_key;
-  if (row.kind === "connection") return row.anchor?.stable_order_key ?? null;
-  return null;
+function PassageGroup({
+  group,
+  items,
+  activeItemId,
+  hoveredItemId,
+  openDisclosureIds,
+  editingHighlightId,
+  highlightActions,
+  onActivate,
+  onToggleDisclosure,
+  onEditHighlight,
+  onActivateObject,
+  onActivateSourceTarget,
+  onHoverItem,
+  onDismissSynapse,
+  linkActions,
+}: {
+  group: ReaderEvidencePassageGroup;
+  items: ReaderEvidenceItem[];
+  activeItemId: string | null;
+  hoveredItemId: string | null;
+  openDisclosureIds: Set<string>;
+  editingHighlightId: string | null;
+  highlightActions: EvidenceHighlightActions;
+  onActivate: () => void;
+  onToggleDisclosure: (id: string) => void;
+  onEditHighlight: (highlightId: string | null) => void;
+  onActivateObject: EvidencePaneSurfaceProps["onActivateObject"];
+  onActivateSourceTarget: EvidencePaneSurfaceProps["onActivateSourceTarget"];
+  onHoverItem: EvidencePaneSurfaceProps["onHoverItem"];
+  onDismissSynapse: (edgeId: string) => void;
+  linkActions: EvidenceLinkActions;
+}) {
+  const resolved = group.resolution.kind === "Resolved";
+  const active = group.items.some((item) => item.id === activeItemId);
+  const passageLabel =
+    group.target_excerpt.kind === "Present" && group.target_excerpt.value.trim()
+      ? group.target_excerpt.value
+      : "Passage";
+  const groupDisclosureId = `group:${group.locus_ref}`;
+  return (
+    <section className={styles.group} data-active={active ? "true" : undefined}>
+      <div className={styles.groupHeader}>
+        <div className={styles.groupTarget}>
+          <span className={styles.groupKicker}>
+            {resolved ? "Passage" : "Unavailable passage"}
+          </span>
+          <span className={styles.groupLabel}>{passageLabel}</span>
+          {!resolved ? (
+            <span className={styles.unavailableReason}>
+              {unavailableReason(group)}
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className={styles.jumpButton}
+          disabled={!resolved}
+          aria-current={active && resolved ? "location" : undefined}
+          aria-label={
+            resolved ? `Jump to ${passageLabel}` : "Passage unavailable"
+          }
+          onClick={onActivate}
+        >
+          <LocateFixed size={14} aria-hidden="true" />
+          Jump
+        </button>
+      </div>
+      <div className={styles.groupItems}>
+        {items.map((item) => (
+          <EvidenceItemRow
+            key={item.id}
+            item={item}
+            group={group}
+            active={activeItemId === item.id}
+            hovered={hoveredItemId === item.id}
+            disclosureOpen={openDisclosureIds.has(`item:${item.id}`)}
+            editing={
+              item.kind === "Highlight" &&
+              editingHighlightId === item.highlight_id
+            }
+            highlightActions={highlightActions}
+            onToggleDisclosure={() => onToggleDisclosure(`item:${item.id}`)}
+            onEditHighlight={onEditHighlight}
+            onActivateObject={onActivateObject}
+            onActivateSourceTarget={onActivateSourceTarget}
+            onHoverItem={onHoverItem}
+            onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
+          />
+        ))}
+      </div>
+      {group.also_references.length > 0 ? (
+        <AssociationDisclosure
+          label="Also references this passage"
+          associations={group.also_references}
+          open={openDisclosureIds.has(groupDisclosureId)}
+          onToggle={() => onToggleDisclosure(groupDisclosureId)}
+          onActivateObject={onActivateObject}
+        />
+      ) : null}
+    </section>
+  );
 }
 
-function anchorForRow(row: EvidenceRow): AnchoredReaderRow | null {
-  if (row.kind === "highlight") return row.data;
-  if (row.kind === "apparatus") return row.anchor;
-  if (row.kind === "connection") return row.anchor;
-  return null;
-}
-
-function toAnchoredApparatusRow(row: ReaderApparatusRow): AnchoredReaderRow | null {
-  const locator = row.marker.locator ?? row.target?.locator ?? null;
-  if (!locator) return null;
-  const exact =
-    row.marker.label ?? row.target?.label ?? row.target?.body_text ?? "Citation";
-  if (
-    locator.type === "web_text_offsets" ||
-    locator.type === "epub_fragment_offsets"
-  ) {
-    return {
-      id: row.id,
-      exact,
-      color: "blue",
-      anchor: {
-        fragment_id: locator.fragment_id,
-        start_offset: locator.start_offset,
-        end_offset: locator.end_offset,
-      },
-      stable_order_key: row.sort_key,
-    };
-  }
-  if (locator.type === "pdf_page_geometry") {
-    const quads = parseRawPdfQuads(locator.quads);
-    if (quads.length === 0) return null;
-    return {
-      id: row.id,
-      exact,
-      color: "blue",
-      page_number: locator.page_number,
-      quads,
-      stable_order_key: row.sort_key,
-    };
-  }
-  return null;
-}
-
-function connectionTargetStatusText(row: ReaderConnectionRow): string | null {
-  const status = row.connection.citation?.target_status;
-  if (row.anchor || !status) return null;
-  if (status === "missing" || status === "forbidden") {
-    return "Target is no longer available.";
-  }
-  if (status === "unanchorable") {
-    return "Target is not jumpable in this reader.";
-  }
-  return null;
-}
-
-function categoryLabel(category: ReaderConnectionRow["source_category"]): string {
-  switch (category) {
-    case "chat": return "Chat";
-    case "dossier": return "Dossier";
-    case "oracle": return "Oracle";
-    case "note": return "Note";
-    case "highlight_note": return "Highlight note";
-    case "user_link": return "Link";
-    case "synapse": return "Synapse";
-    case "system": return "System";
-    case "document_embed": return "Embedded media";
-    default: return "Connection";
+function unavailableReason(group: ReaderEvidencePassageGroup): string {
+  if (group.resolution.kind !== "Unavailable") return "";
+  switch (group.resolution.reason) {
+    case "Missing":
+      return "The target no longer exists.";
+    case "Unanchorable":
+      return "This target cannot be placed in the reader.";
+    case "Stale":
+      return "The source changed after this target was created.";
   }
 }
 
-function kindLabel(kind: ReaderApparatusRow["marker"]["kind"]): string {
-  switch (kind) {
-    case "footnote_ref":
-    case "footnote":
-      return "Footnote";
-    case "endnote_ref":
-    case "endnote":
-      return "Endnote";
-    case "bibliography_ref":
-    case "bibliography_entry":
-      return "Reference";
-    case "sidenote_ref":
-    case "sidenote":
-      return "Sidenote";
-    case "margin_note_ref":
-    case "margin_note":
-      return "Margin note";
-    case "reference_section":
-      return "References";
-    default:
-      return "Citation";
-  }
-}
+const MANUAL_SCROLL_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  " ",
+]);

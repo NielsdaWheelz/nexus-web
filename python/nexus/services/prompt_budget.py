@@ -8,8 +8,7 @@ from dataclasses import dataclass, field
 from math import ceil
 from typing import Literal
 
-from nexus.errors import ApiErrorCode
-from nexus.llm_catalog import model_reasoning_reserve_tokens
+from provider_runtime import ReasoningLevel
 
 BudgetLane = Literal[
     "system",
@@ -44,9 +43,13 @@ LANE_ORDER: tuple[BudgetLane, ...] = (
 
 
 class ContextBudgetError(ValueError):
-    """Raised when mandatory assembled context cannot fit the model input budget."""
+    """Raised when mandatory assembled context cannot fit the model input budget.
 
-    api_error_code = ApiErrorCode.E_LLM_CONTEXT_TOO_LARGE
+    Caught owner-side (chat_runs.py) before any generation attempt begins and
+    folded to the ``context_too_large`` closed §10 code, origin ``intent`` — a
+    ledgerless expected failure (no llm_calls row: the intent never reached
+    ``execute_generation``).
+    """
 
     def __init__(
         self,
@@ -200,27 +203,27 @@ def estimate_block_tokens(blocks: Sequence[PromptBlock]) -> int:
     return sum(block.estimated_tokens for block in blocks)
 
 
-def estimate_reasoning_reserve(provider: str, model_name: str, reasoning: str) -> int:
-    """Reserve hidden reasoning budget from the shared provider-runtime catalog."""
+def estimate_reasoning_reserve(reasoning: ReasoningLevel, reasoning_reserve_tokens: int) -> int:
+    """Reserve hidden reasoning budget from the runtime contract's flat
+    ``pricing.reasoning_reserve_tokens`` fact, gated on the chosen reasoning
+    level actually engaging reasoning (``"none"`` never reserves)."""
 
-    return model_reasoning_reserve_tokens(provider, model_name, reasoning)
+    if reasoning == "none":
+        return 0
+    return max(0, reasoning_reserve_tokens)
 
 
 def build_prompt_budget(
     *,
     max_context_tokens: int,
     max_output_tokens: int,
-    provider: str,
-    model_name: str,
-    reasoning: str,
+    reasoning: ReasoningLevel,
+    reasoning_reserve_tokens: int,
 ) -> PromptBudget:
     """Compute the model input budget after output and reasoning reserves."""
 
     reserved_output_tokens = max(0, max_output_tokens)
-    reserved_reasoning_tokens = max(
-        0,
-        estimate_reasoning_reserve(provider, model_name, reasoning),
-    )
+    reserved_reasoning_tokens = estimate_reasoning_reserve(reasoning, reasoning_reserve_tokens)
     input_budget_tokens = max_context_tokens - reserved_output_tokens - reserved_reasoning_tokens
     if input_budget_tokens <= 0:
         raise ContextBudgetError(

@@ -35,6 +35,20 @@ import { upsertForkOptionForRun } from "@/lib/conversations/branching";
 type ChatRunData = ChatRunResponse["data"];
 type TerminalRunStatus = "complete" | "error" | "cancelled";
 
+/**
+ * ConnectionLostStatusUnknown — a CLIENT-ONLY tail state (§10). It is never
+ * persisted, never an SSE event, and never a server failure: it is the local
+ * fact that the live stream dropped and, after the bounded auto-reconnect
+ * budget, could not confirm the run's status. It is keyed by the assistant
+ * message id so a message row can render the single `Reconnect` action, which
+ * resumes the tail from `last_cursor`. Any rehydrated server state (a terminal
+ * run status folded onto the message) replaces it.
+ */
+interface ConnectionLostStatusUnknown {
+  run_id: string;
+  last_cursor: string;
+}
+
 const CHAT_STREAM_MAX_RECONNECTS = 8;
 const CHAT_STREAM_BACKOFF: SseBackoffConfig = {
   baseMs: 1000,
@@ -81,13 +95,18 @@ export function useChatRunTail({
   setForkOptionsByParentId?: Dispatch<SetStateAction<Record<string, ForkOption[]>>>;
   onRunFinished?: (runId: string) => void;
   onFirstDelta?: (runId: string) => void;
-  onRunDone?: (runId: string, status: TerminalRunStatus, errorCode: string | null) => void;
+  onRunDone?: (runId: string, status: TerminalRunStatus) => void;
   onConversationAvailable?: (conversationId: string, runId: string) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   shouldStartRun?: (ctx: RunVisibilityContext) => boolean;
   shouldApplyRun?: (ctx: RunVisibilityContext) => boolean;
 }) {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // Client-only ConnectionLostStatusUnknown state, keyed by assistant message id
+  // (§10). Surfaced to the transcript so exactly one `Reconnect` card shows.
+  const [lostConnections, setLostConnections] = useState<
+    Record<string, ConnectionLostStatusUnknown>
+  >({});
   const mountedRef = useRef(false);
   // One per-run lifecycle owner (abort handle + supersession token + first-delta
   // latch), replacing the three former refs. `useState` with a lazy initializer
@@ -181,7 +200,17 @@ export function useChatRunTail({
   const abortAll = useCallback(() => {
     streamCtx.abortAll();
     setActiveRunId(null);
+    setLostConnections({});
   }, [streamCtx]);
+
+  const clearLostConnection = useCallback((assistantMessageId: string) => {
+    setLostConnections((prev) => {
+      if (!(assistantMessageId in prev)) return prev;
+      const next = { ...prev };
+      delete next[assistantMessageId];
+      return next;
+    });
+  }, []);
 
   const cancelRun = useCallback(
     async (runId: string | null = activeRunId) => {
@@ -259,6 +288,9 @@ export function useChatRunTail({
       }
 
       streamCtx.claim(runId, token);
+      // A fresh tail (including a user-driven Reconnect) supersedes any prior
+      // client-only connection-lost card for this message.
+      clearLostConnection(originalAssistantId);
       if (runData.stream_state.folded_event_seq > 0) {
         shouldFoldEvent(runId, runData.stream_state.folded_event_seq);
       }
@@ -271,10 +303,21 @@ export function useChatRunTail({
       // is superseded (abortAll) or finished mid-token-mint.
       const streamAbort = new AbortController();
 
-      const notifyDone = (status: TerminalRunStatus, errorCode: string | null) => {
+      const notifyDone = (status: TerminalRunStatus) => {
         if (doneNotified) return;
         doneNotified = true;
-        onRunDone?.(runId, status, errorCode);
+        onRunDone?.(runId, status);
+      };
+
+      // Client-only ConnectionLostStatusUnknown fold: the auto-reconnect budget
+      // is spent and the run is not confirmed terminal. Keep partial text +
+      // pending status; surface the single `Reconnect` card via lostConnections.
+      const markConnectionLost = (lastCursor: string) => {
+        if (!currentVisible()) return;
+        setLostConnections((prev) => ({
+          ...prev,
+          [currentAssistantId]: { run_id: runId, last_cursor: lastCursor },
+        }));
       };
 
       const finishRun = () => {
@@ -288,13 +331,9 @@ export function useChatRunTail({
 
       if (isTerminalRunStatus(runData.run.status)) {
         if (currentVisible()) {
-          handleDone(
-            runData.assistant_message.id,
-            runData.run.status,
-            runData.run.error_code,
-          );
+          handleDone(runData.assistant_message.id, runData.run.status);
         }
-        notifyDone(runData.run.status, runData.run.error_code);
+        notifyDone(runData.run.status);
         finishRun();
         return;
       }
@@ -324,13 +363,9 @@ export function useChatRunTail({
 
           if (isTerminalRunStatus(response.data.run.status)) {
             if (currentVisible()) {
-              handleDone(
-                currentAssistantId,
-                response.data.run.status,
-                response.data.run.error_code,
-              );
+              handleDone(currentAssistantId, response.data.run.status);
             }
-            notifyDone(response.data.run.status, response.data.run.error_code);
+            notifyDone(response.data.run.status);
             finishRun();
           }
           return response.data;
@@ -406,13 +441,9 @@ export function useChatRunTail({
                 case "done":
                   streamDoneSeen = true;
                   if (currentVisible()) {
-                    handleDone(
-                      currentAssistantId,
-                      event.data.status,
-                      event.data.error_code,
-                    );
+                    handleDone(currentAssistantId, event.data.status);
                   }
-                  notifyDone(event.data.status, event.data.error_code);
+                  notifyDone(event.data.status);
                   break;
                 default: {
                   const _exhaustive: never = event;
@@ -433,17 +464,22 @@ export function useChatRunTail({
             },
             onError: (err) => {
               if (streamCtx.isSuperseded(runId, token) || finished) return;
-              // Reconnect budget exhausted (or a fatal stream error). Reconcile one
-              // last time — the run may have completed in the DB exactly as the
-              // stream died — and only surface the interruption if it did not.
+              // Auto-reconnect budget exhausted (or a fatal stream error).
+              // Reconcile one last time — the run may have completed in the DB
+              // exactly as the stream died, in which case reconcile() folds the
+              // terminal status and finishes. If it did NOT confirm terminal,
+              // fold the client-only ConnectionLostStatusUnknown card instead of
+              // a server failure: partial text stays, the row offers Reconnect.
               console.error("Chat run stream failed:", err);
               void (async () => {
-                await reconcile();
+                const persisted = await reconcile();
                 if (streamCtx.isSuperseded(runId, token) || finished) return;
-                if (currentVisible()) {
-                  handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
-                }
-                notifyDone("error", "E_STREAM_INTERRUPTED");
+                markConnectionLost(
+                  String(
+                    persisted?.stream_state.folded_event_seq ??
+                      runData.stream_state.folded_event_seq,
+                  ),
+                );
                 finishRun();
               })();
             },
@@ -473,12 +509,14 @@ export function useChatRunTail({
           // reconcile once and only surface the interruption if it did not finish.
           if (handleUnauthenticatedApiError(err)) return;
           console.error("Failed to open chat run stream:", err);
-          await reconcile();
+          const persisted = await reconcile();
           if (streamCtx.isSuperseded(runId, token) || finished) return;
-          if (currentVisible()) {
-            handleDone(currentAssistantId, "error", "E_STREAM_INTERRUPTED");
-          }
-          notifyDone("error", "E_STREAM_INTERRUPTED");
+          markConnectionLost(
+            String(
+              persisted?.stream_state.folded_event_seq ??
+                runData.stream_state.folded_event_seq,
+            ),
+          );
           finishRun();
           return;
         }
@@ -495,6 +533,7 @@ export function useChatRunTail({
     [
       streamCtx,
       visibility,
+      clearLostConnection,
       handleDelta,
       handleDone,
       handleMetaReceived,
@@ -514,10 +553,32 @@ export function useChatRunTail({
     ],
   );
 
+  // User-driven resume of a ConnectionLostStatusUnknown card: re-fetch the run
+  // and re-tail it from the persisted cursor. Never calls /rerun.
+  const reconnectRun = useCallback(
+    async (assistantMessageId: string) => {
+      const entry = lostConnections[assistantMessageId];
+      if (!entry) return;
+      clearLostConnection(assistantMessageId);
+      try {
+        const response = await apiFetch<ChatRunResponse>(
+          `/api/chat-runs/${entry.run_id}`,
+        );
+        await tailChatRun(response.data);
+      } catch (err) {
+        if (handleUnauthenticatedApiError(err)) return;
+        console.error("Failed to reconnect chat run:", err);
+      }
+    },
+    [lostConnections, clearLostConnection, tailChatRun],
+  );
+
   return {
     activeRunId,
     abortAll,
     cancelRun,
     tailChatRun,
+    lostConnections,
+    reconnectRun,
   };
 }

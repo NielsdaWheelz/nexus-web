@@ -1,13 +1,18 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { ResourceThumbSpec } from "@/lib/collections/types";
+import type { LucideIcon } from "lucide-react";
 import MediaImage from "@/components/ui/MediaImage";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ResourceThumb.module.css";
 
 const SIZE_PX = { sm: 32, md: 44, lg: 64 } as const;
 type ResourceThumbSize = keyof typeof SIZE_PX | "fill";
+
+export interface ResourceThumbSpec {
+  readonly icon: LucideIcon;
+  readonly remoteUrl?: string;
+}
 
 const sizeClass: Record<keyof typeof SIZE_PX, string> = {
   sm: styles.sizeSm,
@@ -56,8 +61,9 @@ export default function ResourceThumb({
       className={cx(styles.iconTile, sizingClass, className)}
       style={viewTransitionName ? transitionStyle : undefined}
       data-view-transition-part="thumb"
-      role="img"
-      aria-label={alt}
+      role={alt ? "img" : undefined}
+      aria-label={alt || undefined}
+      aria-hidden={alt ? undefined : true}
     >
       <Icon className={styles.icon} aria-hidden="true" />
     </span>

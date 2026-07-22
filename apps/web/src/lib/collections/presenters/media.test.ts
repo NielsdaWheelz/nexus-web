@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { presentMedia, type MediaPresenterContext, type MediaPresenterItem } from "./media";
+import { decodePublicationDate } from "@/lib/dates/publicationDate";
+import {
+  presentMedia,
+  type MediaPresenterContext,
+  type MediaPresenterItem,
+} from "./media";
 
 function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
   return {
@@ -9,8 +14,14 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
     title: "On Exactitude in Science",
     canonical_source_url: "https://example.test/borges.pdf",
     processing_status: "ready_for_reading",
-    publisher: "Universal Press",
-    published_date: "1946",
+    read_state: "unread",
+    progressFraction: { kind: "Absent" },
+    capabilities: { can_quote: true },
+    publicationDate: {
+      kind: "Present",
+      value: decodePublicationDate("1946", "date"),
+    },
+    sourceHost: { kind: "Absent" },
     contributors: [],
     ...overrides,
   };
@@ -19,59 +30,110 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
 function ctx(overrides: Partial<MediaPresenterContext> = {}): MediaPresenterContext {
   return {
     canManageLibraries: false,
+    readingTimeEstimate: { kind: "Absent" },
     ...overrides,
   };
 }
 
 describe("presentMedia", () => {
-  it("maps a media item to a media-kind row linking to its reader pane", () => {
+  it("projects the canonical media identity without publisher or thumbnail chrome", () => {
     const view = presentMedia(item(), ctx());
 
-    expect(view.kind).toBe("media");
     expect(view.primary).toEqual({
       kind: "link",
       href: "/media/media-1",
-      paneTitleHint: "On Exactitude in Science",
+      paneLabelHint: "On Exactitude in Science",
       viewTransition: "media-reader",
     });
-    expect(view.headline.text).toBe("On Exactitude in Science");
+    expect(view.title).toEqual({ text: "On Exactitude in Science" });
+    expect(view.publicationDate).toEqual({ kind: "Present", value: "1946" });
+    expect(view).not.toHaveProperty("publisher");
+    expect(view).not.toHaveProperty("lead");
+    expect(view.relatedMediaId).toEqual({ kind: "Present", value: "media-1" });
   });
 
-  it("sets a lead icon", () => {
-    const view = presentMedia(item(), ctx());
-    expect(view.lead.icon).toBeDefined();
+  it("uses the source host only for web articles", () => {
+    expect(
+      presentMedia(
+        item({
+          kind: "web_article",
+          sourceHost: { kind: "Present", value: "example.test" },
+        }),
+        ctx(),
+      ).context,
+    ).toEqual({ kind: "Present", value: { kind: "Text", text: "example.test" } });
+    expect(presentMedia(item({ kind: "pdf" }), ctx()).context).toEqual({
+      kind: "Absent",
+    });
   });
 
-  it("surfaces publisher and published date as signals", () => {
-    const view = presentMedia(item(), ctx());
-
-    const values = view.signals.map((s) => s.value);
-    expect(values).toContain("Universal Press");
-    expect(values).toContain("1946");
-  });
-
-  it("omits absent publisher/date signals", () => {
-    const view = presentMedia(
-      item({ publisher: null, published_date: null }),
-      ctx(),
+  it("preserves numeric reading-time and progress facts", () => {
+    const readingTimeEstimate = {
+      kind: "Present" as const,
+      value: {
+        totalMinutes: { value: 15 },
+        remainingMinutes: { kind: "Present" as const, value: { value: 5 } },
+      },
+    };
+    const unread = presentMedia(item(), ctx({ readingTimeEstimate }));
+    const inProgress = presentMedia(
+      item({
+        read_state: "in_progress",
+        progressFraction: { kind: "Present", value: { value: 0.5 } },
+      }),
+      ctx({ readingTimeEstimate }),
     );
-    expect(view.signals).toEqual([]);
-  });
-
-  it("emits a danger status pill for failed processing", () => {
-    const view = presentMedia(item({ processing_status: "failed" }), ctx());
-    expect(view.status).toEqual({ tone: "danger", label: "Failed" });
-  });
-
-  it("emits no status pill once ready for reading", () => {
-    const view = presentMedia(
-      item({ processing_status: "ready_for_reading" }),
-      ctx(),
+    const finished = presentMedia(
+      item({
+        read_state: "finished",
+        progressFraction: { kind: "Present", value: { value: 1 } },
+      }),
+      ctx({ readingTimeEstimate }),
     );
-    expect(view.status).toBeUndefined();
+
+    expect(unread.activity).toEqual({
+      kind: "Present",
+      value: {
+        kind: "Unread",
+        modality: "Read",
+        totalMinutes: { kind: "Present", value: { value: 15 } },
+      },
+    });
+    expect(inProgress.activity).toEqual({
+      kind: "Present",
+      value: {
+        kind: "InProgress",
+        modality: "Read",
+        fraction: { kind: "Present", value: { value: 0.5 } },
+        remainingMinutes: { kind: "Present", value: { value: 5 } },
+      },
+    });
+    expect(finished.activity).toEqual({
+      kind: "Present",
+      value: { kind: "Finished", modality: "Read" },
+    });
   });
 
-  it("carries contributor credits when present", () => {
+  it("omits an unquantified in-progress activity", () => {
+    expect(
+      presentMedia(
+        item({ read_state: "in_progress", progressFraction: { kind: "Absent" } }),
+        ctx(),
+      ).activity,
+    ).toEqual({ kind: "Absent" });
+  });
+
+  it("keeps exceptional processing explicit and ready silent", () => {
+    expect(
+      presentMedia(item({ processing_status: "failed" }), ctx()).exceptionalStatus,
+    ).toEqual({
+      kind: "Present",
+      value: { kind: "MediaProcessing", status: "failed" },
+    });
+    expect(presentMedia(item(), ctx()).exceptionalStatus).toEqual({ kind: "Absent" });
+  });
+
+  it("preserves contributor credits and truthful actions", () => {
     const credits: ContributorCredit[] = [
       {
         contributor_handle: "borges",
@@ -79,43 +141,15 @@ describe("presentMedia", () => {
         role: "author",
       },
     ];
-    const view = presentMedia(item({ contributors: credits }), ctx());
-    expect(view.contributors).toEqual({ credits, maxVisible: 3 });
-  });
-
-  it("builds a non-empty action list when the subject has capabilities and callbacks", () => {
-    const onDelete = vi.fn();
-    const onManageLibraries = vi.fn();
     const view = presentMedia(
-      item({ capabilities: { can_delete: true } }),
-      ctx({ canManageLibraries: true, onDelete, onManageLibraries }),
+      item({ contributors: credits, capabilities: { can_quote: true, can_delete: true } }),
+      ctx({ canManageLibraries: true, onDelete: vi.fn(), onManageLibraries: vi.fn() }),
     );
 
-    expect(view.actions?.length).toBeGreaterThan(0);
-    const ids = view.actions?.map((a) => a.id) ?? [];
-    expect(ids).toContain("delete-media");
-    expect(ids).toContain("manage-media-libraries");
-  });
-
-  it("makes mark-finished the primary swipe for unread/in-progress rows (delete is menu-only)", () => {
-    const onMarkFinished = vi.fn();
-    const view = presentMedia(
-      item({ read_state: "unread", capabilities: { can_delete: true } }),
-      ctx({ onDelete: vi.fn(), onMarkFinished }),
+    expect(view.contributors).toEqual(credits);
+    expect(view.actions.map((action) => action.id)).toEqual(
+      expect.arrayContaining(["delete-media", "manage-media-libraries"]),
     );
-
-    expect(view.actions?.map((a) => a.id)).toContain("mark-finished");
-    expect(view.swipeActions?.[0]).toMatchObject({ id: "mark-finished", label: "Mark as finished" });
-    expect(view.swipeActions?.map((a) => a.id)).not.toContain("delete-media");
-  });
-
-  it("makes mark-unread the primary swipe for finished rows", () => {
-    const onMarkUnread = vi.fn();
-    const view = presentMedia(
-      item({ read_state: "finished" }),
-      ctx({ onMarkUnread }),
-    );
-
-    expect(view.swipeActions?.[0]).toMatchObject({ id: "mark-unread", label: "Mark as unread" });
+    expect(view).not.toHaveProperty("swipeActions");
   });
 });

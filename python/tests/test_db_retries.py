@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from nexus.db.retries import retry_serializable
+from nexus.db.errors import DatabaseRetryExhaustedError, TransactionRestart
+from nexus.db.retries import retry_read_committed, retry_serializable
 
 pytestmark = pytest.mark.unit
 
@@ -43,6 +44,12 @@ class _FakeOrig:
 def _serialization_error() -> OperationalError:
     return OperationalError(
         "UPDATE ...", {}, _FakeOrig(sqlstate="40001", message="could not serialize access")
+    )
+
+
+def _deadlock_error() -> OperationalError:
+    return OperationalError(
+        "UPDATE ...", {}, _FakeOrig(sqlstate="40P01", message="deadlock detected")
     )
 
 
@@ -105,7 +112,7 @@ def test_retry_serializable_propagates_non_serialization_error() -> None:
     assert db.rollbacks == 1
 
 
-def test_retry_serializable_reraises_after_exhausting_retries() -> None:
+def test_retry_serializable_defect_wraps_exhaustion() -> None:
     db = _FakeSession()
     attempts = {"n": 0}
 
@@ -113,9 +120,52 @@ def test_retry_serializable_reraises_after_exhausting_retries() -> None:
         attempts["n"] += 1
         raise _serialization_error()
 
-    with pytest.raises(OperationalError):
+    with pytest.raises(DatabaseRetryExhaustedError) as excinfo:
         retry_serializable(db, "test_op", op, retries=3)  # type: ignore[arg-type]
     assert attempts["n"] == 3, f"expected exactly 3 attempts, got {attempts['n']}"
+    assert db.rollbacks == 3
+    assert isinstance(excinfo.value.__cause__, OperationalError)
+
+
+def test_retry_read_committed_retries_deadlock_then_succeeds() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _deadlock_error()
+        return "ok"
+
+    assert retry_read_committed(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
+
+
+def test_retry_read_committed_retries_explicit_transaction_restart() -> None:
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise TransactionRestart("locked library membership set changed")
+        return "ok"
+
+    assert retry_read_committed(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
+
+
+def test_retry_read_committed_defect_wraps_restart_exhaustion() -> None:
+    db = _FakeSession()
+
+    def op():
+        raise TransactionRestart("locked library membership set changed")
+
+    with pytest.raises(DatabaseRetryExhaustedError) as excinfo:
+        retry_read_committed(db, "library_delete", op, retries=3)  # type: ignore[arg-type]
+    assert isinstance(excinfo.value.__cause__, TransactionRestart)
     assert db.rollbacks == 3
 
 
@@ -162,7 +212,7 @@ def test_retry_serializable_propagates_integrity_error_missing_diag() -> None:
     assert db.rollbacks == 1
 
 
-def test_retry_serializable_reraises_after_exhausting_integrity_retries() -> None:
+def test_retry_serializable_defect_wraps_integrity_exhaustion() -> None:
     db = _FakeSession()
     attempts = {"n": 0}
 
@@ -170,10 +220,38 @@ def test_retry_serializable_reraises_after_exhausting_integrity_retries() -> Non
         attempts["n"] += 1
         raise _integrity_error("uix_resource_mutations_client_id")
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(DatabaseRetryExhaustedError) as excinfo:
         retry_serializable(db, "test_op", op, retries=3)  # type: ignore[arg-type]
     assert attempts["n"] == 3, f"expected exactly 3 attempts, got {attempts['n']}"
     assert db.rollbacks == 3
+    assert isinstance(excinfo.value.__cause__, IntegrityError)
+
+
+@pytest.mark.parametrize(
+    "constraint_name",
+    [
+        "uq_passage_anchors_identity",
+        "uq_resource_edges_user_context_link_pair",
+        "uq_resource_edges_user_stance_directed_pair",
+        "highlights_pkey",
+    ],
+)
+def test_retry_serializable_retries_link_mutation_first_insert_race(constraint_name: str) -> None:
+    """A concurrent first insert racing the Link mutation's passage-anchor,
+    canonical Link pair, stance pair, or client-minted Highlight id is
+    retryable: the whole attempt reruns so the SELECT observes the winner."""
+    db = _FakeSession()
+    attempts = {"n": 0}
+
+    def op():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise _integrity_error(constraint_name)
+        return "ok"
+
+    assert retry_serializable(db, "test_op", op) == "ok"  # type: ignore[arg-type]
+    assert attempts["n"] == 2
+    assert db.rollbacks == 1
 
 
 def test_retry_serializable_retries_reader_profile_pkey_race_then_succeeds() -> None:

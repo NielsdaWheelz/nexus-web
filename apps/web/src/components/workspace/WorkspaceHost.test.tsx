@@ -1,17 +1,26 @@
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
-import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
+import {
+  PaneFixedChromeContext,
+  usePaneFixedChrome,
+} from "@/components/workspace/PaneFixedChrome";
+import {
+  PaneSecondaryContext,
+  usePaneSecondary,
+} from "@/components/workspace/PaneSecondary";
 import type {
   PaneFixedChromePublication,
+  PanePrimaryChromePublication,
   PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
+import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceId,
@@ -32,15 +41,37 @@ const hostMocks = vi.hoisted(() => ({
     fixedChromeWidthPx: number;
     secondarySurfaces: string;
   }[],
+  mobileSecondaryInputs: [] as {
+    primaryPaneId: string;
+    returnFocusTo?: () => HTMLElement | null;
+  }[],
+  useActualPaneShell: false,
+  primaryChromePublicationByPaneId: new Map<
+    string,
+    PanePrimaryChromePublication
+  >(),
   isMobile: false,
   canvasEdges: { atStart: false, atEnd: false },
   paneCanvasInputs: [] as { mode: string; paneIds: string[] }[],
   runtimeLayout: null as PaneRuntimeLayout | null,
   fixedChromeWidthPx: null as number | null,
   secondaryPublication: null as PaneSecondaryPublication | null,
+  fixedChromeWidthByPaneId: new Map<string, number | null>(),
+  secondaryPublicationByPaneId: new Map<
+    string,
+    PaneSecondaryPublication | null
+  >(),
+  secondaryPublisherByPaneId: new Map<
+    string,
+    (publication: PaneSecondaryPublication | null) => void
+  >(),
+  fixedChromePublisherByPaneId: new Map<
+    string,
+    (publication: PaneFixedChromePublication | null) => void
+  >(),
   openInNewPaneRequest: null as {
     href: string;
-    titleHint?: string;
+    labelHint?: string;
     surfaceId: WorkspaceSecondarySurfaceId;
   } | null,
   resolveResourceLocators: vi.fn<
@@ -56,9 +87,22 @@ const hostMocks = vi.hoisted(() => ({
           primaryWidthPx: 640,
           attachedSecondaryPaneId: null as string | null,
           visibility: "visible" as const,
-          history: { back: [], forward: [] } as { back: string[]; forward: string[] },
+          history: { back: [], forward: [] } as {
+            back: string[];
+            forward: string[];
+          },
         },
-      },
+      } as Record<
+        string,
+        {
+          id: string;
+          href: string;
+          primaryWidthPx: number;
+          attachedSecondaryPaneId: string | null;
+          visibility: "visible" | "minimized";
+          history: { back: string[]; forward: string[] };
+        }
+      >,
       secondaryPanesById: {} as Record<
         string,
         {
@@ -76,7 +120,7 @@ const hostMocks = vi.hoisted(() => ({
       primaryMinWidthPx: 684,
       primaryDefaultWidthPx: 684,
     },
-    runtimeTitleByPaneId: new Map(),
+    runtimeLabelByPaneId: new Map(),
     activatePane: vi.fn(),
     openPane: vi.fn(),
     navigatePane: vi.fn(),
@@ -91,7 +135,7 @@ const hostMocks = vi.hoisted(() => ({
     resizeSecondaryPane: vi.fn(),
     minimizePane: vi.fn(),
     restorePane: vi.fn(),
-    publishPaneTitle: vi.fn(),
+    publishPaneLabel: vi.fn(),
   },
 }));
 
@@ -112,7 +156,11 @@ function mediaResourceItem(id: string): ResourceItem {
     },
     missing: false,
     capabilities: {
-      linkable: true,
+      userRelation: {
+        userLinkSource: true,
+        userLinkTarget: "direct",
+        noteReferenceTarget: true,
+      },
       attachable: true,
       chatSubject: "readable",
       readable: "media",
@@ -138,9 +186,11 @@ function mediaRoute(href: string) {
     id: "media",
     pathname: url.pathname,
     params: { id },
-    staticTitle: "Media",
-    titleMode: "dynamic",
+    defaultLabel: "Media",
+    labelMode: "dynamic",
+    header: { kind: "resource", pendingLabel: "Loading media…" } as const,
     definition: {
+      id: "media",
       bodyMode: "document",
       maxWidthPx: 2400,
       allowsIntrinsicPrimaryWidth: true,
@@ -151,8 +201,19 @@ function mediaRoute(href: string) {
 function TestPaneBody() {
   const instanceId = useRef(++hostMocks.bodyInstanceId);
   const paneRuntime = usePaneRuntime();
+  const publishSecondary = useContext(PaneSecondaryContext);
+  const publishFixedChrome = useContext(PaneFixedChromeContext);
+  usePanePrimaryChrome(
+    paneRuntime
+      ? (hostMocks.primaryChromePublicationByPaneId.get(paneRuntime.paneId) ??
+          null)
+      : null,
+  );
   const didOpenInNewPaneRef = useRef(false);
-  const fixedChromeWidthPx = hostMocks.fixedChromeWidthPx;
+  const fixedChromeWidthPx = paneRuntime
+    ? (hostMocks.fixedChromeWidthByPaneId.get(paneRuntime.paneId) ??
+      hostMocks.fixedChromeWidthPx)
+    : hostMocks.fixedChromeWidthPx;
   const fixedChromePublication = useMemo<PaneFixedChromePublication | null>(
     () =>
       fixedChromeWidthPx === null
@@ -165,7 +226,22 @@ function TestPaneBody() {
     [fixedChromeWidthPx],
   );
   usePaneFixedChrome(fixedChromePublication);
-  usePaneSecondary(hostMocks.secondaryPublication);
+  const secondaryPublication = paneRuntime
+    ? (hostMocks.secondaryPublicationByPaneId.get(paneRuntime.paneId) ??
+      hostMocks.secondaryPublication)
+    : hostMocks.secondaryPublication;
+  usePaneSecondary(secondaryPublication);
+  useEffect(() => {
+    if (!paneRuntime || !publishSecondary || !publishFixedChrome) return;
+    hostMocks.secondaryPublisherByPaneId.set(
+      paneRuntime.paneId,
+      publishSecondary,
+    );
+    hostMocks.fixedChromePublisherByPaneId.set(
+      paneRuntime.paneId,
+      publishFixedChrome,
+    );
+  }, [paneRuntime, publishFixedChrome, publishSecondary]);
   useEffect(() => {
     const id = instanceId.current;
     hostMocks.mountedBodyIds.push(id);
@@ -184,20 +260,35 @@ function TestPaneBody() {
       return;
     }
     didOpenInNewPaneRef.current = true;
-    paneRuntime.openInNewPane(request.href, request.titleHint, request.surfaceId);
+    paneRuntime.openInNewPane(
+      request.href,
+      request.labelHint,
+      request.surfaceId,
+    );
   }, [paneRuntime]);
   return (
     <div
       data-testid="route-body"
       data-instance-id={instanceId.current}
+      data-runtime-pane-id={paneRuntime?.paneId ?? "none"}
       data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
       data-runtime-resource-ref={paneRuntime?.resourceRef ?? "none"}
       data-runtime-resource-status={paneRuntime?.resourceStatus ?? "none"}
     >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
-      <a href="/authors/body-author" data-pane-title-hint="Body Author">
+      <a href="/authors/body-author" data-pane-label-hint="Body Author">
         Body Author
       </a>
+      <button
+        type="button"
+        onClick={(event) =>
+          paneRuntime?.requestSecondarySurface("reader-evidence", {
+            returnFocusTo: event.currentTarget,
+          })
+        }
+      >
+        Open document map
+      </button>
     </div>
   );
 }
@@ -215,88 +306,93 @@ vi.mock("@/lib/workspace/store", async () => {
   const { resolvePaneRouteIdentity } = await import("@/lib/panes/paneIdentity");
   return {
     useWorkspaceHostStore: () => hostMocks.store,
-    resolvePaneRouteKey: (href: string) => resolvePaneRouteIdentity(href).routeKey,
-    resolveWorkspacePaneTitle: (pane: { href: string }) => {
+    resolvePaneRouteKey: (href: string) =>
+      resolvePaneRouteIdentity(href).routeKey,
+    resolveWorkspacePaneLabel: (pane: { href: string }) => {
       const route = mediaRoute(pane.href);
       return {
-        chrome: null,
         routeKey: resolvePaneRouteIdentity(pane.href).routeKey,
         route,
-        title: "Media",
-        titleState: "pending",
-        titleSource: "fallback",
+        label: "Media",
+        labelState: "pending",
+        labelSource: "fallback",
       };
     },
   };
 });
 
-vi.mock("@/components/workspace/PaneShell", () => ({
-  default: ({
-    children,
-    sizing,
-    secondaryPane,
-    secondarySizing,
-    secondaryPublication,
-    fixedChromePublication,
-    navigation,
-    isMobile,
-  }: {
-    children: ReactNode;
-    sizing: { primaryMinWidthPx: number };
-    secondaryPane: { id: string } | null;
-    secondarySizing: { widthPx: number } | null;
-    secondaryPublication: { surfaces: readonly { id: string }[] } | null;
-    fixedChromePublication: { widthPx: number } | null;
-    navigation: {
-      canGoBack: boolean;
-      canGoForward: boolean;
-      onBack: () => void;
-      onForward: () => void;
-    };
-    isMobile: boolean;
-  }) => {
-    const secondarySurfaces = secondaryPublication
-      ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
-      : "none";
-    hostMocks.paneShellSnapshots.push({
-      fixedChromeWidthPx: fixedChromePublication?.widthPx ?? 0,
-      secondarySurfaces,
-    });
-    return (
-      <section
-        data-testid="pane-shell"
-        data-min-width-px={sizing.primaryMinWidthPx}
-        data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
-        data-secondary-width-px={secondarySizing?.widthPx ?? 0}
-        data-secondary-pane-id={secondaryPane?.id ?? "none"}
-        data-secondary-surfaces={secondarySurfaces}
-        data-mobile={isMobile ? "true" : "false"}
-      >
-        <nav aria-label="Mock pane chrome">
-          <button
-            type="button"
-            onClick={navigation.onBack}
-            disabled={!navigation.canGoBack}
-          >
-            Go back in this pane
-          </button>
-          <button
-            type="button"
-            onClick={navigation.onForward}
-            disabled={!navigation.canGoForward}
-          >
-            Go forward in this pane
-          </button>
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: mock pane chrome uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
-          <a href="/authors/author-1" data-pane-title-hint="Chrome Author">
-            Chrome Author
-          </a>
-        </nav>
-        {children}
-      </section>
-    );
-  },
-}));
+vi.mock("@/components/workspace/PaneShell", async () => {
+  const { default: ActualPaneShell } = await vi.importActual<
+    typeof import("@/components/workspace/PaneShell")
+  >("@/components/workspace/PaneShell");
+  return {
+    default: (props: ComponentProps<typeof ActualPaneShell>) => {
+      if (hostMocks.useActualPaneShell) {
+        return <ActualPaneShell {...props} />;
+      }
+      const {
+        children,
+        sizing,
+        secondaryPane,
+        secondarySizing,
+        secondaryPublication,
+        fixedChromePublication,
+        navigation,
+        isMobile,
+        paneId,
+        routeKey,
+        routeHeader,
+        label,
+        labelPending,
+      } = props;
+      const secondarySurfaces = secondaryPublication
+        ? secondaryPublication.surfaces.map((surface) => surface.id).join(",")
+        : "none";
+      hostMocks.paneShellSnapshots.push({
+        fixedChromeWidthPx: fixedChromePublication?.widthPx ?? 0,
+        secondarySurfaces,
+      });
+      return (
+        <section
+          data-testid="pane-shell"
+          data-min-width-px={sizing.primaryMinWidthPx}
+          data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
+          data-secondary-width-px={secondarySizing?.widthPx ?? 0}
+          data-secondary-pane-id={secondaryPane?.id ?? "none"}
+          data-secondary-surfaces={secondarySurfaces}
+          data-mobile={isMobile ? "true" : "false"}
+          data-pane-id-contract={paneId}
+          data-route-key={routeKey}
+          data-route-header-kind={routeHeader.kind}
+          data-label={label}
+          data-label-pending={labelPending ? "true" : "false"}
+        >
+          <nav aria-label="Mock pane chrome">
+            <button
+              type="button"
+              onClick={navigation.onBack}
+              disabled={!navigation.canGoBack}
+            >
+              Go back in this pane
+            </button>
+            <button
+              type="button"
+              onClick={navigation.onForward}
+              disabled={!navigation.canGoForward}
+            >
+              Go forward in this pane
+            </button>
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: mock pane chrome uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
+            <a href="/authors/author-1" data-pane-label-hint="Chrome Author">
+              Chrome Author
+            </a>
+          </nav>
+          {children}
+        </section>
+      );
+    },
+  };
+});
 
 vi.mock("@/components/workspace/WorkspacePaneStrip", () => ({
   default: () => <div data-testid="workspace-pane-strip" />,
@@ -308,21 +404,29 @@ vi.mock("@/components/workspace/MobileSecondaryPaneHost", async () => {
   >("@/lib/panes/panePublications");
   return {
     default: ({
+      primaryPaneId,
       secondary,
       publication,
+      returnFocusTo,
     }: {
+      primaryPaneId: string;
       secondary: {
         groupId: WorkspaceSecondaryGroupId;
         activeSurfaceId: WorkspaceSecondarySurfaceId;
         visibility: "visible" | "collapsed";
       } | null;
       publication: PaneSecondaryPublication | null;
+      returnFocusTo?: () => HTMLElement | null;
     }) => {
+      hostMocks.mobileSecondaryInputs.push({ primaryPaneId, returnFocusTo });
       if (
         secondary?.visibility !== "visible" ||
         !publication ||
         secondary.groupId !== publication.groupId ||
-        !secondaryPublicationIncludesSurface(publication, secondary.activeSurfaceId)
+        !secondaryPublicationIncludesSurface(
+          publication,
+          secondary.activeSurfaceId,
+        )
       ) {
         return null;
       }
@@ -358,7 +462,8 @@ vi.mock("@/lib/keybindingsProvider", () => ({
 }));
 
 vi.mock("@/lib/renderEnvironment/provider", () => ({
-  RenderEnvironmentProvider: ({ children }: { children: ReactNode }) => children,
+  RenderEnvironmentProvider: ({ children }: { children: ReactNode }) =>
+    children,
   useRenderEnvironment: () => ({
     androidShell: false,
     platform: "other",
@@ -389,7 +494,7 @@ import WorkspaceHost from "@/components/workspace/WorkspaceHost";
 
 function setPaneHref(
   href: string,
-  history: { back: string[]; forward: string[] } = { back: [], forward: [] }
+  history: { back: string[]; forward: string[] } = { back: [], forward: [] },
 ) {
   hostMocks.store.state = {
     primaryPaneOrder: ["pane-1"],
@@ -408,18 +513,51 @@ function setPaneHref(
   };
 }
 
+function setTwoPaneHrefs(firstHref: string, secondHref: string) {
+  hostMocks.store.state = {
+    primaryPaneOrder: ["pane-1", "pane-2"],
+    primaryPanesById: {
+      "pane-1": {
+        id: "pane-1",
+        href: firstHref,
+        primaryWidthPx: 640,
+        attachedSecondaryPaneId: null,
+        visibility: "visible",
+        history: { back: [], forward: [] },
+      },
+      "pane-2": {
+        id: "pane-2",
+        href: secondHref,
+        primaryWidthPx: 640,
+        attachedSecondaryPaneId: null,
+        visibility: "visible",
+        history: { back: [], forward: [] },
+      },
+    },
+    secondaryPanesById: {},
+    activePrimaryPaneId: "pane-2",
+  };
+}
+
 describe("WorkspaceHost pane route lifecycle", () => {
   beforeEach(() => {
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.paneShellSnapshots = [];
+    hostMocks.mobileSecondaryInputs = [];
+    hostMocks.useActualPaneShell = false;
+    hostMocks.primaryChromePublicationByPaneId = new Map();
     hostMocks.isMobile = false;
     hostMocks.canvasEdges = { atStart: false, atEnd: false };
     hostMocks.paneCanvasInputs = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
+    hostMocks.fixedChromeWidthByPaneId = new Map();
+    hostMocks.secondaryPublicationByPaneId = new Map();
+    hostMocks.secondaryPublisherByPaneId = new Map();
+    hostMocks.fixedChromePublisherByPaneId = new Map();
     hostMocks.openInNewPaneRequest = null;
     hostMocks.resolveResourceLocators.mockReset();
     hostMocks.resolveResourceLocators.mockResolvedValue([]);
@@ -434,7 +572,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
     hostMocks.store.resizeSecondaryPane.mockReset();
-    hostMocks.store.runtimeTitleByPaneId = new Map();
+    hostMocks.store.runtimeLabelByPaneId = new Map();
     setPaneHref(MEDIA_HREF_1);
   });
 
@@ -451,6 +589,190 @@ describe("WorkspaceHost pane route lifecycle", () => {
     );
     expect(hostMocks.mountedBodyIds).toHaveLength(1);
     expect(hostMocks.unmountedBodyIds).toEqual([]);
+  });
+
+  it("passes the resolved route header and pane label contract to PaneShell", () => {
+    render(<WorkspaceHost />);
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-pane-id-contract",
+      "pane-1",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-route-header-kind",
+      "resource",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-label",
+      "Media",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-label-pending",
+      "true",
+    );
+    expect(
+      screen.getByTestId("pane-shell").getAttribute("data-route-key"),
+    ).toContain(MEDIA_ID_1);
+  });
+
+  it("contains an actual current route/header mismatch to its pane", async () => {
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    hostMocks.useActualPaneShell = true;
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      const view = render(
+        <MobileChromeProvider>
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+      const initialBoundary = screen.getByTestId("pane-error-boundary-pane-1");
+      const initialWidth = initialBoundary.getBoundingClientRect().width;
+      expect(initialWidth).toBeGreaterThan(0);
+
+      hostMocks.primaryChromePublicationByPaneId.set("pane-1", {
+        header: {
+          kind: "section",
+          folio: { kind: "none" },
+          pending: false,
+        },
+      });
+      setTwoPaneHrefs(MEDIA_HREF_3, MEDIA_HREF_2);
+      view.rerender(
+        <MobileChromeProvider>
+          <WorkspaceHost />
+        </MobileChromeProvider>,
+      );
+
+      expect(
+        await screen.findByText(
+          "This pane failed to render. Close it and retry.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Pane failed to render" }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-pane-id",
+        "pane-2",
+      );
+      expect(
+        screen.getByRole("region", { name: "Loading media…" }),
+      ).toContainElement(screen.getByTestId("route-body"));
+      expect(screen.getByTestId("workspace-pane-strip")).toBeInTheDocument();
+      const failedBoundary = screen.getByTestId("pane-error-boundary-pane-1");
+      expect(failedBoundary.getBoundingClientRect().width).toBe(initialWidth);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("contains an invalid current secondary publication to its pane", async () => {
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    hostMocks.secondaryPublicationByPaneId.set("pane-1", {
+      groupId: "reader-tools",
+      defaultSurfaceId: "reader-contents",
+      surfaces: [],
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      render(<WorkspaceHost />);
+
+      expect(
+        await screen.findByRole("region", { name: "Pane failed to render" }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-pane-id",
+        "pane-2",
+      );
+      expect(screen.getByTestId("workspace-pane-strip")).toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("contains an invalid current fixed-chrome publication to its pane", async () => {
+    setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
+    hostMocks.fixedChromeWidthByPaneId.set("pane-1", Number.NaN);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    try {
+      render(<WorkspaceHost />);
+
+      expect(
+        await screen.findByRole("region", { name: "Pane failed to render" }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-pane-id",
+        "pane-2",
+      );
+      expect(screen.getByTestId("workspace-pane-strip")).toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("ignores stale invalid publications and stale cleanup before normalization", async () => {
+    const view = render(<WorkspaceHost />);
+    await waitFor(() => {
+      expect(hostMocks.secondaryPublisherByPaneId.get("pane-1")).toBeDefined();
+      expect(hostMocks.fixedChromePublisherByPaneId.get("pane-1")).toBeDefined();
+    });
+    const staleSecondaryPublisher =
+      hostMocks.secondaryPublisherByPaneId.get("pane-1");
+    const staleFixedChromePublisher =
+      hostMocks.fixedChromePublisherByPaneId.get("pane-1");
+    if (!staleSecondaryPublisher || !staleFixedChromePublisher) {
+      throw new Error("Expected route-scoped publication callbacks");
+    }
+
+    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
+    hostMocks.fixedChromeWidthPx = 48;
+    setPaneHref(MEDIA_HREF_2);
+    view.rerender(<WorkspaceHost />);
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+        "data-secondary-surfaces",
+        "reader-evidence",
+      ),
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-fixed-chrome-width-px",
+      "48",
+    );
+
+    expect(() => {
+      act(() => {
+        staleSecondaryPublisher({
+          groupId: "reader-tools",
+          defaultSurfaceId: "reader-contents",
+          surfaces: [],
+        });
+        staleFixedChromePublisher({
+          id: "reader-document-map-overview-rail",
+          widthPx: Number.NaN,
+          body: <div>Stale invalid fixed chrome</div>,
+        });
+        staleSecondaryPublisher(null);
+        staleFixedChromePublisher(null);
+      });
+    }).not.toThrow();
+
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-surfaces",
+      "reader-evidence",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-fixed-chrome-width-px",
+      "48",
+    );
   });
 
   it("uses desktop canvas mode and renders desktop edge fades", () => {
@@ -518,7 +840,10 @@ describe("WorkspaceHost pane route lifecycle", () => {
     render(<WorkspaceHost />);
 
     await waitFor(() => {
-      expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith("pane-1", 900);
+      expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith(
+        "pane-1",
+        900,
+      );
     });
   });
 
@@ -529,7 +854,10 @@ describe("WorkspaceHost pane route lifecycle", () => {
     const { rerender } = render(<WorkspaceHost />);
 
     await waitFor(() => {
-      expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith("pane-1", 900);
+      expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith(
+        "pane-1",
+        900,
+      );
     });
 
     hostMocks.store.resizePrimaryPane.mockClear();
@@ -545,7 +873,10 @@ describe("WorkspaceHost pane route lifecycle", () => {
       "data-fixed-chrome-width-px",
       "0",
     );
-    expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith("pane-1", 684);
+    expect(hostMocks.store.resizePrimaryPane).toHaveBeenCalledWith(
+      "pane-1",
+      684,
+    );
   });
 
   it("routes pane chrome internal links through the current pane", () => {
@@ -556,7 +887,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/authors/author-1",
-      { titleHint: "Chrome Author" },
+      { labelHint: "Chrome Author" },
     );
     expect(hostMocks.store.openPane).not.toHaveBeenCalled();
   });
@@ -569,8 +900,12 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     render(<WorkspaceHost />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Go back in this pane" }));
-    fireEvent.click(screen.getByRole("button", { name: "Go forward in this pane" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Go back in this pane" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Go forward in this pane" }),
+    );
 
     expect(hostMocks.store.goBackPane).toHaveBeenCalledWith("pane-1");
     expect(hostMocks.store.goForwardPane).toHaveBeenCalledWith("pane-1");
@@ -585,7 +920,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/authors/body-author",
-      { titleHint: "Body Author" },
+      { labelHint: "Body Author" },
     );
     expect(hostMocks.store.openPane).not.toHaveBeenCalled();
   });
@@ -601,7 +936,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       href: "/authors/author-1",
       openerPaneId: "pane-1",
       activate: true,
-      titleHint: "Chrome Author",
+      labelHint: "Chrome Author",
     });
     expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
@@ -681,18 +1016,25 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
     hostMocks.paneShellSnapshots = [];
+    hostMocks.mobileSecondaryInputs = [];
+    hostMocks.useActualPaneShell = false;
+    hostMocks.primaryChromePublicationByPaneId = new Map();
     hostMocks.isMobile = false;
     hostMocks.canvasEdges = { atStart: false, atEnd: false };
     hostMocks.paneCanvasInputs = [];
     hostMocks.runtimeLayout = null;
     hostMocks.fixedChromeWidthPx = null;
     hostMocks.secondaryPublication = null;
+    hostMocks.fixedChromeWidthByPaneId = new Map();
+    hostMocks.secondaryPublicationByPaneId = new Map();
+    hostMocks.secondaryPublisherByPaneId = new Map();
+    hostMocks.fixedChromePublisherByPaneId = new Map();
     hostMocks.openInNewPaneRequest = null;
     hostMocks.store.openPane.mockReset();
     hostMocks.store.requestSecondarySurface.mockReset();
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
-    hostMocks.store.runtimeTitleByPaneId = new Map();
+    hostMocks.store.runtimeLabelByPaneId = new Map();
     setPaneHref(MEDIA_HREF_1);
   });
 
@@ -837,7 +1179,16 @@ describe("WorkspaceHost secondary publication validation", () => {
     );
 
     hostMocks.paneShellSnapshots = [];
-    hostMocks.store.runtimeTitleByPaneId = new Map([["pane-1", "Resolved media"]]);
+    hostMocks.store.runtimeLabelByPaneId = new Map([
+      [
+        "pane-1",
+        {
+          label: "Resolved media",
+          source: "runtime",
+          routeKey: "media:/media/11111111-1111-4111-8111-111111111111",
+        },
+      ],
+    ]);
     rerender(<WorkspaceHost />);
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -856,7 +1207,9 @@ describe("WorkspaceHost secondary publication validation", () => {
     render(<WorkspaceHost />);
 
     await waitFor(() => {
-      expect(hostMocks.store.dropSecondaryPane).toHaveBeenCalledWith("secondary-1");
+      expect(hostMocks.store.dropSecondaryPane).toHaveBeenCalledWith(
+        "secondary-1",
+      );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-secondary-pane-id",
@@ -891,7 +1244,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
-      titleHint: "Doc chat",
+      labelHint: "Doc chat",
       surfaceId: "reader-evidence",
     };
 
@@ -909,7 +1262,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
-      titleHint: "Doc chat",
+      labelHint: "Doc chat",
       surfaceId: "reader-contents",
     };
 
@@ -941,7 +1294,10 @@ describe("WorkspaceHost secondary publication validation", () => {
       paneIds: ["pane-1"],
     });
     expect(screen.queryByTestId("workspace-pane-strip")).toBeNull();
-    expect(screen.getByTestId("pane-shell")).toHaveAttribute("data-mobile", "true");
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-mobile",
+      "true",
+    );
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-fixed-chrome-width-px",
       "0",
@@ -953,5 +1309,30 @@ describe("WorkspaceHost secondary publication validation", () => {
     expect(screen.getByTestId("mobile-secondary-host")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-edge-fade-start")).toBeNull();
     expect(screen.queryByTestId("workspace-edge-fade-end")).toBeNull();
+  });
+
+  it("passes the pane-scoped mobile secondary return-focus target explicitly", async () => {
+    hostMocks.isMobile = true;
+    setPaneWithSecondary({
+      groupId: "reader-tools",
+      activeSurfaceId: "reader-evidence",
+    });
+    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+
+    render(<WorkspaceHost />);
+
+    await screen.findByTestId("mobile-secondary-host");
+    const trigger = screen.getByRole("button", { name: "Open document map" });
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "reader-evidence",
+      );
+    });
+    const mobileInput = hostMocks.mobileSecondaryInputs.at(-1);
+    expect(mobileInput?.primaryPaneId).toBe("pane-1");
+    expect(mobileInput?.returnFocusTo?.()).toBe(trigger);
   });
 });

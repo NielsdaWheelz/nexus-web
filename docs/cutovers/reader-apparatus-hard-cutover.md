@@ -1,15 +1,22 @@
 # Reader apparatus hard cutover
 
-> Status: implementation in progress. The persisted backend read model, API,
-> web/EPUB HTML extraction, sidecar surface, and deterministic fixture corpus
-> exist in the current worktree. PDF apparatus extraction currently supports
-> native `cite.*` link graphs as `ready` when deterministic reference targets
-> materialize, and marker-only `partial` rows when destinations are missing or
-> ambiguous. PDF marker overlays and live GROBID-style scholarly extraction
-> remain pending.
+> Status: BUILT foundation; standalone product API/client surface superseded
+> 2026-07-20. The persisted apparatus read model and web/EPUB/PDF extraction
+> remain internal owners. The reader now consumes them only through
+> `GET /media/{media_id}/document-map` and the canonical Evidence projection.
 > Type: hard cutover.
 > Scope: source-authored footnotes, endnotes, bibliography references, reference lists, and in-document citation markers in reader surfaces for web articles, EPUB, and PDF.
 > Cutover rule: no legacy lanes, no route-time extraction fallbacks, no client DOM heuristics, no backward-compatible duplicate citation model.
+
+## Current state and supersession
+
+The approved
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md)
+supersedes this document's standalone apparatus route, generated frontend
+payload corpus, and Citations-tab presentation. The stable-key extraction and
+reconciliation model remains authoritative. Product API, frontend model, and
+surface instructions below are historical implementation context, not current
+guidance.
 
 ## 1. North star
 
@@ -24,7 +31,11 @@ When a source document contains a footnote marker, endnote marker, bibliography 
 5. Reuse the existing reader-tools, locator, evidence, and hover/activation infrastructure.
 6. Keep this separate from generated chat citations and conversation context refs.
 
-The user-visible surface is a new reader-tools tab labelled `Citations`. The internal domain name is `reader_apparatus` because "citation" is already overloaded by generated assistant evidence, `message_retrievals`, and chat reference rendering.
+The original user-visible surface was a reader-tools tab labelled `Citations`.
+That tab is deleted; source-authored apparatus now appears as typed Evidence
+facts. The internal domain name remains `reader_apparatus` because "citation"
+is overloaded by generated assistant evidence, `message_retrievals`, and chat
+reference rendering.
 
 ## 2. SME thesis
 

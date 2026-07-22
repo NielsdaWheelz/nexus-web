@@ -16,11 +16,6 @@
   display: contents;
 }
 
-.unlinkHint {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-}
-
 .rowActions {
   display: inline-flex;
   align-items: center;

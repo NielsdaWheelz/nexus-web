@@ -5,7 +5,8 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import {
   createOutlineDocFromBlock,
   firstOutlineBlockFromDoc,
@@ -37,20 +38,22 @@ export default function HighlightNoteEditor({
     noteBlockId: string | null,
     createBlockId: string,
     bodyPmJson: Record<string, unknown>,
-    clientMutationId: string
+    clientMutationId: string,
   ) => Promise<HighlightLinkedNoteBlock>;
   onDelete: (
     highlightId: string,
     noteBlockId: string,
     clientMutationId: string,
-    shouldApply: () => boolean
+    shouldApply: () => boolean,
   ) => Promise<void>;
   onLocalChange?: () => void;
   onOpenLink: (href: string, options: { newPane: boolean }) => void;
 }) {
   const feedback = useFeedback();
   const editVersionRef = useRef(0);
-  const persistedBlockIdRef = useRef<string | null>(note?.note_block_id ?? null);
+  const persistedBlockIdRef = useRef<string | null>(
+    note?.note_block_id ?? null,
+  );
   const draftBlockRef = useRef({
     highlightId,
     blockId: note?.note_block_id ?? createRandomId(),
@@ -94,16 +97,16 @@ export default function HighlightNoteEditor({
         bodyPmJson: note?.body_pm_json ?? null,
         bodyText: note?.body_text ?? "",
       }),
-    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id]
+    [draftBlockId, note?.body_pm_json, note?.body_text, note?.note_block_id],
   );
   const [initialDoc, setInitialDoc] = useState(
-    () => readStoredNoteEditorDraft(resourceKey)?.doc ?? persistedDoc
+    () => readStoredNoteEditorDraft(resourceKey)?.doc ?? persistedDoc,
   );
 
   const saveDoc = useCallback(
     async (
       nextDoc: ProseMirrorNode,
-      { clientMutationId }: { clientMutationId: string }
+      { clientMutationId }: { clientMutationId: string },
     ) => {
       const saveResourceKey = resourceKey;
       const saveEditVersion = editVersionRef.current;
@@ -117,7 +120,7 @@ export default function HighlightNoteEditor({
           persistedBlockId,
           block.id,
           block.bodyPmJson,
-          clientMutationId
+          clientMutationId,
         );
         if (currentResourceKeyRef.current === saveResourceKey) {
           persistedBlockIdRef.current =
@@ -130,13 +133,18 @@ export default function HighlightNoteEditor({
         const shouldApply = () =>
           currentResourceKeyRef.current === saveResourceKey &&
           editVersionRef.current === saveEditVersion;
-        await onDelete(highlightId, persistedBlockId, clientMutationId, shouldApply);
+        await onDelete(
+          highlightId,
+          persistedBlockId,
+          clientMutationId,
+          shouldApply,
+        );
         if (shouldApply()) {
           persistedBlockIdRef.current = null;
         }
       }
     },
-    [highlightId, onDelete, onSave, resourceKey]
+    [highlightId, onDelete, onSave, resourceKey],
   );
 
   const session = useNoteEditorSession({
@@ -179,7 +187,7 @@ export default function HighlightNoteEditor({
       onLocalChange?.();
       scheduleSessionSave(nextDoc);
     },
-    [onLocalChange, scheduleSessionSave]
+    [onLocalChange, scheduleSessionSave],
   );
 
   const discardRecoveredDraft = useCallback(() => {
@@ -193,25 +201,30 @@ export default function HighlightNoteEditor({
       if (!blockId) return;
       onOpenLink(`/notes/${blockId}`, { newPane: openInNewPane });
     },
-    [onOpenLink]
+    [onOpenLink],
   );
 
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
-      if (!isObjectType(objectType)) return;
+      const ref = `${objectType}:${objectId}`;
+      if (!parseResourceRef(ref)) return;
       let href: string | null = null;
       try {
-        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-        href = resolved?.route ?? null;
+        const [resolved] = await resolveResourceLocators([
+          { kind: "resource_ref", ref },
+        ]);
+        href = resolved?.resourceItem.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
-        feedback.show(toFeedback(error, { fallback: "Linked object could not be opened." }));
+        feedback.show(
+          toFeedback(error, { fallback: "Linked object could not be opened." }),
+        );
         return;
       }
       if (!href) return;
       onOpenLink(href, { newPane: openInNewPane });
     },
-    [feedback, onOpenLink]
+    [feedback, onOpenLink],
   );
 
   return (
@@ -228,9 +241,12 @@ export default function HighlightNoteEditor({
         onBlurFlush={flushSession}
         onOpenBlock={openBlock}
         onOpenObject={openObject}
+        onFeedback={feedback.show}
         onError={(error) => {
           if (handleUnauthenticatedApiError(error)) return;
-          feedback.show(toFeedback(error, { fallback: "Attachment could not be added." }));
+          feedback.show(
+            toFeedback(error, { fallback: "Attachment could not be added." }),
+          );
         }}
       />
       <NoteDraftRecovery

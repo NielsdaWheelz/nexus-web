@@ -11,6 +11,8 @@
 //    `ContributorHandle` (D-45) — the api-layer decode brands them at ingress.
 
 import type { ContributorHandle } from "@/lib/contributors/handle";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
+import type { Presence } from "@/lib/api/presence";
 
 // ---------------------------------------------------------------------------
 // Embedded snake credit (narrowed, D-33)
@@ -69,7 +71,7 @@ export interface ContributorWorkItem {
   title: string;
   href: string;
   contentKind: string;
-  date: string | null;
+  date: Presence<PublicationDate>;
   roleFacts: ContributorRoleFact[];
 }
 

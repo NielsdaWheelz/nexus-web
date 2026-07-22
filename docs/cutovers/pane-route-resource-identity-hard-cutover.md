@@ -207,7 +207,7 @@ route key.
 - `apps/web/src/lib/panes/paneIdentity.ts` mixes route-instance identity and
   resource-surface identity into one `resourceKey`.
 - `WorkspaceHost` uses that one key for remounts, stale publication guards,
-  title publications, layout publications, fixed chrome, secondary panes, and
+  pane-label publications, layout publications, fixed chrome, secondary panes, and
   pending secondary-surface targeting.
 - `paneServerLoaders.ts` prefetches author panes by `author:<handle>`, which is a
   fetch-cache alias, not canonical graph identity.

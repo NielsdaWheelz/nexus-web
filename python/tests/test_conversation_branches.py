@@ -12,7 +12,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services.conversation_branches import load_leaf_message_path, load_message_path
-from tests.factories import create_test_conversation, create_test_message, create_test_model
+from tests.factories import create_test_conversation, create_test_message
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -307,7 +307,6 @@ def test_delete_branch_rejects_current_path_and_active_subtree_run(
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
     with direct_db.session() as session:
-        model_id = create_test_model(session)
         conversation_id = create_test_conversation(session, user_id)
         root_user_id = create_test_message(session, conversation_id, 1, "user", "Root")
         root_assistant_id = create_test_message(
@@ -349,7 +348,6 @@ def test_delete_branch_rejects_current_path_and_active_subtree_run(
             "assistant",
             "",
             status="pending",
-            model_id=model_id,
             parent_message_id=running_user_id,
         )
         session.add_all(
@@ -380,9 +378,6 @@ def test_delete_branch_rejects_current_path_and_active_subtree_run(
                     idempotency_key="active-subtree-run",
                     payload_hash="active-subtree-run",
                     status="running",
-                    model_id=model_id,
-                    reasoning="none",
-                    key_mode="auto",
                 ),
             ]
         )

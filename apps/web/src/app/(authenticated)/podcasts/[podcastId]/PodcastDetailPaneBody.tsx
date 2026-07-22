@@ -14,14 +14,18 @@ import {
   usePaneRuntime,
   usePaneRouter,
   usePaneSearchParams,
-  useSetPaneTitle,
+  useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { assumeMediaId, type Placement } from "@/lib/lectern/client";
+import { assumeMediaId, type Placement } from "@/lib/lectern/contract";
 import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
@@ -29,6 +33,10 @@ import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import {
+  createLibrary,
+  type LibraryDestinationSelection,
+} from "@/lib/libraries/client";
 import PaneSection from "@/components/ui/PaneSection";
 import SectionOpener from "@/components/ui/SectionOpener";
 import {
@@ -38,7 +46,7 @@ import {
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
-import { usePaneChromeOverride } from "@/components/workspace/PaneShell";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
@@ -126,7 +134,10 @@ export default function PodcastDetailPaneBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
-  const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
+  const [creatingDestination, setCreatingDestination] = useState(false);
+  const [selectedDestinations, setSelectedDestinations] = useState<
+    readonly LibraryDestinationSelection[]
+  >([]);
   const [reloadNonce, setReloadNonce] = useState(0);
   const actions = usePodcastSubscriptionActions(setError);
   const refreshSyncBusy = podcastId
@@ -160,10 +171,9 @@ export default function PodcastDetailPaneBody() {
     },
   });
   const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
-  const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
-  useSetPaneTitle(detail?.podcast.title ?? (loading ? null : "Podcast"));
+  useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   // Populate the membership panel's library list for the active podcast. The
   // hook's loadLibraries does the fetch + error reporting; this layer adds the
@@ -332,7 +342,7 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const episodesDrawerRef = useRef<HTMLElement>(null);
-  useDialogOverlay({
+  const episodesOverlay = useDialogOverlay({
     ref: episodesDrawerRef,
     active: isMobileViewport && episodesDrawerOpen,
     onDismiss: () => setEpisodesDrawerOpen(false),
@@ -400,9 +410,9 @@ export default function PodcastDetailPaneBody() {
         website_url: detail.podcast.website_url,
         image_url: detail.podcast.image_url,
         description: detail.podcast.description,
-        library_ids: selectedLibraryIds,
+        library_ids: selectedDestinations.map((destination) => destination.id),
       });
-      setSelectedLibraryIds([]);
+      setSelectedDestinations([]);
       reload();
     } catch (subscribeError) {
       if (handleUnauthenticatedApiError(subscribeError)) return;
@@ -414,7 +424,7 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setSubscribeBusy(false);
     }
-  }, [detail, reload, selectedLibraryIds]);
+  }, [detail, reload, selectedDestinations]);
 
   const addPodcastToLibrary = useCallback(
     (libraryId: string) => {
@@ -792,7 +802,9 @@ export default function PodcastDetailPaneBody() {
       return null;
     }
     const { session } = state;
-    return session.origin.kind === "Lectern" ? session.descriptor.mediaId : null;
+    return session.origin.kind === "Lectern"
+      ? session.descriptor.mediaId
+      : null;
   }, [player.state]);
 
   // Play next: place After the exact Lectern origin item, else at the head
@@ -805,7 +817,10 @@ export default function PodcastDetailPaneBody() {
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
           : { kind: "First" };
-      void lectern.placeItems({ mediaIds: [assumeMediaId(mediaId)], placement });
+      void lectern.placeItems({
+        mediaIds: [assumeMediaId(mediaId)],
+        placement,
+      });
     },
     [lectern, player.state],
   );
@@ -835,25 +850,13 @@ export default function PodcastDetailPaneBody() {
     onUnsubscribe: unsubscribePodcast,
   });
 
-  // Podcast detail is a document-mode pane; the podcast title is the section
-  // opener's display line (the sole <h1>, §7.6) and the explicit episode-count
-  // folio wins over the auto-derived title folio (§7.5).
-  usePaneChromeOverride({
-    actions: isMobileViewport ? (
-      <Button
-        variant="secondary"
-        size="sm"
-        className={styles.paneActionButton}
-        onClick={() => setEpisodesDrawerOpen((open) => !open)}
-        aria-label="Episodes"
-        aria-expanded={episodesDrawerOpen}
-      >
-        Episodes
-      </Button>
-    ) : undefined,
+  usePanePrimaryChrome({
     options: paneOptions,
-    folio: { kind: "count", value: episodes.length, unit: "episode" },
-    folioPending: loading,
+    header: {
+      kind: "section",
+      folio: { kind: "count", value: episodes.length, unit: "episode" },
+      pending: loading,
+    },
   });
 
   const podcastLibraryCount = podcastLibraries.filter(
@@ -861,7 +864,6 @@ export default function PodcastDetailPaneBody() {
   ).length;
   const episodePaneContent = (
     <PodcastEpisodeList
-      basePath={`/podcasts/${podcastId ?? ""}`}
       episodes={episodes}
       loading={loading}
       error={error}
@@ -873,7 +875,6 @@ export default function PodcastDetailPaneBody() {
       setEpisodeSearchInput={setEpisodeSearchInput}
       transcript={transcript}
       transcriptionAllowed={transcriptionAllowed}
-      billingDisabled={billingDisabled}
       busyMediaIds={busyMediaIds}
       markingEpisodeIds={markingEpisodeIds}
       expandedShowNotesMediaIds={expandedShowNotesMediaIds}
@@ -935,15 +936,31 @@ export default function PodcastDetailPaneBody() {
                 {activeSubscription ? null : (
                   <div className={styles.subscriptionActions}>
                     <LibraryDestinationPicker
-                      selectedLibraryIds={selectedLibraryIds}
-                      onChange={setSelectedLibraryIds}
+                      selected={selectedDestinations}
+                      onChange={setSelectedDestinations}
+                      presentation={{ kind: "Inline" }}
                       label="Libraries"
+                      interaction={
+                        creatingDestination
+                          ? { kind: "Creating" }
+                          : subscribeBusy
+                            ? { kind: "Disabled" }
+                            : { kind: "Enabled" }
+                      }
+                      onCreateDestination={async (name) => {
+                        setCreatingDestination(true);
+                        try {
+                          return await createLibrary({ name });
+                        } finally {
+                          setCreatingDestination(false);
+                        }
+                      }}
                     />
                     <Button
                       variant="primary"
                       size="sm"
                       onClick={() => void handleSubscribe()}
-                      disabled={subscribeBusy || !detail}
+                      disabled={subscribeBusy || creatingDestination || !detail}
                     >
                       {subscribeBusy ? "Subscribing..." : "Subscribe"}
                     </Button>
@@ -1004,34 +1021,36 @@ export default function PodcastDetailPaneBody() {
       />
 
       {isMobileViewport && episodesDrawerOpen ? (
-        <div
-          className={styles.episodesBackdrop}
-          data-testid="episodes-backdrop"
-          onClick={() => setEpisodesDrawerOpen(false)}
-        >
-          <aside
-            ref={episodesDrawerRef}
-            className={styles.episodesDrawer}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Episodes"
-            onClick={(event) => event.stopPropagation()}
+        <ModalLayerProvider token={episodesOverlay.layerToken}>
+          <div
+            className={styles.episodesBackdrop}
+            data-testid="episodes-backdrop"
+            {...modalBackdropProjection(episodesOverlay.isTopmost)}
+            onClick={() => setEpisodesDrawerOpen(false)}
           >
-            <header className={styles.episodesDrawerHeader}>
-              <h2>Episodes</h2>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setEpisodesDrawerOpen(false)}
-              >
-                Close
-              </Button>
-            </header>
-            <div className={styles.episodesDrawerBody}>
-              {episodePaneContent}
-            </div>
-          </aside>
-        </div>
+            <aside
+              ref={episodesDrawerRef}
+              className={styles.episodesDrawer}
+              role="dialog"
+              aria-label="Episodes"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className={styles.episodesDrawerHeader}>
+                <h2>Episodes</h2>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setEpisodesDrawerOpen(false)}
+                >
+                  Close
+                </Button>
+              </header>
+              <div className={styles.episodesDrawerBody}>
+                {episodePaneContent}
+              </div>
+            </aside>
+          </div>
+        </ModalLayerProvider>
       ) : null}
     </>
   );

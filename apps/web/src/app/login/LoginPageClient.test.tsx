@@ -120,7 +120,7 @@ describe("LoginPageClient", () => {
     expect(form).toHaveAttribute("method", "post");
     expect(form).toHaveAttribute("action", "/auth/password");
     expect(within(form).getByDisplayValue("create")).toHaveAttribute("name", "mode");
-    expect(within(form).queryByDisplayValue("/libraries")).toBeNull();
+    expect(within(form).queryByDisplayValue("/lectern")).toBeNull();
     expect(screen.getByLabelText(/display name/i)).toHaveAttribute(
       "name",
       "display_name"

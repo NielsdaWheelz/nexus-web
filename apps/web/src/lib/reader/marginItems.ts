@@ -1,43 +1,45 @@
-import { compareStableString } from "@/lib/display/format";
-import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-import type { EvidenceFilterState } from "@/lib/reader/useEvidenceFilters";
-import type { ReaderConnectionRow } from "@/lib/reader/documentMap";
+import { parseRawPdfQuads } from "@/lib/highlights/pdfTypes";
+import {
+  highlightNoteAssociations,
+  semanticKindForEvidenceItem,
+  userStanceAssociations,
+  type ReaderEvidence,
+  type ReaderEvidenceItem,
+  type ReaderEvidencePassageGroup,
+  type ReaderEvidenceSemanticKind,
+} from "@/lib/reader/documentMap";
+import {
+  evidenceItemPassesFilters,
+  type EvidenceFilterState,
+} from "@/lib/reader/useEvidenceFilters";
 
-// ~24 items at minimum row height fill a 1080p gutter; a client render budget
-// (not a style token or a server value), so it lives here rather than in
-// globals.css / config.py. Overflow past this feeds the "+N more" foot.
+// Applied after viewport projection in MarginRail. This bounds the live gutter
+// without allowing early-document facts to crowd later visible passages out.
 export const MARGIN_MAX_ITEMS = 24 as const;
 
-export type MarginItemKind = "note" | "synapse" | "footnote" | "stance";
+export type MarginItemKind = ReaderEvidenceSemanticKind | "stance";
 
 export interface MarginItem {
   id: string;
+  itemId: string;
   kind: MarginItemKind;
-  orderKey: string;
-  /** Projected to its anchor by useAnchoredReaderProjection (borrowed row shape). */
   anchor: AnchoredReaderRow;
-  /** note: the linked note's first-line body. */
-  noteText?: string;
-  /** synapse: the machine-hand rationale (rendered via MachineText inline). */
+  label: string;
   excerpt?: string;
-  /** footnote: the target work's title · section. */
-  targetTitle?: string;
-  /** footnote: deep link to the other work, when jumpable. */
-  targetHref?: string | null;
-  /** stance: the position glyph. */
-  stance?: "supports" | "contradicts";
-  /** synapse (dismiss) / stance (toggle-off) edge id. */
   edgeId?: string;
+  stance?: "supports" | "contradicts";
 }
 
-// ---------------------------------------------------------------------------
-// The pure overlap/overflow solver — the geometry core lifted out of
-// AnchoredSidecarSurface.alignRows (F3). Each caller computes its own baseline +
-// desiredTop (from its own container/scroll geometry), pre-sorts by its order-key
-// tiebreak, and delegates the push-below-previous-bottom + overflow-count here.
-// The sort by desiredTop is stable, so equal tops keep the caller's order.
-// ---------------------------------------------------------------------------
+export function capProjectedMarginRows<T>(rows: readonly T[]): {
+  visible: T[];
+  hidden: number;
+} {
+  return {
+    visible: rows.slice(0, MARGIN_MAX_ITEMS),
+    hidden: Math.max(0, rows.length - MARGIN_MAX_ITEMS),
+  };
+}
 
 export function stackAnchoredRows(
   positioned: { id: string; desiredTop: number }[],
@@ -49,7 +51,9 @@ export function stackAnchoredRows(
   },
 ): { alignedRows: { id: string; top: number }[]; overflowCount: number } {
   const { rowHeights, rowHeight, gap, containerHeight } = opts;
-  const sorted = [...positioned].sort((left, right) => left.desiredTop - right.desiredTop);
+  const sorted = [...positioned].sort(
+    (left, right) => left.desiredTop - right.desiredTop,
+  );
 
   let previousBottom = -gap;
   const alignedRows: { id: string; top: number }[] = [];
@@ -59,164 +63,114 @@ export function stackAnchoredRows(
     previousBottom = top + (rowHeights.get(row.id) ?? rowHeight);
   }
 
+  const visibleRows: { id: string; top: number }[] = [];
   let overflowCount = 0;
   for (const row of alignedRows) {
-    if (row.top + (rowHeights.get(row.id) ?? rowHeight) > containerHeight) {
+    if (row.top + (rowHeights.get(row.id) ?? rowHeight) <= containerHeight) {
+      visibleRows.push(row);
+    } else {
       overflowCount += 1;
     }
   }
-  return { alignedRows, overflowCount };
+  return { alignedRows: visibleRows, overflowCount };
 }
 
-// ---------------------------------------------------------------------------
-// Connection → anchored row (shared by the margin and the Evidence sidecar so a
-// single owner maps a reader-connection locator to an AnchoredReaderRow).
-// ---------------------------------------------------------------------------
-
-export function anchoredRowFromConnection(row: ReaderConnectionRow): AnchoredReaderRow | null {
-  const locator = row.anchor?.locator;
-  if (!locator) return null;
-  const exact = row.excerpt ?? row.title;
-  if (locator.type === "pdf_page_geometry") {
-    const quads = parseRawPdfQuads(locator.quads);
-    if (quads.length === 0 || typeof locator.page_number !== "number") return null;
-    return {
-      id: row.id,
-      exact,
-      color: "blue",
-      page_number: locator.page_number,
-      quads,
-      stable_order_key: row.anchor?.order_key ?? row.id,
-    };
+export function buildMarginItems(
+  evidence: ReaderEvidence,
+  filters: EvidenceFilterState,
+): MarginItem[] {
+  const items: MarginItem[] = [];
+  for (const group of evidence.passage_groups) {
+    if (group.resolution.kind !== "Resolved") continue;
+    for (const item of group.items) {
+      const anchor = anchoredRowForEvidenceItem(group, item);
+      if (!anchor) continue;
+      if (evidenceItemPassesFilters(item, filters)) {
+        items.push({
+          id: `margin:${item.id}`,
+          itemId: item.id,
+          kind: semanticKindForEvidenceItem(item),
+          anchor,
+          label: item.label,
+          excerpt: marginExcerpt(item),
+          edgeId: item.kind === "Synapse" ? item.edge_id : undefined,
+        });
+      }
+      if (item.kind === "Highlight" && filters.link) {
+        for (const association of userStanceAssociations(item)) {
+          items.push({
+            id: `margin:stance:${association.edge_id}`,
+            itemId: item.id,
+            kind: "stance",
+            anchor: { ...anchor, id: `stance:${association.edge_id}` },
+            label: association.role === "supports" ? "Conceded" : "Doubted",
+            edgeId: association.edge_id,
+            stance: association.role,
+          });
+        }
+      }
+    }
   }
+  return items;
+}
+
+export function anchoredRowForEvidenceItem(
+  group: ReaderEvidencePassageGroup,
+  item: ReaderEvidenceItem,
+): AnchoredReaderRow | null {
+  if (group.resolution.kind !== "Resolved") return null;
+  const locator = group.resolution.anchor.locator;
+  const base = {
+    id: item.id,
+    exact: item.kind === "Highlight" ? item.quote : item.label,
+    color: item.kind === "Highlight" ? item.color : ("blue" as const),
+    stable_order_key: group.resolution.order_key,
+  };
   if (
-    (locator.type === "web_text_offsets" || locator.type === "epub_fragment_offsets") &&
-    typeof locator.fragment_id === "string" &&
-    typeof locator.start_offset === "number" &&
-    typeof locator.end_offset === "number"
+    locator.type === "web_text_offsets" ||
+    locator.type === "epub_fragment_offsets"
   ) {
     return {
-      id: row.id,
-      exact,
-      color: "blue",
+      ...base,
       anchor: {
         fragment_id: locator.fragment_id,
         start_offset: locator.start_offset,
         end_offset: locator.end_offset,
       },
-      stable_order_key: row.anchor?.order_key ?? row.id,
+    };
+  }
+  if (locator.type === "pdf_page_geometry") {
+    if (typeof locator.page_number !== "number") return null;
+    // A fact resolved through a passage_anchor is legitimately page-only: the
+    // passage-anchor resolver recomputes quote identity, never geometry, so its
+    // locator carries no quads until a fresh selection supplies them. Page-only
+    // projection beats dropping the row from the margin/Evidence entirely.
+    const quads = parseRawPdfQuads(locator.quads);
+    return {
+      ...base,
+      page_number: locator.page_number,
+      quads,
     };
   }
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// MarginItem assembly (client-side, no new fetch — §4.8).
-// ---------------------------------------------------------------------------
-
-export interface MarginSources {
-  /** Highlights already held for the Evidence sidecar (anchored reader rows). */
-  highlights: AnchoredReaderRow[];
-  /** Reader-connection rows already held for the Evidence sidecar. */
-  connectionRows: ReaderConnectionRow[];
-}
-
-function classifyConnection(row: ReaderConnectionRow): MarginItemKind | null {
-  // Single if/else-if chain (F4), stance → footnote → synapse. A stance edge is
-  // also a user_link row, so the stance-first ordering + the kind==="context"
-  // guard on footnote keep one edge from emitting two items.
-  const kind = row.connection.kind;
-  const origin = row.connection.origin;
-  if ((kind === "supports" || kind === "contradicts") && origin === "user") {
-    return "stance";
+function marginExcerpt(item: ReaderEvidenceItem): string | undefined {
+  if (item.kind === "Highlight") {
+    const note = highlightNoteAssociations(item).find(
+      (association) => association.object.excerpt.kind === "Present",
+    );
+    return note?.object.excerpt.kind === "Present"
+      ? note.object.excerpt.value
+      : item.quote;
   }
-  if (row.source_category === "user_link" && kind === "context") {
-    return "footnote";
+  if (item.kind === "SourceReference") {
+    const body = item.targets.find(
+      (target) => target.body.kind === "Present",
+    )?.body;
+    if (body?.kind === "Present") return body.value;
   }
-  if (row.source_category === "synapse") {
-    return "synapse";
-  }
-  return null;
-}
-
-/**
- * Whether a MarginItem kind is currently visible under the shared filter. D-12:
- * `note` maps under Highlights; `footnote`/`stance`/`synapse` all map under
- * Connections — the same `EvidenceRowKind` mapping the sidecar uses, so a toggle
- * hides the kind in both presenters identically (AC-9).
- */
-export function isMarginKindVisible(kind: MarginItemKind, filters: EvidenceFilterState): boolean {
-  if (kind === "note") return filters.highlight;
-  return filters.connection;
-}
-
-export interface MarginItemsResult {
-  items: MarginItem[];
-  /** Items dropped by the MARGIN_MAX_ITEMS cap — feeds the "+N more" foot (§4.4). */
-  hiddenByCap: number;
-}
-
-export function buildMarginItems(
-  sources: MarginSources,
-  filters: EvidenceFilterState,
-): MarginItemsResult {
-  const items: MarginItem[] = [];
-
-  if (filters.highlight) {
-    for (const highlight of sources.highlights) {
-      const note = highlight.linked_note_blocks?.find((block) => block.body_text.trim().length > 0);
-      if (!note) continue;
-      items.push({
-        id: `note:${highlight.id}`,
-        kind: "note",
-        orderKey: highlight.stable_order_key ?? highlight.id,
-        anchor: highlight,
-        noteText: note.body_text,
-      });
-    }
-  }
-
-  if (filters.connection) {
-    for (const row of sources.connectionRows) {
-      const kind = classifyConnection(row);
-      if (kind === null) continue;
-      const anchor = anchoredRowFromConnection(row);
-      if (!anchor) continue;
-      const orderKey = row.anchor?.order_key ?? row.id;
-      if (kind === "stance") {
-        items.push({
-          id: `stance:${row.connection.edge_id}`,
-          kind,
-          orderKey,
-          anchor,
-          stance: row.connection.kind === "supports" ? "supports" : "contradicts",
-          edgeId: row.connection.edge_id,
-        });
-      } else if (kind === "footnote") {
-        items.push({
-          id: `footnote:${row.connection.edge_id}`,
-          kind,
-          orderKey,
-          anchor,
-          targetTitle: row.title,
-          targetHref: row.href,
-        });
-      } else {
-        items.push({
-          id: `synapse:${row.connection.edge_id}`,
-          kind,
-          orderKey,
-          anchor,
-          excerpt: row.excerpt ?? row.title,
-          edgeId: row.connection.edge_id,
-        });
-      }
-    }
-  }
-
-  items.sort((left, right) => compareStableString(left.orderKey, right.orderKey));
-  return {
-    items: items.slice(0, MARGIN_MAX_ITEMS),
-    hiddenByCap: Math.max(0, items.length - MARGIN_MAX_ITEMS),
-  };
+  if (item.kind === "Synapse") return item.rationale;
+  if (item.excerpt.kind === "Present") return item.excerpt.value;
+  return undefined;
 }

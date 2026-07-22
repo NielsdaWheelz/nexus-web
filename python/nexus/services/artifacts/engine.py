@@ -16,31 +16,29 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from provider_runtime import ModelRuntime
-from provider_runtime.errors import ModelCallError
+from provider_runtime import Succeeded
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
+from nexus.config import get_settings
 from nexus.db.models import ArtifactRevision
 from nexus.db.retries import retry_serializable
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
     InvalidRequestError,
-    api_error_code_for_model_call,
-    exception_error_detail,
 )
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
 from nexus.schemas.artifact import ArtifactDoneEventPayload
 from nexus.services import run_kit
-from nexus.services.api_key_resolver import ResolvedKey, resolve_api_key, update_user_key_status
 from nexus.services.artifacts.base import ArtifactReducer
 from nexus.services.artifacts.reducers import REDUCERS
-from nexus.services.chat_run_usage import usage_tokens
-from nexus.services.llm_ledger import LedgeredLLM, LlmCallOwner
-from nexus.services.prompt_budget import estimate_tokens
+from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.citations import (
     replace_citations_for_output,
@@ -49,8 +47,9 @@ from nexus.services.resource_graph.citations import (
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.structured_synthesis import (
     StructuredSynthesisError,
-    SynthesisRequest,
-    run_structured_synthesis,
+    build_synthesis_intent,
+    decode_structured_synthesis,
+    outcome_failure_facts,
 )
 
 logger = get_logger(__name__)
@@ -215,12 +214,12 @@ def _create_revision_core(
 # ---------- run (the shared reduce loop) ------------------------------------
 
 
-async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> None:
+async def run_revision(db: Session, *, revision_id: UUID, runtime: ExecutionRuntime) -> None:
     """Reduce one ``building`` revision to prose + grounded citations, then promote.
 
     Replay-safe: a no-op when the revision is missing or not ``building``. The
-    reduce is attributed to the artifact owner (BYOK-first) inside the
-    rate-limit/budget envelope; each attempt is one ``llm_calls`` row (owner
+    reduce is attributed to the artifact owner on the platform credential inside
+    the rate-limit envelope; each attempt is one ``llm_calls`` row (owner
     ``artifact_revision`` — the revision IS the run).
     """
     revision = revision_orm_or_none(db, revision_id=revision_id)
@@ -246,22 +245,6 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
         else None
     )
 
-    try:
-        resolved_key = resolve_api_key(db, owner_id, reducer.provider, "auto")
-    except ApiError as exc:
-        _fail_revision(
-            db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
-        )
-        return
-    except ModelCallError as exc:
-        _fail_revision(
-            db,
-            revision_id=revision_id,
-            error_code=api_error_code_for_model_call(exc.error_code).value,
-            error_detail=exception_error_detail(exc),
-        )
-        return
-
     rate_limiter = get_rate_limiter()
     try:
         rate_limiter.acquire_inflight_slot(owner_id)
@@ -270,80 +253,67 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
             db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
         )
         return
-    budget_reserved = False
-    estimated_tokens = 0
     try:
-        inputs = await reducer.collect(db, subject_ref, collect_viewer, llm)
+        inputs = await reducer.collect(db, subject_ref, collect_viewer, runtime)
         if reducer.is_empty(inputs):
             code, detail = reducer.empty_error
             _fail_revision(db, revision_id=revision_id, error_code=code, error_detail=detail)
             return
         _emit_progress(db, revision_id=revision_id, message="Synthesizing")
 
-        request = reducer.build_request(inputs, custom_instruction)
-        if resolved_key.mode == "platform":
-            estimated_tokens = (
-                estimate_tokens("\n".join(turn.content for turn in request.messages))
-                + reducer.max_output_tokens
-            )
-            try:
-                rate_limiter.reserve_token_budget(owner_id, revision_id, estimated_tokens)
-                budget_reserved = True
-            except ApiError as exc:
-                _fail_revision(
-                    db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
-                )
-                return
-
+        user_content = reducer.build_user_content(inputs, custom_instruction)
+        profile = operation_profile(reducer.llm_operation)
+        intent = build_synthesis_intent(
+            profile=profile,
+            system_prompt=reducer.system_prompt,
+            user_content=user_content,
+            max_output_tokens=reducer.max_output_tokens,
+            schema=reducer.schema,
+        )
         try:
-            result = await run_structured_synthesis(
-                llm=LedgeredLLM(
-                    db=db,
-                    owner=LlmCallOwner(kind="artifact_revision", id=revision_id),
-                    router=llm,
-                    llm_operation=reducer.llm_operation,
-                    key_mode_requested="auto",
-                    key_mode_used=resolved_key.mode,
+            call = await execute_generation(
+                GenerationRequest(
+                    owner=LlmCallOwner(kind="artifact_revision", id=revision_id, user_id=owner_id),
+                    operation=reducer.llm_operation,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
                 ),
-                request=SynthesisRequest(
-                    provider=reducer.provider,
-                    llm_request=request,
-                    api_key=resolved_key.api_key,
-                    timeout_s=reducer.timeout_s,
-                ),
-                schema=reducer.schema,
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                settings=get_settings(),
             )
-        except ModelCallError as exc:
-            error_code = api_error_code_for_model_call(exc.error_code).value
-            logger.warning(
-                "artifact.reduce_failure", revision_id=str(revision_id), error_code=error_code
-            )
-            if resolved_key.mode == "byok" and error_code == ApiErrorCode.E_LLM_INVALID_KEY.value:
-                update_user_key_status(db, resolved_key.user_key_id, "invalid")
+        except ApiError as exc:
             _fail_revision(
-                db,
-                revision_id=revision_id,
-                error_code=error_code,
-                error_detail=exception_error_detail(exc),
+                db, revision_id=revision_id, error_code=exc.code.value, error_detail=exc.message
             )
             return
+
+        if not isinstance(call.outcome, Succeeded):
+            code, detail = outcome_failure_facts(call.outcome)
+            logger.warning("artifact.reduce_failure", revision_id=str(revision_id), error_code=code)
+            _fail_revision(db, revision_id=revision_id, error_code=code, error_detail=detail)
+            return
+
+        try:
+            value = decode_structured_synthesis(call.outcome, schema=reducer.schema)
         except StructuredSynthesisError as exc:
             logger.warning(
                 "artifact.reduce_failure",
                 revision_id=str(revision_id),
-                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_code="invalid_structured_output",
             )
             _fail_revision(
                 db,
                 revision_id=revision_id,
-                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
-                error_detail=exception_error_detail(exc),
+                error_code="invalid_structured_output",
+                error_detail=str(exc),
             )
             return
 
         # Commit the per-attempt llm_calls rows now so they survive the promote.
         db.commit()
-        content_md, citations = reducer.materialize(db, owner_id, subject_ref, inputs, result.value)
+        content_md, citations = reducer.materialize(db, owner_id, subject_ref, inputs, value)
         try:
             validate_generated_markdown_citations(content_md, citations)
         except InvalidRequestError as exc:
@@ -355,7 +325,7 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
             _fail_revision(
                 db,
                 revision_id=revision_id,
-                error_code=ApiErrorCode.E_LLM_BAD_REQUEST.value,
+                error_code="citation_parity_failure",
                 error_detail=exc.message,
             )
             return
@@ -368,17 +338,8 @@ async def run_revision(db: Session, *, revision_id: UUID, llm: ModelRuntime) -> 
             content_md=content_md,
             covered_targets=covered,
             citations=citations,
-            resolved_key=resolved_key,
         )
-        if budget_reserved:
-            actual_tokens = usage_tokens(result.usage)["total_tokens"]
-            rate_limiter.commit_token_budget(
-                owner_id, revision_id, actual_tokens or estimated_tokens
-            )
-            budget_reserved = False
     finally:
-        if budget_reserved:
-            rate_limiter.release_token_budget(owner_id, revision_id)
         rate_limiter.release_inflight_slot(owner_id)
 
 
@@ -391,7 +352,6 @@ def _promote_built_revision(
     content_md: str,
     covered_targets: list[dict[str, object]],
     citations: list,
-    resolved_key: ResolvedKey,
 ) -> None:
     """Atomically mark the revision ready (run_kit) and promote it to current.
 
@@ -441,8 +401,6 @@ def _promote_built_revision(
             ),
             {"revision_id": revision_id, "artifact_id": artifact_id},
         )
-        if resolved_key.mode == "byok":
-            update_user_key_status(db, resolved_key.user_key_id, "valid")
         db.commit()
 
     retry_serializable(db, "_promote_built_revision", op)

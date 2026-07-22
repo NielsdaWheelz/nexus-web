@@ -6,6 +6,11 @@ import { cx } from "@/lib/ui/cx";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss, type DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { useKeyboardInset } from "@/lib/ui/useKeyboardInset";
+import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
 import styles from "./MobileSheet.module.css";
 
 const DRAG_DISMISS_PX = 96;
@@ -38,13 +43,16 @@ interface MobileSheetProps {
 
   /** Forwarded to useDialogOverlay. */
   initialFocus?: (container: HTMLElement) => HTMLElement | null;
-  returnFocusFallback?: () => HTMLElement | null;
+  returnFocusTo?: ReturnFocusTarget;
+  returnFocusFallback?: ReturnFocusTarget;
   /** Read at close time; true ⇒ skip return-focus (destination already claimed it). */
   skipReturnFocus?: () => boolean;
   focusKey?: unknown;
 
   /** Skin on the panel (e.g. palette glass). Geometry stays in MobileSheet.module.css. */
   panelClassName?: string;
+  /** Stable controlled-region ID carried by the active sheet panel. */
+  panelId?: string;
   /** Stable test ids for backdrop/panel (existing tests keep their selectors). */
   backdropTestId?: string;
   panelTestId?: string;
@@ -72,10 +80,12 @@ export default function MobileSheet({
   grabber = true,
   historyDismiss = true,
   initialFocus,
+  returnFocusTo,
   returnFocusFallback,
   skipReturnFocus,
   focusKey,
   panelClassName,
+  panelId,
   backdropTestId,
   panelTestId,
 }: MobileSheetProps) {
@@ -91,16 +101,20 @@ export default function MobileSheet({
     return decision;
   }, [onDismissRequest, onDismiss]);
 
-  useDialogOverlay({
+  const overlay = useDialogOverlay({
     ref: panelRef,
     active,
     onDismiss: onEscape ?? requestDismiss,
     initialFocus,
+    returnFocusTo,
     returnFocusFallback,
     skipReturnFocus,
     focusKey,
+    layerScope: panelId,
   });
-  useHistoryDismiss(active && historyDismiss, requestDismiss);
+  useHistoryDismiss(active && historyDismiss, requestDismiss, {
+    isTopmost: overlay.isTopmost,
+  });
 
   function onPointerDown(event: React.PointerEvent) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -122,32 +136,35 @@ export default function MobileSheet({
 
   if (!active) return null;
   return createPortal(
-    <div
-      className={styles.backdrop}
-      data-layer={layer}
-      data-scrim={scrim}
-      data-testid={backdropTestId}
-      role="presentation"
-      onClick={requestDismiss}
-    >
-      <section
-        ref={panelRef}
-        className={cx(styles.panel, panelClassName)}
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel}
-        tabIndex={-1}
-        data-testid={panelTestId}
-        style={{ "--keyboard-inset": `${inset}px` } as CSSProperties}
-        onClick={(event) => event.stopPropagation()}
-        {...(grabber
-          ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp }
-          : null)}
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.backdrop}
+        data-layer={layer}
+        data-scrim={scrim}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        data-testid={backdropTestId}
+        role="presentation"
+        onClick={requestDismiss}
       >
-        {grabber ? <div className={styles.grabber} data-grabber aria-hidden="true" /> : null}
-        <div className={styles.content}>{children}</div>
-      </section>
-    </div>,
+        <section
+          id={panelId}
+          ref={panelRef}
+          className={cx(styles.panel, panelClassName)}
+          role="dialog"
+          aria-label={ariaLabel}
+          tabIndex={-1}
+          data-testid={panelTestId}
+          style={{ "--keyboard-inset": `${inset}px` } as CSSProperties}
+          onClick={(event) => event.stopPropagation()}
+          {...(grabber
+            ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp }
+            : null)}
+        >
+          {grabber ? <div className={styles.grabber} data-grabber aria-hidden="true" /> : null}
+          <div className={styles.content}>{children}</div>
+        </section>
+      </div>
+    </ModalLayerProvider>,
     document.body,
   );
 }

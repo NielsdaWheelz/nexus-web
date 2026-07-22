@@ -75,29 +75,30 @@ const hrefs = (state: WorkspaceState) =>
   getWorkspacePrimaryPanes(state).map((pane) => pane.href);
 
 const librariesPane = primary("pane-1", "/libraries");
+const lecternPane = primary("pane-lectern", "/lectern");
 const mediaPane = primary("pane-2", "/media/123", { primaryWidthPx: 720 });
 
 describe("isNonTrivialSession", () => {
-  it("treats a single /libraries pane as trivial", () => {
-    expect(isNonTrivialSession(workspace({ primaryPanes: [librariesPane] }))).toBe(false);
+  it("treats a single /lectern pane as trivial", () => {
+    expect(isNonTrivialSession(workspace({ primaryPanes: [lecternPane] }))).toBe(false);
   });
 
-  it("treats a single non-/libraries pane as non-trivial", () => {
+  it("treats a single non-/lectern pane as non-trivial", () => {
     expect(isNonTrivialSession(workspace({ primaryPanes: [mediaPane] }))).toBe(true);
   });
 
   it("treats two or more panes as non-trivial", () => {
     expect(
-      isNonTrivialSession(workspace({ primaryPanes: [librariesPane, { ...mediaPane }] })),
+      isNonTrivialSession(workspace({ primaryPanes: [lecternPane, { ...mediaPane }] })),
     ).toBe(true);
   });
 
-  it("treats a single /libraries pane with history as non-trivial", () => {
+  it("treats a single /lectern pane with history as non-trivial", () => {
     expect(
       isNonTrivialSession(
         workspace({
           primaryPanes: [
-            primary("pane-1", "/libraries", {
+            primary("pane-1", "/lectern", {
               history: { back: ["/media/123"], forward: [] },
             }),
           ],
@@ -106,12 +107,12 @@ describe("isNonTrivialSession", () => {
     ).toBe(true);
   });
 
-  it("treats a single /libraries pane with attached secondary state as non-trivial", () => {
+  it("treats a single /lectern pane with attached secondary state as non-trivial", () => {
     expect(
       isNonTrivialSession(
         workspace({
           primaryPanes: [
-            primary("pane-1", "/libraries", { attachedSecondaryPaneId: "secondary-1" }),
+            primary("pane-1", "/lectern", { attachedSecondaryPaneId: "secondary-1" }),
           ],
           secondaryPanesById: { "secondary-1": secondary() },
         }),
@@ -199,12 +200,12 @@ describe("prepareRestoredState", () => {
   it("returns a default workspace for null", () => {
     const result = prepareRestoredState(null, metrics, false);
     expect(getWorkspacePrimaryPanes(result)).toHaveLength(1);
-    expect(getWorkspacePrimaryPanes(result)[0]?.href).toBe("/libraries");
+    expect(getWorkspacePrimaryPanes(result)[0]?.href).toBe("/lectern");
   });
 
   it("returns a default workspace for garbage state", () => {
     const garbage = prepareRestoredState({ nonsense: true }, metrics, false);
-    expect(getWorkspacePrimaryPanes(garbage)[0]?.href).toBe("/libraries");
+    expect(getWorkspacePrimaryPanes(garbage)[0]?.href).toBe("/lectern");
   });
 
   it("filters Local Vault panes for the Android shell", () => {
@@ -260,7 +261,7 @@ describe("selectRestoredState", () => {
   });
 
   it("falls back to the most-recent-elsewhere session when own is trivial", () => {
-    const trivialOwn = workspace({ primaryPanes: [librariesPane] });
+    const trivialOwn = workspace({ primaryPanes: [lecternPane] });
     expect(hrefs(selectRestoredState(trivialOwn, elsewhereRaw, metrics, false)!)).toEqual([
       "/notes",
     ]);
@@ -273,7 +274,7 @@ describe("selectRestoredState", () => {
   });
 
   it("returns null when neither session is non-trivial", () => {
-    const trivialOwn = workspace({ primaryPanes: [librariesPane] });
+    const trivialOwn = workspace({ primaryPanes: [lecternPane] });
     expect(selectRestoredState(trivialOwn, null, metrics, false)).toBeNull();
     expect(selectRestoredState(null, null, metrics, false)).toBeNull();
   });
@@ -298,40 +299,47 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     ],
   });
 
-  it("keeps a neutral /libraries open as pure saved-session restore", () => {
+  it("appends and activates the Lectern home intent over a saved session", () => {
     const deepLink = workspace({
-      activePrimaryPaneId: "pane-url-libraries",
-      primaryPanes: [primary("pane-url-libraries", "/libraries")],
+      activePrimaryPaneId: "pane-url-lectern",
+      primaryPanes: [primary("pane-url-lectern", "/lectern")],
     });
-    expect(mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics)).toBe(restored);
+
+    const merged = mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics);
+
+    expect(hrefs(merged)).toEqual(["/libraries", "/notes", "/lectern"]);
+    expect(merged.activePrimaryPaneId).toBe("pane-url-lectern");
   });
 
-  it("rekeys a neutral single-pane same-resource restore to preserve first-paint hydration", () => {
+  it("reuses and activates an existing Lectern pane for the home intent", () => {
     const singlePaneRestore = workspace({
-      activePrimaryPaneId: "pane-saved-libraries",
+      activePrimaryPaneId: "pane-saved-notes",
       primaryPanes: [
-        primary("pane-saved-libraries", "/libraries", {
+        primary("pane-saved-notes", "/notes"),
+        primary("pane-saved-lectern", "/lectern", {
           primaryWidthPx: 640,
+          visibility: "minimized",
           history: { back: ["/notes"], forward: [] },
         }),
       ],
     });
     const deepLink = workspace({
-      activePrimaryPaneId: "pane-url-libraries",
-      primaryPanes: [primary("pane-url-libraries", "/libraries")],
+      activePrimaryPaneId: "pane-url-lectern",
+      primaryPanes: [primary("pane-url-lectern", "/lectern")],
     });
 
     const merged = mergeRestoredWorkspaceWithDeepLink(singlePaneRestore, deepLink, metrics);
 
-    expect(merged.activePrimaryPaneId).toBe("pane-url-libraries");
-    expect(getWorkspacePrimaryPanes(merged)).toEqual([
-      expect.objectContaining({
-        id: "pane-url-libraries",
-        href: "/libraries",
-        primaryWidthPx: 640,
-        history: { back: ["/notes"], forward: [] },
-      }),
-    ]);
+    expect(merged.activePrimaryPaneId).toBe("pane-saved-lectern");
+    expect(getWorkspacePrimaryPanes(merged)).toHaveLength(2);
+    expect(
+      getWorkspacePrimaryPanes(merged).find(({ id }) => id === "pane-saved-lectern"),
+    ).toMatchObject({
+      href: "/lectern",
+      visibility: "visible",
+      primaryWidthPx: 640,
+      history: { back: ["/notes"], forward: [] },
+    });
   });
 
   it("adds an explicit deep link as the active pane instead of letting restore override it", () => {

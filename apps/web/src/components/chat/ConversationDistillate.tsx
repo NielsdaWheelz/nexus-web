@@ -131,7 +131,7 @@ export default function ConversationDistillate({
     ) => {
       if (target) dispatchReaderSourceActivation(target);
       activateResource(activation, {
-        label: target?.label,
+        labelHint: target?.label,
         navigate,
         newPane: event?.shiftKey === true,
       });

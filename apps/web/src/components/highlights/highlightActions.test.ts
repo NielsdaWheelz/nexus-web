@@ -84,7 +84,7 @@ describe("buildHighlightActions", () => {
       handlers: noopHandlers,
     }).find((option) => option.id === "edit-bounds");
     expect(editing?.label).toBe("Cancel edit bounds");
-    expect(editing?.pressed).toBe(true);
+    expect(editing?.state).toEqual({ kind: "toggle", pressed: true });
   });
 
   it("offers color plus quotes for a fresh selection, never edit/delete", () => {

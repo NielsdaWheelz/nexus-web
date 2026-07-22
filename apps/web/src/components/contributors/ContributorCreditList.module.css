@@ -3,7 +3,7 @@
   max-width: 100%;
   color: var(--ink-muted);
   font-size: var(--text-sm);
-  line-height: var(--leading-snug);
+  line-height: var(--leading-normal);
 }
 
 .separator {

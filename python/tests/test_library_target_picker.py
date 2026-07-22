@@ -43,7 +43,7 @@ class TestLibraryTargetPickerOptions:
             owned_out_library_id = create_test_library(session, viewer_id, "Owned Out")
             shared_member_library_id = create_test_library(session, other_owner_id, "Shared Member")
             add_library_member(session, shared_member_library_id, viewer_id, role="member")
-            # The generic filing endpoint below only re-files media already
+            # The canonical bulk filing endpoint below only re-files media already
             # reachable through a membership (readable-or-restorable, spec
             # S4.3 rule 1) — establish a direct default entry first. Default
             # is excluded from `list_item_libraries`'s target rows, so this
@@ -61,11 +61,11 @@ class TestLibraryTargetPickerOptions:
         direct_db.register_cleanup("memberships", "library_id", shared_member_library_id)
 
         attach_response = auth_client.post(
-            f"/libraries/{owned_in_library_id}/media",
-            json={"media_id": str(media_id)},
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(owned_in_library_id)]},
             headers=auth_headers(viewer_id),
         )
-        assert attach_response.status_code == 201, (
+        assert attach_response.status_code == 204, (
             "media setup attach failed unexpectedly: "
             f"{attach_response.status_code} {attach_response.text}"
         )
@@ -214,7 +214,7 @@ class TestLibraryTargetPickerOptions:
             json={"podcast_id": str(podcast_id)},
             headers=auth_headers(viewer_id),
         )
-        assert add_response.status_code == 201, (
+        assert add_response.status_code == 204, (
             "podcast setup library attach failed unexpectedly: "
             f"{add_response.status_code} {add_response.text}"
         )

@@ -9,17 +9,24 @@ the table under an explicit allowlist (see the cutover spec).
 
 import base64
 import json
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
-from typing import Any, Literal, assert_never
+from datetime import datetime
+from typing import Any, Literal, assert_never, cast
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import can_read_media, can_restore_media, visible_media_ids_cte_sql
+from nexus.auth.permissions import (
+    can_read_media,
+    can_restore_media,
+    visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
+)
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
@@ -30,15 +37,17 @@ from nexus.schemas.library import (
     LibraryPageInfo,
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
+    ReadingTimeEstimateOut,
 )
-from nexus.schemas.media import MediaLibrariesResponse
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
+from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_governance as governance
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
-    visible_credit_rows_sql,
 )
+from nexus.services.media_document_metrics import load_media_word_counts
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
 # id DESC). The single definition of the entry total order.
@@ -46,235 +55,14 @@ _ENTRY_ORDER = "position ASC, created_at DESC, id DESC"
 _ENTRY_COLUMNS = "id, library_id, media_id, podcast_id, created_at, position"
 _TARGET_COLUMN: dict[LibraryEntryKind, str] = {"media": "media_id", "podcast": "podcast_id"}
 
-# The orderings GET /libraries/{id}/entries supports (spec S5). "position" is the
-# default and keeps EXACTLY `_ENTRY_ORDER`; "resonance" applies the deterministic
-# score below.
-LibraryEntrySort = Literal["position", "resonance"]
+_READING_WORDS_PER_MINUTE = 240
+_READING_MINUTES_FINE_LIMIT = 10
+_READING_MINUTES_COARSE_LIMIT = 60
 
-# Strict, discriminated opaque-cursor kinds (spec S4.2). Each binds viewer_id +
-# library_id + sort; a `k`, `viewer_id`, `library_id`, or `sort` mismatch —
-# including every pre-cutover `library_entries:snapshot` cursor — is
-# E_INVALID_CURSOR. Stateless keyset, never a stored snapshot.
+# Strict, discriminated opaque cursor kinds for the two entry orderings this
+# owner retains. Resonance owns its separate cursor contract.
 _DEFAULT_CURSOR_KIND = "library_entries:default:v1"
 _POSITION_CURSOR_KIND = "library_entries:position:v1"
-_RESONANCE_CURSOR_KIND = "library_entries:resonance:v1"
-
-# Resonance score weights (spec S5). The score is a pure SQL/arithmetic
-# combination of precomputed signals: recency-decay over the entry's most recent
-# activity, log1p(connection_count), and shared-author hits, with NO request-time
-# LLM. The similarity term is OMITTED for v1 (it folds in later behind config;
-# adding it now would require a per-entry vector scan, which v1 deliberately avoids
-# until the existing vector-index plan is proven).
-_RESONANCE_RECENCY_WEIGHT = 1.0
-_RESONANCE_CONNECTION_WEIGHT = 0.1
-_RESONANCE_SHARED_AUTHOR_WEIGHT = 0.05
-_RESONANCE_SIMILARITY_WEIGHT = 0.05
-# Recency half-life in days: the decay term is 0.5 ** (age_days / half_life), so an
-# entry last touched `half_life` days ago contributes half a fresh entry's recency.
-_RESONANCE_RECENCY_HALF_LIFE_DAYS = 14.0
-
-# Per-entry most-recent engagement instant, in SQL, for ordering. Mirrors the two
-# authoritative sources `_hydrate_entries`/`services.media` read post-hoc: a direct
-# media entry's reader engagement / listening state (podcast episodes are still
-# `media_id` library entries), and a podcast entry's MAX listening-state recency
-# across its visible episodes. NULL when the target was never engaged.
-# Engagement recency composes the consumption owner's reader-engagement recency
-# and its listening recency; the raw consumption table reads live only in their
-# owner (spec §3 / §8 AC-15).
-_LAST_ENGAGED_AT_SQL = f"""
-    CASE
-        WHEN le.media_id IS NOT NULL THEN NULLIF(
-            GREATEST(
-                COALESCE(
-                    {
-    consumption_service.reader_engagement_recency_subquery_sql(
-        user_param=":viewer_id", media_expr="le.media_id"
-    )
-}, '-infinity'::timestamptz),
-                COALESCE(
-                    {
-    consumption_service.listening_recency_subquery_sql(
-        user_param=":viewer_id", media_expr="le.media_id"
-    )
-}, '-infinity'::timestamptz)
-            ),
-            '-infinity'::timestamptz
-        )
-        WHEN le.podcast_id IS NOT NULL THEN {
-    consumption_service.listening_recency_max_subquery_sql(
-        user_param=":viewer_id", podcast_expr="le.podcast_id"
-    )
-}
-        ELSE NULL
-    END
-"""
-
-# Connection count for the entry's media:<id>/podcast:<id> ref over the AI-free
-# `LIST_CONNECTION_ORIGINS` allowlist (edges where the ref is source OR target).
-_CONNECTION_COUNT_SQL = """
-    (
-        SELECT COUNT(*)
-        FROM resource_edges e
-        WHERE e.user_id = :viewer_id
-          AND e.origin = ANY(:resonance_origins)
-          AND (
-            (e.source_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
-             AND e.source_id = COALESCE(le.media_id, le.podcast_id))
-            OR
-            (e.target_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
-             AND e.target_id = COALESCE(le.media_id, le.podcast_id))
-          )
-    )
-"""
-
-_LAST_CONNECTED_AT_SQL = """
-    (
-        SELECT MAX(e.created_at)
-        FROM resource_edges e
-        WHERE e.user_id = :viewer_id
-          AND e.origin = ANY(:resonance_origins)
-          AND (
-            (e.source_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
-             AND e.source_id = COALESCE(le.media_id, le.podcast_id))
-            OR
-            (e.target_scheme = CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
-             AND e.target_id = COALESCE(le.media_id, le.podcast_id))
-          )
-    )
-"""
-
-_PUBLISHED_AT_SQL = """
-    CASE
-        WHEN le.media_id IS NOT NULL THEN (
-            SELECT CASE
-                WHEN m.published_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
-                    THEN m.published_date::date::timestamptz
-                WHEN m.published_date ~ '^\\d{4}-\\d{2}$'
-                    THEN (m.published_date || '-01')::date::timestamptz
-                WHEN m.published_date ~ '^\\d{4}$'
-                    THEN (m.published_date || '-01-01')::date::timestamptz
-                ELSE NULL
-            END
-            FROM media m
-            WHERE m.id = le.media_id
-        )
-        WHEN le.podcast_id IS NOT NULL THEN (
-            SELECT MAX(pe.published_at)
-            FROM podcast_episodes pe
-            WHERE pe.podcast_id = le.podcast_id
-        )
-        ELSE NULL
-    END
-"""
-
-# Shared-author affinity over the canonical visible-credit relation (spec §4): the
-# resonance score's author term self-joins the visible-credit relation on
-# contributor_id (author role only), so neither this module nor the score reads
-# contributor_credits directly. Binds :viewer_id via the composed relation.
-_SHARED_AUTHOR_HITS_SQL = f"""
-    (
-        SELECT COUNT(DISTINCT mine.contributor_id)
-        FROM ({visible_credit_rows_sql()}) mine
-        JOIN ({visible_credit_rows_sql()}) other
-          ON other.contributor_id = mine.contributor_id
-         AND other.role = 'author'
-        JOIN library_entries peer
-          ON peer.library_id = le.library_id
-         AND peer.id <> le.id
-         AND (
-            (other.media_id IS NOT NULL AND peer.media_id = other.media_id)
-            OR (other.podcast_id IS NOT NULL AND peer.podcast_id = other.podcast_id)
-         )
-        WHERE mine.role = 'author'
-          AND (
-            (le.media_id IS NOT NULL AND mine.media_id = le.media_id)
-            OR (le.podcast_id IS NOT NULL AND mine.podcast_id = le.podcast_id)
-          )
-    )
-"""
-
-_SIMILARITY_SQL = """
-    CASE
-        WHEN le.media_id IS NOT NULL THEN COALESCE((
-            SELECT 1.0 - (ce.embedding_vector <=> seed.vec)
-            FROM (
-                SELECT ce_seed.embedding_vector AS vec,
-                       cis.active_embedding_provider AS provider,
-                       cis.active_embedding_model AS model
-                FROM content_index_states cis
-                JOIN content_chunks cc_seed
-                  ON cc_seed.owner_kind = 'media'
-                 AND cc_seed.owner_id = cis.owner_id
-                JOIN content_embeddings ce_seed
-                  ON ce_seed.chunk_id = cc_seed.id
-                 AND ce_seed.embedding_provider = cis.active_embedding_provider
-                 AND ce_seed.embedding_model = cis.active_embedding_model
-                 AND ce_seed.embedding_dimensions = :embedding_dims
-                 AND ce_seed.embedding_vector IS NOT NULL
-                WHERE cis.owner_kind = 'media'
-                  AND cis.owner_id = le.media_id
-                  AND cis.status = 'ready'
-                  AND cis.active_embedding_provider IS NOT NULL
-                  AND cis.active_embedding_model IS NOT NULL
-                ORDER BY cc_seed.chunk_idx ASC, cc_seed.id ASC
-                LIMIT 1
-            ) seed
-            JOIN content_embeddings ce
-              ON ce.embedding_dimensions = :embedding_dims
-             AND ce.embedding_provider = seed.provider
-             AND ce.embedding_model = seed.model
-             AND ce.embedding_vector IS NOT NULL
-            JOIN content_chunks cc
-              ON cc.id = ce.chunk_id
-             AND cc.owner_kind = 'media'
-            JOIN content_index_states peer_cis
-              ON peer_cis.owner_kind = 'media'
-             AND peer_cis.owner_id = cc.owner_id
-             AND peer_cis.status = 'ready'
-             AND peer_cis.active_embedding_provider = seed.provider
-             AND peer_cis.active_embedding_model = seed.model
-            JOIN library_entries peer
-              ON peer.library_id = le.library_id
-             AND peer.id <> le.id
-             AND peer.media_id = cc.owner_id
-            ORDER BY ce.embedding_vector <=> seed.vec ASC, cc.owner_id ASC, cc.id ASC
-            LIMIT 1
-        ), 0.0)
-        ELSE 0.0
-    END
-"""
-
-_MOST_RECENT_ACTIVITY_SQL = f"""
-    GREATEST(
-        le.created_at,
-        COALESCE({_LAST_ENGAGED_AT_SQL}, le.created_at),
-        COALESCE({_LAST_CONNECTED_AT_SQL}, le.created_at),
-        COALESCE({_PUBLISHED_AT_SQL}, le.created_at)
-    )
-"""
-
-# Deterministic resonance score: weighted recency-decay + log1p(connection_count),
-# highest first, with `id DESC` as the stable tiebreak so identical input yields one
-# fixed order. The caller binds `:resonance_as_of`; cursor pagination reuses the same
-# timestamp across pages so a load-more sequence cannot reshuffle underneath itself.
-_RESONANCE_SCORE_SQL = f"""
-    (
-        {_RESONANCE_RECENCY_WEIGHT} * power(
-            0.5,
-            GREATEST(
-                EXTRACT(EPOCH FROM (:resonance_as_of - {_MOST_RECENT_ACTIVITY_SQL})) / 86400.0,
-                0.0
-            ) / {_RESONANCE_RECENCY_HALF_LIFE_DAYS}
-        )
-        + {_RESONANCE_CONNECTION_WEIGHT} * ln(1.0 + {_CONNECTION_COUNT_SQL})
-        + {_RESONANCE_SHARED_AUTHOR_WEIGHT} * {_SHARED_AUTHOR_HITS_SQL}
-        + {_RESONANCE_SIMILARITY_WEIGHT} * {_SIMILARITY_SQL}
-    )
-"""
-_RESONANCE_ORDER = f"""
-    {_RESONANCE_SCORE_SQL} DESC,
-    le.id DESC
-"""
 
 
 def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
@@ -304,8 +92,8 @@ def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
       tombstoned, never surfaces even though the physical row still exists).
     - Any other (:viewer_id, `library_param`) pair — non-member, someone else's
       default, or a system-library target — contributes zero rows. This
-      relation never raises; masking a non-member as "not found" is the
-      caller's job (`library_governance.lock_library_for_member`).
+    relation never raises; masking a non-member as "not found" is the
+    caller's job (`library_governance.lock_library_for_member`).
     """
     return f"""
         SELECT le.media_id
@@ -335,6 +123,205 @@ def library_media_ids_cte_sql(*, library_param: str = ":library_id") -> str:
     """
 
 
+def destination_membership_rows_sql() -> str:
+    """Complete membership for one viewer/destination pair.
+
+    Binds ``:viewer_id`` and ``:library_id``. Columns are ``target_scheme``,
+    ``target_id``, ``media_id``, and ``podcast_id``. Non-default membership is
+    physical and includes hidden rows; Default is its complete live personal-All
+    media set. Authorization and destination filing policy remain caller-owned.
+    """
+    return f"""
+        SELECT
+            CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+                AS target_scheme,
+            COALESCE(le.media_id, le.podcast_id) AS target_id,
+            le.media_id,
+            le.podcast_id
+        FROM library_entries le
+        JOIN libraries l ON l.id = le.library_id
+        JOIN memberships membership
+          ON membership.library_id = l.id AND membership.user_id = :viewer_id
+        WHERE l.id = :library_id
+          AND l.is_default = false
+
+        UNION ALL
+
+        SELECT
+            'media' AS target_scheme,
+            default_media.media_id AS target_id,
+            default_media.media_id,
+            NULL::uuid AS podcast_id
+        FROM ({library_media_ids_cte_sql()}) default_media
+        WHERE EXISTS (
+            SELECT 1
+            FROM libraries destination
+            JOIN memberships membership
+              ON membership.library_id = destination.id
+             AND membership.user_id = :viewer_id
+            WHERE destination.id = :library_id
+              AND destination.is_default = true
+              AND destination.system_key IS NULL
+        )
+    """
+
+
+def physical_entry_rows_sql() -> str:
+    """Uncapped physical rows for ``:library_id``.
+
+    Columns are the canonical entry columns plus ``target_scheme`` and
+    ``target_id``. Visibility and recommendation policy belong to the composing
+    query.
+    """
+    return """
+        SELECT
+            le.id,
+            le.library_id,
+            le.media_id,
+            le.podcast_id,
+            le.created_at,
+            le.position,
+            CASE WHEN le.media_id IS NOT NULL THEN 'media' ELSE 'podcast' END
+                AS target_scheme,
+            COALESCE(le.media_id, le.podcast_id) AS target_id
+        FROM library_entries le
+        WHERE le.library_id = :library_id
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryAnchorFact:
+    ref: ResourceRef
+
+
+def library_anchor_facts(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+    limit: int,
+) -> tuple[LibraryAnchorFact, ...]:
+    """Newest readable representative refs from complete destination membership."""
+    if limit <= 0:
+        return ()
+    from nexus.services.podcasts.episodes import episode_publication_rows_sql
+
+    rows = (
+        db.execute(
+            text(f"""
+                WITH destination AS (
+                    {destination_membership_rows_sql()}
+                ),
+                engagement AS (
+                    {consumption_service.engagement_fact_rows_sql()}
+                ),
+                episodes AS (
+                    {episode_publication_rows_sql()}
+                ),
+                visible_media AS (
+                    {visible_media_ids_cte_sql()}
+                ),
+                visible_podcasts AS (
+                    {visible_podcast_ids_cte_sql()}
+                ),
+                candidate_entries AS (
+                    SELECT
+                        destination.target_scheme,
+                        destination.target_id,
+                        le.id AS entry_id,
+                        le.created_at,
+                        (le.library_id = :library_id) AS is_direct
+                    FROM destination
+                    JOIN library_entries le
+                      ON (
+                        destination.media_id IS NOT NULL
+                        AND le.media_id = destination.media_id
+                      ) OR (
+                        destination.podcast_id IS NOT NULL
+                        AND le.podcast_id = destination.podcast_id
+                      )
+                    JOIN memberships membership
+                      ON membership.library_id = le.library_id
+                     AND membership.user_id = :viewer_id
+                    JOIN libraries source_library
+                      ON source_library.id = le.library_id
+                     AND source_library.system_key IS NULL
+                ),
+                canonical_entries AS (
+                    SELECT DISTINCT ON (target_scheme, target_id)
+                        target_scheme, target_id, created_at
+                    FROM candidate_entries
+                    ORDER BY
+                        target_scheme,
+                        target_id,
+                        is_direct DESC,
+                        created_at ASC,
+                        entry_id ASC
+                ),
+                podcast_engagement AS (
+                    SELECT
+                        episodes.podcast_id,
+                        MAX(engagement.last_engaged_at) FILTER (
+                            WHERE engagement.last_engaged_at <= now()
+                        ) AS last_engaged_at
+                    FROM episodes
+                    JOIN visible_media ON visible_media.media_id = episodes.media_id
+                    JOIN engagement ON engagement.media_id = episodes.media_id
+                    GROUP BY episodes.podcast_id
+                )
+                SELECT
+                    canonical_entries.target_scheme,
+                    canonical_entries.target_id,
+                    canonical_entries.created_at,
+                    CASE
+                        WHEN canonical_entries.target_scheme = 'media'
+                            THEN CASE
+                                WHEN media_engagement.last_engaged_at <= now()
+                                THEN media_engagement.last_engaged_at
+                            END
+                        ELSE podcast_engagement.last_engaged_at
+                    END AS last_engaged_at
+                FROM canonical_entries
+                LEFT JOIN engagement media_engagement
+                  ON canonical_entries.target_scheme = 'media'
+                 AND media_engagement.media_id = canonical_entries.target_id
+                LEFT JOIN podcast_engagement
+                  ON canonical_entries.target_scheme = 'podcast'
+                 AND podcast_engagement.podcast_id = canonical_entries.target_id
+                WHERE (
+                    canonical_entries.target_scheme = 'media'
+                    AND canonical_entries.target_id IN (SELECT media_id FROM visible_media)
+                ) OR (
+                    canonical_entries.target_scheme = 'podcast'
+                    AND canonical_entries.target_id IN (SELECT podcast_id FROM visible_podcasts)
+                )
+                ORDER BY
+                    last_engaged_at DESC NULLS LAST,
+                    canonical_entries.created_at DESC,
+                    canonical_entries.target_scheme ASC,
+                    canonical_entries.target_id ASC
+                LIMIT :anchor_limit
+            """),
+            {
+                "viewer_id": viewer_id,
+                "library_id": library_id,
+                "anchor_limit": limit,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return tuple(
+        LibraryAnchorFact(
+            ref=ResourceRef(
+                scheme=cast("ResourceScheme", str(row["target_scheme"])),
+                id=UUID(str(row["target_id"])),
+            ),
+        )
+        for row in rows
+    )
+
+
 @dataclass(frozen=True)
 class EntryTarget:
     """What a library entry points at — exactly one of media|podcast. A faithful model
@@ -352,6 +339,17 @@ def podcast_target(podcast_id: UUID) -> EntryTarget:
     return EntryTarget("podcast", podcast_id)
 
 
+@dataclass(frozen=True, slots=True)
+class LibraryEntryHydrationFact:
+    """Typed owner input for strict cross-service Library entry hydration."""
+
+    id: UUID
+    library_id: UUID
+    target: EntryTarget
+    created_at: datetime
+    position: int
+
+
 @dataclass(frozen=True)
 class PodcastLibraryRemovalResult:
     removed_from_library_count: int
@@ -360,14 +358,25 @@ class PodcastLibraryRemovalResult:
 
 @dataclass(frozen=True)
 class LibraryFilingOutcome:
-    """The idempotent present/inserted outcome a filing command returns (spec
-    S4.3 rule 8). `inserted` is False when the physical entry already existed
-    (re-file/idempotent path) — `agent_tools.writes` reads it so Undo never
-    deletes a filing it did not itself create; REST callers project `entry`
-    unchanged into the existing response envelope."""
+    """The idempotent inserted-only outcome a filing command returns.
 
-    entry: LibraryEntryOut
+    `inserted` is False when the physical entry already existed
+    (re-file/idempotent path); `agent_tools.writes` reads it so Undo never
+    deletes a filing it did not itself create.
+    """
+
     inserted: bool
+
+
+def _display_reading_minutes(word_count: int, fraction: float) -> int:
+    raw_minutes = word_count * fraction / _READING_WORDS_PER_MINUTE
+    if raw_minutes < _READING_MINUTES_FINE_LIMIT:
+        quantum = 1
+    elif raw_minutes < _READING_MINUTES_COARSE_LIMIT:
+        quantum = 5
+    else:
+        quantum = 15
+    return max(1, quantum * math.floor(raw_minutes / quantum + 0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -406,12 +415,67 @@ def raise_if_media_teardown_pending(db: Session, media_id: UUID) -> None:
     ).fetchone()
     if locked is None:
         return
+    _raise_if_locked_media_teardown_pending(db, media_id)
+
+
+def _raise_if_locked_media_teardown_pending(db: Session, media_id: UUID) -> None:
+    """Apply the teardown barrier after the caller has locked the media row."""
     intent = db.execute(
         text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     ).fetchone()
     if intent is not None:
         raise ConflictError(ApiErrorCode.E_MEDIA_DELETING, "Media is being deleted")
+
+
+def _lock_authorized_media_for_filing(
+    db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+    *,
+    authorization: Literal["readable", "restorable"],
+) -> None:
+    """Lock, then reauthorize an actor filing before any library lock.
+
+    The pre-lock authorization in each public command gives its normal fast-fail
+    behavior. This locked check is the linearization guard: a concurrent whole-resource
+    deletion or last-library teardown may remove the viewer's final reachability while
+    the filing waits for the media row, and must not turn that stale authorization into
+    a new reference.
+    """
+    locked = db.execute(
+        text("SELECT 1 FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).fetchone()
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    if authorization == "restorable":
+        authorized = can_restore_media(db, viewer_id, media_id)
+    elif authorization == "readable":
+        authorized = can_read_media(
+            db,
+            viewer_id,
+            media_id,
+            include_tearing_down=True,
+        )
+    else:
+        assert_never(authorization)
+    if not authorized:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    _raise_if_locked_media_teardown_pending(db, media_id)
+
+
+def lock_media_rows_in_order(db: Session, media_ids: Sequence[UUID]) -> list[UUID]:
+    """Lock existing media rows in the repository-wide reference-mutation order."""
+    ordered_ids = sorted(set(media_ids))
+    if not ordered_ids:
+        return []
+    rows = db.execute(
+        text("SELECT id FROM media WHERE id = ANY(:media_ids) ORDER BY id FOR UPDATE"),
+        {"media_ids": ordered_ids},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def ensure_entry(db: Session, library_id: UUID, target: EntryTarget) -> bool:
@@ -535,6 +599,17 @@ def list_media_ids_in_library(db: Session, library_id: UUID) -> list[UUID]:
     return [UUID(str(row[0])) for row in rows]
 
 
+def library_ids_for_media(db: Session, media_id: UUID) -> list[UUID]:
+    """All physical library references for media, ordered by library UUID."""
+    rows = db.execute(
+        text(
+            "SELECT library_id FROM library_entries WHERE media_id = :media_id ORDER BY library_id"
+        ),
+        {"media_id": media_id},
+    ).fetchall()
+    return [UUID(str(row[0])) for row in rows]
+
+
 def count_entries_for_media(db: Session, media_id: UUID) -> int:
     return int(
         db.execute(
@@ -588,86 +663,43 @@ def admin_non_default_library_ids_for_media(
 # ---------------------------------------------------------------------------
 
 
-def _start_of_today(viewer_timezone: str) -> datetime:
-    """Start-of-day boundary used for the "surfaced today" lane."""
-    try:
-        tz = ZoneInfo(viewer_timezone)
-    except ZoneInfoNotFoundError as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "viewer_tz must be a valid IANA timezone",
-        ) from exc
-    now = datetime.now(tz)
-    return datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(UTC)
-
-
-def _surfaced_today(
+def hydrate_entry_page(
+    db: Session,
     *,
-    created_at: datetime,
-    last_engaged_at: datetime | None,
-    last_connected_at: datetime | None,
-    published_at: datetime | None,
-    start_of_today: datetime,
-) -> bool:
-    """True when the entry's most recent list-surface signal falls today."""
-    most_recent = max(
-        instant
-        for instant in (created_at, last_engaged_at, last_connected_at, published_at)
-        if instant is not None
-    )
-    return most_recent >= start_of_today
-
-
-def _entry_recency_signals(
-    db: Session, *, viewer_id: UUID, entry_ids: list[UUID]
-) -> dict[UUID, tuple[datetime | None, datetime | None]]:
-    if not entry_ids:
-        return {}
-    from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
-
-    rows = (
-        db.execute(
-            text(f"""
-                SELECT
-                    le.id AS entry_id,
-                    {_LAST_CONNECTED_AT_SQL} AS last_connected_at,
-                    {_PUBLISHED_AT_SQL} AS published_at
-                FROM library_entries le
-                WHERE le.id = ANY(:entry_ids)
-            """),
-            {
-                "viewer_id": viewer_id,
-                "entry_ids": entry_ids,
-                "resonance_origins": list(LIST_CONNECTION_ORIGINS),
-            },
+    viewer_id: UUID,
+    facts: Sequence[LibraryEntryHydrationFact],
+) -> list[LibraryEntryOut]:
+    """Strictly hydrate already-visible facts supplied across an owner boundary."""
+    rows = [
+        {
+            "id": fact.id,
+            "library_id": fact.library_id,
+            "media_id": fact.target.id if fact.target.kind == "media" else None,
+            "podcast_id": fact.target.id if fact.target.kind == "podcast" else None,
+            "created_at": fact.created_at,
+            "position": fact.position,
+        }
+        for fact in facts
+    ]
+    entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=rows)
+    expected_ids = [fact.id for fact in facts]
+    actual_ids = [entry.id for entry in entries]
+    if actual_ids != expected_ids:
+        # justify-defect: the composing repeatable-read query already proved every
+        # typed target visible; hydration must preserve its exact cardinality/order.
+        raise AssertionError(
+            f"Library entry hydration drifted: expected {expected_ids}, got {actual_ids}"
         )
-        .mappings()
-        .all()
-    )
-    return {
-        UUID(str(row["entry_id"])): (row["last_connected_at"], row["published_at"]) for row in rows
-    }
+    return entries
 
 
-def _hydrate_entries(
-    db: Session, viewer_id: UUID, rows, *, viewer_timezone: str = "UTC"
+def _hydrate_entry_rows(
+    db: Session, *, viewer_id: UUID, rows: Sequence[Any]
 ) -> list[LibraryEntryOut]:
     """Hydrate name-keyed entry rows (_ENTRY_COLUMNS) into LibraryEntryOut, batching
-    the media and podcast lookups. Entries whose target is not viewer-visible drop out.
-
-    Each entry also carries the derived "surfaced today" lane signal (S3): the
-    entry's media/podcast engagement recency (`last_engaged_at`), graph recency,
-    published recency, and whether their greatest value lands on the current
-    viewer-timezone day."""
+    the media and podcast lookups. Entries whose target is not viewer-visible drop out."""
     if not rows:
         return []
-
-    start_of_today = _start_of_today(viewer_timezone)
-    recency_signals_by_entry_id = _entry_recency_signals(
-        db,
-        viewer_id=viewer_id,
-        entry_ids=[UUID(str(row["id"])) for row in rows],
-    )
 
     media_ids = [UUID(str(row["media_id"])) for row in rows if row["media_id"] is not None]
     podcast_ids = [UUID(str(row["podcast_id"])) for row in rows if row["podcast_id"] is not None]
@@ -680,6 +712,44 @@ def _hydrate_entries(
             media.id: media
             for media in media_service.list_media_for_viewer_by_ids(db, viewer_id, media_ids)
         }
+
+    for media in media_by_id.values():
+        if media.read_state is None:
+            # justify-service-invariant-check: shared MediaOut permits contexts
+            # without viewer state; Library hydration requires the correlated projection.
+            # justify-defect: the viewer-scoped media loader must hydrate every row.
+            raise AssertionError(f"missing Library read state for media {media.id}")
+
+    eligible_media_ids = [
+        media.id
+        for media in media_by_id.values()
+        if media.kind in ("web_article", "epub", "pdf") and media.capabilities.can_quote
+    ]
+    word_counts = load_media_word_counts(db, eligible_media_ids) if eligible_media_ids else {}
+    reading_time_by_media_id: dict[UUID, ReadingTimeEstimateOut] = {}
+    for media_id in eligible_media_ids:
+        word_count = word_counts[media_id]
+        if word_count == 0:
+            continue
+        media = media_by_id[media_id]
+        total_minutes = _display_reading_minutes(word_count, 1.0)
+        remaining_minutes: Presence[int] = absent()
+        if (
+            media.kind in ("web_article", "epub")
+            and media.read_state == "in_progress"
+            and media.progress_fraction is not None
+        ):
+            remaining = _display_reading_minutes(word_count, 1.0 - media.progress_fraction)
+            if remaining > total_minutes:
+                # justify-service-invariant-check: the relationship between two
+                # derived rounded values is not expressible in their integer types.
+                # justify-defect: bounded progression and monotonic rounding guarantee it.
+                raise AssertionError(f"remaining reading time exceeds total for media {media_id}")
+            remaining_minutes = present(remaining)
+        reading_time_by_media_id[media_id] = ReadingTimeEstimateOut(
+            total_minutes=total_minutes,
+            remaining_minutes=remaining_minutes,
+        )
 
     podcast_rows_by_id = {}
     if podcast_ids:
@@ -698,8 +768,7 @@ def _hydrate_entries(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } = 'unplayed'
-                        ) AS unplayed_count,
-                        MAX(pls.updated_at) AS last_listened_at
+                        ) AS unplayed_count
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
@@ -725,7 +794,6 @@ def _hydrate_entries(
                     p.created_at AS podcast_created_at,
                     p.updated_at AS podcast_updated_at,
                     COALESCE(pu.unplayed_count, 0) AS unplayed_count,
-                    pu.last_listened_at AS last_listened_at,
                     ps.status AS sub_status,
                     ps.default_playback_speed AS sub_default_playback_speed,
                     ps.auto_queue AS sub_auto_queue,
@@ -759,9 +827,6 @@ def _hydrate_entries(
             media = media_by_id.get(media_id)
             if media is None:
                 continue
-            last_connected_at, published_at = recency_signals_by_entry_id.get(
-                UUID(str(row["id"])), (None, None)
-            )
             hydrated.append(
                 LibraryEntryOut(
                     id=UUID(str(row["id"])),
@@ -772,15 +837,10 @@ def _hydrate_entries(
                     media=media,
                     podcast=None,
                     subscription=None,
-                    read_state=media.read_state,
-                    progress_fraction=media.progress_fraction,
-                    last_engaged_at=media.last_engaged_at,
-                    surfaced_today=_surfaced_today(
-                        created_at=row["created_at"],
-                        last_engaged_at=media.last_engaged_at,
-                        last_connected_at=last_connected_at,
-                        published_at=published_at,
-                        start_of_today=start_of_today,
+                    reading_time_estimate=(
+                        present(reading_time_by_media_id[media_id])
+                        if media_id in reading_time_by_media_id
+                        else absent()
                     ),
                 )
             )
@@ -810,10 +870,6 @@ def _hydrate_entries(
                 updated_at=podcast_row["sub_updated_at"],
             )
 
-        podcast_last_engaged_at = podcast_row["last_listened_at"]
-        last_connected_at, published_at = recency_signals_by_entry_id.get(
-            UUID(str(row["id"])), (None, None)
-        )
         hydrated.append(
             LibraryEntryOut(
                 id=UUID(str(row["id"])),
@@ -821,14 +877,6 @@ def _hydrate_entries(
                 kind="podcast",
                 position=int(row["position"]),
                 created_at=row["created_at"],
-                last_engaged_at=podcast_last_engaged_at,
-                surfaced_today=_surfaced_today(
-                    created_at=row["created_at"],
-                    last_engaged_at=podcast_last_engaged_at,
-                    last_connected_at=last_connected_at,
-                    published_at=published_at,
-                    start_of_today=start_of_today,
-                ),
                 media=None,
                 podcast=LibraryPodcastOut(
                     id=podcast_id,
@@ -845,6 +893,7 @@ def _hydrate_entries(
                     unplayed_count=int(podcast_row["unplayed_count"] or 0),
                 ),
                 subscription=subscription,
+                reading_time_estimate=absent(),
             )
         )
 
@@ -911,7 +960,7 @@ def list_item_libraries(
     ]
 
 
-def add_media_to_library(
+def ensure_media_in_library(
     db: Session, viewer_id: UUID, library_id: UUID, media_id: UUID
 ) -> LibraryFilingOutcome:
     """The one actor-authorized filing command for attaching media to a library
@@ -920,11 +969,11 @@ def add_media_to_library(
     the physical row IS the direct intent, inserted unconditionally even when the
     media is already virtually present through another membership.
 
-    Authorizes readable-OR-restorable media (rule 1) right after the existence
-    check, before any lock is taken — REST and agent_tools both funnel through
-    this one gate, so neither surface can file a media_id the viewer has no
-    membership path to (no existence leak: unauthorized looks identical to
-    nonexistent).
+    A fast precheck authorizes readable-OR-restorable media (rule 1), then the
+    media-row lock rechecks the same authorization before any library lock.
+    REST and agent_tools both funnel through this one gate, so neither surface
+    can file a stale or unauthorized media_id (no existence leak: unauthorized
+    looks identical to nonexistent).
 
     Ordering is load-bearing: the media-teardown barrier must run before any
     library lock (spec S3/S4.3), so this locks/checks the media row FIRST and
@@ -941,7 +990,12 @@ def add_media_to_library(
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         if not can_restore_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        raise_if_media_teardown_pending(db, media_id)
+        _lock_authorized_media_for_filing(
+            db,
+            viewer_id,
+            media_id,
+            authorization="restorable",
+        )
 
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
@@ -952,19 +1006,98 @@ def add_media_to_library(
         # existed (spec S4.3 rule 6 / AC4).
         clear_user_media_deletion(db, viewer_id, media_id)
 
-        row = (
-            db.execute(
-                text(
-                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                    "WHERE library_id = :library_id AND media_id = :media_id"
-                ),
-                {"library_id": library_id, "media_id": media_id},
-            )
-            .mappings()
-            .fetchone()
-        )
+    return LibraryFilingOutcome(inserted=inserted)
 
-    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
+
+def ensure_media_absent_from_library_for_viewer(
+    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
+) -> None:
+    """Idempotently remove one media from a writable non-default library."""
+    _ensure_media_absent_from_library_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_id=library_id,
+        require_non_default_destination=True,
+        retry_label="ensure_media_absent_from_library",
+    )
+
+
+def undo_media_filing_for_viewer(
+    db: Session, viewer_id: UUID, media_id: UUID, library_id: UUID
+) -> None:
+    """Undo one agent-created media filing, including a direct Default filing."""
+    _ensure_media_absent_from_library_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        library_id=library_id,
+        require_non_default_destination=False,
+        retry_label="undo_media_filing",
+    )
+
+
+def _ensure_media_absent_from_library_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    library_id: UUID,
+    require_non_default_destination: bool,
+    retry_label: str,
+) -> None:
+    def attempt() -> None:
+        with transaction(db):
+            context = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+            governance.require_admin(context.role)
+            if require_non_default_destination:
+                governance.require_non_default(context.is_default)
+            governance.require_not_system(context.system_key)
+
+            target = media_target(media_id)
+            if not entry_exists(db, library_id, target):
+                return
+
+            if lock_media_rows_in_order(db, [media_id]) != [media_id]:
+                if not entry_exists(db, library_id, target):
+                    # Concurrent whole-resource or whole-library teardown also removes
+                    # this entry. Its commit is a successful serial predecessor for this
+                    # idempotent command.
+                    return
+                # justify-service-invariant-check: the initial target entry authorized
+                # media reachability, so a missing media row is safe only after a fresh
+                # READ COMMITTED statement confirms that entry disappeared with it.
+                # justify-defect: non-cascading storage FKs forbid a live dangling entry.
+                raise AssertionError("media library entry points at missing media")
+
+            context = governance.lock_library_for_member(db, viewer_id, library_id)
+            governance.require_admin(context.role)
+            if require_non_default_destination:
+                governance.require_non_default(context.is_default)
+            governance.require_not_system(context.system_key)
+            if not entry_exists(db, library_id, target):
+                return
+
+            raise_if_media_teardown_pending(db, media_id)
+            reference_count = count_entries_for_media(db, media_id)
+            if reference_count == 1:
+                raise ConflictError(
+                    ApiErrorCode.E_MEDIA_LAST_REFERENCE,
+                    "Media must remain in at least one library",
+                )
+            if reference_count < 1:
+                # justify-service-invariant-check: the locked target entry was re-read in
+                # this transaction, so a zero count means the storage invariant is broken.
+                # justify-defect: a present entry must contribute one lifetime reference.
+                raise AssertionError("present media library entry was not counted")
+            if not delete_entry(db, library_id, target):
+                # justify-service-invariant-check: media and library row locks exclude every
+                # supported concurrent remover after the immediately preceding re-read.
+                # justify-defect: the exact entry cannot disappear while both locks are held.
+                raise AssertionError("locked media library entry disappeared before delete")
+            normalize_positions(db, library_id)
+
+    retry_read_committed(db, retry_label, attempt)
 
 
 def add_podcast_to_library(
@@ -992,19 +1125,7 @@ def add_podcast_to_library(
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
 
         inserted = ensure_entry(db, library_id, podcast_target(podcast_id))
-        row = (
-            db.execute(
-                text(
-                    f"SELECT {_ENTRY_COLUMNS} FROM library_entries "
-                    "WHERE library_id = :library_id AND podcast_id = :podcast_id"
-                ),
-                {"library_id": library_id, "podcast_id": podcast_id},
-            )
-            .mappings()
-            .fetchone()
-        )
-
-    return LibraryFilingOutcome(entry=_hydrate_entries(db, viewer_id, [row])[0], inserted=inserted)
+    return LibraryFilingOutcome(inserted=inserted)
 
 
 def seed_media_into_system_library(db: Session, library_id: UUID, media_id: UUID) -> bool:
@@ -1121,7 +1242,6 @@ def _finish_entry_page(
     viewer_id: UUID,
     rows: Sequence[Any],
     limit: int,
-    viewer_timezone: str,
     build_cursor: Callable[[Any], str],
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """Shared tail for every keyset family (spec S4.2/AC6): the caller already
@@ -1131,7 +1251,7 @@ def _finish_entry_page(
     columns a cursor needs, e.g. `MediaOut` carries no `created_at`)."""
     page_rows = list(rows[:limit])
     has_more = len(rows) > limit
-    page_entries = _hydrate_entries(db, viewer_id, page_rows, viewer_timezone=viewer_timezone)
+    page_entries = _hydrate_entry_rows(db, viewer_id=viewer_id, rows=page_rows)
     next_cursor = build_cursor(page_rows[-1]) if has_more and page_rows else None
     return page_entries, LibraryPageInfo(has_more=has_more, next_cursor=next_cursor)
 
@@ -1143,7 +1263,6 @@ def _list_default_library_entries(
     library_id: UUID,
     limit: int,
     cursor: str | None,
-    viewer_timezone: str,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """Default virtual read surface (spec S4.1/S4.2): accessible non-system
     physical media entries, deduplicated by media_id via a two-stage DISTINCT ON
@@ -1237,7 +1356,6 @@ def _list_default_library_entries(
         viewer_id=viewer_id,
         rows=rows,
         limit=limit,
-        viewer_timezone=viewer_timezone,
         build_cursor=build_cursor,
     )
 
@@ -1249,7 +1367,6 @@ def _list_position_library_entries(
     library_id: UUID,
     limit: int,
     cursor: str | None,
-    viewer_timezone: str,
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
     """Non-default ``sort="position"``: a true keyset over the canonical
     `_ENTRY_ORDER` (position ASC, created_at DESC, id DESC)."""
@@ -1324,106 +1441,6 @@ def _list_position_library_entries(
         viewer_id=viewer_id,
         rows=rows,
         limit=limit,
-        viewer_timezone=viewer_timezone,
-        build_cursor=build_cursor,
-    )
-
-
-def _list_resonance_library_entries(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-    limit: int,
-    cursor: str | None,
-    viewer_timezone: str,
-) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """Non-default ``sort="resonance"``: a keyset over (score DESC, id DESC).
-    `resonance_as_of` is generated once on the first page and carried unchanged
-    through the cursor on every later page (spec S4.2) — current
-    connection/engagement mutations stay live, so the recomputed score can
-    differ from an earlier page's if an underlying signal changed; AC7 only
-    promises stability when it does not."""
-    # Lazy import: connection_summaries -> resolve -> library_entries is an
-    # import cycle, so the S4 origin owner is read at call time, not import.
-    from nexus.services.resource_graph.connection_summaries import LIST_CONNECTION_ORIGINS
-    from nexus.services.semantic_chunks import transcript_embedding_dimensions
-
-    after_score: float | None = None
-    after_entry_id: UUID | None = None
-    if cursor is None:
-        resonance_as_of = db.execute(text("SELECT now()")).scalar_one()
-    else:
-        payload = _decode_entry_cursor(
-            cursor, _RESONANCE_CURSOR_KIND, viewer_id=viewer_id, library_id=library_id
-        )
-        try:
-            resonance_as_of = datetime.fromisoformat(str(payload["resonance_as_of"]))
-            after_score = float(payload["after_score"])
-            after_entry_id = UUID(str(payload["after_entry_id"]))
-        except Exception:
-            # justify-ignore-error: malformed cursor input is an expected API error path.
-            raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-    params: dict[str, object] = {
-        "library_id": library_id,
-        "viewer_id": viewer_id,
-        "resonance_origins": list(LIST_CONNECTION_ORIGINS),
-        "embedding_dims": transcript_embedding_dimensions(),
-        "resonance_as_of": resonance_as_of,
-        "limit": limit + 1,
-    }
-    keyset_clause = ""
-    if after_entry_id is not None:
-        keyset_clause = """
-          WHERE (
-            scored.resonance_score < :after_score
-            OR (scored.resonance_score = :after_score AND scored.id < :after_entry_id)
-          )
-        """
-        params["after_score"] = after_score
-        params["after_entry_id"] = after_entry_id
-
-    rows = (
-        db.execute(
-            text(f"""
-                WITH scored AS (
-                    SELECT {_ENTRY_COLUMNS}, {_RESONANCE_SCORE_SQL} AS resonance_score
-                    FROM library_entries le
-                    WHERE le.library_id = :library_id
-                      AND (le.podcast_id IS NOT NULL OR le.media_id IN ({visible_media_ids_cte_sql()}))
-                )
-                SELECT {_ENTRY_COLUMNS}, resonance_score
-                FROM scored
-                {keyset_clause}
-                ORDER BY resonance_score DESC, id DESC
-                LIMIT :limit
-            """),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-
-    def build_cursor(row: Any) -> str:
-        return _encode_entry_cursor(
-            {
-                "k": _RESONANCE_CURSOR_KIND,
-                "viewer_id": str(viewer_id),
-                "library_id": str(library_id),
-                "sort": "resonance",
-                "resonance_as_of": resonance_as_of.isoformat(),
-                "after_score": float(row["resonance_score"]),
-                "after_entry_id": str(row["id"]),
-            }
-        )
-
-    return _finish_entry_page(
-        db,
-        viewer_id=viewer_id,
-        rows=rows,
-        limit=limit,
-        viewer_timezone=viewer_timezone,
         build_cursor=build_cursor,
     )
 
@@ -1435,33 +1452,18 @@ def list_library_entries(
     *,
     limit: int = 100,
     cursor: str | None = None,
-    sort: LibraryEntrySort = "position",
-    viewer_timezone: str = "UTC",
 ) -> tuple[list[LibraryEntryOut], LibraryPageInfo]:
-    """List a library's ordered, hydrated entries. Member-only.
+    """List a library's position-ordered, hydrated entries. Member-only.
 
-    Default (spec S4.1/S4.2): the live, deduplicated "personal All" virtual
-    view — see :func:`_list_default_library_entries`. No reorder; `sort`
-    must not be ``"resonance"`` (AC7).
-
-    Non-default ``sort="position"`` (default) keeps EXACTLY the canonical
-    `_ENTRY_ORDER`; ``sort="resonance"`` orders by the deterministic
-    recency+connection score (no request-time LLM, stable id tiebreak).
-
-    Every family fetches ``limit + 1`` rows through a stateless keyset cursor
-    (AC6) and performs no write on this path — the snapshot machinery this
-    replaced is gone outright.
+    Default is the live, deduplicated personal-All virtual view; non-default
+    libraries use the canonical physical position order. Resonance ordering is
+    owned exclusively by the Resonance service.
     """
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    _start_of_today(viewer_timezone)
     limit = min(limit, 200)
 
     ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
-
-    # AC7: Default rejects sort=resonance before any entries query runs.
-    if sort == "resonance":
-        governance.require_non_default(ctx.is_default)
 
     if ctx.is_default:
         return _list_default_library_entries(
@@ -1470,32 +1472,19 @@ def list_library_entries(
             library_id=library_id,
             limit=limit,
             cursor=cursor,
-            viewer_timezone=viewer_timezone,
         )
-    if sort == "resonance":
-        return _list_resonance_library_entries(
-            db,
-            viewer_id=viewer_id,
-            library_id=library_id,
-            limit=limit,
-            cursor=cursor,
-            viewer_timezone=viewer_timezone,
-        )
-    if sort == "position":
-        return _list_position_library_entries(
-            db,
-            viewer_id=viewer_id,
-            library_id=library_id,
-            limit=limit,
-            cursor=cursor,
-            viewer_timezone=viewer_timezone,
-        )
-    assert_never(sort)
+    return _list_position_library_entries(
+        db,
+        viewer_id=viewer_id,
+        library_id=library_id,
+        limit=limit,
+        cursor=cursor,
+    )
 
 
 def reorder_entries(
     db: Session, viewer_id: UUID, library_id: UUID, body: LibraryEntryOrderRequest
-) -> list[LibraryEntryOut]:
+) -> None:
     """Replace the full entry order for an admin viewer. The requested set must equal the
     existing set; the new order is applied in one set-based statement (already dense, so
     no follow-up renormalize). Default has no physical order to reorder — it is
@@ -1523,28 +1512,29 @@ def reorder_entries(
                 "Library reorder requires an exact full set of entry IDs",
             )
 
-        db.execute(
-            text("""
-                WITH desired AS (
-                    SELECT id, ord - 1 AS new_position
-                    FROM unnest(cast(:entry_ids AS uuid[])) WITH ORDINALITY AS t(id, ord)
-                )
-                UPDATE library_entries le
-                SET position = desired.new_position
-                FROM desired
-                WHERE le.id = desired.id AND le.library_id = :library_id
-            """),
-            {"entry_ids": requested_ids, "library_id": library_id},
+        result = cast(
+            CursorResult[Any],
+            db.execute(
+                text("""
+                    WITH desired AS (
+                        SELECT id, ord - 1 AS new_position
+                        FROM unnest(cast(:entry_ids AS uuid[])) WITH ORDINALITY AS t(id, ord)
+                    )
+                    UPDATE library_entries le
+                    SET position = desired.new_position
+                    FROM desired
+                    WHERE le.id = desired.id AND le.library_id = :library_id
+                """),
+                {"entry_ids": requested_ids, "library_id": library_id},
+            ),
         )
-
-    entries, _page = list_library_entries(
-        db,
-        viewer_id,
-        library_id,
-        limit=min(max(len(requested_ids), 1), 200),
-        sort="position",
-    )
-    return entries
+        if result.rowcount != len(requested_ids):
+            # justify-service-invariant-check: exact-set validation and the library
+            # lock establish cardinality, but affected-row metadata is runtime-only.
+            # justify-defect: a mismatch means the locked order invariant was violated.
+            raise AssertionError(
+                f"Library reorder affected {result.rowcount} rows; expected {len(requested_ids)}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1561,29 +1551,33 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
     clear_user_media_deletion(db, user_id, media_id)
 
 
-def add_media_to_libraries_for_viewer(
+def ensure_media_in_libraries_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> MediaLibrariesResponse:
+) -> None:
     """Verify the viewer can read the media, then add selected writable destinations."""
     from nexus.services import media as media_service
 
     with transaction(db):
         media_service.get_media_for_viewer(db, viewer_id, media_id)
+        _lock_authorized_media_for_filing(
+            db,
+            viewer_id,
+            media_id,
+            authorization="readable",
+        )
         targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
-        inserted = _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
-    return MediaLibrariesResponse(media_id=media_id, library_ids_added=inserted)
+        _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 
 
 def _add_media_to_resolved_libraries(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
-) -> list[UUID]:
+) -> None:
     if not library_ids:
-        return []
+        return
     from nexus.services.media_deletion import clear_user_media_deletion
 
-    clear_user_media_deletion(db, viewer_id, media_id)
     # The media-teardown barrier must run before any library lock (spec S4.3),
-    # so this locks/checks the media row FIRST — matching add_media_to_library's
+    # so this locks/checks the media row FIRST — matching ensure_media_in_library's
     # mandated media->library order and avoiding an AB-BA deadlock against it.
     raise_if_media_teardown_pending(db, media_id)
     locked_contexts = {
@@ -1595,11 +1589,9 @@ def _add_media_to_resolved_libraries(
         governance.require_admin(ctx.role)
         governance.require_not_system(ctx.system_key)
 
-    inserted: list[UUID] = []
     for library_id in library_ids:
-        if ensure_entry(db, library_id, media_target(media_id)):
-            inserted.append(library_id)
-    return inserted
+        ensure_entry(db, library_id, media_target(media_id))
+    clear_user_media_deletion(db, viewer_id, media_id)
 
 
 def assign_libraries_for_media(
@@ -1618,6 +1610,9 @@ def assign_libraries_for_media_in_current_transaction(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
     targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
+    default_library_id = governance.default_library_id_for_user(db, viewer_id)
+    raise_if_media_teardown_pending(db, media_id)
+    governance.lock_library_rows_in_order(db, [default_library_id, *targets])
     ensure_media_in_default_library(db, viewer_id, media_id)
     _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
 

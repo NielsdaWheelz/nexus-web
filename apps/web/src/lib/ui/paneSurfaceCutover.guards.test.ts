@@ -23,7 +23,6 @@ const standardPaneBodies = [
   "src/app/(authenticated)/settings/billing/SettingsBillingPaneBody.tsx",
   "src/app/(authenticated)/settings/identities/SettingsIdentitiesPaneBody.tsx",
   "src/app/(authenticated)/settings/keybindings/KeybindingsPaneBody.tsx",
-  "src/app/(authenticated)/settings/keys/SettingsKeysPaneBody.tsx",
   "src/app/(authenticated)/settings/local-vault/SettingsLocalVaultPaneBody.tsx",
   "src/app/(authenticated)/settings/reader/SettingsReaderPaneBody.tsx",
 ];
@@ -59,6 +58,22 @@ describe("pane surface/resource row cutover source gates", () => {
       `src/components/ui/${contextRow}.module.css`,
       `src/components/settings/${settingRow}.tsx`,
       `src/components/settings/${settingRow}.module.css`,
+      "src/components/collections/CollectionDisplayControls.tsx",
+      "src/components/collections/CollectionDisplayControls.module.css",
+      "src/components/collections/CollectionGalleryCard.tsx",
+      "src/components/collections/CollectionGalleryCard.module.css",
+      "src/components/collections/ReadStateBadge.tsx",
+      "src/components/chat/ContextRefChatList.tsx",
+      "src/components/chat/ContextRefChatList.module.css",
+      "src/components/chat/ResourceChatTab.tsx",
+      "src/components/chat/ResourceChatTab.module.css",
+      "src/lib/collections/collectionViewState.ts",
+      "src/lib/collections/collectionViewState.test.ts",
+      "src/lib/collections/useCollectionDisplayState.ts",
+      "src/lib/conversations/useChatsByContextRef.ts",
+      "src/lib/ui/useCollectionKeyboard.ts",
+      "src/lib/ui/useRowSwipe.ts",
+      "src/__tests__/components/ResourceChatTab.test.tsx",
     ];
 
     expect(
@@ -128,7 +143,7 @@ describe("pane surface/resource row cutover source gates", () => {
 
     const sortableList = sourceText("src/components/sortable/SortableList.tsx");
     expect(sortableList).toContain('from "@/components/ui/ResourceList"');
-    expect(sortableList).toContain("resourceList ? (");
+    expect(sortableList).toContain("<ResourceList ariaLabel={ariaLabel}>");
   });
 
   it("keeps collection presenters pure and status projection centralized", () => {
@@ -145,7 +160,7 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(clientHookImports).toEqual([]);
 
     const retiredStatusSymbols =
-      /\b(?:mediaStatus|syncBadge|typeBadge|MEDIA_KIND_ICONS)\b/;
+      /\b(?:mediaStatus|syncBadge|typeBadge|MEDIA_KIND_ICONS|mediaProcessingStatusPill|podcastSyncStatusPill|readingTimeSignal)\b/;
     const statusOffenders = sourceFiles(join(APP_ROOT, "src/app"))
       .concat(sourceFiles(join(APP_ROOT, "src/components")))
       .concat(sourceFiles(join(APP_ROOT, "src/lib")))
@@ -154,9 +169,10 @@ describe("pane surface/resource row cutover source gates", () => {
     expect(statusOffenders).toEqual([]);
   });
 
-  it("keeps swipe and connection-list policy explicit", () => {
+  it("keeps the swipe cutover and connection-list policy explicit", () => {
     const collectionRow = sourceText("src/components/collections/CollectionRow.tsx");
-    expect(collectionRow).toContain("row.swipeActions");
+    expect(collectionRow).not.toContain("swipeActions");
+    expect(collectionRow).not.toContain("useRowSwipe");
     expect(collectionRow).not.toContain("action.tone === \"danger\"");
 
     const connectionSummaries = readFileSync(
@@ -213,11 +229,6 @@ describe("pane surface/resource row cutover source gates", () => {
       standingHeadLiteral.test(sourceText(path)),
     );
     expect(literalOffenders).toEqual([]);
-
-    // No dead BROWSE/TODAY standing head after siblings #6/#7.
-    expect(sourceText("src/lib/navigation/standingHead.ts")).not.toMatch(
-      /"BROWSE"|"TODAY"|standingHead.*Browse|standingHead.*Today/,
-    );
   });
 
   it("has no legacy resultRows/pageList class hooks remaining in src/app", () => {
@@ -235,7 +246,6 @@ describe("pane surface/resource row cutover source gates", () => {
       "src/app/(authenticated)/media/[id]/MediaPaneBody.tsx",
       "src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx",
       "src/app/globals.css",
-      "src/components/collections/CollectionGalleryCard.tsx",
       "src/components/collections/CollectionRow.tsx",
       "src/components/collections/CollectionView.tsx",
       "src/components/ui/ResourceActivation.tsx",
@@ -244,7 +254,6 @@ describe("pane surface/resource row cutover source gates", () => {
       "src/lib/collections/presenters/episode.ts",
       "src/lib/collections/presenters/media.ts",
       "src/lib/collections/presenters/search.ts",
-      "src/lib/collections/useCollectionDisplayState.ts",
       "src/lib/panes/paneLinkNavigation.ts",
       "src/lib/panes/paneRuntime.tsx",
       "src/lib/ui/viewTransitions.ts",

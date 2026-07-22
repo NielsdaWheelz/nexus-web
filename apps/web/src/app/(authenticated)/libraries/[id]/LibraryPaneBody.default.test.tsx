@@ -49,7 +49,16 @@ function seededMediaEntry(id: string, mediaId: string, title: string) {
       publisher: null,
       canonical_source_url: null,
       processing_status: "ready_for_reading",
-      capabilities: {},
+      read_state: "unread",
+      progress_fraction: null,
+      capabilities: { can_quote: true },
+    },
+    readingTimeEstimate: {
+      kind: "Present",
+      value: {
+        totalMinutes: 15,
+        remainingMinutes: { kind: "Absent" },
+      },
     },
   };
 }
@@ -71,9 +80,11 @@ const paneWithLectern = (
 );
 
 function lecternGetResponse(input: unknown): Response | null {
-  return fetchInputPath(input) === "/api/lectern"
-    ? Response.json({ data: { items: [] } })
-    : null;
+  const path = fetchInputPath(input);
+  if (path === "/api/lectern" || path === `/api/libraries/${LIBRARY_ID}/slate`) {
+    return Response.json({ data: { items: [] } });
+  }
+  return null;
 }
 
 afterEach(() => {

@@ -1,4 +1,9 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { absent, type Presence } from "@/lib/api/presence";
+import {
+  decodeOptionalPublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { normalizeSearchResult } from "./normalizeSearchResult";
 import type { SearchApiResult, SearchResultRowViewModel } from "./types";
@@ -50,6 +55,10 @@ function buildSourceMeta(result: SearchApiResult): string | null {
     return result.source_label ?? "conversation";
   }
 
+  if (result.type === "artifact") {
+    return result.source_label ?? "distillate";
+  }
+
   if (result.type === "evidence_span") {
     return result.source_label ?? result.citation_label;
   }
@@ -88,14 +97,27 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   }
 
   const parts = [result.source.title];
-  if (result.source.published_date) {
-    parts.push(result.source.published_date);
-  }
   if (result.source.media_kind) {
     parts.push(result.source.media_kind.replace(/_/g, " "));
   }
 
   return parts.filter(Boolean).join(" — ") || null;
+}
+
+function publicationDateFor(
+  result: SearchApiResult,
+): Presence<PublicationDate> {
+  if (result.type === "web_result") {
+    return decodeOptionalPublicationDate(
+      result.published_at,
+      "search web_result published_at",
+    );
+  }
+  if (!("source" in result)) return absent();
+  return decodeOptionalPublicationDate(
+    result.source.published_date,
+    `search ${result.type} source.published_date`,
+  );
 }
 
 function buildPrimaryText(result: SearchApiResult): string {
@@ -132,6 +154,9 @@ function buildPrimaryText(result: SearchApiResult): string {
   }
   if (result.type === "conversation") {
     return result.title || sanitizeSnippet(result.snippet) || "Conversation";
+  }
+  if (result.type === "artifact") {
+    return result.title || sanitizeSnippet(result.snippet) || "Distillate";
   }
   if (result.type === "evidence_span") {
     return sanitizeSnippet(result.snippet) || result.citation_label;
@@ -175,7 +200,7 @@ export function adaptSearchResultRow(
     resourceRef: result.resource_ref,
     activation: result.activation,
     citationTarget: result.citation_target,
-    paneTitleHint: primaryText,
+    paneLabelHint: primaryText,
     type: result.type,
     mediaId: result.media_id,
     contextRef: {
@@ -197,12 +222,15 @@ export function adaptSearchResultRow(
               ? result.citation_label
             : result.type === "conversation"
               ? "conversation"
+            : result.type === "artifact"
+              ? "distillate"
             : result.type === "web_result"
               ? "web result"
             : result.type,
     primaryText,
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
+    publicationDate: publicationDateFor(result),
     contributorCredits: getContributorCredits(result),
     noteBody: result.type === "note_block" ? result.body_text : null,
   };

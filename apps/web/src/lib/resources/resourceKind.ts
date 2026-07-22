@@ -25,13 +25,11 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
-import type { ObjectType } from "@/lib/objectRefs";
 import {
   isResourceScheme,
   parseResourceRef,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
-import { resourceSchemeIsLinkable } from "./resourceCapabilities.generated";
 
 const RESOURCE_SCHEME_ICONS = {
   media: FileText,
@@ -52,13 +50,8 @@ const RESOURCE_SCHEME_ICONS = {
   contributor: User,
   podcast: Disc3,
   reader_apparatus_item: NotebookTabs,
+  passage_anchor: TextQuote,
 } satisfies Record<ResourceScheme, LucideIcon>;
-
-export function resourceObjectTypeForScheme(
-  scheme: ResourceScheme,
-): ObjectType | null {
-  return resourceSchemeIsLinkable(scheme) ? scheme : null;
-}
 
 export function resourceIconForUri(resourceRef: string): LucideIcon {
   const parsed = parseResourceRef(resourceRef);
@@ -70,9 +63,9 @@ export function resourceIconForScheme(scheme: string): LucideIcon {
 }
 
 /**
- * Lead icon for a media row by its `kind`. All media share the `media` scheme,
- * so this is the one owner of the finer book/pdf/audio/video distinction the
- * collection lead falls back to when there is no cover.
+ * Detail-header icon for media by its `kind`. Collection rows deliberately
+ * carry no lead image or type icon; MediaPane remains the owner of this finer
+ * book/pdf/audio/video distinction.
  */
 export function mediaKindIcon(kind: string): LucideIcon {
   switch (kind) {

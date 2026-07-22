@@ -25,12 +25,14 @@ from uuid import UUID, uuid4
 
 import pytest
 import respx
+from fastapi.testclient import TestClient
+from provider_runtime import RuntimeDefect
 from pydantic import ValidationError
 from sqlalchemy import text
 
 from nexus.config import clear_settings_cache
 from nexus.db.models import Fragment
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import InvalidRequestError, NotFoundError
 from nexus.services import contributors
 from nexus.services.content_indexing import (
     IndexOwner,
@@ -179,17 +181,9 @@ class TestBasicSearch:
                 fragments=[fragment],
                 reason="test",
             )
-            # The generic filing endpoint below only re-files media already
-            # reachable through a membership (readable-or-restorable, spec
-            # S4.3 rule 1) — establish the direct entry first.
+            # Establish the direct entry that production ingest creates.
             seed_media_in_library(session, default_library_id, media_id)
             session.commit()
-
-        auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(user_id),
-        )
 
         with direct_db.session() as session:
             highlight_id, note_block_id = create_test_highlight_note(
@@ -3914,22 +3908,49 @@ class TestSemanticTranscriptChunkSearch:
         chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
         assert all(row["source"]["media_id"] != str(media_id) for row in chunk_results)
 
-    @pytest.mark.parametrize(
-        ("provider_status", "provider_body"),
-        [
-            (500, {"error": {"message": "provider unavailable"}}),
-            (200, {"data": [{"index": 0, "embedding": [0.1]}]}),
-        ],
-    )
     @respx.mock
-    def test_semantic_search_reports_query_embedding_failures(
+    def test_semantic_search_transient_embedding_provider_failure_falls_back_to_lexical(
         self,
         auth_client,
         direct_db: DirectSessionManager,
         monkeypatch: pytest.MonkeyPatch,
-        provider_status: int,
-        provider_body: dict[str, object],
     ):
+        """A transient provider failure (exhausted retries) is operational
+        resilience, not a search error (spec §5.5, search-intent-model hard
+        cutover): it degrades to lexical-only, typed and logged, and the
+        request still succeeds."""
+        user_id, media_id = self._seed_transcript_chunk_media(
+            auth_client,
+            direct_db,
+            semantic_status="ready",
+        )
+        self._use_openai_embedding_provider(monkeypatch)
+        respx.post(OPENAI_EMBEDDINGS_URL).respond(
+            500,
+            json={"error": {"message": "provider unavailable"}},
+        )
+
+        response = auth_client.get(
+            "/search?q=transformer+attention&kinds=documents",
+            headers=auth_headers(user_id),
+        )
+        assert response.status_code == 200, response.text
+        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
+        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results), (
+            "a transient query-embedding provider failure should fall back to lexical search"
+        )
+
+    @respx.mock
+    def test_semantic_search_malformed_embedding_response_reports_search_failure(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A malformed (wrong-dimension) embedding response is a hard provider
+        error, distinct from provider-unavailable: it is not operationally
+        resilient to silently retry or downgrade, so it surfaces as a search
+        failure."""
         user_id, _media_id = self._seed_transcript_chunk_media(
             auth_client,
             direct_db,
@@ -3937,47 +3958,53 @@ class TestSemanticTranscriptChunkSearch:
         )
         self._use_openai_embedding_provider(monkeypatch)
         respx.post(OPENAI_EMBEDDINGS_URL).respond(
-            provider_status,
-            json=provider_body,
+            200,
+            json={"data": [{"index": 0, "embedding": [0.1]}]},
         )
 
         response = auth_client.get(
             "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
-        assert response.status_code == 503, (
-            f"expected semantic provider failure to surface, got "
+        assert response.status_code == 500, (
+            f"expected malformed embedding response to surface as a search failure, got "
             f"{response.status_code}: {response.text}"
         )
-        assert response.json()["error"]["code"] == "E_LLM_PROVIDER_DOWN"
+        assert response.json()["error"]["code"] == "E_APP_SEARCH_FAILED"
 
-    def test_semantic_search_missing_embedding_key_falls_back_to_lexical(
+    def test_semantic_search_missing_embedding_credential_is_a_defect_not_a_product_failure(
         self,
         auth_client,
         direct_db: DirectSessionManager,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        user_id, media_id = self._seed_transcript_chunk_media(
+        """A missing platform embedding key is an operator misconfiguration,
+        not a user-facing state (platform keys are validated at startup in
+        staging/prod): it raises ``RuntimeDefect`` unwrapped rather than
+        degrading to lexical search, and the request fails loudly with
+        E_INTERNAL instead of silently downgrading result quality."""
+        user_id, _media_id = self._seed_transcript_chunk_media(
             auth_client,
             direct_db,
             semantic_status="ready",
         )
 
         def missing_key(_text: str) -> tuple[str, list[float]]:
-            raise ApiError(ApiErrorCode.E_LLM_NO_KEY, "OPENAI_API_KEY is required.")
+            raise RuntimeDefect(
+                origin="provider_http",
+                code="credential_missing",
+                message="No platform API key configured for provider=openai",
+            )
 
         monkeypatch.setattr("nexus.services.search.embedding.build_text_embedding", missing_key)
-
-        response = auth_client.get(
+        no_raise_client = TestClient(auth_client.app, raise_server_exceptions=False)
+        response = no_raise_client.get(
             "/search?q=transformer+attention&kinds=documents",
             headers=auth_headers(user_id),
         )
 
-        assert response.status_code == 200, response.text
-        chunk_results = [r for r in response.json()["results"] if r["type"] == "content_chunk"]
-        assert any(row["source"]["media_id"] == str(media_id) for row in chunk_results), (
-            "missing query-embedding credentials should fall back to lexical search"
-        )
+        assert response.status_code == 500, response.text
+        assert response.json()["error"]["code"] == "E_INTERNAL"
 
     @respx.mock
     def test_default_semantic_search_builds_one_query_embedding(

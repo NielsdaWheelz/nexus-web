@@ -60,7 +60,9 @@ function respondWith(routes: Record<string, unknown>): void {
 }
 
 function respondWithFn(responder: Responder): void {
-  mockCallFastAPI.mockImplementation(async (path: string) => responder(path) as never);
+  mockCallFastAPI.mockImplementation(
+    async (path: string) => responder(path) as never,
+  );
 }
 
 // The exact seven-field profile the strict decoder accepts; there is no frontend default.
@@ -117,7 +119,12 @@ function workspace(input: {
 function sessionEnvelope(input: {
   own?: WorkspaceState | null;
   mostRecentElsewhere?: WorkspaceState | null;
-}): { data: { own: { state: unknown } | null; most_recent_elsewhere: { state: unknown } | null } } {
+}): {
+  data: {
+    own: { state: unknown } | null;
+    most_recent_elsewhere: { state: unknown } | null;
+  };
+} {
   return {
     data: {
       own: input.own ? { state: input.own } : null,
@@ -168,22 +175,18 @@ describe("loadWorkspaceBootstrap", () => {
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
   });
 
-  it("falls back to the default href and runs that route's loader when no request-path header is present", async () => {
-    // No REQUEST_PATH_HEADER set — bootstrap must use the default fallback href,
-    // which resolves to the libraries pane (a prefetched route).
-    const librariesEnvelope = {
-      data: [{ id: "lib-1" }],
-      page: { has_more: false, next_cursor: null },
-    };
+  it("falls back to the Lectern home when no request-path header is present", async () => {
+    const slateEnvelope = { data: { items: [] } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/libraries": librariesEnvelope,
+      "/lectern/slate": slateEnvelope,
     });
 
     const result = await loadWorkspaceBootstrap(false);
 
     expect(result.initialHref).toBe(WORKSPACE_DEFAULT_FALLBACK_HREF);
-    expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+    expect(result.initialHref).toBe("/lectern");
+    expect(result.resources["lectern:slate:0"]).toEqual({ items: [] });
   });
 
   it("loads fragments for a readable media kind and composes the media pane resource", async () => {
@@ -198,7 +201,10 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.resources["abc"]).toEqual({ media, fragments: [fragment] });
+    expect(result.resources["abc"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [fragment] },
+    });
     expect(mockCallFastAPI).toHaveBeenCalledWith(
       "/media/abc/fragments",
       expect.anything(),
@@ -215,7 +221,10 @@ describe("loadWorkspaceBootstrap", () => {
 
     const result = await loadWorkspaceBootstrap(false);
 
-    expect(result.resources["ep"]).toEqual({ media, fragments: [] });
+    expect(result.resources["ep"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
       "/media/ep/fragments",
       expect.anything(),
@@ -241,7 +250,9 @@ describe("loadWorkspaceBootstrap", () => {
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/contributors/jane": { data: detail },
-      "/contributors/jane/works?limit=100": { data: { works: [work], nextCursor: null } },
+      "/contributors/jane/works?limit=100": {
+        data: { works: [work], nextCursor: null },
+      },
     });
 
     const result = await loadWorkspaceBootstrap(false);
@@ -254,7 +265,12 @@ describe("loadWorkspaceBootstrap", () => {
         otherNames: ["J. Doe"],
         canRename: true,
       },
-      works: [work],
+      works: [
+        {
+          ...work,
+          date: { kind: "Present", value: "2020-01-01" },
+        },
+      ],
       worksNextCursor: null,
     });
   });
@@ -262,7 +278,27 @@ describe("loadWorkspaceBootstrap", () => {
   it("composes the library detail resource from library and entries paths", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
     const library = { id: "lib-1", name: "Seeded Library" };
-    const entry = { id: "entry-1", media: { id: "media-1" } };
+    const entry = {
+      id: "entry-1",
+      kind: "media",
+      media: {
+        id: "media-1",
+        kind: "web_article",
+        processing_status: "ready_for_reading",
+        read_state: "unread",
+        progress_fraction: null,
+        published_date: null,
+        canonical_source_url: "https://example.test/article",
+        capabilities: { can_quote: true },
+      },
+      readingTimeEstimate: {
+        kind: "Present",
+        value: {
+          totalMinutes: 15,
+          remainingMinutes: { kind: "Absent" },
+        },
+      },
+    };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
       "/libraries/lib-1": { data: library },
@@ -276,7 +312,24 @@ describe("loadWorkspaceBootstrap", () => {
 
     expect(result.resources["lib-1"]).toEqual({
       library,
-      entries: [entry],
+      entries: [
+        {
+          ...entry,
+          media: {
+            ...entry.media,
+            progressFraction: { kind: "Absent" },
+            publicationDate: { kind: "Absent" },
+            sourceHost: { kind: "Present", value: "example.test" },
+          },
+          readingTimeEstimate: {
+            kind: "Present",
+            value: {
+              totalMinutes: { value: 15 },
+              remainingMinutes: { kind: "Absent" },
+            },
+          },
+        },
+      ],
       entriesPage: { has_more: false, next_cursor: null },
     });
   });
@@ -353,19 +406,13 @@ describe("loadWorkspaceBootstrap", () => {
     );
   });
 
-  it("seeds settings account, keys, and billing resources with their pane keys", async () => {
+  it("seeds settings account and billing resources with their pane keys", async () => {
     const cases = [
       {
         href: "/settings/account",
         path: "/me",
         key: "settings-account:me",
         body: { data: { email: "seed@example.com", display_name: "Seed" } },
-      },
-      {
-        href: "/settings/keys",
-        path: "/keys",
-        key: "settings-keys:0",
-        body: { data: [] },
       },
       {
         href: "/settings/billing",
@@ -420,7 +467,9 @@ describe("loadWorkspaceBootstrap", () => {
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
     });
 
-    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow("Invalid reader profile");
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "Invalid reader profile",
+    );
   });
 
   it("omits the pane resource when its loader fails (D-8) without throwing", async () => {
@@ -472,8 +521,8 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("restores this device's own saved session into initialState and seeds every visible pane (AC-4)", async () => {
     // Device cookie present → the bootstrap fetches this device's saved session and
-    // restores its panes. A neutral deep-link (/libraries) lets the multi-pane layout
-    // pass through unchanged, so initialState reflects the restored panes and wave 2
+    // restores its panes. The explicit /libraries deep link reuses the matching
+    // restored pane, so initialState reflects the restored panes and wave 2
     // seeds BOTH visible panes' resources, not just the URL pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
@@ -491,7 +540,9 @@ describe("loadWorkspaceBootstrap", () => {
     };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/libraries": librariesEnvelope,
       "/media/123": { data: media },
     });
@@ -502,8 +553,95 @@ describe("loadWorkspaceBootstrap", () => {
       ["/libraries", "/media/123"].sort(),
     );
     // AC-4: both restored visible panes' resources are seeded under their cacheKeys.
-    expect(result.resources["123"]).toEqual({ media, fragments: [] });
+    expect(result.resources["123"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
     expect(result.resources["libraries:0"]).toEqual(librariesEnvelope);
+  });
+
+  it("honors Lectern home intent while preserving restored panes", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/lectern");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [primary("pane-media", "/media/123")],
+    });
+    const media = { kind: "epub", capabilities: { can_read: true } };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/lectern/slate": { data: { items: [] } },
+      "/media/123": { data: media },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(visibleHrefs(result.initialState)).toEqual([
+      "/media/123",
+      "/lectern",
+    ]);
+    expect(activeHref(result.initialState)).toBe("/lectern");
+  });
+
+  it("prefetches an inactive visible Lectern as its first read", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/123");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/123"),
+        primary("pane-lectern", "/lectern"),
+      ],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/media/123": {
+        data: { kind: "epub", capabilities: { can_read: true } },
+      },
+      "/lectern/slate": { data: { items: [] } },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(activeHref(result.initialState)).toBe("/media/123");
+    expect(result.resources["lectern:slate:0"]).toEqual({ items: [] });
+    expect(
+      mockCallFastAPI.mock.calls.filter(([path]) => path === "/lectern/slate"),
+    ).toHaveLength(1);
+  });
+
+  it("does not prefetch a minimized Lectern", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/media/123");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const ownState = workspace({
+      activePrimaryPaneId: "pane-media",
+      primaryPanes: [
+        primary("pane-media", "/media/123"),
+        primary("pane-lectern", "/lectern", { visibility: "minimized" }),
+      ],
+    });
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
+      "/media/123": {
+        data: { kind: "epub", capabilities: { can_read: true } },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(result.resources["lectern:slate:0"]).toBeUndefined();
+    expect(
+      mockCallFastAPI.mock.calls.filter(([path]) => path === "/lectern/slate"),
+    ).toHaveLength(0);
   });
 
   it("retries the URL pane in wave 2 when its wave-1 seed failed, so the active pane is still seeded (AC-4)", async () => {
@@ -556,7 +694,7 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("falls back to most_recent_elsewhere when own is trivial/absent (AC-7)", async () => {
     // own null, a non-trivial session from another device → that layout is restored.
-    // A neutral deep-link keeps the multi-pane elsewhere layout intact.
+    // The explicit /libraries deep link reuses its matching restored pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
     const elsewhere = workspace({
@@ -628,13 +766,16 @@ describe("loadWorkspaceBootstrap", () => {
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
     expect(panes[0]?.href).toBe(result.initialHref);
-    expect(result.resources["solo"]).toEqual({ media, fragments: [] });
+    expect(result.resources["solo"]).toEqual({
+      media,
+      fragments: { status: "ready", data: [] },
+    });
   });
 
   it("merges the deep-link pane into the restored layout", async () => {
     // Restored layout does NOT contain the deep-link resource → the deep-link pane is
     // appended and made active, alongside the restored pane. The restored session must
-    // be non-trivial to be selected (a lone /libraries pane is treated as trivial), so
+    // be non-trivial to be selected (only a lone /lectern pane is trivial), so
     // the saved layout is a single /conversations pane.
     requestHeaders.set(REQUEST_PATH_HEADER, "/media/xyz");
     requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
@@ -644,7 +785,9 @@ describe("loadWorkspaceBootstrap", () => {
     const media = { kind: "epub", capabilities: { can_read: true } };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/conversations?limit=50": { data: [], page: { next_cursor: null } },
       "/media/xyz": { data: media },
     });
@@ -670,7 +813,9 @@ describe("loadWorkspaceBootstrap", () => {
     });
     respondWith({
       "/me/reader-profile": PROFILE_OK,
-      "/me/workspace-session?device_id=dev-1": sessionEnvelope({ own: ownState }),
+      "/me/workspace-session?device_id=dev-1": sessionEnvelope({
+        own: ownState,
+      }),
       "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
       "/billing/account": { data: { billing_plan_tier: "free" } },
     });

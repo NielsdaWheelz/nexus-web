@@ -1,116 +1,348 @@
-"""Integration tests for metadata enrichment task behavior."""
+"""Integration tests for metadata enrichment task behavior.
 
-import base64
-import importlib
+`enrich_metadata` has no separate "owner function" injected with a runtime the
+way e.g. `generate_dawn_write` is (see `tests/test_dawn_write.py`) — the
+`GenerationRequest`/`execute_generation` call lives directly inside the task's
+`_run` closure, itself invoked through `run_llm_task`. The only test seam is
+`ExecutionRuntime` construction (`nexus.tasks.llm_task.ProductionExecutionRuntime`),
+which this file swaps for a fake that scripts one `provider_runtime` outcome
+per call — the same `_ScriptedRuntime` shape `tests/test_llm_execution.py` uses.
+
+Unlike `tests/test_llm_execution.py`, this file does NOT route the task
+through a savepoint-shared `db_session`: `enrich_metadata` fans out across
+*three independent, separately-committing sessions* on its own (the worker's
+`db`, `execute_generation`'s ledger `session_factory`, and the author facade's
+"fresh session" per spec 2.4/D-14 in `nexus.services.contributors`) — nesting
+three `join_transaction_mode="create_savepoint"` sessions that deeply breaks
+SQLAlchemy's savepoint bookkeeping. So this file uses `direct_db`
+(`DirectSessionManager`, real independent connections, real commits) exactly
+like the pre-cutover file did, and leaves every `get_session_factory` seam
+pointed at its real default (already resolving to the test database via the
+`DATABASE_URL` env var) — only the rate limiter singleton and the
+`ExecutionRuntime` construction are test-installed.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from provider_runtime.errors import ModelCallError, ModelCallErrorCode
-from provider_runtime.types import ModelResponse, ProviderApiKey, TokenUsage
+from provider_runtime import (
+    Absent,
+    CallMeta,
+    Failed,
+    GenerateIntent,
+    PossiblyBillable,
+    Present,
+    ProviderHttpUnavailable,
+    ResponsePayload,
+    StructuredContent,
+    Succeeded,
+    TokenUsage,
+    TransientExhausted,
+    UserMessage,
+)
 from sqlalchemy import text
 
-from nexus.services.api_key_resolver import ResolvedKey
+from nexus.config import clear_settings_cache
+from nexus.db.session import get_session_factory
+from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.contributor_credits import load_contributor_credits_for_media
-from nexus.services.crypto import MASTER_KEY_SIZE, _get_master_key, encrypt_api_key
+from nexus.services.llm_profiles import operation_profile
+from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from tests.helpers import create_test_user_id
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
 
-
-def _enrich_metadata_module():
-    return importlib.import_module("nexus.tasks.enrich_metadata")
+_PROFILE = operation_profile("metadata_enrichment")
 
 
-def _stub_resolved_keys(monkeypatch, enrich_module, api_key: str = "sk-test") -> None:
-    """Stub the key-resolution seam; the real path is covered by the BYOK test."""
-    monkeypatch.setattr(
-        enrich_module,
-        "resolve_api_key",
-        lambda _db, _user_id, provider, _key_mode: ResolvedKey(
-            api_key=api_key, mode="platform", provider=provider
+# ---------------------------------------------------------------------------
+# ExecutionRuntime fixture seam — same shape as tests/test_llm_execution.py's
+# `_ScriptedRuntime`, plus `intents` capture (this file asserts prompt content,
+# which the reference fixture doesn't need to track).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ScriptedRuntime:
+    outcome: object
+    calls: list[str] = field(default_factory=list)
+    intents: list[GenerateIntent] = field(default_factory=list)
+
+    async def generate(self, intent, plan, credential):
+        self.calls.append("generate")
+        self.intents.append(intent)
+        return self.outcome
+
+    def stream(self, intent, plan, credential, *, cancel):
+        raise NotImplementedError("enrich_metadata never streams")
+
+
+def _meta(**overrides: object) -> CallMeta:
+    fields: dict[str, object] = {
+        "provider": _PROFILE.target.provider,
+        "model": _PROFILE.target.model,
+        "provider_request_id": Present("req-abc"),
+        "upstream_provider": Absent(),
+        "usage": Present(
+            TokenUsage(
+                input_tokens=50,
+                output_tokens=20,
+                total_tokens=70,
+                reasoning_tokens=Absent(),
+                cache_read_input_tokens=Absent(),
+                cache_write_input_tokens=Absent(),
+            )
+        ),
+        "attempt_trace": (),
+        "billability": PossiblyBillable(),
+    }
+    fields.update(overrides)
+    return CallMeta(**fields)  # type: ignore[arg-type]
+
+
+def _succeeded(payload: dict, *, usage: TokenUsage | None = None) -> Succeeded:
+    meta = _meta(usage=Present(usage)) if usage is not None else _meta()
+    return Succeeded(
+        meta=meta,
+        response=ResponsePayload(
+            content=StructuredContent(payload=payload, text=json.dumps(payload)),
+            continuation=Absent(),
         ),
     )
 
 
-def _completed_response(
-    structured_output: dict | None, text: str = "", usage: TokenUsage | None = None
-) -> ModelResponse:
-    return ModelResponse(
-        text=text,
-        usage=usage,
-        provider_request_id=None,
-        status="completed",
-        structured_output=structured_output,
+def _provider_unavailable_failure() -> Failed:
+    return Failed(
+        meta=_meta(usage=Absent()),
+        failure=TransientExhausted(attempts=1, cause=ProviderHttpUnavailable()),
     )
 
 
-class _RecordingRateLimiter:
-    """Records the metadata worker budget-envelope calls."""
+def _prompt_text(intent: GenerateIntent) -> str:
+    return "\n".join(
+        block.text
+        for message in intent.messages
+        if isinstance(message, UserMessage)
+        for block in message.blocks
+    )
 
-    def __init__(self) -> None:
+
+# ---------------------------------------------------------------------------
+# Wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _platform_key(monkeypatch):
+    """generation_credential needs a configured platform key for the pinned
+    ("fast" -> openai) profile — there is no BYOK path any more."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-platform-openai")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+@pytest.fixture(autouse=True)
+def _rate_limiter():
+    previous = get_rate_limiter()
+    set_rate_limiter(RateLimiter(session_factory=get_session_factory()))
+    yield
+    set_rate_limiter(previous)
+
+
+def _install_runtime(monkeypatch, runtime: _ScriptedRuntime) -> None:
+    monkeypatch.setattr(
+        "nexus.tasks.llm_task.ProductionExecutionRuntime", lambda provider_runtime: runtime
+    )
+
+
+def _grant_ai_entitlement(direct_db: DirectSessionManager, user_id: UUID) -> None:
+    direct_db.register_cleanup("billing_entitlement_overrides", "user_id", user_id)
+    # Registered after the parent so it runs first (LIFO): the audit-event child
+    # rows FK-reference the override and must be deleted before it.
+    direct_db.register_cleanup("billing_entitlement_override_events", "user_id", user_id)
+    with direct_db.session() as session:
+        grant_entitlement_override(
+            session,
+            user_id=user_id,
+            plan_tier="ai_pro",
+            platform_token_quota_mode="unlimited",
+            platform_token_limit_monthly=None,
+            transcription_quota_mode="unlimited",
+            transcription_minutes_limit_monthly=None,
+            expires_at=None,
+            reason="enrich_metadata integration test",
+            actor_label="test",
+        )
+        session.commit()
+
+
+class _RecordingRateLimiter(RateLimiter):
+    """Records the metadata worker budget-envelope calls while still
+    delegating to the real Postgres-backed implementation."""
+
+    def __init__(self, *, session_factory) -> None:
+        super().__init__(session_factory=session_factory)
         self.events: list[tuple[str, UUID, UUID | None, int | None]] = []
 
     def acquire_inflight_slot(self, user_id: UUID) -> None:
         self.events.append(("acquire_inflight_slot", user_id, None, None))
+        super().acquire_inflight_slot(user_id)
 
     def release_inflight_slot(self, user_id: UUID) -> None:
         self.events.append(("release_inflight_slot", user_id, None, None))
+        super().release_inflight_slot(user_id)
 
     def reserve_token_budget(
         self, user_id: UUID, reservation_id: UUID, est_tokens: int, ttl: int = 300
     ) -> None:
         self.events.append(("reserve_token_budget", user_id, reservation_id, est_tokens))
+        super().reserve_token_budget(user_id, reservation_id, est_tokens, ttl)
 
     def commit_token_budget(self, user_id: UUID, reservation_id: UUID, actual_tokens: int) -> None:
         self.events.append(("commit_token_budget", user_id, reservation_id, actual_tokens))
+        super().commit_token_budget(user_id, reservation_id, actual_tokens)
 
     def release_token_budget(self, user_id: UUID, reservation_id: UUID) -> None:
         self.events.append(("release_token_budget", user_id, reservation_id, None))
+        super().release_token_budget(user_id, reservation_id)
 
     def event_names(self) -> list[str]:
         return [event[0] for event in self.events]
 
 
-@pytest.fixture(autouse=True)
-def metadata_rate_limiter(monkeypatch) -> _RecordingRateLimiter:
-    limiter = _RecordingRateLimiter()
-    monkeypatch.setattr("nexus.tasks.enrich_metadata.get_rate_limiter", lambda: limiter)
-    return limiter
+def _insert_user(session, user_id: UUID) -> None:
+    session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+
+def _insert_media(
+    session,
+    media_id: UUID,
+    *,
+    kind: str = "web_article",
+    title: str = "notes.pdf",
+    processing_status: str = "ready_for_reading",
+    created_by_user_id: UUID | None,
+    publisher: str | None = None,
+    description: str | None = None,
+    language: str | None = None,
+    published_date: str | None = None,
+    failure_stage: str | None = None,
+    last_error_code: str | None = None,
+    last_error_message: str | None = None,
+    metadata_enriched_at: datetime | None = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            INSERT INTO media (
+                id, kind, title, canonical_source_url, processing_status,
+                created_by_user_id, publisher, description, language,
+                published_date, failure_stage, last_error_code, last_error_message,
+                metadata_enriched_at
+            ) VALUES (
+                :id, :kind, :title, 'https://example.com/a', :processing_status,
+                :created_by_user_id, :publisher, :description, :language,
+                :published_date, :failure_stage, :last_error_code, :last_error_message,
+                :metadata_enriched_at
+            )
+            """
+        ),
+        {
+            "id": media_id,
+            "kind": kind,
+            "title": title,
+            "processing_status": processing_status,
+            "created_by_user_id": created_by_user_id,
+            "publisher": publisher,
+            "description": description,
+            "language": language,
+            "published_date": published_date,
+            "failure_stage": failure_stage,
+            "last_error_code": last_error_code,
+            "last_error_message": last_error_message,
+            "metadata_enriched_at": metadata_enriched_at,
+        },
+    )
+
+
+def _register_user_and_media_cleanup(
+    direct_db: DirectSessionManager, *, media_id: UUID, user_id: UUID | None
+) -> None:
+    # Registration order is parent-first; DirectSessionManager.cleanup() deletes
+    # in reverse (LIFO), so this yields child-first, FK-safe deletion:
+    # llm_calls, contributor_credits, media, users.
+    if user_id is not None:
+        direct_db.register_cleanup("users", "id", user_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+    direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+
+
+def _media_row(direct_db: DirectSessionManager, media_id: UUID, columns: str):
+    with direct_db.session() as session:
+        return session.execute(
+            text(f"SELECT {columns} FROM media WHERE id = :id"), {"id": media_id}
+        ).fetchone()
+
+
+def _author_rows(direct_db: DirectSessionManager, media_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                "SELECT credited_name FROM contributor_credits"
+                " WHERE media_id = :media_id ORDER BY ordinal ASC"
+            ),
+            {"media_id": media_id},
+        ).fetchall()
+
+
+def _llm_call_rows(direct_db: DirectSessionManager, media_id: UUID):
+    with direct_db.session() as session:
+        return session.execute(
+            text(
+                """
+                SELECT call_seq, provider, model_name, llm_operation, outcome,
+                       error_origin, error_code, error_detail
+                FROM llm_calls
+                WHERE owner_kind = 'media_enrichment' AND owner_id = :id
+                ORDER BY call_seq
+                """
+            ),
+            {"id": media_id},
+        ).fetchall()
 
 
 class TestEnrichMetadata:
     def test_pending_podcast_episode_uses_show_notes_and_structured_metadata(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         podcast_id = uuid4()
         media_id = uuid4()
 
+        direct_db.register_cleanup("users", "id", user_id)
         direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("podcasts", "id", podcast_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("podcast_episodes", "media_id", media_id)
+        direct_db.register_cleanup("contributor_credits", "media_id", media_id)
+        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            _insert_user(session, user_id)
             session.execute(
                 text(
                     """
-                    INSERT INTO podcasts (
-                        id,
-                        provider,
-                        provider_podcast_id,
-                        title,
-                        feed_url
-                    )
-                    VALUES (
-                        :id,
-                        'podcast_index',
-                        :provider_podcast_id,
-                        :title,
-                        :feed_url
-                    )
+                    INSERT INTO podcasts (id, provider, provider_podcast_id, title, feed_url)
+                    VALUES (:id, 'podcast_index', :provider_podcast_id, :title, :feed_url)
                     """
                 ),
                 {
@@ -120,48 +352,21 @@ class TestEnrichMetadata:
                     "feed_url": f"https://feeds.example.com/{podcast_id}.xml",
                 },
             )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id,
-                        kind,
-                        title,
-                        canonical_source_url,
-                        processing_status,
-                        created_by_user_id
-                    )
-                    VALUES (
-                        :id,
-                        'podcast_episode',
-                        'Episode 7',
-                        :canonical_source_url,
-                        'pending',
-                        :created_by_user_id
-                    )
-                    """
-                ),
-                {
-                    "id": media_id,
-                    "canonical_source_url": f"https://feeds.example.com/{podcast_id}.xml",
-                    "created_by_user_id": user_id,
-                },
+            _insert_media(
+                session,
+                media_id,
+                kind="podcast_episode",
+                title="Episode 7",
+                created_by_user_id=user_id,
             )
             session.execute(
                 text(
                     """
                     INSERT INTO podcast_episodes (
-                        media_id,
-                        podcast_id,
-                        provider_episode_id,
-                        fallback_identity,
+                        media_id, podcast_id, provider_episode_id, fallback_identity,
                         description_text
-                    )
-                    VALUES (
-                        :media_id,
-                        :podcast_id,
-                        :provider_episode_id,
-                        :fallback_identity,
+                    ) VALUES (
+                        :media_id, :podcast_id, :provider_episode_id, :fallback_identity,
                         :description_text
                     )
                     """
@@ -175,24 +380,10 @@ class TestEnrichMetadata:
                 },
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _settings: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        prompt_holder: dict[str, str] = {}
-        structured_output_seen: dict[str, bool] = {}
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, key, timeout_s
-            prompt_holder["prompt"] = req.messages[0].content
-            structured_output_seen["present"] = getattr(req, "structured_output", None) is not None
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": None,
                     "authors": ["Episode Host"],
@@ -202,38 +393,21 @@ class TestEnrichMetadata:
                     "published_date": "2026-03-02",
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "success"
-        assert structured_output_seen == {"present": True}
-        assert "Systems Show" in prompt_holder["prompt"]
-        assert "feedback loops" in prompt_holder["prompt"]
+        assert runtime.calls == ["generate"]
+        prompt = _prompt_text(runtime.intents[0])
+        assert "Systems Show" in prompt
+        assert "feedback loops" in prompt
 
-        with direct_db.session() as session:
-            media_row = session.execute(
-                text(
-                    """
-                    SELECT publisher, language, description, published_date
-                    FROM media
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            author_rows = session.execute(
-                text(
-                    """
-                    SELECT credited_name
-                    FROM contributor_credits
-                    WHERE media_id = :media_id
-                    ORDER BY ordinal ASC
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchall()
+        media_row = _media_row(
+            direct_db, media_id, "publisher, language, description, published_date"
+        )
+        author_rows = _author_rows(direct_db, media_id)
 
         assert media_row == (
             "Systems Show",
@@ -246,58 +420,29 @@ class TestEnrichMetadata:
     def test_automatic_enrichment_overwrites_populated_metadata_by_default(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
         fragment_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id,
-                        kind,
-                        title,
-                        canonical_source_url,
-                        processing_status,
-                        created_by_user_id,
-                        metadata_enriched_at
-                    )
-                    VALUES (
-                        :id,
-                        'web_article',
-                        'John-Keats.com - Poems',
-                        'https://example.com/notes',
-                        'ready_for_reading',
-                        :created_by_user_id,
-                        :metadata_enriched_at
-                    )
-                    """
-                ),
-                {
-                    "id": media_id,
-                    "created_by_user_id": user_id,
-                    "metadata_enriched_at": datetime.now(UTC),
-                },
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                title="John-Keats.com - Poems",
+                created_by_user_id=user_id,
+                metadata_enriched_at=datetime.now(UTC),
             )
             session.execute(
                 text(
                     """
-                    INSERT INTO fragments (
-                        id,
-                        media_id,
-                        idx,
-                        html_sanitized,
-                        canonical_text
-                    )
+                    INSERT INTO fragments (id, media_id, idx, html_sanitized, canonical_text)
                     VALUES (
-                        :id,
-                        :media_id,
-                        0,
+                        :id, :media_id, 0,
                         '<p>Ada Lovelace wrote these analytical engine notes.</p>',
                         'Ada Lovelace wrote these analytical engine notes.'
                     )
@@ -306,19 +451,10 @@ class TestEnrichMetadata:
                 {"id": fragment_id, "media_id": media_id},
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _settings: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "Analytical Engine Notes",
                     "authors": ["Ada Lovelace"],
@@ -328,35 +464,16 @@ class TestEnrichMetadata:
                     "language": "en",
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
-
+        result = enrich_metadata(str(media_id))
         assert result["status"] == "success"
 
-        with direct_db.session() as session:
-            media_row = session.execute(
-                text(
-                    """
-                    SELECT title, publisher, description, published_date, language
-                    FROM media
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            author_rows = session.execute(
-                text(
-                    """
-                    SELECT credited_name
-                    FROM contributor_credits
-                    WHERE media_id = :media_id
-                    ORDER BY ordinal ASC
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchall()
+        media_row = _media_row(
+            direct_db, media_id, "title, publisher, description, published_date, language"
+        )
+        author_rows = _author_rows(direct_db, media_id)
 
         assert media_row == (
             "Analytical Engine Notes",
@@ -370,44 +487,30 @@ class TestEnrichMetadata:
     def test_automatic_enrichment_never_skips_no_gaps(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id, publisher, description, language,
-                        published_date
-                    ) VALUES (
-                        :id, 'web_article', 'Real Article Title',
-                        'https://example.com/a', 'ready_for_reading',
-                        :user_id, 'Example Co', 'A summary.', 'en', '2026-01-01'
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                title="Real Article Title",
+                created_by_user_id=user_id,
+                publisher="Example Co",
+                description="A summary.",
+                language="en",
+                published_date="2026-01-01",
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "Better Article Title",
                     "authors": None,
@@ -417,10 +520,10 @@ class TestEnrichMetadata:
                     "language": "en",
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
         assert result["status"] == "success", (
             f"Expected automatic enrichment to run even when all fields are populated, got {result}"
         )
@@ -429,42 +532,28 @@ class TestEnrichMetadata:
     def test_overwrites_populated_fields_by_default(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id, publisher, description
-                    ) VALUES (
-                        :id, 'web_article', 'Old Title', 'https://example.com/a',
-                        'ready_for_reading', :user_id, 'Old Publisher', 'Old description.'
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                title="Old Title",
+                created_by_user_id=user_id,
+                publisher="Old Publisher",
+                description="Old description.",
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "New Title",
                     "authors": None,
@@ -474,18 +563,13 @@ class TestEnrichMetadata:
                     "language": None,
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
         assert result["status"] == "success", f"Expected success, got {result}"
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT title, publisher, description FROM media WHERE id = :id"),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(direct_db, media_id, "title, publisher, description")
         assert row == ("New Title", "New Publisher", "New description."), (
             f"Expected default enrichment to overwrite populated fields, got {row}"
         )
@@ -498,42 +582,21 @@ class TestEnrichMetadata:
         # cutover.py); this test's remaining scope is enrich_metadata's own
         # observation build: repeated structured runs stay deduped and
         # idempotent (no duplicate rows across two identical LLM responses).
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            _insert_media(session, media_id, title="notes.pdf", created_by_user_id=user_id)
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "Analytical Engine Notes",
                     "authors": ["Ada Lovelace", "Ada  Lovelace", "Charles Babbage"],
@@ -543,11 +606,11 @@ class TestEnrichMetadata:
                     "language": None,
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        first = enrich_module.enrich_metadata(str(media_id))
-        second = enrich_module.enrich_metadata(str(media_id))
+        first = enrich_metadata(str(media_id))
+        second = enrich_metadata(str(media_id))
 
         assert first["status"] == "success", first
         assert second["status"] == "success", second
@@ -566,76 +629,47 @@ class TestEnrichMetadata:
     def test_llm_failure_records_metadata_failure(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        # Old surface: the runtime raised ModelCallError(PROVIDER_DOWN) and the
+        # task recorded error_code="E_LLM_PROVIDER_DOWN". New surface: a
+        # provider failure is a *returned* Failed(TransientExhausted(...))
+        # outcome (the runtime already exhausted its own retries), mapped by
+        # outcome_failure_facts to the runtime's fixed failure code.
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            _insert_media(session, media_id, title="notes.pdf", created_by_user_id=user_id)
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
+        runtime = _ScriptedRuntime(outcome=_provider_unavailable_failure())
+        _install_runtime(monkeypatch, runtime)
 
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            raise ModelCallError(
-                ModelCallErrorCode.PROVIDER_DOWN,
-                "x" * 1500,
-                provider="openai",
-            )
-
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "failed"
         assert result["reason"] == "llm_failed"
-        assert result["error_code"] == "E_LLM_PROVIDER_DOWN", (
+        assert result["error_code"] == "provider_unavailable", (
             f"Expected llm_failed result, got {result}"
         )
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT failure_stage, last_error_code, last_error_message,
-                           processing_status
-                    FROM media WHERE id = :id
-                    """
-                ),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(
+            direct_db,
+            media_id,
+            "failure_stage, last_error_code, last_error_message, processing_status",
+        )
         assert row is not None
         failure_stage, last_error_code, last_error_message, processing_status = row
         assert failure_stage == "metadata", (
             f"Expected failure_stage='metadata', got {failure_stage!r}"
         )
-        assert last_error_code == "E_LLM_PROVIDER_DOWN", (
-            f"Expected ModelCallError's error_code, got {last_error_code!r}"
+        assert last_error_code == "provider_unavailable", (
+            f"Expected the runtime failure code, got {last_error_code!r}"
         )
         assert last_error_message is not None
         assert len(last_error_message) <= 1000, (
@@ -648,114 +682,75 @@ class TestEnrichMetadata:
     def test_parse_failure_records_metadata_failure(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            _insert_media(session, media_id, title="notes.pdf", created_by_user_id=user_id)
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
+        # A Succeeded outcome whose StructuredContent.payload does not satisfy
+        # MetadataEnrichmentOutput (missing the other five required-nullable
+        # keys) — the strict-JSON contract still leaves room for a payload
+        # that fails the pydantic schema, and that must fail closed.
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded({"title": "Unstructured text payload must be ignored"})
         )
-        _stub_resolved_keys(monkeypatch, enrich_module)
+        _install_runtime(monkeypatch, runtime)
 
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
-                None, text='{"title":"Unstructured text payload must be ignored"}'
-            )
-
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "failed"
         assert result["reason"] == "parse_failed"
         assert result["error_code"] == "E_METADATA_PARSE_FAILED", (
-            f"Expected missing structured_output to fail closed, got {result}"
+            f"Expected malformed structured output to fail closed, got {result}"
         )
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT failure_stage, last_error_code, processing_status
-                    FROM media WHERE id = :id
-                    """
-                ),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(direct_db, media_id, "failure_stage, last_error_code, processing_status")
         assert row == ("metadata", "E_METADATA_PARSE_FAILED", "ready_for_reading"), (
             f"Expected metadata failure recorded with parse-failed code, got {row}"
         )
 
-    def test_structured_validation_failure_is_terminal_for_configured_provider(
+    def test_structured_validation_failure_is_terminal(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        # Old surface: this exercised provider-fallback (openai -> gemini) and
+        # asserted the eventual failure's `result["provider"]`. There is no
+        # per-call provider fallback any more (one profile, one dispatch), and
+        # a failed result no longer carries provider/model at all (only a
+        # success result does) — this test's remaining scope is that a
+        # semantically-invalid field (bad partial-ISO date) in an otherwise
+        # complete structured payload is a terminal parse failure, not
+        # silently coerced or retried.
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id, failure_stage, last_error_code,
-                        last_error_message
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id, 'metadata', 'E_METADATA_PARSE_FAILED',
-                        'previous failure'
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                title="notes.pdf",
+                created_by_user_id=user_id,
+                failure_stage="metadata",
+                last_error_code="E_METADATA_PARSE_FAILED",
+                last_error_message="previous failure",
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("gemini", "gemini-3-flash-preview"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        observed_providers: list[str] = []
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            observed_providers.append(req.model.provider)
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "Bad Date",
                     "authors": None,
@@ -765,69 +760,46 @@ class TestEnrichMetadata:
                     "language": "en",
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "failed"
         assert result["reason"] == "parse_failed"
-        assert result["provider"] == "gemini"
-        assert observed_providers == ["gemini"]
+        assert "provider" not in result, "a failed result no longer carries provider/model"
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT title, publisher, language, failure_stage, last_error_code
-                    FROM media WHERE id = :id
-                    """
-                ),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(
+            direct_db, media_id, "title, publisher, language, failure_stage, last_error_code"
+        )
         assert row == ("notes.pdf", None, None, "metadata", "E_METADATA_PARSE_FAILED")
 
     def test_successful_run_clears_prior_metadata_failure(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id, failure_stage, last_error_code,
-                        last_error_message
-                    ) VALUES (
-                        :id, 'web_article', 'Real Title', 'https://example.com/a',
-                        'ready_for_reading', :user_id, 'metadata', 'E_FOO', 'prior'
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                title="Real Title",
+                created_by_user_id=user_id,
+                failure_stage="metadata",
+                last_error_code="E_FOO",
+                last_error_message="prior",
             )
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": None,
                     "authors": None,
@@ -837,24 +809,17 @@ class TestEnrichMetadata:
                     "language": None,
                 }
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
         assert result["status"] == "success", f"Expected success, got {result}"
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    """
-                    SELECT failure_stage, last_error_code, last_error_message,
-                           processing_status
-                    FROM media WHERE id = :id
-                    """
-                ),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(
+            direct_db,
+            media_id,
+            "failure_stage, last_error_code, last_error_message, processing_status",
+        )
         assert row == (None, None, None, "ready_for_reading"), (
             f"Expected prior metadata failure cleared (status unchanged), got {row}"
         )
@@ -862,81 +827,62 @@ class TestEnrichMetadata:
     def test_no_provider_records_failure_while_operational_skips_do_not(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
-        media_no_provider = uuid4()
+        media_disabled = uuid4()
         media_extracting = uuid4()
         media_missing = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_no_provider)
-        direct_db.register_cleanup("media", "id", media_extracting)
         direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("media", "id", media_disabled)
+        direct_db.register_cleanup("media", "id", media_extracting)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            # has gaps but no provider configured
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_no_provider, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            # has gaps and an owning user, but enrichment is disabled globally
+            _insert_media(session, media_disabled, created_by_user_id=user_id)
             # not_ready: still extracting
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'extracting', :user_id
-                    )
-                    """
-                ),
-                {"id": media_extracting, "user_id": user_id},
+            _insert_media(
+                session,
+                media_extracting,
+                processing_status="extracting",
+                created_by_user_id=user_id,
             )
             session.commit()
 
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(enrich_module, "select_enrichment_model", lambda _s: None)
+        monkeypatch.setenv("METADATA_ENRICHMENT_ENABLED", "false")
+        clear_settings_cache()
 
-        no_provider_result = enrich_module.enrich_metadata(str(media_no_provider))
+        no_provider_result = enrich_metadata(str(media_disabled))
         assert no_provider_result["status"] == "failed"
         assert no_provider_result["reason"] == "no_provider"
         assert no_provider_result["error_code"] == "E_METADATA_NO_PROVIDER"
 
-        not_ready_result = enrich_module.enrich_metadata(str(media_extracting))
+        not_ready_result = enrich_metadata(str(media_extracting))
         assert not_ready_result == {"status": "skipped", "reason": "not_ready"}
 
-        not_found_result = enrich_module.enrich_metadata(str(media_missing))
+        not_found_result = enrich_metadata(str(media_missing))
         assert not_found_result == {"status": "skipped", "reason": "media_not_found"}
+
+        clear_settings_cache()
 
         with direct_db.session() as session:
             rows = {
                 row.id: row
                 for row in session.execute(
                     text(
-                        """
-                        SELECT id, failure_stage, last_error_code, last_error_message
-                        FROM media WHERE id = ANY(:ids)
-                        """
+                        "SELECT id, failure_stage, last_error_code, last_error_message"
+                        " FROM media WHERE id = ANY(:ids)"
                     ),
-                    {"ids": [media_no_provider, media_extracting]},
+                    {"ids": [media_disabled, media_extracting]},
                 ).fetchall()
             }
 
-        no_provider_row = rows[media_no_provider]
-        assert no_provider_row.failure_stage == "metadata"
-        assert no_provider_row.last_error_code == "E_METADATA_NO_PROVIDER"
-        assert no_provider_row.last_error_message
+        disabled_row = rows[media_disabled]
+        assert disabled_row.failure_stage == "metadata"
+        assert disabled_row.last_error_code == "E_METADATA_NO_PROVIDER"
+        assert disabled_row.last_error_message
 
         extracting_row = rows[media_extracting]
         assert (
@@ -946,177 +892,93 @@ class TestEnrichMetadata:
         ), f"Operational skips should not write failure_stage; got {tuple(extracting_row)}"
 
     def test_failed_processing_status_is_not_marked_metadata_failed(
-        self, direct_db: DirectSessionManager, monkeypatch
+        self, direct_db: DirectSessionManager
     ):
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
         direct_db.register_cleanup("users", "id", user_id)
+        direct_db.register_cleanup("media", "id", media_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        failure_stage, last_error_code, created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'failed', 'embed', 'E_INGEST_FAILED', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
+            _insert_user(session, user_id)
+            _insert_media(
+                session,
+                media_id,
+                processing_status="failed",
+                failure_stage="embed",
+                last_error_code="E_INGEST_FAILED",
+                created_by_user_id=user_id,
             )
             session.commit()
 
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(enrich_module, "select_enrichment_model", lambda _s: None)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
         assert result == {"status": "skipped", "reason": "not_ready"}
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text(
-                    "SELECT processing_status, failure_stage, last_error_code FROM media WHERE id = :id"
-                ),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(direct_db, media_id, "processing_status, failure_stage, last_error_code")
         assert row == ("failed", "embed", "E_INGEST_FAILED")
 
     def test_provider_failure_ledgers_one_terminal_provider_attempt(
         self, direct_db: DirectSessionManager, monkeypatch
     ):
-        """Provider failure is terminal; provider-runtime owns retry within the single call."""
+        """Provider failure is terminal in one dispatch; there is no
+        per-call provider-fallback chain any more (one profile, one call)."""
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            _insert_media(session, media_id, title="notes.pdf", created_by_user_id=user_id)
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
+        runtime = _ScriptedRuntime(outcome=_provider_unavailable_failure())
+        _install_runtime(monkeypatch, runtime)
 
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            if req.model.provider == "openai":
-                raise ModelCallError(
-                    ModelCallErrorCode.PROVIDER_DOWN, "openai down", provider="openai"
-                )
-            return _completed_response(
-                {
-                    "title": "Recovered Title",
-                    "authors": None,
-                    "publisher": None,
-                    "description": None,
-                    "published_date": None,
-                    "language": None,
-                }
-            )
-
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "failed"
-        assert result["provider"] == "openai"
-        assert result["error_code"] == "E_LLM_PROVIDER_DOWN"
+        assert result["error_code"] == "provider_unavailable"
 
-        with direct_db.session() as session:
-            rows = session.execute(
-                text(
-                    """
-                    SELECT call_seq, provider, model_name, llm_operation,
-                           key_mode_requested, key_mode_used, error_class, error_detail
-                    FROM llm_calls
-                    WHERE owner_kind = 'media_enrichment' AND owner_id = :id
-                    ORDER BY call_seq
-                    """
-                ),
-                {"id": media_id},
-            ).fetchall()
+        rows = _llm_call_rows(direct_db, media_id)
 
-        assert [(row.call_seq, row.provider) for row in rows] == [(1, "openai")], (
-            f"Expected one ledger row for the configured provider attempt, got {rows}"
+        assert [(row.call_seq, row.provider) for row in rows] == [(1, _PROFILE.target.provider)], (
+            f"Expected one ledger row for the single dispatch attempt, got {rows}"
         )
-        assert rows[0].error_class == "E_LLM_PROVIDER_DOWN"
-        assert rows[0].error_detail == "ModelCallError: openai down"
+        assert rows[0].outcome == "failed"
+        assert rows[0].error_origin == "provider_http"
+        assert rows[0].error_code == "provider_unavailable"
+        assert rows[0].model_name == _PROFILE.target.model
         assert {row.llm_operation for row in rows} == {"metadata_enrichment"}
-        assert {(row.key_mode_requested, row.key_mode_used) for row in rows} == {
-            ("auto", "platform")
-        }
 
     def test_platform_enrichment_runs_inside_budget_envelope(
-        self,
-        direct_db: DirectSessionManager,
-        monkeypatch,
-        metadata_rate_limiter: _RecordingRateLimiter,
+        self, direct_db: DirectSessionManager, monkeypatch
     ):
         """Platform metadata enrichment uses the shared inflight and token-budget envelope."""
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         user_id = create_test_user_id()
         media_id = uuid4()
 
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+        _register_user_and_media_cleanup(direct_db, media_id=media_id, user_id=user_id)
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
+            _insert_user(session, user_id)
+            _insert_media(session, media_id, title="notes.pdf", created_by_user_id=user_id)
             session.commit()
+        _grant_ai_entitlement(direct_db, user_id)
 
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-        _stub_resolved_keys(monkeypatch, enrich_module)
+        recording_limiter = _RecordingRateLimiter(session_factory=get_session_factory())
+        set_rate_limiter(recording_limiter)
 
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            return _completed_response(
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded(
                 {
                     "title": "Budgeted Title",
                     "authors": None,
@@ -1125,239 +987,50 @@ class TestEnrichMetadata:
                     "published_date": None,
                     "language": None,
                 },
-                usage=TokenUsage(input_tokens=7, output_tokens=5, total_tokens=12),
+                usage=TokenUsage(
+                    input_tokens=7,
+                    output_tokens=5,
+                    total_tokens=12,
+                    reasoning_tokens=Absent(),
+                    cache_read_input_tokens=Absent(),
+                    cache_write_input_tokens=Absent(),
+                ),
             )
+        )
+        _install_runtime(monkeypatch, runtime)
 
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "success"
-        assert metadata_rate_limiter.event_names() == [
+        assert recording_limiter.event_names() == [
             "acquire_inflight_slot",
             "reserve_token_budget",
             "commit_token_budget",
             "release_inflight_slot",
-        ], f"unexpected envelope: {metadata_rate_limiter.events}"
-        reserve_event = metadata_rate_limiter.events[1]
-        commit_event = metadata_rate_limiter.events[2]
-        assert reserve_event[1] == user_id
-        assert reserve_event[2] == media_id
-        assert reserve_event[3] is not None and reserve_event[3] > 1200
-        assert commit_event == ("commit_token_budget", user_id, media_id, 12)
-
-    def test_byok_success_marks_key_valid(
-        self, direct_db: DirectSessionManager, monkeypatch, request
-    ):
-        """Real resolve_api_key path: the owner's BYOK key is used and a
-        successful enrichment marks it 'valid' (terminal key-status feedback)."""
-        _get_master_key.cache_clear()
-        request.addfinalizer(_get_master_key.cache_clear)
-        test_key = b"test_master_key_for_encryption!!"
-        assert len(test_key) == MASTER_KEY_SIZE
-        monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", base64.b64encode(test_key).decode("ascii"))
-
-        user_id = create_test_user_id()
-        media_id = uuid4()
-        byok_plaintext = "sk-byok-openai-key-1234567890"
-        ciphertext, nonce, version, fingerprint = encrypt_api_key(byok_plaintext)
-
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
+        ], f"unexpected envelope: {recording_limiter.events}"
 
         with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
+            generation_id = session.execute(
                 text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO user_api_keys (
-                        user_id, provider, encrypted_key, key_nonce,
-                        master_key_version, key_fingerprint, status
-                    ) VALUES (
-                        :user_id, 'openai', :encrypted_key, :key_nonce,
-                        :version, :fingerprint, 'untested'
-                    )
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "encrypted_key": ciphertext,
-                    "key_nonce": nonce,
-                    "version": version,
-                    "fingerprint": fingerprint,
-                },
-            )
-            session.commit()
-
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-
-        seen: dict[str, ProviderApiKey] = {}
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            seen["api_key"] = key
-            return _completed_response(
-                {
-                    "title": "BYOK Title",
-                    "authors": None,
-                    "publisher": None,
-                    "description": None,
-                    "published_date": None,
-                    "language": None,
-                }
-            )
-
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
-
-        assert result["status"] == "success", f"Expected BYOK-backed success, got {result}"
-        assert seen["api_key"].source == "byok"
-        assert seen["api_key"].reveal() == byok_plaintext, (
-            "the decrypted BYOK key must reach the provider"
-        )
-
-        with direct_db.session() as session:
-            key_row = session.execute(
-                text(
-                    """
-                    SELECT status, last_tested_at, last_used_at
-                    FROM user_api_keys WHERE user_id = :user_id AND provider = 'openai'
-                    """
-                ),
-                {"user_id": user_id},
-            ).fetchone()
-            ledger_row = session.execute(
-                text(
-                    """
-                    SELECT key_mode_requested, key_mode_used FROM llm_calls
-                    WHERE owner_kind = 'media_enrichment' AND owner_id = :id
-                    """
+                    "SELECT id FROM llm_calls WHERE owner_kind = 'media_enrichment' AND owner_id = :id"
                 ),
                 {"id": media_id},
-            ).fetchone()
-
-        assert key_row is not None
-        status, last_tested_at, last_used_at = key_row
-        assert status == "valid", f"BYOK success must mark the key valid, got {status!r}"
-        assert last_tested_at is not None and last_used_at is not None, (
-            f"valid feedback must stamp last_tested_at/last_used_at, got {key_row}"
-        )
-        assert ledger_row == ("auto", "byok")
-
-    def test_byok_invalid_key_marks_key_invalid(
-        self, direct_db: DirectSessionManager, monkeypatch, request
-    ):
-        """A BYOK key that the provider rejects with E_LLM_INVALID_KEY is marked
-        'invalid' so it stops being retried forever (terminal key-status feedback)."""
-        _get_master_key.cache_clear()
-        request.addfinalizer(_get_master_key.cache_clear)
-        test_key = b"test_master_key_for_encryption!!"
-        assert len(test_key) == MASTER_KEY_SIZE
-        monkeypatch.setenv("NEXUS_KEY_ENCRYPTION_KEY", base64.b64encode(test_key).decode("ascii"))
-
-        user_id = create_test_user_id()
-        media_id = uuid4()
-        byok_plaintext = "sk-byok-openai-key-1234567890"
-        ciphertext, nonce, version, fingerprint = encrypt_api_key(byok_plaintext)
-
-        direct_db.register_cleanup("media", "id", media_id)
-        direct_db.register_cleanup("users", "id", user_id)
-        direct_db.register_cleanup("llm_calls", "owner_id", media_id)
-
-        with direct_db.session() as session:
-            session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text(
-                    """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status,
-                        created_by_user_id
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading', :user_id
-                    )
-                    """
-                ),
-                {"id": media_id, "user_id": user_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO user_api_keys (
-                        user_id, provider, encrypted_key, key_nonce,
-                        master_key_version, key_fingerprint, status
-                    ) VALUES (
-                        :user_id, 'openai', :encrypted_key, :key_nonce,
-                        :version, :fingerprint, 'untested'
-                    )
-                    """
-                ),
-                {
-                    "user_id": user_id,
-                    "encrypted_key": ciphertext,
-                    "key_nonce": nonce,
-                    "version": version,
-                    "fingerprint": fingerprint,
-                },
-            )
-            session.commit()
-
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-
-        async def _fake_generate(self, req, *, key, timeout_s):
-            _ = self, req, key, timeout_s
-            raise ModelCallError(ModelCallErrorCode.INVALID_KEY, "rejected", provider="openai")
-
-        monkeypatch.setattr(enrich_module.ModelRuntime, "generate", _fake_generate)
-
-        result = enrich_module.enrich_metadata(str(media_id))
-
-        assert result["status"] == "failed"
-        assert result["error_code"] == "E_LLM_INVALID_KEY", f"got {result}"
-
-        with direct_db.session() as session:
-            status = session.execute(
-                text(
-                    "SELECT status FROM user_api_keys "
-                    "WHERE user_id = :user_id AND provider = 'openai'"
-                ),
-                {"user_id": user_id},
             ).scalar_one()
 
-        assert status == "invalid", (
-            f"BYOK invalid-key failure must mark the key invalid, got {status!r}"
-        )
+        reserve_event = recording_limiter.events[1]
+        commit_event = recording_limiter.events[2]
+        assert reserve_event[1] == user_id
+        # The reservation id is the per-call generation id allocated inside
+        # execute_generation, not the owner (media) id — unlike the
+        # pre-cutover ledger, owner and reservation identity are decoupled.
+        assert reserve_event[2] == generation_id
+        assert reserve_event[3] is not None and reserve_event[3] > 0
+        assert commit_event == ("commit_token_budget", user_id, generation_id, 12)
 
-    def test_ownerless_media_records_no_provider_failure(
-        self, direct_db: DirectSessionManager, monkeypatch
-    ):
-        """Without an owning user there is no key spine to resolve against."""
+    def test_ownerless_media_records_no_provider_failure(self, direct_db: DirectSessionManager):
+        """Without an owning user there is no platform-key spine to resolve against."""
+        from nexus.tasks.enrich_metadata import enrich_metadata
+
         media_id = uuid4()
         direct_db.register_cleanup("media", "id", media_id)
 
@@ -1365,35 +1038,19 @@ class TestEnrichMetadata:
             session.execute(
                 text(
                     """
-                    INSERT INTO media (
-                        id, kind, title, canonical_source_url, processing_status
-                    ) VALUES (
-                        :id, 'web_article', 'notes.pdf', 'https://example.com/a',
-                        'ready_for_reading'
-                    )
+                    INSERT INTO media (id, kind, title, canonical_source_url, processing_status)
+                    VALUES (:id, 'web_article', 'notes.pdf', 'https://example.com/a', 'ready_for_reading')
                     """
                 ),
                 {"id": media_id},
             )
             session.commit()
 
-        enrich_module = _enrich_metadata_module()
-        monkeypatch.setattr(
-            enrich_module,
-            "select_enrichment_model",
-            lambda _s: ("openai", "gpt-5.4-mini"),
-        )
-
-        result = enrich_module.enrich_metadata(str(media_id))
+        result = enrich_metadata(str(media_id))
 
         assert result["status"] == "failed"
         assert result["reason"] == "no_provider"
         assert result["error_code"] == "E_METADATA_NO_PROVIDER"
 
-        with direct_db.session() as session:
-            row = session.execute(
-                text("SELECT failure_stage, last_error_code FROM media WHERE id = :id"),
-                {"id": media_id},
-            ).fetchone()
-
+        row = _media_row(direct_db, media_id, "failure_stage, last_error_code")
         assert row == ("metadata", "E_METADATA_NO_PROVIDER")

@@ -1,29 +1,3 @@
-.section {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.header {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.label {
-  margin: 0;
-  color: var(--ink);
-  font-size: var(--text-lg);
-}
-
-.description {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-}
-
 .list {
   display: flex;
   min-width: 0;
@@ -34,29 +8,7 @@
 }
 
 /* Editorial index: rows butt together, separated by their own hairline rules. */
-.list[data-view="list"] > li {
+.list > li {
   content-visibility: auto;
-  contain-intrinsic-size: auto 64px;
-}
-
-.list[data-view="list"][data-density="compact"] > li {
-  contain-intrinsic-size: auto 44px;
-}
-
-/* Gallery: cover-forward cards. */
-.list[data-view="gallery"] {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(168px, 100%), 1fr));
-  gap: var(--space-4);
-}
-
-.list[data-view="gallery"] > li {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
-}
-
-.footer {
-  display: flex;
-  justify-content: center;
-  padding-top: var(--space-3);
+  contain-intrinsic-size: auto 52px;
 }

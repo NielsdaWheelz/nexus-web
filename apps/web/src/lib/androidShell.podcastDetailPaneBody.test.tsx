@@ -8,12 +8,11 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneRuntime: () => ({ openInNewPane: vi.fn() }),
   usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePaneSearchParams: () => new URLSearchParams(),
-  useSetPaneTitle: () => {},
+  useSetPaneLabel: () => {},
 }));
 
-vi.mock("@/components/workspace/PaneShell", () => ({
-  usePaneChromeOverride: () => {},
-  usePaneMobileChromeController: () => null,
+vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
+  usePanePrimaryChrome: () => {},
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({

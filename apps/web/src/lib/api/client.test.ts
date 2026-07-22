@@ -1,5 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch, apiKeepaliveJson, apiPostFormData } from "./client";
+import {
+  ApiError,
+  apiFetch,
+  apiKeepaliveJson,
+  apiPostFormData,
+  isSameSystemApiDefect,
+} from "./client";
+
+describe("same-system API defects", () => {
+  it("classifies owned response and internal failures by code, not status", () => {
+    for (const [status, code] of [
+      [200, "E_INVALID_RESPONSE"],
+      [502, "E_UNKNOWN"],
+      [500, "E_INTERNAL"],
+    ] as const) {
+      expect(isSameSystemApiDefect(new ApiError(status, code, code))).toBe(
+        true,
+      );
+    }
+    expect(
+      isSameSystemApiDefect(new ApiError(502, "E_UPSTREAM", "Unavailable")),
+    ).toBe(false);
+  });
+});
 
 describe("apiFetch", () => {
   afterEach(() => {
@@ -12,7 +35,7 @@ describe("apiFetch", () => {
       new Response("<!doctype html><title>Login</title>", {
         status: 200,
         headers: { "content-type": "text/html" },
-      })
+      }),
     );
 
     await expect(apiFetch("/api/libraries")).rejects.toMatchObject({
@@ -23,7 +46,9 @@ describe("apiFetch", () => {
   });
 
   it("allows successful empty responses", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
 
     await expect(apiFetch("/api/libraries/library-1")).resolves.toBeUndefined();
   });
@@ -38,8 +63,8 @@ describe("apiFetch", () => {
             request_id: "request-1",
           },
         },
-        { status: 401 }
-      )
+        { status: 401 },
+      ),
     );
 
     await expect(apiFetch("/api/libraries")).rejects.toEqual(
@@ -47,8 +72,8 @@ describe("apiFetch", () => {
         401,
         "E_UNAUTHENTICATED",
         "Authentication required",
-        "request-1"
-      )
+        "request-1",
+      ),
     );
   });
 
@@ -57,7 +82,7 @@ describe("apiFetch", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockReturnValue(
       new Promise<Response>((resolve) => {
         resolveFetch = resolve;
-      })
+      }),
     );
 
     const first = apiFetch<{ data: string }>("/api/libraries/library-1");
@@ -76,12 +101,16 @@ describe("apiFetch", () => {
       .mockResolvedValueOnce(Response.json({ data: "first" }))
       .mockResolvedValueOnce(Response.json({ data: "second" }));
 
-    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual({
-      data: "first",
-    });
-    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual({
-      data: "second",
-    });
+    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual(
+      {
+        data: "first",
+      },
+    );
+    await expect(apiFetch<{ data: string }>("/api/libraries")).resolves.toEqual(
+      {
+        data: "second",
+      },
+    );
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
@@ -125,11 +154,15 @@ describe("apiFetch", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockReturnValue(
       new Promise<Response>((resolve) => {
         resolveFetch = resolve;
-      })
+      }),
     );
 
-    const first = apiFetch<{ data: string }>("/api/libraries", { cache: "no-store" });
-    const second = apiFetch<{ data: string }>("/api/libraries", { cache: "no-store" });
+    const first = apiFetch<{ data: string }>("/api/libraries", {
+      cache: "no-store",
+    });
+    const second = apiFetch<{ data: string }>("/api/libraries", {
+      cache: "no-store",
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     resolveFetch?.(Response.json({ data: "ok" }));
@@ -171,8 +204,8 @@ describe("apiFetch", () => {
             request_id: "request-1",
           },
         },
-        { status: 401 }
-      )
+        { status: 401 },
+      ),
     );
 
     await expect(apiFetch("/api/libraries")).rejects.toEqual(
@@ -180,21 +213,26 @@ describe("apiFetch", () => {
         401,
         "E_UNAUTHENTICATED",
         "Authentication required",
-        "request-1"
-      )
+        "request-1",
+      ),
     );
     expect(assign).not.toHaveBeenCalled();
   });
 
   it("posts form data without overriding multipart headers", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: { imported: 1 } }, { status: 200 })
-    );
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json({ data: { imported: 1 } }, { status: 200 }),
+      );
     const formData = new FormData();
     formData.append("file", new Blob(["opml"]), "feeds.opml");
 
     await expect(
-      apiPostFormData<{ data: { imported: number } }>("/api/podcasts/import/opml", formData)
+      apiPostFormData<{ data: { imported: number } }>(
+        "/api/podcasts/import/opml",
+        formData,
+      ),
     ).resolves.toEqual({ data: { imported: 1 } });
     expect(fetchSpy).toHaveBeenCalledWith("/api/podcasts/import/opml", {
       method: "POST",
@@ -208,7 +246,7 @@ describe("apiFetch", () => {
       .mockResolvedValue(new Response(null, { status: 204 }));
 
     await expect(
-      apiKeepaliveJson("/api/me/workspace-session", { device_id: "device-1" })
+      apiKeepaliveJson("/api/me/workspace-session", { device_id: "device-1" }),
     ).resolves.toBeUndefined();
     expect(fetchSpy).toHaveBeenCalledWith("/api/me/workspace-session", {
       method: "PUT",

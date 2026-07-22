@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
+import { useContainingModalLayer } from "@/lib/ui/useModalLayer";
 
 type DismissReason = "outside-click" | "escape";
 
@@ -33,8 +34,12 @@ export function useDismissOnOutsideOrEscape(args: {
   onDismissRef.current = onDismiss;
   const refsRef = useRef(refs);
   refsRef.current = refs;
+  const modalToken = useContainingModalLayer();
 
-  useEscapeKey(enabled, () => onDismissRef.current("escape"));
+  useEscapeKey(enabled, () => onDismissRef.current("escape"), {
+    layer: "transient",
+    modalToken,
+  });
 
   useEffect(() => {
     if (!enabled) return;

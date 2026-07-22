@@ -17,12 +17,16 @@ from nexus.schemas.conversation import (
     ChatRunStreamStateOut,
     ChatRunStreamToolCallOut,
 )
+from nexus.services.chat_failure import (
+    chat_failure_projection,
+    compute_has_write_tool_attempt,
+    compute_terminal_attempts,
+)
 from nexus.services.conversations import (
     conversation_to_out,
     get_message_count,
     message_to_out,
-    resendable_assistant_message_ids,
-    retryable_assistant_message_ids,
+    rerunnable_assistant_message_ids,
 )
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 
@@ -34,22 +38,12 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     if conversation is None or user_message is None or assistant_message is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
 
-    message_ids = [user_message.id, assistant_message.id]
-    retryable_message_ids = retryable_assistant_message_ids(
+    rerunnable_ids = rerunnable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
+        assistant_message_ids=[user_message.id, assistant_message.id],
     )
-    resendable_message_ids = resendable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    user_message_out = message_to_out(
-        user_message,
-        can_retry_response=user_message.id in retryable_message_ids,
-        can_resend_response=user_message.id in resendable_message_ids,
-    )
+    user_message_out = message_to_out(user_message, can_rerun=user_message.id in rerunnable_ids)
     trust_trail = build_assistant_trust_trail(
         db,
         viewer_id=viewer_id,
@@ -57,13 +51,18 @@ def build_chat_run_response(db: Session, viewer_id: UUID, run: ChatRun) -> ChatR
     )
     assistant_message_out = message_to_out(
         assistant_message,
-        can_retry_response=assistant_message.id in retryable_message_ids,
-        can_resend_response=assistant_message.id in resendable_message_ids,
+        can_rerun=assistant_message.id in rerunnable_ids,
         trust_trail=trust_trail,
         citations=[trust_citation.citation for trust_citation in trust_trail.citations],
     )
+    failure = chat_failure_projection(
+        run,
+        has_write_tool_attempt=compute_has_write_tool_attempt(db, run),
+        attempts=compute_terminal_attempts(db, run),
+    )
+    run_out = ChatRunOut.model_validate(run).model_copy(update={"failure": failure})
     return ChatRunResponse(
-        run=ChatRunOut.model_validate(run),
+        run=run_out,
         conversation=conversation_to_out(
             db,
             conversation,
@@ -129,7 +128,7 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
     terminal = run.status in {"complete", "error", "cancelled"}
     status = (
         "interrupted"
-        if run.status == "error" and run.error_code == ApiErrorCode.E_LLM_INTERRUPTED.value
+        if run.status == "error" and run.error_code == "stream_interrupted"
         else run.status
     )
     return ChatRunStreamStateOut(

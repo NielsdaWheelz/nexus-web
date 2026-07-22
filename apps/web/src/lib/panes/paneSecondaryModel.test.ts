@@ -7,11 +7,23 @@ import {
   getSecondaryWidthPolicy,
   isWorkspaceSecondaryGroupId,
   isWorkspaceSecondarySurfaceId,
+  paneSecondaryRegionId,
   resolveEffectiveSecondarySizing,
   PANE_SECONDARY_SURFACE_DEFINITIONS,
 } from "@/lib/panes/paneSecondaryModel";
 
 describe("paneSecondaryModel", () => {
+  it("scopes secondary region ids by primary pane and group", () => {
+    expect(paneSecondaryRegionId("pane-a", "reader-tools")).toBe(
+      "pane-pane-a-secondary-reader-tools",
+    );
+    expect(paneSecondaryRegionId("pane-b", "reader-tools")).not.toBe(
+      paneSecondaryRegionId("pane-a", "reader-tools"),
+    );
+    expect(paneSecondaryRegionId("pane-a", "conversation-context")).not.toBe(
+      paneSecondaryRegionId("pane-a", "reader-tools"),
+    );
+  });
   it("maps secondary surfaces to their owning groups", () => {
     expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
     expect(getSecondaryGroupForSurface("reader-evidence")).toBe("reader-tools");

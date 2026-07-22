@@ -1,17 +1,21 @@
-"""Integration tests for POST /media/{id}/libraries.
+"""Integration tests for canonical media-library membership endpoints.
 
-Covers the additive bulk-add endpoint per docs/multi-library-assignment.md §7.2:
-- 200 response with `library_ids_added` exactly equal to inserted ids.
-- Idempotent: re-call with same ids returns empty `library_ids_added`.
+The additive POST remains the bulk filing owner. The member DELETE is idempotent,
+kind-neutral, authorization-first, and refuses the last lifetime reference.
+
+POST coverage per docs/multi-library-assignment.md §7.2:
+- 204 No Content after authoritative membership mutation.
+- Idempotent: re-call with the same ids remains 204 and changes no membership.
 - 403 `E_LIBRARY_FORBIDDEN` for inaccessible ids, atomic (no partial inserts).
 - Default and duplicate destination ids are rejected.
 """
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 
+from nexus.db.models import MediaKind
 from nexus.services import library_entries, library_governance
 from tests.factories import (
     add_library_member,
@@ -35,30 +39,11 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
 def _attach_media_to_default_library(
     auth_client, direct_db: DirectSessionManager, user_id: UUID, media_id: UUID
 ) -> UUID:
-    """Seed media into the user's default library, then exercise the REST
-    attach as an idempotent re-file.
-
-    ``tests.factories.create_test_media`` makes a bare media row with no
-    reachable membership path. Production never has that state: ingest always
-    auto-files new media into the creator's default library before any REST
-    filing call can reach it. The actor-authorized filing command (spec S4.3
-    rule 1) now requires the target to already be membership-reachable, so
-    setup must establish that reachability directly (mirroring ingest) before
-    the REST call, which then exercises the documented idempotent
-    present/inserted outcome.
-    """
+    """Seed the default membership that production ingest establishes."""
     default_library_id = _bootstrap_user(auth_client, user_id)
     with direct_db.session() as session:
         library_entries.ensure_media_in_default_library(session, user_id, media_id)
         session.commit()
-    response = auth_client.post(
-        f"/libraries/{default_library_id}/media",
-        json={"media_id": str(media_id)},
-        headers=auth_headers(user_id),
-    )
-    assert response.status_code == 201, (
-        f"default-library attach failed: {response.status_code} {response.text}"
-    )
     return default_library_id
 
 
@@ -105,28 +90,19 @@ class TestPostMediaLibrariesEndpoint:
             headers=auth_headers(viewer_id),
         )
 
-        assert response.status_code == 200, (
-            f"expected 200 from POST /media/{{id}}/libraries, "
+        assert response.status_code == 204, (
+            f"expected 204 from POST /media/{{id}}/libraries, "
             f"got {response.status_code}: {response.text}"
         )
-        data = response.json()["data"]
-        assert UUID(data["media_id"]) == media_id
-        added = {UUID(value) for value in data["library_ids_added"]}
-        assert added == {lib_a, lib_b}, (
-            f"library_ids_added must reflect every newly inserted id, got {data}"
-        )
+        assert response.content == b""
 
         memberships = _library_entry_ids_for_media(direct_db, media_id)
-        assert lib_a in memberships
-        assert lib_b in memberships
-        assert default_library_id in memberships, (
-            "default library membership must be preserved by additive add"
-        )
+        assert memberships == {default_library_id, lib_a, lib_b}
 
     def test_post_media_libraries_idempotent(self, auth_client, direct_db: DirectSessionManager):
-        """Calling twice with the same ids yields empty `library_ids_added` second time."""
+        """Calling twice with the same ids is a bodyless successful no-op."""
         viewer_id = create_test_user_id()
-        _bootstrap_user(auth_client, viewer_id)
+        default_library_id = _bootstrap_user(auth_client, viewer_id)
 
         with direct_db.session() as session:
             media_id = create_test_media(session, title="Idempotent Media")
@@ -147,36 +123,31 @@ class TestPostMediaLibrariesEndpoint:
             json={"library_ids": [str(lib_a), str(lib_b)]},
             headers=auth_headers(viewer_id),
         )
-        assert first.status_code == 200, (
+        assert first.status_code == 204, (
             f"first add must succeed, got {first.status_code}: {first.text}"
         )
-        first_added = {UUID(value) for value in first.json()["data"]["library_ids_added"]}
-        assert first_added == {lib_a, lib_b}
+        assert first.content == b""
 
         second = auth_client.post(
             f"/media/{media_id}/libraries",
             json={"library_ids": [str(lib_a), str(lib_b)]},
             headers=auth_headers(viewer_id),
         )
-        assert second.status_code == 200, (
+        assert second.status_code == 204, (
             "second add with identical ids must remain a successful no-op, "
             f"got {second.status_code}: {second.text}"
         )
-        assert second.json()["data"]["library_ids_added"] == [], (
-            f"idempotent re-call must report zero ids inserted, got {second.json()['data']}"
-        )
+        assert second.content == b""
 
         memberships = _library_entry_ids_for_media(direct_db, media_id)
-        assert {lib_a, lib_b}.issubset(memberships), (
-            "memberships must be unchanged after idempotent re-call"
-        )
+        assert memberships == {default_library_id, lib_a, lib_b}
 
-    def test_post_media_libraries_reports_only_new_inserts(
+    def test_post_media_libraries_preserves_existing_and_adds_missing(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """Existing entries stay idempotent; response lists only rows inserted by this call."""
+        """Existing entries stay idempotent while missing memberships are added."""
         viewer_id = create_test_user_id()
-        _bootstrap_user(auth_client, viewer_id)
+        default_library_id = _bootstrap_user(auth_client, viewer_id)
 
         with direct_db.session() as session:
             media_id = create_test_media(session, title="Partial Existing Media")
@@ -195,7 +166,8 @@ class TestPostMediaLibrariesEndpoint:
             json={"library_ids": [str(existing_lib)]},
             headers=auth_headers(viewer_id),
         )
-        assert first.status_code == 200, first.text
+        assert first.status_code == 204, first.text
+        assert first.content == b""
 
         second = auth_client.post(
             f"/media/{media_id}/libraries",
@@ -203,8 +175,13 @@ class TestPostMediaLibrariesEndpoint:
             headers=auth_headers(viewer_id),
         )
 
-        assert second.status_code == 200, second.text
-        assert second.json()["data"]["library_ids_added"] == [str(new_lib)]
+        assert second.status_code == 204, second.text
+        assert second.content == b""
+        assert _library_entry_ids_for_media(direct_db, media_id) == {
+            default_library_id,
+            existing_lib,
+            new_lib,
+        }
 
     def test_post_media_libraries_forbids_inaccessible(
         self, auth_client, direct_db: DirectSessionManager
@@ -337,6 +314,251 @@ class TestPostMediaLibrariesEndpoint:
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
 
+class TestDeleteMediaLibraryEndpoint:
+    @pytest.mark.parametrize(
+        "media_kind",
+        [
+            MediaKind.web_article.value,
+            MediaKind.pdf.value,
+            MediaKind.epub.value,
+            MediaKind.video.value,
+            MediaKind.podcast_episode.value,
+        ],
+    )
+    def test_removes_every_media_kind(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        media_kind: str,
+    ):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(
+                session,
+                title=f"Remove {media_kind}",
+                kind=media_kind,
+            )
+            library_id = create_test_library(session, viewer_id, f"Remove {media_kind}")
+            library_entries.ensure_media_in_default_library(session, viewer_id, media_id)
+            session.commit()
+            library_entries.ensure_media_in_library(session, viewer_id, library_id, media_id)
+
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        response = auth_client.delete(
+            f"/media/{media_id}/libraries/{library_id}",
+            headers=auth_headers(viewer_id),
+        )
+        assert response.status_code == 204, response.text
+        assert response.content == b""
+
+        memberships = auth_client.get(
+            f"/media/{media_id}/libraries", headers=auth_headers(viewer_id)
+        )
+        assert memberships.status_code == 200, memberships.text
+        target = next(row for row in memberships.json()["data"] if row["id"] == str(library_id))
+        assert target["is_in_library"] is False
+
+    def test_authorized_absent_and_unknown_media_are_replay_safe(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        other_owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, other_owner_id)
+        with direct_db.session() as session:
+            library_id = create_test_library(session, viewer_id, "Replay safe")
+            private_library_id = create_test_library(
+                session, other_owner_id, "Inaccessible media source"
+            )
+            private_media_id = create_test_media(session, title="Existing inaccessible media")
+            library_entries.ensure_entry(
+                session,
+                private_library_id,
+                library_entries.media_target(private_media_id),
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", private_media_id)
+        direct_db.register_cleanup("media", "id", private_media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("memberships", "library_id", private_library_id)
+        direct_db.register_cleanup("libraries", "id", private_library_id)
+
+        for media_id in (uuid4(), private_media_id):
+            response = auth_client.delete(
+                f"/media/{media_id}/libraries/{library_id}",
+                headers=auth_headers(viewer_id),
+            )
+            assert response.status_code == 204, response.text
+            assert response.content == b""
+        assert _library_entry_ids_for_media(direct_db, private_media_id) == {private_library_id}
+
+    def test_member_only_library_is_forbidden_without_a_media_oracle(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, owner_id)
+        with direct_db.session() as session:
+            library_id = create_test_library(session, owner_id, "Member-only target")
+            add_library_member(session, library_id, viewer_id, role="member")
+            private_media_id = create_test_media(session, title="Private media oracle guard")
+            library_entries.ensure_entry(
+                session, library_id, library_entries.media_target(private_media_id)
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", private_media_id)
+        direct_db.register_cleanup("media", "id", private_media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        for media_id in (uuid4(), private_media_id):
+            response = auth_client.delete(
+                f"/media/{media_id}/libraries/{library_id}",
+                headers=auth_headers(viewer_id),
+            )
+            assert response.status_code == 403, response.text
+            assert response.json()["error"]["code"] == "E_FORBIDDEN"
+
+    def test_inaccessible_library_is_masked_without_a_media_oracle(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, owner_id)
+        with direct_db.session() as session:
+            library_id = create_test_library(session, owner_id, "Inaccessible target")
+            readable_media_id = create_test_media(session, title="Readable media oracle guard")
+            library_entries.ensure_media_in_default_library(session, viewer_id, readable_media_id)
+            library_entries.ensure_entry(
+                session,
+                library_id,
+                library_entries.media_target(readable_media_id),
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", readable_media_id)
+        direct_db.register_cleanup("media", "id", readable_media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        for media_id in (uuid4(), readable_media_id):
+            response = auth_client.delete(
+                f"/media/{media_id}/libraries/{library_id}",
+                headers=auth_headers(viewer_id),
+            )
+            assert response.status_code == 404, response.text
+            assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
+
+    def test_refuses_last_lifetime_reference(self, auth_client, direct_db: DirectSessionManager):
+        viewer_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Last reference")
+            library_id = create_test_library(session, viewer_id, "Only reference")
+            library_entries.ensure_entry(
+                session, library_id, library_entries.media_target(media_id)
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+
+        response = auth_client.delete(
+            f"/media/{media_id}/libraries/{library_id}",
+            headers=auth_headers(viewer_id),
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "E_MEDIA_LAST_REFERENCE"
+        assert library_id in _library_entry_ids_for_media(direct_db, media_id)
+
+    def test_lost_response_replay_succeeds_after_last_visible_path_is_removed(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        other_owner_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, other_owner_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Lost response replay")
+            visible_library_id = create_test_library(session, viewer_id, "Visible path")
+            private_library_id = create_test_library(session, other_owner_id, "Private survivor")
+            for library_id in (visible_library_id, private_library_id):
+                library_entries.ensure_entry(
+                    session, library_id, library_entries.media_target(media_id)
+                )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        for library_id in (visible_library_id, private_library_id):
+            direct_db.register_cleanup("memberships", "library_id", library_id)
+            direct_db.register_cleanup("libraries", "id", library_id)
+
+        endpoint = f"/media/{media_id}/libraries/{visible_library_id}"
+        first = auth_client.delete(endpoint, headers=auth_headers(viewer_id))
+        replay = auth_client.delete(endpoint, headers=auth_headers(viewer_id))
+        assert first.status_code == 204, first.text
+        assert replay.status_code == 204, replay.text
+        assert (
+            auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id)).status_code
+            == 404
+        )
+        assert (
+            auth_client.get(f"/media/{media_id}", headers=auth_headers(other_owner_id)).status_code
+            == 200
+        )
+
+    def test_default_library_is_not_a_removal_target(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, viewer_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Default guard")
+            library_entries.ensure_media_in_default_library(session, viewer_id, media_id)
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        response = auth_client.delete(
+            f"/media/{media_id}/libraries/{default_library_id}",
+            headers=auth_headers(viewer_id),
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "E_DEFAULT_LIBRARY_FORBIDDEN"
+
+    def test_whole_resource_delete_rejects_every_query_without_mutation(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        viewer_id = create_test_user_id()
+        default_library_id = _bootstrap_user(auth_client, viewer_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Old query guard")
+            library_entries.ensure_media_in_default_library(session, viewer_id, media_id)
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+
+        for query in (f"library_id={default_library_id}", "undeclared=value"):
+            response = auth_client.delete(
+                f"/media/{media_id}?{query}",
+                headers=auth_headers(viewer_id),
+            )
+            assert response.status_code == 400, response.text
+            assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
+            assert (
+                auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id)).status_code
+                == 200
+            )
+
+
 class TestSystemMediaDeletionGuards:
     def test_delete_media_from_system_library_is_forbidden(
         self, auth_client, direct_db: DirectSessionManager
@@ -365,7 +587,7 @@ class TestSystemMediaDeletionGuards:
         direct_db.register_cleanup("libraries", "id", system_library_id)
 
         response = auth_client.delete(
-            f"/media/{media_id}?library_id={system_library_id}",
+            f"/media/{media_id}/libraries/{system_library_id}",
             headers=auth_headers(viewer_id),
         )
 
@@ -458,13 +680,10 @@ class TestSystemMediaDeletionGuards:
         assert detail_resp.json()["data"]["capabilities"]["can_delete"] is False
 
         # Explicit non-system filing (own Default) makes it personally deletable.
-        default_library_id = _bootstrap_user(auth_client, viewer_id)
-        add_resp = auth_client.post(
-            f"/libraries/{default_library_id}/media",
-            json={"media_id": str(media_id)},
-            headers=auth_headers(viewer_id),
-        )
-        assert add_resp.status_code == 201, add_resp.text
+        _bootstrap_user(auth_client, viewer_id)
+        with direct_db.session() as session:
+            library_entries.ensure_media_in_default_library(session, viewer_id, media_id)
+            session.commit()
 
         detail_resp = auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id))
         assert detail_resp.status_code == 200, detail_resp.text

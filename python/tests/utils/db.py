@@ -309,20 +309,44 @@ class DirectSessionManager:
         with Session(self.engine) as session:
             for table, column, value in reversed(self._cleanup_items):
                 if table == "highlights" and column == "fragment_anchor_fragment_id":
+                    # Highlight-family FKs no longer cascade: delete the anchor
+                    # child rows first, then the highlight roots they pointed at.
                     session.execute(
                         text(
                             """
-                            DELETE FROM highlights
-                            WHERE id IN (
-                                SELECT highlight_id
-                                FROM highlight_fragment_anchors
+                            WITH doomed AS (
+                                DELETE FROM highlight_fragment_anchors
                                 WHERE fragment_id = :value
+                                RETURNING highlight_id
                             )
+                            DELETE FROM highlights
+                            WHERE id IN (SELECT highlight_id FROM doomed)
                             """
                         ),
                         {"value": value},
                     )
                     continue
+
+                if table == "highlights":
+                    # Child-first: highlight_pdf_quads/highlight_pdf_anchors/
+                    # highlight_fragment_anchors FK highlights.id without
+                    # cascade; clear them before the generic root delete below.
+                    for child_table in (
+                        "highlight_pdf_quads",
+                        "highlight_pdf_anchors",
+                        "highlight_fragment_anchors",
+                    ):
+                        session.execute(
+                            text(
+                                f"""
+                                DELETE FROM {child_table}
+                                WHERE highlight_id IN (
+                                    SELECT id FROM highlights WHERE {column} = :value
+                                )
+                                """
+                            ),
+                            {"value": value},
+                        )
 
                 if value is None:
                     session.execute(text(f"DELETE FROM {table} WHERE {column} IS NULL"))
@@ -402,6 +426,57 @@ class DirectSessionManager:
                     )
 
                 if table == "media" and column == "id":
+                    # Highlights FK media.id (anchor_media_id) with no cascade,
+                    # and survive fragment replacement by design (universal-link
+                    # authoring: Highlight Durability), so remove the highlight
+                    # family child-first before the media row.
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM highlight_pdf_quads
+                            WHERE highlight_id IN (
+                                SELECT id FROM highlights WHERE anchor_media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM highlight_pdf_anchors
+                            WHERE media_id = :value
+                               OR highlight_id IN (
+                                    SELECT id FROM highlights WHERE anchor_media_id = :value
+                               )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM highlight_fragment_anchors
+                            WHERE highlight_id IN (
+                                SELECT id FROM highlights WHERE anchor_media_id = :value
+                            )
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text("DELETE FROM highlights WHERE anchor_media_id = :value"),
+                        {"value": value},
+                    )
+                    session.execute(
+                        text(
+                            """
+                            DELETE FROM passage_anchors
+                            WHERE owner_scheme = 'media' AND owner_id = :value
+                            """
+                        ),
+                        {"value": value},
+                    )
                     # reader_apparatus_* FK media.id with no ON DELETE CASCADE
                     # (repo doctrine); delete children-first so the media row can
                     # be removed. FK chain: edges -> items -> states.
@@ -461,10 +536,6 @@ class DirectSessionManager:
                         session,
                         note_filter="SELECT id FROM note_blocks WHERE user_id = :value",
                         params={"value": value},
-                    )
-                    session.execute(
-                        text("DELETE FROM user_pinned_objects WHERE user_id = :value"),
-                        {"value": value},
                     )
                     session.execute(
                         text("DELETE FROM daily_note_pages WHERE user_id = :value"),
@@ -1037,15 +1108,6 @@ class DirectSessionManager:
                     session.execute(
                         text(
                             """
-                            DELETE FROM user_pinned_objects
-                            WHERE object_type = 'page' AND object_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
                             DELETE FROM resource_view_states
                             WHERE (surface_scheme = 'page' AND surface_id = :value)
                                OR (target_scheme = 'page' AND target_id = :value)
@@ -1089,16 +1151,6 @@ class DirectSessionManager:
                             DELETE FROM resource_versions
                             WHERE user_id = :value
                               AND resource_scheme IN ('page', 'note_block')
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE user_id = :value
-                              AND object_type IN ('page', 'note_block')
                             """
                         ),
                         {"value": value},
@@ -1197,16 +1249,6 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE object_type = 'note_block'
-                              AND object_id = :value
-                            """
-                        ),
-                        {"value": value},
-                    )
 
                 if table == "note_blocks" and column == "user_id":
                     _delete_note_owned_content(
@@ -1260,16 +1302,6 @@ class DirectSessionManager:
                                   source_scheme = 'note_block'
                                OR target_scheme = 'note_block'
                               )
-                            """
-                        ),
-                        {"value": value},
-                    )
-                    session.execute(
-                        text(
-                            """
-                            DELETE FROM user_pinned_objects
-                            WHERE user_id = :value
-                              AND object_type = 'note_block'
                             """
                         ),
                         {"value": value},

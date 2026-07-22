@@ -1,73 +1,114 @@
-.libraryLabel {
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.fileSection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.fieldHeading {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.fieldHeading > :first-child {
   color: var(--ink);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
+}
+
+.fieldHeading > :last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fileInput {
   display: none;
 }
 
-.importActions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.opmlInputLabel {
+.helper,
+.feedback {
+  margin: 0;
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }
 
-.opmlFieldset {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.feedback {
+  color: var(--danger);
 }
 
-.opmlFileRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.opmlHelper {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
+.feedback[data-severity="warning"] {
+  color: var(--warning);
 }
 
 .importSummary {
-  border: 1px solid var(--edge);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2);
-  background: var(--surface-2);
-  color: var(--ink);
-  font-size: var(--text-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--edge-subtle);
 }
 
-.importSummaryTitle {
-  margin: 0 0 var(--space-2);
+.importSummaryTitle,
+.issues h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
 }
 
 .importStats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  color: var(--ink-muted);
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
 }
 
-.importErrors {
+.importStats div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.importStats dt,
+.importStats dd {
+  margin: 0;
+}
+
+.importStats dd {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+}
+
+.issues {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.issues ul {
   margin: var(--space-2) 0 0;
   padding-left: var(--space-5);
-  color: var(--ink-faint);
 }
 
 @media (max-width: 900px) {
-  .importActions {
-    align-items: stretch;
-    flex-direction: column;
+  .importStats {
+    grid-template-columns: 1fr;
   }
 }

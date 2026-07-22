@@ -4,12 +4,15 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import KeybindingsPaneBody from "./KeybindingsPaneBody";
 
 describe("KeybindingsPaneBody", () => {
-  it("renders the Open launcher binding label", () => {
+  it("renders Launcher, canonical destinations, and the Today action", () => {
     render(
       <KeybindingsProvider>
         <KeybindingsPaneBody />
       </KeybindingsProvider>,
     );
     expect(screen.getByText("Open launcher")).toBeInTheDocument();
+    expect(screen.getByText("Go to Lectern")).toBeInTheDocument();
+    expect(screen.getByText("Go to Atlas")).toBeInTheDocument();
+    expect(screen.getByText("Go to Today")).toBeInTheDocument();
   });
 });

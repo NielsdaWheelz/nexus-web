@@ -17,7 +17,7 @@ import GlobalPlayerFooter from "@/components/GlobalPlayerFooter";
 import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { absent } from "@/lib/api/presence";
-import type { LecternItem } from "@/lib/lectern/client";
+import type { LecternItem } from "@/lib/lectern/contract";
 import {
   buildFooterDescriptor,
   jsonResponse,
@@ -34,6 +34,7 @@ function audioItem(itemId: string, mediaId: string, title: string): LecternItem 
   return {
     itemId: itemId as LecternItem["itemId"],
     mediaId: mediaId as LecternItem["mediaId"],
+    kind: "podcast_episode",
     title,
     subtitle: absent(),
     href: `/media/${mediaId}` as LecternItem["href"],

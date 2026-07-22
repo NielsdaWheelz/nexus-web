@@ -4,7 +4,12 @@ import { parseLauncherInput } from "./parseLauncherInput";
 describe("parseLauncherInput", () => {
   it("empty string → no lane, empty text, no url", () => {
     const input = parseLauncherInput("");
-    expect(input).toMatchObject({ raw: "", explicitLane: null, text: "", url: null });
+    expect(input).toMatchObject({
+      raw: "",
+      explicitLane: null,
+      text: "",
+      url: null,
+    });
     expect(input.searchQuery.text).toBe("");
   });
 
@@ -20,12 +25,21 @@ describe("parseLauncherInput", () => {
     expect(parseLauncherInput(">settings").explicitLane).toBe("go");
     expect(parseLauncherInput("@reader").explicitLane).toBe("open");
     expect(parseLauncherInput("?why").explicitLane).toBe("ask");
-    expect(parseLauncherInput("+https://x.com").explicitLane).toBe("add");
     expect(parseLauncherInput(">  foo  ").text).toBe("foo");
   });
 
+  it("does not reserve + as a lane sigil", () => {
+    expect(parseLauncherInput("+upload")).toMatchObject({
+      explicitLane: null,
+      text: "+upload",
+    });
+  });
+
   it("sigil-only → lane set, empty text", () => {
-    expect(parseLauncherInput(">")).toMatchObject({ explicitLane: "go", text: "" });
+    expect(parseLauncherInput(">")).toMatchObject({
+      explicitLane: "go",
+      text: "",
+    });
   });
 
   it("mid-string sigil is not a lane sigil", () => {

@@ -41,16 +41,20 @@ function ctx(overrides?: Partial<LauncherContext>): LauncherContext {
   };
 }
 
-function makePane(partial: Partial<LauncherPane> & { id: string }): LauncherPane {
+function makePane(
+  partial: Partial<LauncherPane> & { id: string },
+): LauncherPane {
   return {
     href: "/libraries",
     visibility: "visible",
-    title: "Libraries",
+    label: "Libraries",
     ...partial,
   };
 }
 
-function makeOracleRow(partial: Partial<LauncherOracleRow> & { id: string }): LauncherOracleRow {
+function makeOracleRow(
+  partial: Partial<LauncherOracleRow> & { id: string },
+): LauncherOracleRow {
   return {
     folio_number: 1,
     folio_motto: "Omnia vincit amor",
@@ -61,7 +65,10 @@ function makeOracleRow(partial: Partial<LauncherOracleRow> & { id: string }): La
 }
 
 function makeHistoryRow(
-  partial: Partial<LauncherRecentRow> & { target_key: string; target_href: string },
+  partial: Partial<LauncherRecentRow> & {
+    target_key: string;
+    target_href: string;
+  },
 ): LauncherRecentRow {
   return {
     title_snapshot: "Some page",
@@ -74,7 +81,8 @@ function makeHistoryRow(
 function makeSearchResult(
   partial: Partial<SearchResultRowViewModel> & { key: string },
 ): SearchResultRowViewModel {
-  const resourceRef = partial.resourceRef ?? "media:11111111-1111-4111-8111-111111111111";
+  const resourceRef =
+    partial.resourceRef ?? "media:11111111-1111-4111-8111-111111111111";
   return {
     resourceRef,
     activation: partial.activation ?? {
@@ -89,9 +97,10 @@ function makeSearchResult(
     contextRef: null,
     typeLabel: "Article",
     primaryText: "Search Hit",
-    paneTitleHint: "Search Hit",
+    paneLabelHint: "Search Hit",
     snippetSegments: [],
     sourceMeta: null,
+    publicationDate: { kind: "Absent" },
     contributorCredits: [],
     noteBody: null,
     ...partial,
@@ -110,7 +119,9 @@ function makeBrowseDocument(partial?: Partial<BrowseResult>): BrowseResult {
   } as BrowseResult;
 }
 
-function makeWebResult(partial?: Partial<LauncherWebResult>): LauncherWebResult {
+function makeWebResult(
+  partial?: Partial<LauncherWebResult>,
+): LauncherWebResult {
   return {
     url: "https://news.example.com/story",
     title: "A Web Story",
@@ -126,8 +137,15 @@ function makeWebResult(partial?: Partial<LauncherWebResult>): LauncherWebResult 
 
 describe("buildLauncherItems — context item", () => {
   it("emits a context item for the active pane with sectionId=context, target pane-open", () => {
-    const pane = makePane({ id: "p1", title: "Daily", href: "/daily", visibility: "visible" });
-    const items = buildLauncherItems(ctx({ panes: [pane], activePaneId: "p1" }));
+    const pane = makePane({
+      id: "p1",
+      label: "Daily",
+      href: "/daily",
+      visibility: "visible",
+    });
+    const items = buildLauncherItems(
+      ctx({ panes: [pane], activePaneId: "p1" }),
+    );
     const contextItem = items.find((i) => i.sectionId === "context");
 
     expect(contextItem).toBeDefined();
@@ -139,7 +157,9 @@ describe("buildLauncherItems — context item", () => {
 
   it("does not emit a context item when activePaneId does not match any pane", () => {
     const pane = makePane({ id: "p1", href: "/libraries" });
-    const items = buildLauncherItems(ctx({ panes: [pane], activePaneId: "unknown" }));
+    const items = buildLauncherItems(
+      ctx({ panes: [pane], activePaneId: "unknown" }),
+    );
     expect(items.filter((i) => i.sectionId === "context")).toHaveLength(0);
   });
 });
@@ -151,8 +171,18 @@ describe("buildLauncherItems — context item", () => {
 describe("buildLauncherItems — open-tab items", () => {
   it("emits one open-tabs item per pane with target pane-open + a pane-close trailing action", () => {
     const panes = [
-      makePane({ id: "p1", title: "Libraries", href: "/libraries", visibility: "visible" }),
-      makePane({ id: "p2", title: "Podcasts", href: "/podcasts", visibility: "minimized" }),
+      makePane({
+        id: "p1",
+        label: "Libraries",
+        href: "/libraries",
+        visibility: "visible",
+      }),
+      makePane({
+        id: "p2",
+        label: "Podcasts",
+        href: "/podcasts",
+        visibility: "minimized",
+      }),
     ];
     const items = buildLauncherItems(ctx({ panes }));
     const paneItems = items.filter((i) => i.id.startsWith("pane-open-"));
@@ -171,7 +201,10 @@ describe("buildLauncherItems — open-tab items", () => {
 
     const p2 = paneItems.find((i) => i.id === "pane-open-p2")!;
     expect(p2.subtitle).toBe("Restore minimized tab");
-    expect(p2.trailingAction?.target).toEqual({ kind: "pane-close", paneId: "p2" });
+    expect(p2.trailingAction?.target).toEqual({
+      kind: "pane-close",
+      paneId: "p2",
+    });
   });
 
   it("gives the active pane a scopeBoost of 300, others get 0", () => {
@@ -182,8 +215,12 @@ describe("buildLauncherItems — open-tab items", () => {
     const items = buildLauncherItems(ctx({ panes, activePaneId: "active" }));
     const paneItems = items.filter((i) => i.id.startsWith("pane-open-"));
 
-    expect(paneItems.find((i) => i.id === "pane-open-active")!.rank.scopeBoost).toBe(300);
-    expect(paneItems.find((i) => i.id === "pane-open-other")!.rank.scopeBoost).toBe(0);
+    expect(
+      paneItems.find((i) => i.id === "pane-open-active")!.rank.scopeBoost,
+    ).toBe(300);
+    expect(
+      paneItems.find((i) => i.id === "pane-open-other")!.rank.scopeBoost,
+    ).toBe(0);
   });
 });
 
@@ -194,7 +231,10 @@ describe("buildLauncherItems — open-tab items", () => {
 describe("buildLauncherItems — recent items", () => {
   it("maps a history row to a recent href item with frecency boost", () => {
     const pane = makePane({ id: "p1", href: "/libraries" });
-    const row = makeHistoryRow({ target_key: "notes-key", target_href: "/notes" });
+    const row = makeHistoryRow({
+      target_key: "notes-key",
+      target_href: "/notes",
+    });
     const boosts = new Map([["notes-key", 42]]);
     const items = buildLauncherItems(
       ctx({ panes: [pane], historyRows: [row], frecencyBoosts: boosts }),
@@ -204,14 +244,23 @@ describe("buildLauncherItems — recent items", () => {
     expect(recent).toBeDefined();
     expect(recent!.sectionId).toBe("recent");
     expect(recent!.source).toBe("recent");
-    expect(recent!.target).toEqual({ kind: "href", href: "/notes", externalShell: false });
+    expect(recent!.target).toEqual({
+      kind: "href",
+      href: "/notes",
+      externalShell: false,
+    });
     expect(recent!.rank.frecencyBoost).toBe(42);
   });
 
   it("drops a history row whose target_href matches an open pane href", () => {
     const pane = makePane({ id: "p1", href: "/libraries" });
-    const dupe = makeHistoryRow({ target_key: "lib-key", target_href: "/libraries" });
-    const items = buildLauncherItems(ctx({ panes: [pane], historyRows: [dupe] }));
+    const dupe = makeHistoryRow({
+      target_key: "lib-key",
+      target_href: "/libraries",
+    });
+    const items = buildLauncherItems(
+      ctx({ panes: [pane], historyRows: [dupe] }),
+    );
     expect(items.find((i) => i.id === "recent-lib-key")).toBeUndefined();
   });
 });
@@ -223,13 +272,48 @@ describe("buildLauncherItems — recent items", () => {
 describe("buildLauncherItems — recent folios", () => {
   it("only includes complete rows (capped at 5), targets /oracle/{id} as a pane (externalShell false)", () => {
     const rows: LauncherOracleRow[] = [
-      makeOracleRow({ id: "o1", status: "complete", folio_number: 1, folio_theme: "Love" }),
-      makeOracleRow({ id: "o2", status: "pending", folio_number: 2, folio_theme: "War" }),
-      makeOracleRow({ id: "o3", status: "complete", folio_number: 3, folio_theme: "Peace" }),
-      makeOracleRow({ id: "o4", status: "complete", folio_number: 4, folio_theme: "Fire" }),
-      makeOracleRow({ id: "o5", status: "complete", folio_number: 5, folio_theme: "Water" }),
-      makeOracleRow({ id: "o6", status: "complete", folio_number: 6, folio_theme: "Earth" }),
-      makeOracleRow({ id: "o7", status: "complete", folio_number: 7, folio_theme: "Air" }),
+      makeOracleRow({
+        id: "o1",
+        status: "complete",
+        folio_number: 1,
+        folio_theme: "Love",
+      }),
+      makeOracleRow({
+        id: "o2",
+        status: "pending",
+        folio_number: 2,
+        folio_theme: "War",
+      }),
+      makeOracleRow({
+        id: "o3",
+        status: "complete",
+        folio_number: 3,
+        folio_theme: "Peace",
+      }),
+      makeOracleRow({
+        id: "o4",
+        status: "complete",
+        folio_number: 4,
+        folio_theme: "Fire",
+      }),
+      makeOracleRow({
+        id: "o5",
+        status: "complete",
+        folio_number: 5,
+        folio_theme: "Water",
+      }),
+      makeOracleRow({
+        id: "o6",
+        status: "complete",
+        folio_number: 6,
+        folio_theme: "Earth",
+      }),
+      makeOracleRow({
+        id: "o7",
+        status: "complete",
+        folio_number: 7,
+        folio_theme: "Air",
+      }),
     ];
     const items = buildLauncherItems(ctx({ oracleRows: rows }));
     const folioItems = items.filter((i) => i.sectionId === "recent-folios");
@@ -239,13 +323,24 @@ describe("buildLauncherItems — recent folios", () => {
     expect(items.find((i) => i.id === "oracle-recent-o2")).toBeUndefined(); // pending excluded
 
     const first = items.find((i) => i.id === "oracle-recent-o1")!;
-    expect(first.target).toEqual({ kind: "href", href: "/oracle/o1", externalShell: false });
+    expect(first.target).toEqual({
+      kind: "href",
+      href: "/oracle/o1",
+      externalShell: false,
+    });
   });
 
   it("includes the Roman folio numeral in the title", () => {
-    const row = makeOracleRow({ id: "o1", folio_number: 4, folio_theme: "Fire", folio_motto: "Ignis" });
+    const row = makeOracleRow({
+      id: "o1",
+      folio_number: 4,
+      folio_theme: "Fire",
+      folio_motto: "Ignis",
+    });
     const items = buildLauncherItems(ctx({ oracleRows: [row] }));
-    expect(items.find((i) => i.id === "oracle-recent-o1")!.title).toContain("IV");
+    expect(items.find((i) => i.id === "oracle-recent-o1")!.title).toContain(
+      "IV",
+    );
   });
 });
 
@@ -261,7 +356,10 @@ describe("buildLauncherItems — command items", () => {
     const libraries = items.find((i) => i.id === "libraries")!;
     expect(libraries).toBeDefined();
     expect(libraries.sectionId).toBe("go");
-    expect(libraries.target).toMatchObject({ kind: "href", href: "/libraries" });
+    expect(libraries.target).toMatchObject({
+      kind: "href",
+      href: "/libraries",
+    });
 
     // /settings itself is NOT a "/settings/" subpage → stays in `go`.
     expect(items.find((i) => i.id === "settings")!.sectionId).toBe("go");
@@ -269,7 +367,10 @@ describe("buildLauncherItems — command items", () => {
     // A /settings/* subpage → `settings` section.
     const appearance = items.find((i) => i.id === "appearance")!;
     expect(appearance.sectionId).toBe("settings");
-    expect(appearance.target).toMatchObject({ kind: "href", href: "/settings/appearance" });
+    expect(appearance.target).toMatchObject({
+      kind: "href",
+      href: "/settings/appearance",
+    });
 
     // The oracle destination opens as a pane after shell dissolution.
     expect(items.find((i) => i.id === "oracle")!.target).toMatchObject({
@@ -280,11 +381,17 @@ describe("buildLauncherItems — command items", () => {
   });
 
   it("attaches shortcutLabel when ctx.keybindings[command.id] is set, else leaves it undefined", () => {
-    const withBinding = buildLauncherItems(ctx({ keybindings: { libraries: "Meta+l" } }));
-    expect(withBinding.find((i) => i.id === "libraries")!.shortcutLabel).toBeTruthy();
+    const withBinding = buildLauncherItems(
+      ctx({ keybindings: { libraries: "Meta+l" } }),
+    );
+    expect(
+      withBinding.find((i) => i.id === "libraries")!.shortcutLabel,
+    ).toBeTruthy();
 
     const withoutBinding = buildLauncherItems(ctx({ keybindings: {} }));
-    expect(withoutBinding.find((i) => i.id === "libraries")!.shortcutLabel).toBeUndefined();
+    expect(
+      withoutBinding.find((i) => i.id === "libraries")!.shortcutLabel,
+    ).toBeUndefined();
   });
 });
 
@@ -311,24 +418,32 @@ describe("buildLauncherItems — create items", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (g) add items → open-add with seed mode url/file/opml
+// (g) matching add aliases → open-add with a typed seed
 // ---------------------------------------------------------------------------
 
 describe("buildLauncherItems — add items", () => {
-  it("emits add-from-url / add-upload / add-opml in the add section with seeded open-add targets", () => {
+  it("omits Add aliases from the resting Launcher", () => {
     const items = buildLauncherItems(ctx());
+
+    expect(items.filter((item) => item.sectionId === "add")).toHaveLength(0);
+  });
+
+  it("emits URL, file, and OPML aliases for matching non-empty queries", () => {
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("add import upload") }),
+    );
 
     expect(items.find((i) => i.id === "add-from-url")!.target).toEqual({
       kind: "open-add",
-      seed: { mode: "url" },
+      seed: { kind: "Content", initialFocus: "Url", initialDestinations: [] },
     });
     expect(items.find((i) => i.id === "add-upload")!.target).toEqual({
       kind: "open-add",
-      seed: { mode: "file" },
+      seed: { kind: "Content", initialFocus: "File", initialDestinations: [] },
     });
     expect(items.find((i) => i.id === "add-opml")!.target).toEqual({
       kind: "open-add",
-      seed: { mode: "opml" },
+      seed: { kind: "Opml", initialDestinations: [] },
     });
     for (const id of ["add-from-url", "add-upload", "add-opml"]) {
       expect(items.find((i) => i.id === id)!.sectionId).toBe("add");
@@ -352,7 +467,7 @@ describe("buildLauncherItems — search results", () => {
           unresolvedReason: null,
         },
         primaryText: "Article about love",
-        paneTitleHint: "Article about love",
+        paneLabelHint: "Article about love",
       }),
       makeSearchResult({
         key: "s2",
@@ -367,7 +482,9 @@ describe("buildLauncherItems — search results", () => {
     ];
     const items = buildLauncherItems(ctx({ searchResults: results }));
 
-    const searchItems = items.filter((i) => i.source === "search" && i.id.startsWith("search-"));
+    const searchItems = items.filter(
+      (i) => i.source === "search" && i.id.startsWith("search-"),
+    );
     expect(searchItems).toHaveLength(2);
 
     const s1 = searchItems.find((i) => i.id === "search-s1")!;
@@ -375,7 +492,7 @@ describe("buildLauncherItems — search results", () => {
     expect(s1.target).toMatchObject({
       kind: "resource",
       activation: { resourceRef: results[0]!.resourceRef, href: "/media/abc" },
-      titleHint: "Article about love",
+      labelHint: "Article about love",
     });
     expect(s1.rank.searchScore).toBe(1);
   });
@@ -401,7 +518,9 @@ describe("buildLauncherItems — search results", () => {
 
 describe("buildLauncherItems — browse results", () => {
   it("maps a browse document to a browse-results item with target browse-acquire", () => {
-    const result = makeBrowseDocument({ title: "Deep Learning Primer" } as Partial<BrowseResult>);
+    const result = makeBrowseDocument({
+      title: "Deep Learning Primer",
+    } as Partial<BrowseResult>);
     const items = buildLauncherItems(ctx({ browseResults: [result] }));
     const browse = items.filter((i) => i.sectionId === "browse-results");
 
@@ -419,7 +538,10 @@ describe("buildLauncherItems — browse results", () => {
 
 describe("buildLauncherItems — web results", () => {
   it("maps a web result to a browse-results item that opens its url via externalShell", () => {
-    const result = makeWebResult({ url: "https://news.example.com/story", title: "Breaking" });
+    const result = makeWebResult({
+      url: "https://news.example.com/story",
+      title: "Breaking",
+    });
     const items = buildLauncherItems(ctx({ webResults: [result] }));
     const web = items.find((i) => i.id.startsWith("web-"))!;
 
@@ -442,18 +564,25 @@ describe("buildLauncherItems — web results", () => {
 
 describe("buildLauncherItems — URL hard signal", () => {
   it("emits an add-url-quick row with target add-url and a large scopeBoost when the input is a bare URL", () => {
-    const items = buildLauncherItems(ctx({ input: makeInput("https://example.com/x") }));
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("https://example.com/x") }),
+    );
     const urlAdd = items.find((i) => i.id === "add-url-quick")!;
 
     expect(urlAdd).toBeDefined();
     expect(urlAdd.sectionId).toBe("add");
     expect(urlAdd.title).toContain("example.com");
-    expect(urlAdd.target).toEqual({ kind: "add-url", url: "https://example.com/x" });
+    expect(urlAdd.target).toEqual({
+      kind: "add-url",
+      url: "https://example.com/x",
+    });
     expect(urlAdd.rank.scopeBoost ?? 0).toBeGreaterThan(100_000);
   });
 
   it("is absent when the input is not a bare URL", () => {
-    const items = buildLauncherItems(ctx({ input: makeInput("just some text") }));
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("just some text") }),
+    );
     expect(items.find((i) => i.id === "add-url-quick")).toBeUndefined();
   });
 });
@@ -479,7 +608,9 @@ describe("buildLauncherItems — quick create-note", () => {
   });
 
   it("is absent when the input is a bare URL", () => {
-    const items = buildLauncherItems(ctx({ input: makeInput("https://example.com/x") }));
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("https://example.com/x") }),
+    );
     expect(items.find((i) => i.id === "create-note-quick")).toBeUndefined();
   });
 });
@@ -500,11 +631,19 @@ describe("buildLauncherItems — ask item", () => {
   });
 
   it("is absent when text.length < 2", () => {
-    expect(buildLauncherItems(ctx({ input: makeInput("q") })).find((i) => i.id === "ask-ai")).toBeUndefined();
+    expect(
+      buildLauncherItems(ctx({ input: makeInput("q") })).find(
+        (i) => i.id === "ask-ai",
+      ),
+    ).toBeUndefined();
   });
 
   it("is absent when text is empty", () => {
-    expect(buildLauncherItems(ctx({ input: makeInput("") })).find((i) => i.id === "ask-ai")).toBeUndefined();
+    expect(
+      buildLauncherItems(ctx({ input: makeInput("") })).find(
+        (i) => i.id === "ask-ai",
+      ),
+    ).toBeUndefined();
   });
 
   it("is suppressed when a non-search base item title equals the text case-insensitively", () => {
@@ -514,7 +653,9 @@ describe("buildLauncherItems — ask item", () => {
   });
 
   it("is ALWAYS present in the ask lane, even when a base title equals the text", () => {
-    const items = buildLauncherItems(ctx({ input: makeInput("Libraries", "ask") }));
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("Libraries", "ask") }),
+    );
     expect(items.find((i) => i.id === "ask-ai")).toBeDefined();
   });
 
@@ -550,12 +691,18 @@ describe("buildLauncherItems — see-all item", () => {
     expect(seeAll).toBeDefined();
     expect(seeAll.sectionId).toBe("search-results");
     expect(seeAll.source).toBe("search");
-    expect(seeAll.target).toEqual({ kind: "href", href: "/search?q=quantum", externalShell: false });
+    expect(seeAll.target).toEqual({
+      kind: "href",
+      href: "/search?q=quantum",
+      externalShell: false,
+    });
     expect(seeAll.pin).toBe("last");
   });
 
   it("is absent when the input is a bare URL", () => {
-    const items = buildLauncherItems(ctx({ input: makeInput("https://example.com/x") }));
+    const items = buildLauncherItems(
+      ctx({ input: makeInput("https://example.com/x") }),
+    );
     expect(items.find((i) => i.id === "see-all-search")).toBeUndefined();
   });
 });
@@ -573,7 +720,11 @@ describe("buildLauncherItems — browse-web item", () => {
     expect(browseWeb.sectionId).toBe("browse-results");
     expect(browseWeb.source).toBe("browse");
     expect(browseWeb.pin).toBe("last");
-    expect(browseWeb.target).toEqual({ kind: "set-lane", lane: "browse", query: "quantum" });
+    expect(browseWeb.target).toEqual({
+      kind: "set-lane",
+      lane: "browse",
+      query: "quantum",
+    });
   });
 });
 
@@ -587,8 +738,12 @@ describe("buildLauncherItems — android shell filter", () => {
 
   it("excludes a pane pointing at /settings/local-vault when androidShell=true", () => {
     const panes = [
-      makePane({ id: "vault", href: "/settings/local-vault", title: "Local Vault" }),
-      makePane({ id: "billing", href: "/settings/billing", title: "Billing" }),
+      makePane({
+        id: "vault",
+        href: "/settings/local-vault",
+        label: "Local Vault",
+      }),
+      makePane({ id: "billing", href: "/settings/billing", label: "Billing" }),
     ];
     const items = buildLauncherItems(ctx({ panes, androidShell: true }));
     const paneItems = items.filter((i) => i.id.startsWith("pane-open-"));
@@ -599,7 +754,10 @@ describe("buildLauncherItems — android shell filter", () => {
 
   it("excludes a recent row pointing at /settings/local-vault when androidShell=true", () => {
     const historyRows = [
-      makeHistoryRow({ target_key: "vault-key", target_href: "/settings/local-vault" }),
+      makeHistoryRow({
+        target_key: "vault-key",
+        target_href: "/settings/local-vault",
+      }),
       makeHistoryRow({ target_key: "lib-key", target_href: "/libraries" }),
     ];
     const items = buildLauncherItems(ctx({ historyRows, androidShell: true }));
@@ -609,7 +767,10 @@ describe("buildLauncherItems — android shell filter", () => {
 
   it("keeps the same /settings/local-vault rows when androidShell=false", () => {
     const historyRows = [
-      makeHistoryRow({ target_key: "vault-key", target_href: "/settings/local-vault" }),
+      makeHistoryRow({
+        target_key: "vault-key",
+        target_href: "/settings/local-vault",
+      }),
       makeHistoryRow({ target_key: "lib-key", target_href: "/libraries" }),
     ];
     const items = buildLauncherItems(ctx({ historyRows, androidShell: false }));
@@ -632,19 +793,30 @@ describe("buildLauncherItems — output ordering", () => {
     // Base rows (e.g. the `libraries` command) precede every tail row.
     const baseIdx = ids.indexOf("libraries");
     expect(baseIdx).toBeGreaterThanOrEqual(0);
-    for (const tail of ["create-note-quick", "ask-ai", "browse-web", "see-all-search"]) {
+    for (const tail of [
+      "create-note-quick",
+      "ask-ai",
+      "browse-web",
+      "see-all-search",
+    ]) {
       expect(ids.indexOf(tail), `${tail} after base`).toBeGreaterThan(baseIdx);
     }
     // Tail relative order: create-note, ask, browse-web, see-all.
-    expect(ids.indexOf("create-note-quick")).toBeLessThan(ids.indexOf("ask-ai"));
+    expect(ids.indexOf("create-note-quick")).toBeLessThan(
+      ids.indexOf("ask-ai"),
+    );
     expect(ids.indexOf("ask-ai")).toBeLessThan(ids.indexOf("browse-web"));
-    expect(ids.indexOf("browse-web")).toBeLessThan(ids.indexOf("see-all-search"));
+    expect(ids.indexOf("browse-web")).toBeLessThan(
+      ids.indexOf("see-all-search"),
+    );
 
     // url-add is prepended ahead of all base rows.
-    const urlItems = buildLauncherItems(ctx({ input: makeInput("https://example.com/x") }));
-    expect(urlItems[0].id).toBe("add-url-quick");
-    expect(urlItems.indexOf(urlItems.find((i) => i.id === "add-url-quick")!)).toBeLessThan(
-      urlItems.findIndex((i) => i.id === "libraries"),
+    const urlItems = buildLauncherItems(
+      ctx({ input: makeInput("https://example.com/x") }),
     );
+    expect(urlItems[0].id).toBe("add-url-quick");
+    expect(
+      urlItems.indexOf(urlItems.find((i) => i.id === "add-url-quick")!),
+    ).toBeLessThan(urlItems.findIndex((i) => i.id === "libraries"));
   });
 });

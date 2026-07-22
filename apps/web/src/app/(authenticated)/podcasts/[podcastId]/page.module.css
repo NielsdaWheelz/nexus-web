@@ -69,10 +69,6 @@
   margin-bottom: 12px;
 }
 
-.paneActionButton {
-  border-radius: var(--radius-full);
-}
-
 .headerActions {
   display: flex;
   align-items: center;
@@ -272,15 +268,6 @@
   padding: 16px;
 }
 
-.queueBadge {
-  border: 1px solid var(--edge-subtle);
-  background: var(--surface-2);
-  color: var(--ink-faint);
-  border-radius: var(--radius-full);
-  padding: 4px 8px;
-  font-size: var(--text-xs);
-}
-
 .episodeActions {
   display: flex;
   align-items: center;
@@ -297,20 +284,6 @@
   font-size: var(--text-xs);
   color: var(--ink-faint);
   white-space: pre-wrap;
-}
-
-.episodeShowNotesPreview[data-expanded="false"] {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.showNotesToggleButton {
-  height: auto;
-  padding: 0;
-  color: var(--accent);
-  font-weight: var(--weight-regular);
 }
 
 .batchTranscriptSummary {

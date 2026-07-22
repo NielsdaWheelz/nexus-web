@@ -34,6 +34,12 @@ is the sole full-list editor and the footer has no list/dialog. Those
 references describe the pre-cutover surface and are retained as historical
 record only.
 
+**Follow-up note (2026-07-21):** the pane-header identity cutover added the
+shared nested-overlay contract documented in `docs/modules/overlays.md`. It
+supersedes the original single-sheet assumptions and N1 below: topmost modal
+projection, Escape arbitration, reference-counted body locking, and one shared
+history marker now compose across nested overlays.
+
 ## Summary
 
 The mobile chat drawer (`MobileSecondaryPaneHost`, hosting the
@@ -227,9 +233,9 @@ Owns, for every mobile bottom sheet in the app:
 - Portal to `document.body`.
 - Backdrop: fixed full-viewport layer, scrim token, tap-to-dismiss
   (`onClick={onDismiss}` on the scrim, `stopPropagation` on the panel — the
-  portal-safe pattern from dialog-overlay-hook-unification §9; outside-click
+  portal-safe pattern from `docs/modules/overlays.md`; outside-click
   is intentionally not owned by `useDialogOverlay`).
-- Panel: `role="dialog"`, `aria-modal="true"`, label, `tabIndex={-1}`, flex
+- Panel: `role="dialog"`, label, `tabIndex={-1}`, flex
   column, `width: 100%`, top-corner radius, top hairline border, shadow token,
   entry animation, `overflow: hidden` with a `min-height: 0` content slot.
 - Grabber + drag-to-dismiss (pointer capture on `[data-grabber]`, live
@@ -312,15 +318,15 @@ Render shape:
 
 ```tsx
 const inset = useKeyboardInset();
-useDialogOverlay({ ref: panelRef, active, onDismiss: onEscape ?? onDismiss, initialFocus, returnFocusFallback, focusKey });
-useHistoryDismiss(active && historyDismiss, onDismiss);
+const overlay = useDialogOverlay({ ref: panelRef, active, onDismiss: onEscape ?? onDismiss, initialFocus, returnFocusFallback, focusKey, layerScope: panelId });
+useHistoryDismiss(active && historyDismiss, onDismiss, { isTopmost: overlay.isTopmost });
 if (!active) return null;
 return createPortal(
   <div className={styles.backdrop} data-layer={layer} data-scrim={scrim} role="presentation" onClick={onDismiss}>
     <section
       ref={panelRef}
       className={cx(styles.panel, panelClassName)}
-      role="dialog" aria-modal="true" aria-label={ariaLabel} tabIndex={-1}
+      role="dialog" aria-label={ariaLabel} tabIndex={-1}
       style={{ "--keyboard-inset": `${inset}px` }}
       onClick={(e) => e.stopPropagation()}
       {...dragHandlers /* active only when grabber */}
@@ -434,7 +440,8 @@ Notes:
 ## Existing patterns to reuse
 
 - `useDialogOverlay` — the modal contract, used as-is. Backdrop-onClick
-  dismissal stays caller-side (portal-safe pattern, dialog-overlay §9).
+  dismissal stays caller-side (portal-safe pattern in
+  `docs/modules/overlays.md`).
 - `useHistoryDismiss` — used as-is, including the microtask navigating-close
   guard. The mount contract it documents becomes `MobileSheet`'s mount
   contract.
@@ -547,7 +554,7 @@ by design (docs/modules/workspace.md). Removed rather than carried.
 
 Vaul would import a second overlay system alongside `useDialogOverlay` for one
 behavior (drag) the palette already implements in ~15 lines. Native `<dialog>`
-/ popovers were already ruled out by the dialog-overlay cutover (portal
+/ popovers are ruled out by the shared overlay contract (portal
 landmine). The VirtualKeyboard API is Chromium-only with broken env vars
 beyond `keyboard-inset-height`; `interactive-widget` covers the same browsers
 declaratively. Revisit only if iOS ships keyboard env vars.
@@ -628,7 +635,7 @@ From repo root; all must return nothing:
 - AC-12: `grep -rn "z-index: 1000" apps/web/src --include="*.css"` (token-only z-indexes).
 - AC-13: `grep -rEn "align-items: *flex-end" apps/web/src/components --include="*.module.css"` returns only `MobileSheet.module.css` and `HoverPreview.module.css` (NavSheet/queue panel are side-anchored and do not match; if another legitimate non-sheet match exists at implementation time, list it here explicitly rather than weakening the gate). `HoverPreview.module.css` `.sheetBackdrop` is the explicit exception: HoverPreview's `(hover: none)` tap fallback is a lightweight, non-interactive preview surface outside this cutover's six-sheet scope, not a migrated modal sheet.
 - AC-14: `grep -rn "DRAG_DISMISS_PX\|data-grabber" apps/web/src --include="*.tsx" | grep -v MobileSheet` returns only test files.
-- AC-15: `grep -rn "useHistoryDismiss" apps/web/src --include="*.tsx" | grep -v test` returns only `MobileSheet.tsx` and the NavSheet/AppNav wiring.
+- AC-15: `grep -rn "useHistoryDismiss" apps/web/src --include="*.tsx" | grep -v test` returns only `MobileSheet.tsx`, `NavSheet.tsx`, and the modal-local transient owner in `ActionMenu.tsx`.
 
 ### Verification
 
@@ -726,14 +733,13 @@ On the primary phone (iOS Safari is the hard case), production build:
 
 ## Non-goals
 
-- N1. Snap points / multi-detent sheets, sheet stacking management, or a
-  generic "single Escape owner" arbiter for stacked overlays (existing gap,
-  unchanged by this cutover; the z-token order already encodes priority).
+- N1. Snap points / multi-detent sheet geometry. Nested modal interaction is
+  owned by the later shared overlay-layer contract, not by `MobileSheet`.
 - N2. Migrating NavSheet's geometry or the desktop queue panel/popovers into
   `MobileSheet`.
 - N3. Adopting Vaul/Radix or any overlay library.
-- N4. Native `<dialog>`/popover adoption (ruled out by the dialog-overlay
-  cutover; portal landmine).
+- N4. Native `<dialog>`/popover adoption (ruled out by the shared overlay
+  contract; portal landmine).
 - N5. VirtualKeyboard API (`overlaysContent`, `env(keyboard-inset-*)`).
 - N6. PWA/standalone-mode work, scroll-driven keyboard animations, or
   `scrollend`-based settle logic.

@@ -7,7 +7,7 @@ import {
   decodeLecternResult,
   decodeLecternSnapshot,
   decodeListeningState,
-} from "./client";
+} from "./contract";
 
 const MEDIA_ID = "11111111-1111-1111-1111-111111111111";
 const ITEM_ID = "22222222-2222-2222-2222-222222222222";
@@ -33,6 +33,7 @@ function item(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   return {
     itemId: ITEM_ID,
     mediaId: MEDIA_ID,
+    kind: "podcast_episode",
     title: "A title",
     subtitle: { kind: "Present", value: "A subtitle" },
     href: "/media/abc",
@@ -91,6 +92,23 @@ describe("decodeActivation", () => {
       expect(() => decodeActivation(footerAudio({ positionMs: 10.5 }))).toThrow();
     });
 
+    it("rejects negative and overflowing signed-32-bit integers", () => {
+      expect(() => decodeActivation(footerAudio({ positionMs: -1 }))).toThrow();
+      expect(() =>
+        decodeActivation(footerAudio({ writeRevision: 2_147_483_648 })),
+      ).toThrow();
+      expect(() =>
+        decodeActivation(
+          footerAudio({ durationMs: { kind: "Present", value: 2_147_483_648 } }),
+        ),
+      ).toThrow();
+    });
+
+    it("rejects playback speed outside 0.25..3", () => {
+      expect(() => decodeActivation(footerAudio({ playbackSpeed: 0.249 }))).toThrow();
+      expect(() => decodeActivation(footerAudio({ playbackSpeed: 3.001 }))).toThrow();
+    });
+
     it("rejects more than 100 chapters (bounds)", () => {
       const chapters = Array.from({ length: 101 }, (_, index) => ({
         title: `c${index}`,
@@ -127,6 +145,7 @@ describe("decodeLecternItem", () => {
     const decoded = decodeLecternItem(item());
     expect(decoded.itemId).toBe(ITEM_ID);
     expect(decoded.mediaId).toBe(MEDIA_ID);
+    expect(decoded.kind).toBe("podcast_episode");
     expect(decoded.href).toBe("/media/abc");
     expect(decoded.consumption.state).toBe("InProgress");
   });
@@ -135,8 +154,18 @@ describe("decodeLecternItem", () => {
     expect(() => decodeLecternItem(item({ mediaId: "not-a-uuid" }))).toThrow();
   });
 
+  it("rejects an unknown media kind", () => {
+    expect(() => decodeLecternItem(item({ kind: "audio" }))).toThrow();
+  });
+
   it("rejects an href that does not start with a slash", () => {
     expect(() => decodeLecternItem(item({ href: "media/abc" }))).toThrow();
+  });
+
+  it("rejects protocol-relative and normalized href spellings", () => {
+    expect(() => decodeLecternItem(item({ href: "//evil.example/media/abc" }))).toThrow();
+    expect(() => decodeLecternItem(item({ href: "/media/../lectern" }))).toThrow();
+    expect(() => decodeLecternItem(item({ href: "/media\\abc" }))).toThrow();
   });
 
   it("rejects a lowercase consumption state", () => {

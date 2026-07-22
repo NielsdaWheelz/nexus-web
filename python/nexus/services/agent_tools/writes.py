@@ -69,6 +69,13 @@ WRITE_TOOL_NAMES: tuple[str, ...] = (
 
 _EDGE_KINDS = ("context", "supports", "contradicts")
 
+# Parameter schemas follow the canonical JSON-Schema subset (llm-provider-runtime
+# hard cutover §5): every property is listed in ``required`` with
+# ``additionalProperties: false``, and semantically optional values are
+# required-nullable ``anyOf [X, {"type": "null"}]``. Executors treat an explicit
+# null exactly like an omitted key (all argument reads go through ``args.get``),
+# and defaults (highlight color yellow, edge kind context) live in the execute
+# path, never in the schema.
 ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {
         "name": ADD_TO_LIBRARY_TOOL_NAME,
@@ -87,13 +94,19 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                     "type": "string",
                     "description": "media:<uuid> or podcast:<uuid> to file.",
                 },
-                "library_id": {"type": "string", "description": "Target library UUID."},
+                "library_id": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Target library UUID; null when filing by library_name.",
+                },
                 "library_name": {
-                    "type": "string",
-                    "description": "Target library name (exact, case-insensitive).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Target library name (exact, case-insensitive); "
+                        "null when filing by library_id."
+                    ),
                 },
             },
-            "required": ["resource_uri"],
+            "required": ["resource_uri", "library_id", "library_name"],
             "additionalProperties": False,
         },
     },
@@ -109,11 +122,11 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
             "properties": {
                 "markdown": {"type": "string", "description": "The note text (markdown)."},
                 "page_uri": {
-                    "type": "string",
-                    "description": "page:<uuid> to append to; omit for today's daily note.",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "page:<uuid> to append to; null for today's daily note.",
                 },
             },
-            "required": ["markdown"],
+            "required": ["markdown", "page_uri"],
             "additionalProperties": False,
         },
     },
@@ -132,21 +145,35 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                 "media_uri": {"type": "string", "description": "media:<uuid> to highlight in."},
                 "exact": {"type": "string", "description": "The passage, verbatim."},
                 "prefix": {
-                    "type": "string",
-                    "description": "Text immediately before the passage (to disambiguate).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately before the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
                 },
                 "suffix": {
-                    "type": "string",
-                    "description": "Text immediately after the passage (to disambiguate).",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately after the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
                 },
                 "color": {
-                    "type": "string",
-                    "enum": ["yellow", "green", "blue", "pink", "purple"],
-                    "description": "Highlight color (default yellow).",
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "enum": ["yellow", "green", "blue", "pink", "purple"],
+                        },
+                        {"type": "null"},
+                    ],
+                    "description": "Highlight color; null for the default (yellow).",
                 },
-                "note": {"type": "string", "description": "Optional highlight note (markdown)."},
+                "note": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Optional highlight note (markdown); null for none.",
+                },
             },
-            "required": ["media_uri", "exact"],
+            "required": ["media_uri", "exact", "prefix", "suffix", "color", "note"],
             "additionalProperties": False,
         },
     },
@@ -164,16 +191,18 @@ ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
                 "source_uri": {"type": "string", "description": "One endpoint URI."},
                 "target_uri": {"type": "string", "description": "The other endpoint URI."},
                 "kind": {
-                    "type": "string",
-                    "enum": list(_EDGE_KINDS),
-                    "description": "Relationship kind (default context).",
+                    "anyOf": [
+                        {"type": "string", "enum": list(_EDGE_KINDS)},
+                        {"type": "null"},
+                    ],
+                    "description": "Relationship kind; null for the default (context).",
                 },
                 "rationale": {
                     "type": "string",
                     "description": "One-line reason for the connection.",
                 },
             },
-            "required": ["source_uri", "target_uri", "rationale"],
+            "required": ["source_uri", "target_uri", "kind", "rationale"],
             "additionalProperties": False,
         },
     },
@@ -374,10 +403,10 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     command REST also uses (spec S4.3), so the agent path has full parity: system-
     library rejection, podcast-into-Default rejection, active-subscription
     requirement for podcasts, tombstone-clearing, and an idempotent
-    present/inserted outcome for Undo correctness (AC4).
+    inserted-only outcome for Undo correctness (AC4).
 
     Media readable-or-restorable authorization (rule 1) is the shared filing
-    command's own gate (`library_entries.add_media_to_library`) — NOT
+    command's own gate (`library_entries.ensure_media_in_library`) — NOT
     `assert_ref_visible`, which uses full readable visibility and would 404 a
     tombstoned media the viewer is trying to restore by re-filing it. Podcasts
     have no restorable lane, so that branch still asserts visibility here."""
@@ -388,7 +417,7 @@ def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _Hand
     library_id = _resolve_library_id(db, viewer_id, args)
 
     if ref.scheme == "media":
-        outcome = library_entries.add_media_to_library(db, viewer_id, library_id, ref.id)
+        outcome = library_entries.ensure_media_in_library(db, viewer_id, library_id, ref.id)
     else:
         outcome = library_entries.add_podcast_to_library(db, viewer_id, library_id, ref.id)
 
@@ -668,12 +697,25 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
             delete_edge(db, viewer_id=viewer_id, edge_id=UUID(ref["id"]))
             db.commit()
         elif kind == "entry":
-            library_entries.delete_entry(
-                db,
-                UUID(ref["library_id"]),
-                library_entries.EntryTarget(kind=ref["target_scheme"], id=UUID(ref["target_id"])),
-            )
-            db.commit()
+            target_scheme = ref["target_scheme"]
+            if target_scheme == "media":
+                library_entries.undo_media_filing_for_viewer(
+                    db,
+                    viewer_id,
+                    UUID(ref["target_id"]),
+                    UUID(ref["library_id"]),
+                )
+            elif target_scheme == "podcast":
+                library_entries.remove_podcast_from_library(
+                    db,
+                    viewer_id,
+                    UUID(ref["library_id"]),
+                    UUID(ref["target_id"]),
+                )
+            else:
+                # justify-defect: add_to_library records only the closed media/podcast
+                # ResourceRef union in its own result_refs payload.
+                raise AssertionError(f"unknown entry target scheme: {target_scheme!r}")
         elif kind == "highlight":
             highlights.delete_highlight(db, viewer_id, UUID(ref["id"]))
         elif kind == "note_block":
@@ -681,7 +723,12 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "queue":
             # Tolerates an already-removed Lectern item (manual removal, R-5).
             consumption_service.remove_lectern_item(viewer_id, UUID(ref["id"]))
-    except ApiError:
-        # R-5: the target is already gone (manual delete). The revert still
-        # succeeds and the row is stamped reverted.
+    except ApiError as exc:
+        if exc.code not in {
+            ApiErrorCode.E_NOT_FOUND,
+            ApiErrorCode.E_MEDIA_NOT_FOUND,
+            ApiErrorCode.E_LIBRARY_NOT_FOUND,
+        }:
+            raise
+        # justify-ignore-error: R-5 defines an already-removed Undo target as success.
         db.rollback()

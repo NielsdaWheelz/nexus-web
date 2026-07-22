@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { stateChangingApiHeaders } from "./api";
+import {
+  AUTHENTICATED_HOME_PATH,
+  isAuthenticatedHome,
+} from "./app-routes";
 
 /**
  * The Android share-sheet capture surface (`/share`). `make test-e2e` runs this
@@ -163,7 +167,7 @@ test.describe("share to Nexus", () => {
       page.getByRole("heading", { name: "Save to Nexus" }),
     ).toBeVisible();
     await page.getByRole("link", { name: "Cancel" }).click();
-    await expect(page).toHaveURL(/\/libraries$/);
+    await expect(page).toHaveURL(isAuthenticatedHome);
     expect(fromUrlRequests).toHaveLength(0);
   });
 
@@ -216,7 +220,7 @@ test.describe("share to Nexus", () => {
       ).toBeVisible();
       await expect(page.getByRole("link", { name: "Done" })).toHaveAttribute(
         "href",
-        "/libraries",
+        AUTHENTICATED_HOME_PATH,
       );
     } finally {
       await context.close();

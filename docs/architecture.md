@@ -104,7 +104,9 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / OpenRouter / Cloudflare (LLM + embeddings),
+   External: OpenAI / Anthropic / Gemini / Moonshot (LLM; OpenAI also
+             embeddings + transcription); OpenRouter is a hidden, uncertified
+             operator route only — no product profile targets it,
              Brave (web search), Podcast Index, Deepgram, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
@@ -127,15 +129,15 @@ the BFF. See [`rules/layers.md`](rules/layers.md) and
 
 There are **four runtime processes** plus managed dependencies.
 
-| Process | Code | Hosted | Role |
-|---|---|---|---|
-| Next.js frontend + BFF | `apps/web` | **Vercel** (Git-triggered) | React UI + `/api/*` proxy to FastAPI |
-| FastAPI API | `apps/api/main.py` → `python/nexus` | **Hetzner VPS** (Docker Compose) | product API, SSE streaming |
-| Worker | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS** | background jobs from `background_jobs` |
-| PostgreSQL (pgvector) | — | **same Hetzner VPS** | the single source of truth |
+| Process                | Code                                                  | Hosted                           | Role                                   |
+| ---------------------- | ----------------------------------------------------- | -------------------------------- | -------------------------------------- |
+| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (Git-triggered)       | React UI + `/api/*` proxy to FastAPI   |
+| FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming             |
+| Worker                 | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | background jobs from `background_jobs` |
+| PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth             |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
-(hosted Auth only — JWT issuance/JWKS/OAuth; *no* Supabase Database or Storage),
+(hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
 and the LLM/search/podcast/billing providers above. **Caddy** terminates TLS in
 front of the API; the frontend is served by Vercel.
 
@@ -170,14 +172,14 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 
 ## 4. Architectural principles (the constitution)
 
-These are the load-bearing rules that explain *why* the code looks the way it
+These are the load-bearing rules that explain _why_ the code looks the way it
 does. Full normative text lives in [`rules/`](rules/index.md); this is the
 orientation summary.
 
 **Layering & ownership** ([`rules/layers.md`](rules/layers.md),
 [`rules/codebase.md`](rules/codebase.md), [`rules/cleanliness.md`](rules/cleanliness.md)).
 Top to bottom: Next middleware (network-free session classification + CSP) →
-Data Access Layer (`apps/web/src/lib/auth/dal.ts`, the *only* verified-session
+Data Access Layer (`apps/web/src/lib/auth/dal.ts`, the _only_ verified-session
 authorization boundary) → Next `/api/*` routes (dumb proxy, no business logic) →
 FastAPI middleware (JWT verify, request-id, viewer injection) → FastAPI route
 handlers (validate input, call one service, shape the response) → **services**
@@ -187,8 +189,8 @@ dependencies passed as explicit parameters never globals) → models
 side effects only in entrypoints.
 
 **Error vs defect** ([`rules/errors.md`](rules/errors.md),
-[`rules/correctness.md`](rules/correctness.md)). *Errors* are expected, modelled
-failures with typed codes. *Defects* are broken invariants ("should never
+[`rules/correctness.md`](rules/correctness.md)). _Errors_ are expected, modelled
+failures with typed codes. _Defects_ are broken invariants ("should never
 happen") — they are **never** turned into UI states, retryable branches, or
 persisted status fields; observing one in production triggers a code change. No
 `T | null`/`Optional` in service APIs to represent classifiable absence — classify
@@ -199,7 +201,7 @@ Branch exhaustively on finite value sets (`assert_never`); no bare
 **Transport is a dumb pipe** ([`rules/modules/transport.md`](rules/modules/transport.md)).
 Application work that must survive a disconnect is decoupled from the transport —
 which is exactly why a chat answer is a durable `ChatRun` executed by the worker
-and merely *tailed* over SSE, not driven by the HTTP connection.
+and merely _tailed_ over SSE, not driven by the HTTP connection.
 
 **Database** ([`rules/database.md`](rules/database.md)). UUID `id` PKs (never
 exposed to users), `timestamptz` with `now()` defaults, right-open `[start, end)`
@@ -240,8 +242,8 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    product reads/writes go to **same-origin** `/api/*`; GETs are de-duplicated
    in-flight; a `401 E_UNAUTHENTICATED` hard-redirects to `/login`.
 2. **Next middleware** (`middleware.ts` → `lib/supabase/middleware.ts`) attaches a
-   per-request CSP nonce and classifies the Supabase session cookie *without any
-   network I/O* into `active | refreshable | ended | anonymous`. `/api/*` is
+   per-request CSP nonce and classifies the Supabase session cookie _without any
+   network I/O_ into `active | refreshable | ended | anonymous`. `/api/*` is
    passed straight through — the proxy owns its own auth.
 3. The `/api/*` **route handler** is a one-liner: `return proxyToFastAPI(req, "<path>")`.
 4. **`proxyToFastAPI`** (`lib/api/proxy.ts`) does the real work: enforces a CSRF
@@ -328,20 +330,23 @@ hashes, fingerprints, or supersession chains.
 
 The tables group into these domains:
 
-**Identity / auth / sessions** — `users` (PK = Supabase `sub`), `user_api_keys`
-(encrypted BYOK), `billing_accounts`, `billing_entitlement_overrides` (+events),
+**Identity / auth / sessions** — `users` (PK = Supabase `sub`),
+`billing_accounts`, `billing_entitlement_overrides` (+events),
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
-`reader_profiles`, `workspace_sessions`, `command_palette_usages`.
+`reader_profiles`, `workspace_sessions`, `command_palette_usages`. LLM access
+runs on platform credentials only — there is no per-user key table.
 
-**Media / ingestion** — `media` (the central readable entity), `media_file`
-(private original-file object metadata), `project_gutenberg_catalog`,
+**Media / ingestion** — `media` (the central readable entity; PDF `plain_text`
+has a same-row STORED `plain_text_word_count` derivative), `media_file` (private
+original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
 **Reader content / fragments** — `fragments` (current render units carrying
-`canonical_text` + `html_sanitized`), `fragment_blocks`, EPUB structure
+`canonical_text` + `html_sanitized` and a same-row STORED
+`canonical_text_word_count` derivative), `fragment_blocks`, EPUB structure
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
 `epub_resources` for private extracted asset object metadata),
-`pdf_page_text_spans`, `reader_media_state`.
+`pdf_page_text_spans`.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
@@ -350,9 +355,19 @@ The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
 `object_search` substrate.
 
-**Highlights** — `highlights` (base row + the exact/prefix/suffix triple),
-`highlight_fragment_anchors` (codepoint ranges), `highlight_pdf_anchors` +
-`highlight_pdf_quads` (page-space geometry).
+**Highlights & passage anchors** — `highlights` (base row + the
+exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
+`fragment_id` is a disposable locator cache, not an FK — a missing fragment is
+detected by LEFT JOIN and re-resolved by quote, never cascade-deleted),
+`highlight_pdf_anchors` + `highlight_pdf_quads` (page-space geometry), and
+`passage_anchors` (durable user-owned identity for a derived/passage
+endpoint — owner `media`/`note_block`, an immutable normalized-quote
+`anchor_key`, and a replaceable `locator_hint`; it is the sole durable form a
+passage candidate takes once linked, never a persisted `evidence_span`/
+`content_chunk`/`fragment`/`reader_apparatus_item`/`oracle_passage_anchor`
+row). None of the highlight-family FKs cascade; ordinary deletion is explicit
+child-first cleanup, and reindex/refresh never delete Highlights or passage
+anchors — unresolved locators stay visible rather than disappearing.
 
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
 `library_invitations`, and the current **library-intelligence** head/revision
@@ -368,24 +383,39 @@ there is no self-FK, no merge/split/tombstone, and no status column),
 
 **Notes** — `pages` (title only), `daily_note_pages`, `note_blocks`
 (ProseMirror JSON + generated text only), `resource_versions`,
-`resource_mutations`, `resource_view_states`, and `user_pinned_objects`.
+`resource_mutations`, and `resource_view_states`.
 Page/note ordering, inline note-to-object refs, highlight-note attachments, and
 backlinks are `resource_edges`, below — notes own no link table.
 
 **Resource graph** — `resource_edges` (the single directed connection table:
-stance `kind`, writer `origin` (`user`, `citation`, `system`, `note_body`,
-`highlight_note`, `synapse`), polymorphic `scheme`+`id`
+`kind` (`context`, `supports`, `contradicts`), writer `origin` (`user`,
+`citation`, `system`, `note_body`, `highlight_note`, `synapse`,
+`document_embed`, `assistant`, `link_note`), polymorphic `scheme`+`id`
 endpoints with no endpoint FKs, optional ordered-adjacency keys, citation
 `ordinal`+`snapshot`, and synapse rationale snapshots),
 `resource_external_snapshots` (stable targets for public web-search citations),
 and `oracle_reading_folios` (oracle-owned generated folio content referencing its
 citation edge). This subgraph is the single durable positive connection
-contract.
+contract. **Link** is the one durable relationship-authoring primitive:
+exactly one neutral `origin='user', kind='context'` edge exists per user and
+canonical unordered endpoint pair (`min(A,B) → max(A,B)`, ordered by
+`(scheme, id)`); repeated or reverse creation returns the existing Link rather
+than raising or duplicating. A directional user **stance**
+(`supports`/`contradicts`) may coexist on the same pair — at most one per
+user/unordered pair, its stored direction carrying meaning — and ordered
+adjacency (page/note occurrence order) is a third, never-canonicalized shape;
+all three may coexist on the same endpoints. An optional **Link note** is one
+ordinary note attached through two structural `link_note` edges (one per
+endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
+field — the attachment edges themselves never render as separate rows.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`, `message_llm`, `models` (LLM registry);
-plus the **chat-run** machinery: `chat_runs`,
+(per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
+(carries product selection snapshots `profile_id`/`reasoning_option_id` and
+resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
+`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
+gone),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -401,12 +431,16 @@ message API responses include a
 (`auto_queue_watermark_at`), `podcast_subscription_libraries`,
 `podcast_episodes` (PK = `media_id`), `podcast_episode_chapters`,
 `podcast_listening_states` (position/duration/speed +
-`write_revision`/`reset_epoch` heartbeat fencing), `podcast_transcription_jobs`,
+`write_revision`/`reset_epoch` heartbeat fencing plus heartbeat-only
+`last_engaged_at`; operational `updated_at` is not engagement),
+`podcast_transcription_jobs`,
 `podcast_transcription_usage_daily`, `podcast_transcript_segments`.
 
-**Lectern / consumption** — `consumption_queue_items` (the Lectern: one
-ordered, mixed-media list per viewer, membership/order only — completion is
-never stored on the row), `consumption_overrides` (explicit `Unread`/
+**Reader cursor / Lectern / consumption** — `reader_media_state` (the canonical
+resume cursor only; consumption state does not derive directly from it),
+`consumption_queue_items` (the Lectern: one ordered, mixed-media list per
+viewer, membership/order only — completion is never stored on the row),
+`consumption_overrides` (explicit `Unread`/
 `Finished` state), `reader_engagement_states` (one current-state row per
 viewer/media: `last_engaged_at` recency and, for non-PDF locators, a
 monotonic `max_total_progression` — no session/device/span/dwell history),
@@ -482,12 +516,12 @@ timeouts) and wakes the SSE tail. The committed row — not the notification —
 the source of truth; a missed/coalesced NOTIFY only delays an update by the idle
 keepalive, never drops it.
 
-| Channel | Producer | Consumer |
-|---|---|---|
-| `chat_run_events` | insert on `chat_run_events` | chat SSE tail |
-| `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail |
-| `media_events` | update on `media` | media-status SSE |
-| `nexus_background_jobs` | enqueue in `jobs/queue.py` | worker wake-up |
+| Channel                 | Producer                          | Consumer         |
+| ----------------------- | --------------------------------- | ---------------- |
+| `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
+| `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
+| `media_events`          | update on `media`                 | media-status SSE |
+| `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
 ### 7.3 Background jobs & the worker
 
@@ -497,13 +531,13 @@ inserting a `background_jobs` row + `pg_notify` **in the caller's transaction**
 runs two loops:
 
 - **Job loop**: `claim_next_job` atomically picks one due row with
-  `FOR UPDATE SKIP LOCKED` (new work *or* a crashed job whose lease expired),
+  `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
   flips it to `running` with a lease, dispatches to the registered handler under a
   heartbeat thread, then commits a terminal/retry transition. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
   dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
-	  writes an errored assistant message, and `note_reindex_job` marks the note's
-	  content index `failed`.
+  writes an errored assistant message, and `note_reindex_job` marks the note's
+  content index `failed`.
 - **Scheduler loop**: enqueues periodic jobs into fixed time slots with
   deterministic dedupe keys, so exactly one job per slot survives across workers.
 
@@ -520,7 +554,7 @@ startup in CI and a user-facing kind can never be stranded unallowlisted (the
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `library_intelligence_artifact_generate`,
-	`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
+`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
@@ -535,26 +569,27 @@ lane's observed role slice, so duplicate identity is prevented at write time
 rather than proposed and reconciled after the fact.
 
 > Gotcha: only `enrich_metadata` and `media_unit_build` declare
-> `failed_result_statuses`. Other ingest tasks that *return* `{"status":"failed"}`
+> `failed_result_statuses`. Other ingest tasks that _return_ `{"status":"failed"}`
 > still mark the **queue** row succeeded — the failure is recorded on the domain
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation-run harness.** The five LLM generation kinds (`chat_run`,
-`oracle_reading_generate`, `library_intelligence_artifact_generate`,
-`media_unit_build`, `enrich_metadata`) run their bodies inside one shared worker
-envelope, `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop,
-`httpx` client, and `ModelRuntime` construction (including the fixture swap and
-the worker-exception boundary). Ledgered generation calls inside those jobs leave
-one `llm_calls` row via `llm_ledger.observed_generate` /
-`observed_generate_stream`, on success and on failure, and
-`run_kit.mark_terminal` stamps `error_code`/`error_detail` on the run parent —
-so a failed run is diagnosable. Saved-key probes and transcript embeddings are
-explicit exceptions described in [modules/llms.md](modules/llms.md). The worker
-installs the process-global rate limiter at startup so the first job of any kind
-has a working limiter. SERIALIZABLE retries everywhere (including the scheduler
-loop) go through the one helper `db/retries.py:retry_serializable`. See
-[modules/llms.md](modules/llms.md).
+**Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
+`oracle_reading_generate`, `synapse_scan`, `dawn_write`,
+`library_intelligence_artifact_generate` and the conversation-distillate
+reducer under the generic `artifacts` engine, `media_unit_build`,
+`enrich_metadata`) run their bodies inside one shared worker envelope,
+`tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
+client, and `ExecutionRuntime` construction (production or the real-media
+fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
+worker-exception boundary). Every provider call inside a job goes through
+`services/llm_execution.py:execute_generation`/`execute_generation_stream` —
+the sole caller of the ledger — leaving one `llm_calls` row on every terminal
+path (success, defect, or entitlement/budget denial), with the failure
+attributed to the layer that detected it. See [modules/llms.md](modules/llms.md).
+The worker installs the process-global rate limiter at startup so the first job
+of any kind has a working limiter. SERIALIZABLE retries everywhere (including
+the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
@@ -567,6 +602,7 @@ Visibility is enforced by boolean predicates (`auth/permissions.py`) that take a
 explicit session and never leak existence (not-found == not-visible).
 
 Other identity surfaces:
+
 - **Stream tokens** (`services/stream_tokens.py`, route `api/routes/stream_tokens.py`):
   HS256, ~60s, single-use, for SSE.
 - **Extension sessions** (`services/extension_sessions.py`): opaque
@@ -575,16 +611,20 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 BYOK keys, billing & entitlements
+### 7.5 Platform LLM credentials, billing & entitlements
 
-- **BYOK** (`services/user_keys.py`, `crypto.py`, `api_key_resolver.py`): user
-  provider keys (openai/anthropic/gemini/openrouter; Cloudflare is platform-only
-  in the current credential contract) are encrypted with XChaCha20-Poly1305
-  (PyNaCl `SecretBox`) under `NEXUS_KEY_ENCRYPTION_KEY`; only a 4-char fingerprint
-  is exposed. Status lifecycle `untested → valid → invalid → revoked` (revoke
-  wipes ciphertext, keeps fingerprint for audit). `key_mode ∈ {auto, byok_only,
-  platform_only}` chooses BYOK-first vs platform; platform use is gated by
-  entitlements.
+- **Platform credentials** (`services/llm_credentials.py`): the sole platform-key
+  reader for every generation, embedding, and transcription call — no BYOK, no
+  per-user key, no DB lookup, no encryption. It reads `OPENAI_API_KEY` /
+  `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `MOONSHOT_API_KEY` straight off
+  `Settings`; a missing key at call time is a `RuntimeDefect` (broken deployment
+  invariant), never a product-facing failure, because presence is enforced at
+  startup by `config.validate_required_settings` for staging/prod (which also
+  requires an RFC 3339 `NEXUS_FABLE_RETENTION_ACCEPTED_AT` deployment
+  assertion — Fable requires 30-day retention and is not ZDR-eligible).
+  `OPENROUTER_API_KEY` is not part of the deployed app's required settings; it
+  belongs only to the separate paid provider-runtime certification command.
+  See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
@@ -603,13 +643,26 @@ Other identity surfaces:
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
-three surfaces: the in-app search page, the chat `app_search` agent tool (RAG), and
-object-ref resolution for notes. The request is a single typed `SearchQuery` value
-object parsed at the edge; the user-facing taxonomy is **six kinds** (Documents,
-Notes, Highlights, Conversations, People, Web) folding the internal result types,
-with operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
+two public surfaces: the in-app search page and the chat `app_search` agent tool
+(RAG). The request is a single typed `SearchQuery` value object parsed at the
+edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
+Conversations, People, Web) folding the internal result types, with
+operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
 `embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+Ranking/retrieval is extracted below that public projection into one internal
+pre-projection candidate seam (`search/candidates.py`); **resource target
+search** (`services/resource_items/targets.py`, `POST
+/resource-items/targets/search`) is a second projection over the same
+candidate engine, not a second search engine, and never introduces a new
+public `SearchKind` or `GET /search` result type. Its `purpose=link` profile
+is the full hybrid retrieval and may surface passage candidates (`kind:
+"passage"`, transient `candidate_ref`); its `purpose=reference` profile is a
+one-character-capable lexical fast path (exact/prefix/substring/FTS,
+including note-body substrings) restricted to direct targets, and never calls
+`build_query_embedding`. Both profiles apply target capability, visibility,
+canonical dedupe, and exclusions before per-source caps, and refill a sparse
+filtered page rather than under-filling it.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -618,8 +671,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `content_index_states(owner_kind, owner_id)` with the active embedding
   provider/model; rebuilds replace current blocks, chunks, spans, and embeddings
   for the owner.
-- **Retrieval** is hybrid — and hybrid is an *invariant*, not a per-request toggle:
-  a vector ANN arm (cosine over pgvector, joined on the *active* embedding config)
+- **Retrieval** is hybrid — and hybrid is an _invariant_, not a per-request toggle:
+  a vector ANN arm (cosine over pgvector, joined on the _active_ embedding config)
   **UNION** a lexical FTS arm, reranked by a weighted score (lexical hit + semantic
   similarity + recency), filtered by a similarity floor, then resolved through the
   locator resolver. There is no `semantic` flag; the query embedding is built once
@@ -633,8 +686,8 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   `<scheme>:<uuid>` ref over a closed scheme set (`media`, `library`,
   `evidence_span`, `content_chunk`, `highlight`, `page`, `note_block`, `fragment`,
   `conversation`, `message`, `oracle_reading`, `oracle_passage_anchor`,
-  `library_intelligence_artifact`, `library_intelligence_revision`,
-  `reader_apparatus_item`, `external_snapshot`, `contributor`, `podcast`)
+  `artifact`, `artifact_revision`, `reader_apparatus_item`, `external_snapshot`,
+  `contributor`, `podcast`, `passage_anchor`)
   is the one persisted resource-identity vocabulary. The same ref identifies a
   resource everywhere: an edge endpoint, a citation target, an attached
   conversation context ref, a chat subject, and a read/inspect agent-tool
@@ -642,7 +695,20 @@ result-type grid. The package owns one concern per module (`kinds`, `query`, `sc
   strict (canonical lowercase uuid) and returns a typed failure, never `None`.
   Hydration + permission checks live in `services/resource_graph/resolve.py` —
   `load_resource_batch` is the one place each scheme's read SQL + visibility gate
-  exists.
+  exists, including a viewer-scoped `passage_anchor` branch under the same
+  masked-404 convention as every other scheme.
+- **User-Link/mention capability** (`services/resource_items/capabilities.py`):
+  one explicit `ResourceUserRelationPolicy(user_link_source: bool,
+user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
+  former scalar `linkable` flag — `UserLinkTargetMode` is `"none" | "direct" |
+"materialize_passage"`, so a scheme can admit a durable Link while
+  distinguishing a direct endpoint from one that must first materialize a
+  `passage_anchor`; a derived `note_reference_target` property is `True` only
+  for `"direct"`. `evidence_span`, `content_chunk`, `fragment`,
+  `reader_apparatus_item`, and `oracle_passage_anchor` are passage-candidate-only
+  (`materialize_passage`); `external_snapshot` is `"none"`; every other scheme
+  above is a direct source/target/reference. Backend policy and the
+  hand-maintained frontend projection are exhaustive and parity-tested.
 
 ### 7.7 Citations & the agent tool contract
 
@@ -782,8 +848,8 @@ through byte-size-checked storage helpers. EPUB assets are not in Next Image
 selection becomes a stored highlight with a precomputed
 `exact`/`prefix`/`suffix` triple (a 64-codepoint context window) that doubles as
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
-text-layer match) — a first-class geometry-only state the Document Map
-Highlights lens renders with an explicit placeholder. The current highlight
+text-layer match) — a first-class geometry-only state Evidence renders with an
+explicit placeholder. The current highlight
 contract lives in [`modules/highlight.md`](modules/highlight.md).
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
@@ -799,17 +865,28 @@ apparatus is capability-gated: native `cite.*` links can be `ready` when
 deterministic reference targets are materialized, marker-only native-link rows
 remain `partial`, synthetic legal-footnote support is narrow, and unsupported
 scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
-from raw layout text. Fixture counts and 20-source support status live in
+from raw layout text. Replacement reconciles rows by `(media_id, stable_key)` so
+surviving resource refs and their graph edges remain stable across refresh.
+Fixture counts and 20-source support status live in
 `python/tests/fixtures/reader_apparatus/corpus_manifest.json`.
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
-`dangerouslySetInnerHTML` site (annotating already-sanitized HTML). Inline
+`dangerouslySetInnerHTML` site. It renders already-sanitized HTML, permits
+annotation transforms, and applies the bounded media `h1`-to-`h2` projection
+beneath the resource heading. Inline
 highlight rendering remains separate for text selection, while the reader
-**Document Map** is the single side instrument for Contents, Highlights,
-Citations, Connections, and Chat. Its desktop overview rail is positioned from
-aggregate owner locators and metadata, never DOM geometry; mobile uses the
-workspace secondary sheet instead of fixed chrome.
+**Document Map** is the single side instrument with exactly `Contents | Evidence`.
+Evidence is a target-centered aggregate of highlights, source references,
+generated citations, links, and Synapses, separated into passage and
+whole-document scopes with typed one-hop associations. `MarginRail` is the
+wide-reader spatial presenter for the same filtered passage facts. The desktop
+overview rail is positioned from aggregate owner locators and metadata, never
+DOM geometry, and has no generic opener. One semantic `documentMapAction`
+projects into the desktop header `ActionBar` and mobile Options; mobile presents
+the same secondary publication in the workspace sheet.
+The contract is
+[`reader-evidence-scope-associations-hard-cutover.md`](cutovers/reader-evidence-scope-associations-hard-cutover.md).
 
 ### 8.3 Chat & conversations
 
@@ -817,12 +894,12 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 `services/chat_runs.py` + the `chat_run_*` modules + `context_assembler.py`.
 
 - **Conversation = message tree.** Each "send" creates a user message plus a
-  *pending assistant* message; replying under an existing assistant forks a
+  _pending assistant_ message; replying under an existing assistant forks a
   **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
   history assembly only includes messages on the current path, so sibling branches
   never leak into context.
 - **One send = one durable `ChatRun`.** HTTP never calls the provider. `POST
-  /chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
+/chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
   hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
   executes: assemble context → stream provider tokens + run tools (up to 8 tool
   iterations) → append events → finalize. The client merely tails `chat_run_events`
@@ -835,10 +912,15 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Cancellation/crash**: cancel sets a flag the worker polls; a `delta` without a
-  `done` (crashed mid-stream) is detected and finalized as interrupted/retryable.
-- **Models** (`llm_catalog.py`, `services/models.py`): a curated catalog gates
-  which provider/model/reasoning combos are usable; availability is the
-  intersection of enabled providers and usable keys (BYOK or platform).
+  `done` (crashed mid-stream) is detected and folded into the closed
+  `ExpectedChatFailure` union (`stream_interrupted`), never a bespoke retry code.
+- **Profiles, not a catalog** (`services/llm_profiles.py`): chat sends
+  `profile_id` + `reasoning_option_id` from seven code-defined, startup-validated
+  product profiles (`fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`),
+  each mapped to one certified `provider_runtime.CATALOG` target. There is no
+  provider/model/key picker and no availability intersection to compute — every
+  listed profile is always usable on the platform key. See
+  [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -912,22 +994,41 @@ predicates in `auth/permissions.py`; the search/object readers read
   "All" query**, not a materialized or backfilled set. It has no closure,
   intrinsic, or snapshot table and no backfill worker: `GET` against the
   default library computes, at read time, the distinct media reachable
-  through any of the viewer's *current* non-system memberships (their own
+  through any of the viewer's _current_ non-system memberships (their own
   default-library entries plus every non-system library they belong to),
   deduplicated by `media_id` — a direct default entry wins the tie, else the
   earliest entry. Losing a membership (leave, be removed, library deleted)
   removes that library's contribution on the next read with no separate
   cleanup step. Filing media into the default library directly — the one
-  actor-authorized filing command in `library_entries.add_media_to_library`
+  actor-authorized filing command in `library_entries.ensure_media_in_library`
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
   membership loss cannot take away. Pagination over any library — default or
   not — is stateless keyset pagination with three cursor kinds (default-set
-  media-recency, non-default position order, and non-default resonance
+  media-recency, non-default position order, and non-default Resonance
   order); each cursor is scoped to its `(viewer_id, library_id, kind)` and
   any mismatch is a clean `400 E_INVALID_CURSOR`, never a silent
   reinterpretation.
+- **Library reading-time is a list projection, not shared media state.**
+  `services/media_document_metrics.py` batch-aggregates only the STORED integer
+  source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
+  owns the 240-WPM and coarse-rounding policy. Each `LibraryEntryOut` carries a
+  required `Presence<ReadingTimeEstimateOut>`. Total is available for positive
+  counts; remaining is derived only for in-progress web/EPUB media from the
+  canonical consumption projection's monotonic whole-document progression.
+  PDF remains total-only, and shared PDF quote readiness uses the stored
+  positive word count rather than reading `plain_text`. Nested `media` owns read
+  state/progress; the entry does not duplicate them, and no Library list path
+  scans source text.
+- **Resonance is the one relevance owner.** `services/resonance/` composes
+  policy-neutral read ports from consumption, libraries, the resource graph,
+  contributors, and the semantic index. It owns Related ordering, non-default
+  library Resonance ordering, and the on-demand Reading Slate projection; fact
+  owners retain their tables and mutations. `GET /libraries/{id}/slate`
+  returns at most ten deterministic, destination-addable suggestions outside
+  complete membership. A successful Add preserves visible Slate survivors and
+  appends at most one novel result from a canonical refetch.
 - **Library Intelligence** (`services/library_intelligence.py`) is one stable
   synthesis artifact head per library plus immutable generated revisions.
   Citations belong to `library_intelligence_revision:<id>`; the artifact head
@@ -976,8 +1077,8 @@ item body/title/version/mutation and ordered-adjacency services. Inline
 `object_ref`/`object_embed` nodes sync into `resource_edges` with
 `origin='note_body'` (`replace_edges_for_origin` keeps the block's edge set in
 step with its body); a note attached to a highlight is itself a `note_block`
-	linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
-	`note_block` content owners via `note_indexing.enqueue_note_reindex`.
+linked by an `origin='highlight_note'` edge. Note bodies are indexed directly as
+`note_block` content owners via `note_indexing.enqueue_note_reindex`.
 Frontend: `components/notes/ProseMirrorOutlineEditor.tsx` +
 `lib/notes/prosemirror/*`.
 
@@ -1008,7 +1109,12 @@ the sole DML owner of current-state reader recency — `last_engaged_at` plus,
 for non-PDF locators, a monotonic `max_total_progression`; no session,
 device, span, or dwell history), and `_projection.py` (the combined
 explicit-override + reader-engagement read model, plus batched
-`PlayerDescriptor`s reusing `derive_playback_source`). Two bounded
+`PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
+policy-neutral engagement and complete queue-membership reads to Resonance;
+it does not own a second public Recent product. `GET /lectern/slate` builds the
+on-demand **At hand** projection from Continuity, Arrival, and factual graph,
+author, and calibrated semantic evidence. It returns at most ten placeable
+media outside the complete queue and excludes `Finished` targets. Two bounded
 aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`SetBatchState`) — each
@@ -1033,18 +1139,23 @@ across pane navigation and is never an editor. A single app-wide `<audio>`
 element lives in `lib/player/globalPlayer.tsx` with a Web Audio effects graph,
 OS media-session integration, and a single-flight, generation-keyed
 15s-cadence listening heartbeat (`lib/player/listeningHeartbeat.ts`). See
-[`modules/player.md`](modules/player.md) for the full file map.
+[`modules/player.md`](modules/player.md) for the full file map. The shared
+`ReadingSlateSection` consumes an optional Lectern first-paint seed and
+otherwise queries only while its pane is active. It delegates Add to the
+existing Lectern or library mutation owner and owns deterministic stable
+refill, not destination state.
 
-### 8.9 Search surfaces & command palette
+### 8.9 Search surfaces & Launcher
 
 The same `search()` backs the `/search` results page (`SearchPaneBody`), inline
-palette results, and the chat `app_search` tool — the page and the palette `@` lane
+Launcher results, and the chat `app_search` tool — the page and the Launcher `@` lane
 share one frontend query model (`lib/search`: `parseSearchInput` → `SearchQuery` →
 `fetchSearchResultPage`), so an identical input yields identical results and "See
-all" round-trips through the URL. The **command palette**
-(`components/CommandPalette.tsx`) aggregates open tabs, frecency-ranked recents
+all" round-trips through the URL. The **Launcher**
+(`components/launcher/`, `lib/launcher/`) aggregates open tabs, frecency-ranked recents
 (`command_palette` service), static nav/create commands, and live search results,
-ranked by `commandRanking.ts` and executed via `requestOpenInAppPane`. The
+ranked by the Launcher ranking pipeline and dispatched through the workspace pane
+contract. The
 **browse** surface (`services/browse.py`) is a global acquisition search across
 documents (incl. Gutenberg), videos (YouTube Data API), and podcasts.
 
@@ -1056,12 +1167,12 @@ The web app (`apps/web`, Next.js 15 App Router) has one structural idea you must
 internalize first:
 
 **Routing is a client-side pane system, not Next.js `children`.** The
-`(authenticated)` layout renders a fixed `AuthenticatedShell` and *ignores*
+`(authenticated)` layout renders a fixed `AuthenticatedShell` and _ignores_
 `children`. Each route's `page.tsx` exists only so Next resolves the URL; the
 actual body is a `*PaneBody` component that the **pane route registry**
 (`lib/panes/paneRouteModel.ts`, `lib/panes/paneRouteTable.ts`, and
 `lib/panes/paneRenderRegistry.tsx`) resolves and renders inside a pane. The URL
-is a *projection* of the active pane (mirrored via `history.replaceState`), not
+is a _projection_ of the active pane (mirrored via `history.replaceState`), not
 the driver. New devs frequently look in `page.tsx` for behavior that lives in
 `*PaneBody.tsx`.
 
@@ -1069,14 +1180,40 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   multi-pane canvas. State (`WorkspaceState`: primary panes with per-pane history,
   attached secondary tool panes, widths) lives in a React reducer+context store and
   is persisted **per-user-per-device** to `workspace_sessions`. A pane is identified
-  by a `resourceKey` (`media:<id>` etc.) — the de-dup, title-cache, and remount key.
+  by a stable pane id; its resolved `routeKey` gates route-scoped labels, layout,
+  secondary/fixed chrome, and primary-chrome publication so stale cleanup cannot
+  mutate a newer route instance.
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,
-  `useSetPaneTitle`, `usePaneSecondary`; `usePaneRuntime().isActive` exposes the
+  `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
+  `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for adoption-versus-
   handoff arbitration). Secondary panes (Document Map,
   conversation context, library tools) are runtime-published sidebars.
+  Every supported route declares a typed section/resource header contract.
+  `PaneShell` combines that contract with one primary-chrome publication and
+  projects it into a 44px desktop section header, 60px desktop resource header,
+  or 60px mobile top bar (safe area additional). Resource identity is title plus
+  structured credits; actions/options are typed descriptors shared by desktop
+  `ActionBar` and mobile Options. A pane-scoped error boundary contains chrome and
+  body failures without replacing sibling panes or the workspace.
+- **App navigation is a curated projection, not a feature directory.**
+  `lib/navigation/destinations.ts` owns destination identity;
+  `components/appnav/navModel.ts` independently owns the flat fixed order
+  Lectern → Libraries → Podcasts → Chats → Notes → Atlas → Oracle for both rail
+  and mobile sheet. Section routes derive semantic navigation ownership from
+  `header.destinationId`; resource routes (notably `/media/{id}`) declare one
+  `sectionDestinationId`, with no duplicate field or prefix map. Plain clicks
+  dispatch through workspace `openPane` to
+  restore/reuse an exact pane or open a new one; modified/non-primary clicks remain
+  native anchor gestures. The activation result explicitly assigns focus to the
+  source trigger for an already-active destination or to the destination for a
+  real pane handoff, so closing mobile/account surfaces do not strand or steal
+  focus. Lectern is the brand and authenticated-home target.
+  Pinning is intentionally absent; personalized retrieval lives in the Lectern
+  Reading Slate and Launcher ranking. See
+  [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a
   `<Suspense fallback={<AuthenticatedShellSkeleton/>}>`, itself wrapped in
@@ -1112,7 +1249,10 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   URL-hash fold navigates the active pane (preserving the restored layout) rather than
   resetting state. The restore algebra lives in one isomorphic resolver
   (`workspaceRestore.ts`, server-safe, shared by the bootstrap and the store reducer;
-  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`).
+  `schema.ts`/`paneWidth.ts` are likewise isomorphic, not `"use client"`). The
+  canonical `/lectern` request is explicit home intent: restore preserves the saved
+  layout, then reuses or appends and activates Lectern; it is not a neutral alias for
+  the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
   structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
@@ -1224,21 +1364,21 @@ raw SQL. Every backend test is marked (`unit`/`integration`/`slow`/`supabase`).
 
 Tiers:
 
-| Tier | Scope | Real vs mocked | Command |
-|---|---|---|---|
-| Static | ruff/pyright/eslint/tsc/actionlint | — | `make check` |
-| Backend unit | pure logic | no I/O, no mocks | `make test-back-unit` |
-| Frontend unit | pure TS | Node env | `make test-front-unit` |
-| Component | React in real Chromium | only `next/image` shim | `make test-front-browser` |
-| Backend integration | FastAPI + real Postgres | external boundaries mockable | `make test-back-integration` |
-| Migrations | Alembic up/down | dedicated DB | `make test-migrations` |
-| E2E env preflight | Supabase env resolver contract | no services | `make test-e2e-env` |
-| E2E (default) | user journeys, prod-built web, no-reload API | full real stack, fixture providers | `make test-e2e` |
-| Real-media | ingest/search/chat acceptance | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media` |
-| Live-providers | real OpenAI/Anthropic/Gemini/OpenRouter/Cloudflare, OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external | `make test-live-providers` |
+| Tier                | Scope                                                                                                                                                  | Real vs mocked                                                   | Command                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------- |
+| Static              | ruff/pyright/eslint/tsc/actionlint                                                                                                                     | —                                                                | `make check`                 |
+| Backend unit        | pure logic                                                                                                                                             | no I/O, no mocks                                                 | `make test-back-unit`        |
+| Frontend unit       | pure TS                                                                                                                                                | Node env                                                         | `make test-front-unit`       |
+| Component           | React in real Chromium                                                                                                                                 | only `next/image` shim                                           | `make test-front-browser`    |
+| Backend integration | FastAPI + real Postgres                                                                                                                                | external boundaries mockable                                     | `make test-back-integration` |
+| Migrations          | Alembic up/down                                                                                                                                        | dedicated DB                                                     | `make test-migrations`       |
+| E2E env preflight   | Supabase env resolver contract                                                                                                                         | no services                                                      | `make test-e2e-env`          |
+| E2E (default)       | user journeys, prod-built web, no-reload API                                                                                                           | full real stack, fixture providers                               | `make test-e2e`              |
+| Real-media          | ingest/search/chat acceptance                                                                                                                          | real code, deterministic fixture LLM + `fixture_hash` embeddings | `make test-real-media`       |
+| Live-providers      | real OpenAI/Anthropic/Gemini/Moonshot/OpenRouter (pinned `provider_runtime` matrix), OpenAI embeddings/transcription, Podcast Index/Deepgram/YouTube/X | live external                                                    | `make test-live-providers`   |
 
 The **real-media vs live-providers** split is the determinism boundary:
-real-media runs real product code but swaps the *external provider edge* for
+real-media runs real product code but swaps the _external provider edge_ for
 deterministic fixtures (`services/real_media_fixture_llm.py`); an AST scan
 (`tests/real_media/test_no_internal_mocks.py`) mechanically forbids internal mocks
 in that tier. Backend harness: `python/tests/conftest.py` (two DB-isolation models),
@@ -1264,7 +1404,7 @@ The things most likely to bite you, distilled:
    ingest, X, YouTube, remote files, EPUB assets, listening state, file access,
    and processing transitions have named owners.
 5. **`ready_for_reading` is the document success terminal**; search/embedding
-   readiness is a *separate* state machine. Source-attempt retry and metadata
+   readiness is a _separate_ state machine. Source-attempt retry and metadata
    retry are user-visible retry capabilities; `source` is not a `failure_stage`.
 6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
@@ -1274,17 +1414,17 @@ The things most likely to bite you, distilled:
 8. **Active conversation path is per-viewer**; only path messages enter context.
 9. **Citation `[N]` is a dense, turn-global ordinal carried on an
    `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
-`message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
-attached-reference citation regression came from breaking this density.
+   `message_retrievals` (which is telemetry pointing back via `cited_edge_id`); the
+   attached-reference citation regression came from breaking this density.
 10. **Assistant trust trails are read models, not new truth.** They are assembled
-   when assistant messages are read from chat runs, prompt assemblies, tool calls,
-   retrieval ledgers, citation edges, and context-ref-added events. Message
-   documents remain text-only.
+    when assistant messages are read from chat runs, prompt assemblies, tool calls,
+    retrieval ledgers, citation edges, and context-ref-added events. Message
+    documents remain text-only.
 11. **`background_jobs` is raw SQL**, invisible in `models.py`. Most ingest tasks'
-   `{"status":"failed"}` returns mark the *queue* row succeeded; recovery is the
-   reconciler + manual retry.
+    `{"status":"failed"}` returns mark the _queue_ row succeeded; recovery is the
+    reconciler + manual retry.
 12. **No DB cascades.** Deletion is explicit, reference-counted, and orders external
-   (storage) effects after the DB commit.
+    (storage) effects after the DB commit.
 13. **pgvector is fixed at 256 dims**; chunk ANN uses the current embedding
     provider/model rows. A model change requires rebuilding current embeddings
     before semantic search should depend on them.
@@ -1297,34 +1437,34 @@ attached-reference citation regression came from breaking this density.
 
 ## 14. Where to look (file index)
 
-| You want… | Start at |
-|---|---|
-| Repository rules / boundaries | [`rules/index.md`](rules/index.md) |
-| Reader behavior contract | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md) |
-| FastAPI bootstrap / middleware / lifecycle | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/` |
-| DB layer / sessions / LISTEN-NOTIFY | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`) |
-| The schema | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`) |
-| Background jobs / worker | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/` |
-| Media catalog and ingest owners | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
-| Reader/highlights backend | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights}.py` |
-| Chat / conversations | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py` |
-| Oracle | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py` |
-| Search / retrieval / indexing | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py` |
-| Resource graph (edges, refs, citations, connections) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`) |
-| Agent tools | `python/nexus/services/agent_tools/` |
-| Libraries / contributors / notes | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py` |
-| Podcasts / playback | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py` |
-| Auth / billing / keys / rate limit | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/` |
-| Frontend BFF / auth / SSE | `apps/web/src/lib/{api,auth,supabase}/` |
-| Workspace / panes | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/` |
-| Reader / chat / player UI | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/` |
-| Android shell | `apps/android/app/src/main/` |
-| Browser extension | `apps/extension/` |
-| Build / run / deploy | `Makefile`, `deployment.md`, `deploy/` |
-| Tests | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts` |
+| You want…                                                         | Start at                                                                                                                                                                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository rules / boundaries                                     | [`rules/index.md`](rules/index.md)                                                                                                                                                                     |
+| Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
+| FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
+| DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
+| The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
+| Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
+| Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
+| Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
+| Search / retrieval / indexing / Link target search                | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/targets.py`               |
+| Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
+| Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
+| Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
+| Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
+| Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
+| Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |
+| Workspace / panes                                                 | `apps/web/src/lib/{workspace,panes}/`, `apps/web/src/components/workspace/`                                                                                                                            |
+| Reader / chat / player UI                                         | `apps/web/src/components/{reader,chat}/`, `apps/web/src/lib/{reader,highlights,conversations,player,lectern}/`                                                                                         |
+| Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
+| Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |
+| Build / run / deploy                                              | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
+| Tests                                                             | `docs/local-rules/testing_standards.md`, `python/tests/`, `e2e/`, `apps/web/vitest.config.ts`                                                                                                          |
 
 ---
 
-*This document is an overview maintained alongside the code. When a slice's
+_This document is an overview maintained alongside the code. When a slice's
 behavior changes materially, update the relevant section here and the canonical
-rule/module doc it links to.*
+rule/module doc it links to._

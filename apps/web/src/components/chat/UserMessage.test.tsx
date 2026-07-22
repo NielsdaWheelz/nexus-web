@@ -22,8 +22,7 @@ function message(
     parent_message_id: null,
     trust_trail: null,
     status: "complete",
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -37,9 +36,7 @@ describe("chat human rows keep their hover timestamp (AC-3)", () => {
     render(
       <UserMessage
         message={message("user-1", "user", "What is the capital of France?")}
-        errorLabel=""
         timestampLabel="Jun 3"
-        retrying={false}
       />,
     );
 
@@ -53,7 +50,6 @@ describe("chat human rows keep their hover timestamp (AC-3)", () => {
     render(
       <SystemMessage
         message={message("system-1", "system", "Conversation renamed.")}
-        errorLabel=""
         timestampLabel="Jun 4"
       />,
     );

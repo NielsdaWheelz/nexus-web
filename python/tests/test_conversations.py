@@ -31,7 +31,6 @@ from tests.factories import (
     create_test_conversation,
     create_test_media_in_library,
     create_test_message,
-    create_test_model,
     get_user_default_library,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -654,7 +653,6 @@ class TestDeleteConversation:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
-            model_id = create_test_model(session)
             conversation_id = create_test_conversation(session, user_id)
             root_user_id = create_test_message(
                 session,
@@ -669,7 +667,6 @@ class TestDeleteConversation:
                 seq=2,
                 role="assistant",
                 content="Assistant",
-                model_id=model_id,
                 parent_message_id=root_user_id,
             )
             branch_user_id = create_test_message(
@@ -687,7 +684,6 @@ class TestDeleteConversation:
                 role="assistant",
                 content="",
                 status="pending",
-                model_id=model_id,
                 parent_message_id=branch_user_id,
             )
             session.add(
@@ -714,9 +710,6 @@ class TestDeleteConversation:
                     idempotency_key=f"test-delete-{conversation_id}",
                     payload_hash="test-delete-branch-state",
                     status="running",
-                    model_id=model_id,
-                    reasoning="none",
-                    key_mode="auto",
                 )
             )
             session.commit()

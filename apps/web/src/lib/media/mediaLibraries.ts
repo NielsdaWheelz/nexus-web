@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api/client";
+import { apiCommand204, apiFetch } from "@/lib/api/client";
 import { isRecord } from "@/lib/validation";
 
 export interface LibraryTargetPickerItem {
@@ -10,36 +10,35 @@ export interface LibraryTargetPickerItem {
   canRemove: boolean;
 }
 
-interface MediaLibrariesResponse {
-  data: Array<{
-    id: string;
-    name: string;
-    color: string | null;
-    is_default?: boolean;
-    is_in_library: boolean;
-    can_add: boolean;
-    can_remove: boolean;
-  }>;
+export class MediaLibraryContractDefect extends Error {
+  constructor(message: string) {
+    // justify-defect: malformed owned membership response bodies are
+    // code/schema mismatches. Exact command statuses are guarded by apiCommand204.
+    super(message);
+    this.name = "MediaLibraryContractDefect";
+  }
 }
 
-/**
- * Tagged result of `DELETE /media/{id}` (spec
- * `docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1). `Removed`
- * dropped a scoped library reference with lifetime references remaining;
- * `Hidden` recorded the viewer hide marker (whole-workspace removal with
- * references remaining); `Deleting` removed the last reference and scheduled
- * physical deletion — callers treat it as removal-in-progress.
- */
 export type MediaDeleteResult =
-  | { kind: "Removed"; removedFromLibraryIds: string[]; remainingReferenceCount: number }
-  | { kind: "Hidden"; removedFromLibraryIds: string[]; remainingReferenceCount: number }
+  | {
+      kind: "Removed";
+      removedFromLibraryIds: string[];
+      remainingReferenceCount: number;
+    }
+  | {
+      kind: "Hidden";
+      removedFromLibraryIds: string[];
+      remainingReferenceCount: number;
+    }
   | { kind: "Deleting" };
 
 // Same-system strict decode: the backend produces exactly this camelCase tagged
 // union; any other shape is a code/schema-mismatch defect.
 function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
   if (!isRecord(raw) || !isRecord(raw.data)) {
-    throw new Error("Invalid MediaDeleteResult envelope: expected { data: {...} }");
+    throw new MediaLibraryContractDefect(
+      "Invalid MediaDeleteResult envelope: expected { data: {...} }",
+    );
   }
   const data = raw.data;
   if (data.kind === "Deleting") {
@@ -54,70 +53,106 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
       typeof count !== "number" ||
       !Number.isInteger(count)
     ) {
-      throw new Error(`Invalid MediaDeleteResult.${data.kind}: bad fields`);
+      throw new MediaLibraryContractDefect(
+        `Invalid MediaDeleteResult.${data.kind}: bad fields`,
+      );
     }
-    return { kind: data.kind, removedFromLibraryIds: ids, remainingReferenceCount: count };
+    return {
+      kind: data.kind,
+      removedFromLibraryIds: ids,
+      remainingReferenceCount: count,
+    };
   }
-  throw new Error(`Invalid MediaDeleteResult.kind: ${JSON.stringify(data.kind)}`);
+  throw new MediaLibraryContractDefect(
+    `Invalid MediaDeleteResult.kind: ${JSON.stringify(data.kind)}`,
+  );
 }
 
-/**
- * The one `DELETE /media/{id}` caller. With `libraryId` it removes that scoped
- * library reference; without it, it removes/hides across the whole workspace.
- */
-export async function deleteMedia(
-  mediaId: string,
-  options: { libraryId?: string } = {},
-): Promise<MediaDeleteResult> {
-  const query =
-    options.libraryId !== undefined
-      ? `?library_id=${encodeURIComponent(options.libraryId)}`
-      : "";
-  const response = await apiFetch<unknown>(`/api/media/${mediaId}${query}`, {
+export async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
+  const response = await apiFetch<unknown>(`/api/media/${mediaId}`, {
     method: "DELETE",
   });
   return decodeMediaDeleteResult(response);
 }
 
 interface FetchMediaLibraryMembershipsOptions {
-  /** Drop the user's default library from the response (used by media-detail pickers). */
-  excludeDefault?: boolean;
+  signal?: AbortSignal;
 }
 
 export async function fetchMediaLibraryMemberships(
   mediaId: string,
-  { excludeDefault = false }: FetchMediaLibraryMembershipsOptions = {},
+  { signal }: FetchMediaLibraryMembershipsOptions = {},
 ): Promise<LibraryTargetPickerItem[]> {
-  const response = await apiFetch<MediaLibrariesResponse>(
-    `/api/media/${mediaId}/libraries`,
-  );
-  return response.data
-    .filter((library) => !excludeDefault || !library.is_default)
-    .map((library) => ({
-      id: library.id,
-      name: library.name,
-      color: library.color,
-      isInLibrary: library.is_in_library,
-      canAdd: library.can_add,
-      canRemove: library.can_remove,
-    }));
+  const response = await apiFetch<unknown>(`/api/media/${mediaId}/libraries`, {
+    signal,
+  });
+  return decodeMediaLibraryMemberships(response);
 }
 
-export async function addMediaToLibrary(
-  mediaId: string,
-  libraryId: string,
-): Promise<void> {
-  await apiFetch(`/api/libraries/${libraryId}/media`, {
-    method: "POST",
-    body: JSON.stringify({ media_id: mediaId }),
+export function decodeMediaLibraryMemberships(
+  raw: unknown,
+): LibraryTargetPickerItem[] {
+  if (!isRecord(raw) || !Array.isArray(raw.data)) {
+    throw new MediaLibraryContractDefect(
+      "Invalid media-library memberships response: expected a data array.",
+    );
+  }
+  return raw.data.map((entry) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      typeof entry.name !== "string" ||
+      entry.name.length === 0 ||
+      (entry.color !== null && typeof entry.color !== "string") ||
+      typeof entry.is_in_library !== "boolean" ||
+      typeof entry.can_add !== "boolean" ||
+      typeof entry.can_remove !== "boolean"
+    ) {
+      throw new MediaLibraryContractDefect(
+        "Invalid media-library memberships response: invalid library entry.",
+      );
+    }
+    return {
+      id: entry.id,
+      name: entry.name,
+      color: entry.color,
+      isInLibrary: entry.is_in_library,
+      canAdd: entry.can_add,
+      canRemove: entry.can_remove,
+    };
   });
 }
 
-export async function removeMediaFromLibrary(
-  mediaId: string,
-  libraryId: string,
-): Promise<MediaDeleteResult> {
-  return deleteMedia(mediaId, { libraryId });
+export async function ensureMediaInLibraries({
+  mediaId,
+  libraryIds,
+  signal,
+}: {
+  mediaId: string;
+  libraryIds: readonly string[];
+  signal?: AbortSignal;
+}): Promise<void> {
+  await apiCommand204(`/api/media/${mediaId}/libraries`, {
+    method: "POST",
+    body: JSON.stringify({ library_ids: libraryIds }),
+    signal,
+  });
+}
+
+export async function ensureMediaAbsentFromLibrary({
+  mediaId,
+  libraryId,
+  signal,
+}: {
+  mediaId: string;
+  libraryId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  await apiCommand204(`/api/media/${mediaId}/libraries/${libraryId}`, {
+    method: "DELETE",
+    signal,
+  });
 }
 
 export function patchLibraryMembership<T extends LibraryTargetPickerItem>(

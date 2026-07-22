@@ -4,88 +4,146 @@ import { useLayoutEffect, useRef } from "react";
 import { isRecord } from "@/lib/validation";
 
 /**
- * While `active`, push one synthetic history entry so the Android/browser back
- * button dismisses the overlay (fires `onDismiss`) instead of leaving the page.
- * When `active` goes false because the overlay closed via its own UI, the entry
- * we pushed is popped automatically; the back-button path already consumed it, so
- * it is never popped twice (C7). Keep this hook mounted across the overlay's
- * open/close (don't unmount it with the overlay) — it stays strict-mode safe and
- * covers every close path, since it reacts to `active` rather than to unmount.
+ * While any owner is active, keep one synthetic history entry so Android/browser
+ * Back dismisses the topmost eligible overlay instead of leaving the page. The
+ * activation-ordered owner stack, marker, and popstate listener are shared across
+ * all hook instances; nested, simultaneous, non-LIFO, and A-to-B handoff closes
+ * therefore cannot strand entries or dismiss more than one layer.
  *
  * Dirty guard: `onDismiss` may return a `DismissDecision`. `"accepted"` (or
  * `void`) dismisses as before. `"blocked"` keeps the overlay open — because the
- * browser already popped our synthetic entry when it fired popstate, we
- * immediately re-push the marker so a second, immediate Back cannot navigate
- * away while the overlay shows its confirmation. Existing `void`-returning
- * consumers are unaffected.
+ * browser already popped the marker when it fired popstate, the shared owner
+ * re-arms it before another Back can leave while confirmation remains visible.
+ * Keep the hook mounted across open/close and drive it with `active`.
  */
 
 export type DismissDecision = "accepted" | "blocked";
 
 const MARKER = "__nexusOverlayHistory";
 
+interface HistoryDismissOwner {
+  readonly token: object;
+  readonly onDismissRef: { current: () => DismissDecision | void };
+  readonly isTopmostRef: { current: boolean };
+}
+
+const owners: HistoryDismissOwner[] = [];
+let markerPopScheduled = false;
+let markerPopInFlight = false;
+let listening = false;
+
 function hasMarker(): boolean {
   return isRecord(history.state) && history.state[MARKER] === true;
 }
 
 function pushMarker(): void {
-  history.pushState({ ...(isRecord(history.state) ? history.state : {}), [MARKER]: true }, "");
+  history.pushState(
+    { ...(isRecord(history.state) ? history.state : {}), [MARKER]: true },
+    "",
+  );
+}
+
+function scheduleMarkerPop(): void {
+  if (markerPopScheduled || markerPopInFlight) return;
+  markerPopScheduled = true;
+  queueMicrotask(() => {
+    markerPopScheduled = false;
+    if (markerPopInFlight) return;
+    if (owners.length !== 0) return;
+    if (!hasMarker()) {
+      if (!markerPopInFlight) stopListening();
+      return;
+    }
+    markerPopInFlight = true;
+    startListening();
+    history.back();
+  });
+}
+
+function topmostOwner(): HistoryDismissOwner | null {
+  for (let index = owners.length - 1; index >= 0; index -= 1) {
+    const owner = owners[index];
+    if (owner?.isTopmostRef.current) return owner;
+  }
+  return null;
+}
+
+function handlePopState(): void {
+  // A UI close removes the shared marker with an asynchronous traversal. A new
+  // owner can mount before that traversal completes; consume the old pop and
+  // arm a fresh marker instead of dismissing the replacement overlay.
+  if (markerPopInFlight) {
+    markerPopInFlight = false;
+    if (owners.length > 0 && !hasMarker()) pushMarker();
+    if (owners.length === 0) stopListening();
+    return;
+  }
+  const owner = topmostOwner();
+  if (!owner) {
+    if (owners.length > 0 && !hasMarker()) pushMarker();
+    return;
+  }
+
+  const decision = owner.onDismissRef.current();
+  if (decision === "blocked") {
+    if (!hasMarker()) pushMarker();
+    return;
+  }
+
+  // React may not commit the accepted dismissal until this native event has
+  // returned. Re-arm only if a history-enabled owner remains after that commit.
+  queueMicrotask(() => {
+    if (owners.length > 0 && !hasMarker()) pushMarker();
+  });
+}
+
+function startListening(): void {
+  if (listening) return;
+  window.addEventListener("popstate", handlePopState);
+  listening = true;
+}
+
+function stopListening(): void {
+  if (!listening) return;
+  window.removeEventListener("popstate", handlePopState);
+  listening = false;
 }
 
 export function useHistoryDismiss(
   active: boolean,
   onDismiss: () => DismissDecision | void,
+  options: { readonly isTopmost: boolean },
 ): void {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
-  const entryActiveRef = useRef(false);
+  const isTopmostRef = useRef(options.isTopmost);
+  isTopmostRef.current = options.isTopmost;
+  const tokenRef = useRef<object | null>(null);
+  if (tokenRef.current === null) tokenRef.current = {};
+  const token = tokenRef.current;
 
   useLayoutEffect(() => {
-    if (!active) {
-      if (entryActiveRef.current) {
-        // Closed via the overlay's own UI — remove the entry we pushed. The
-        // popstate this triggers has no listener (the open-effect cleanup ran
-        // first), so it cannot re-fire onDismiss.
-        //
-        // But the close may itself be a *navigation*: selecting a palette
-        // result closes the overlay and opens a route, and the workspace URL
-        // sync replaces our synthetic entry with the destination via
-        // `replaceState` in a sibling effect that runs *after* this one in the
-        // same flush. Popping then would revert the navigation (lands on the
-        // previous route). Defer the pop to a microtask — which drains after the
-        // whole effect flush — and only pop if our marker is still the current
-        // entry. A navigation drops the marker (replaceState wrote null state),
-        // so we skip the pop and let the destination stand; a plain dismiss
-        // keeps the marker, so we pop it as before.
-        entryActiveRef.current = false;
-        queueMicrotask(() => {
-          if (hasMarker()) history.back();
-        });
-      }
-      return;
+    if (!active) return;
+    const owner = { token, onDismissRef, isTopmostRef };
+    owners.push(owner);
+    if (owners.length === 1) {
+      // Test doubles may model traversal synchronously without a popstate. In a
+      // browser, history state and popstate complete in one traversal task.
+      if (markerPopInFlight && !hasMarker()) markerPopInFlight = false;
+      if (!markerPopInFlight && !hasMarker()) pushMarker();
+      startListening();
     }
-    if (!hasMarker()) {
-      pushMarker();
-    }
-    entryActiveRef.current = true;
-    const onPopState = () => {
-      // Back button: the browser already removed our entry.
-      const decision = onDismissRef.current();
-      if (decision === "blocked") {
-        // Dirty guard vetoed the dismissal. Our synthetic entry is already gone
-        // (the browser popped it to fire this event), so re-arm it now — a
-        // second immediate Back must not navigate away while the confirmation
-        // is shown. We still own an entry to pop on UI close, so keep the
-        // listener attached and entryActiveRef true.
-        if (!hasMarker()) {
-          pushMarker();
-        }
-        return;
+    return () => {
+      const index = owners.findIndex((candidate) => candidate.token === token);
+      if (index < 0) {
+        throw new Error("Active history-dismiss owner was not registered.");
       }
-      // Accepted (or void): dismissal ran; nothing left to pop.
-      entryActiveRef.current = false;
+      owners.splice(index, 1);
+      if (owners.length === 0) {
+        scheduleMarkerPop();
+      } else if (!markerPopInFlight && !hasMarker()) {
+        pushMarker();
+      }
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [active]);
+  }, [active, token]);
 }

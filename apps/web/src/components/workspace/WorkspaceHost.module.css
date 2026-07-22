@@ -58,6 +58,7 @@
 
 /* ── Pane route boundary ── */
 
+.paneErrorBoundaryShell,
 .paneRouteBoundaryShell {
   height: 100%;
   min-width: 0;
@@ -66,7 +67,8 @@
   flex: 0 0 auto;
 }
 
-.paneWrap[data-mobile="true"] > .paneRouteBoundaryShell {
+.paneWrap[data-mobile="true"] > .paneErrorBoundaryShell,
+.paneWrap[data-mobile="true"] .paneRouteBoundaryShell {
   width: 100%;
   min-width: 100%;
   max-width: 100%;

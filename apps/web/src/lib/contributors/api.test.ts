@@ -121,7 +121,31 @@ describe("contributor api decode boundary", () => {
 
     const page = await fetchContributorWorks("ursula-le-guin", { cursor: "abc" });
     expect(page.works[0].roleFacts[0].role).toBe("author");
+    expect(page.works[0].date).toEqual({ kind: "Present", value: "1968" });
     expect(page.nextCursor).toBeNull();
+  });
+
+  it("rejects a malformed contributor-work publication date", async () => {
+    stubFetch(() =>
+      jsonResponse({
+        data: {
+          works: [
+            {
+              title: "Impossible",
+              href: "/media/impossible",
+              contentKind: "epub",
+              date: "2025-02-29",
+              roleFacts: [],
+            },
+          ],
+          nextCursor: null,
+        },
+      }),
+    );
+
+    await expect(fetchContributorWorks("ursula-le-guin")).rejects.toThrow(
+      /ContributorWorkItem.date/,
+    );
   });
 
   it("PUTs a manual media-authors body and decodes branded author credits", async () => {

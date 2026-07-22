@@ -198,7 +198,9 @@ class MainActivityTest {
     }
 
     @Test
-    fun nexusAuthStartDefaultsMissingNextToLibraries() {
+    fun nexusAuthStartDefaultsMissingNextToLectern() {
+        assertEquals("/lectern", DEFAULT_AUTH_RETURN_TARGET)
+
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             val oauthPrefix = "${BuildConfig.NEXUS_BASE_URL}/auth/oauth"
 

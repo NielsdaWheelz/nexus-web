@@ -53,53 +53,6 @@ class HydratedObjectRef(ObjectRef):
     icon: str | None = None
 
 
-class PinnedObjectRefOut(BaseModel):
-    id: UUID
-    object_ref: HydratedObjectRef = Field(serialization_alias="objectRef")
-    surface_key: str = Field(serialization_alias="surfaceKey")
-    order_key: str = Field(serialization_alias="orderKey")
-    created_at: datetime = Field(serialization_alias="createdAt")
-    updated_at: datetime = Field(serialization_alias="updatedAt")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class CreatePinnedObjectRefRequest(ObjectRef):
-    surface_key: str = Field(
-        "navbar",
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("surface_key", "surfaceKey"),
-        serialization_alias="surfaceKey",
-    )
-    order_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("order_key", "orderKey"),
-        serialization_alias="orderKey",
-    )
-
-
-class UpdatePinnedObjectRefRequest(BaseModel):
-    surface_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("surface_key", "surfaceKey"),
-        serialization_alias="surfaceKey",
-    )
-    order_key: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        validation_alias=AliasChoices("order_key", "orderKey"),
-        serialization_alias="orderKey",
-    )
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
 def validate_note_body_pm_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -224,8 +177,28 @@ def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: st
             raise ValueError(f"{path} must contain only text nodes")
 
 
+class ResourceUserRelationPolicyOut(BaseModel):
+    user_link_source: bool = Field(
+        validation_alias=AliasChoices("user_link_source", "userLinkSource"),
+        serialization_alias="userLinkSource",
+    )
+    user_link_target: Literal["none", "direct", "materialize_passage"] = Field(
+        validation_alias=AliasChoices("user_link_target", "userLinkTarget"),
+        serialization_alias="userLinkTarget",
+    )
+    note_reference_target: bool = Field(
+        validation_alias=AliasChoices("note_reference_target", "noteReferenceTarget"),
+        serialization_alias="noteReferenceTarget",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ResourceItemCapabilitiesOut(BaseModel):
-    linkable: bool
+    user_relation: ResourceUserRelationPolicyOut = Field(
+        validation_alias=AliasChoices("user_relation", "userRelation"),
+        serialization_alias="userRelation",
+    )
     attachable: bool
     chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
         Field(

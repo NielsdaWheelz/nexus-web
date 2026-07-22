@@ -1,8 +1,7 @@
 /*
- * Media / podcast detail byline (content spec §1). These are fresh wrapping
- * classes, deliberately NOT the truncating `ResourceRow` `.contributors` slot
- * nor its bare `.eyebrow` wrapper: the detail byline must wrap and never
- * ellipsize a name (§0.5 / §1.2). Names are inline text, never pills.
+ * Podcast detail byline (content spec §1). These are wrapping
+ * classes: the detail byline must wrap and never ellipsize a name. Names are
+ * inline text, never pills.
  */
 
 .root {
@@ -53,45 +52,4 @@
 
 .nameText {
   color: var(--ink);
-}
-
-.empty {
-  color: var(--ink-faint);
-}
-
-/* Trailing pinned marker + edit affordance, after the last name. */
-.controls {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-inline-start: var(--space-2);
-}
-
-.pinned {
-  color: var(--ink-muted);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-wide);
-}
-
-/* Quiet text button — not an icon-only pill, not a floating card action. */
-.editButton {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.editButton:hover {
-  color: var(--ink);
-  text-decoration: underline;
-}
-
-.editButton:focus-visible {
-  outline: var(--focus-ring-width) solid var(--ring);
-  outline-offset: var(--focus-ring-offset);
-  border-radius: var(--radius-xs);
 }

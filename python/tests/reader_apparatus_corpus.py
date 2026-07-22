@@ -88,30 +88,6 @@ REAL_MEDIA_FIXTURE_CONTRACTS = {
     "source_package_unit_and_remote_pdf_api_contract",
     "tei_unit_contract",
 }
-FRONTEND_SURFACE_EXPECTATIONS = {
-    "citations_tab_omitted",
-    "citations_tab_rows",
-}
-FRONTEND_SURFACE_VERIFICATION_STATUSES = {
-    "not_frontend_payload_tested",
-    "payload_projection_and_direct_surface_tested",
-    "reader_shell_omission_tested",
-}
-FRONTEND_SURFACE_VERIFIED_LAYERS = {
-    "api_payload_fixture",
-    "payload_schema_projection",
-    "direct_component_render",
-    "direct_component_desktop_alignment",
-    "media_pane_shell_publication",
-    "media_pane_shell_omission",
-    "real_media_api_persistence",
-    "real_media_e2e_surfacing",
-}
-FRONTEND_SURFACE_GAP_REASONS = {
-    "derived_backend_only",
-    "empty_or_unsupported_no_tab",
-    "payload_fixture_not_committed",
-}
 RAW_SOURCE_FIXTURE_ELIGIBILITY_STATUSES = {
     "eligible",
     "eligible_text_only_with_conditions",
@@ -280,14 +256,6 @@ def automated_fixture_cases_matching(**criteria: object) -> list[dict[str, Any]]
 
 def real_media_fixture_contracts() -> dict[str, dict[str, Any]]:
     return dict(load_reader_apparatus_manifest()["real_media_fixture_contracts"])
-
-
-def frontend_api_payload_fixtures() -> list[dict[str, Any]]:
-    return list(load_reader_apparatus_manifest()["frontend_api_payload_fixtures"])
-
-
-def frontend_surface_contracts() -> list[dict[str, Any]]:
-    return list(load_reader_apparatus_manifest()["frontend_surface_contracts"])
 
 
 def gold_graph_fixtures() -> list[dict[str, Any]]:

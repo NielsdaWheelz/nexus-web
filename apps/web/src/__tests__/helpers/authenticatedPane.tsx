@@ -32,7 +32,7 @@ export function renderHydratedPane({
   onOpenInNewPane: ReturnType<typeof vi.fn>;
   onGoBackPane: ReturnType<typeof vi.fn>;
   onGoForwardPane: ReturnType<typeof vi.fn>;
-  onSetPaneTitle: ReturnType<typeof vi.fn>;
+  onSetPaneLabel: ReturnType<typeof vi.fn>;
   onSetPaneLayout: ReturnType<typeof vi.fn>;
   onSetPaneSecondary: ReturnType<typeof vi.fn>;
   onSetPaneFixedChrome: ReturnType<typeof vi.fn>;
@@ -48,7 +48,7 @@ export function renderHydratedPane({
   const onOpenInNewPane = vi.fn();
   const onGoBackPane = vi.fn();
   const onGoForwardPane = vi.fn();
-  const onSetPaneTitle = vi.fn();
+  const onSetPaneLabel = vi.fn();
   const onSetPaneLayout = vi.fn();
   const onSetPaneSecondary = vi.fn();
   const onSetPaneFixedChrome = vi.fn();
@@ -71,7 +71,7 @@ export function renderHydratedPane({
           onOpenInNewPane={onOpenInNewPane}
           onGoBackPane={onGoBackPane}
           onGoForwardPane={onGoForwardPane}
-          onSetPaneTitle={onSetPaneTitle}
+          onSetPaneLabel={onSetPaneLabel}
           onSetPaneLayout={onSetPaneLayout}
         >
           <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
@@ -91,7 +91,7 @@ export function renderHydratedPane({
     onOpenInNewPane,
     onGoBackPane,
     onGoForwardPane,
-    onSetPaneTitle,
+    onSetPaneLabel,
     onSetPaneLayout,
     onSetPaneSecondary,
     onSetPaneFixedChrome,

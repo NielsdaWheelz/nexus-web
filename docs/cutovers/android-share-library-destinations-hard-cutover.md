@@ -39,8 +39,8 @@ shape for a user with many libraries:
 - There is no inline create-library path.
 - Library destination writes currently validate "accessible" libraries first,
   then the actual add path requires admin. That is a capability mismatch.
-- Bulk add can partially apply because `_add_media_to_resolved_libraries` loops
-  through `add_media_to_library`, and each call owns its own transaction.
+- Bulk add can partially apply because the former resolved-library loop called a
+  singular transaction owner once per destination.
 
 The long-term-safe owner-layer fix is not a route-local button in
 `ShareCapture`. The target state is one canonical writable-library destination
@@ -289,7 +289,7 @@ Rules:
 - inaccessible IDs are forbidden,
 - member-only IDs are forbidden,
 - already-present media-library entries are idempotent no-ops,
-- response `library_ids_added` includes only IDs actually inserted.
+- success is `204 No Content`; authoritative membership is read separately.
 
 ## Backend API design
 
@@ -386,7 +386,7 @@ Required backend behavior:
 - reject default IDs,
 - reject duplicate IDs,
 - add all destination entries atomically,
-- return only IDs actually inserted.
+- return `204 No Content`.
 
 ### Other ingest endpoints
 
@@ -425,7 +425,7 @@ express membership/read semantics. It must not be called from write paths.
 
 Refactor writes so there is one atomic add-multiple command:
 
-- `add_media_to_libraries_for_viewer(db, viewer_id, media_id, library_ids)`
+- `ensure_media_in_libraries_for_viewer(db, viewer_id, media_id, library_ids)`
 - `assign_libraries_for_media(db, viewer_id, media_id, library_ids)`
 
 Required properties:
@@ -438,7 +438,7 @@ Required properties:
 - no partial apply across selected destinations,
 - no nested independent transaction per destination,
 - idempotent for already-present entries,
-- stable `library_ids_added` based on actual inserts.
+- no response metadata; callers read authoritative membership separately.
 
 Concurrency:
 
@@ -486,11 +486,17 @@ Component contract:
 
 ```ts
 interface LibraryDestinationPickerProps {
-  selectedLibraryIds: string[];
-  onChange(next: string[]): void;
-  disabled?: boolean;
+  selected: readonly LibraryDestinationSelection[];
+  onChange(next: readonly LibraryDestinationSelection[]): void;
+  presentation:
+    | { kind: "Inline" }
+    | { kind: "DisclosureContent"; onRequestClose(): void };
   label: string;
-  emptySelectionLabel?: string;
+  interaction:
+    | { kind: "Enabled" }
+    | { kind: "Disabled" }
+    | { kind: "Creating" };
+  onCreateDestination(name: string): Promise<LibraryDestinationSelection>;
 }
 ```
 
@@ -524,10 +530,13 @@ Accessibility:
 
 Surfaces:
 
-- The picker is an inline combobox/listbox in every migrated surface.
-- The list participates in normal layout instead of floating over later
-  controls; Save/Cancel and tray row actions must never be occluded by an open
-  result list.
+- Share and other always-visible destination steps render the picker inline.
+- Explicit Add has one current owner: `AddPanel` renders the same picker inside
+  the controlled `LibraryDestinationDisclosure`; it is closed by default and
+  never reserves permanent picker height.
+- Inline and disclosure content both participate in normal layout instead of
+  floating over later controls; Save/Cancel and Add row actions are never
+  occluded by an open result list.
 - No `PaletteSheet` or second mobile-only picker is introduced in this cutover.
 
 ### Share capture
@@ -558,7 +567,7 @@ Forbidden state:
 Submit behavior:
 
 - Do not call `addMediaFromUrl` during mount for URL shares.
-- Call `addMediaFromUrl({ url, libraryIds: selectedLibraryIds })` only after
+- Call `addMediaFromUrl({ url, libraryIds: selected.map(({ id }) => id) })` only after
   the user taps `Save`.
 - Retry failed URLs with the same selected destinations.
 - Use `nexus-share://done` only after the user explicitly completes. The final
@@ -569,7 +578,8 @@ Submit behavior:
 Migrate these from `LibraryMultiSelectPicker` and `useNonDefaultLibraries` to
 `LibraryDestinationPicker`:
 
-- `apps/web/src/components/AddContentTray.tsx`
+- `apps/web/src/components/launcher/AddPanel.tsx` through the controlled
+  `LibraryDestinationDisclosure`
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
 - `apps/web/src/app/share/ShareCapture.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
@@ -739,7 +749,8 @@ Add:
 
 Update:
 
-- `apps/web/src/components/AddContentTray.tsx`
+- `apps/web/src/components/launcher/AddPanel.tsx`
+- `apps/web/src/components/LibraryDestinationDisclosure.tsx`
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/PodcastsPaneBody.tsx`
 - `apps/web/src/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody.tsx`
@@ -826,7 +837,7 @@ Add or update:
   - reused URL add remains idempotent.
 - `python/tests/test_media_libraries_endpoint.py`
   - atomic no-partial behavior,
-  - actual `library_ids_added` under already-present entries,
+  - `204` plus authoritative membership under already-present entries,
   - invalid target prevents all inserts.
 - podcast tests if podcast library assignment uses the writable destination
   resolver.
@@ -851,7 +862,8 @@ Add or update:
   - multi-URL share sends same selected IDs to every URL,
   - non-URL share still quick-captures to daily note,
   - old post-save add-libraries modal is absent.
-- `AddContentTray.test.tsx`
+- `components/launcher/AddPanel.test.tsx` and
+  `components/LibraryDestinationDisclosure.test.tsx`
   - destination picker uses server-backed destinations,
   - selected destination IDs are submitted unchanged.
 
@@ -884,11 +896,11 @@ Targeted local checks after implementation:
 
 ```bash
 cd apps/web
-./node_modules/.bin/eslint src/app/share src/app/api/libraries/writable-destinations src/components/LibraryDestinationPicker.tsx src/components/LibraryDestinationPicker.test.tsx src/components/AddContentTray.tsx src/__tests__/components/AddContentTray.test.tsx src/lib/libraries src/lib/media src/app/'(authenticated)'/browse/BrowsePaneBody.tsx src/app/'(authenticated)'/podcasts/PodcastsPaneBody.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.test.tsx src/lib/androidShell.podcastDetailPaneBody.test.tsx
+./node_modules/.bin/eslint src/app/share src/app/api/libraries/writable-destinations src/components/LibraryDestinationPicker.tsx src/components/LibraryDestinationPicker.test.tsx src/components/LibraryDestinationDisclosure.tsx src/components/LibraryDestinationDisclosure.test.tsx src/components/launcher/AddPanel.tsx src/components/launcher/AddPanel.test.tsx src/lib/libraries src/lib/media src/app/'(authenticated)'/browse/BrowsePaneBody.tsx src/app/'(authenticated)'/podcasts/PodcastsPaneBody.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.test.tsx src/lib/androidShell.podcastDetailPaneBody.test.tsx
 bun run lint:css-tokens
 bun run typecheck
 bun run test:unit -- src/lib/libraries/client.test.ts
-bun run test:browser -- src/components/LibraryDestinationPicker.test.tsx src/app/share/ShareCapture.test.tsx src/__tests__/components/AddContentTray.test.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.test.tsx src/lib/androidShell.podcastDetailPaneBody.test.tsx
+bun run test:browser -- src/components/LibraryDestinationPicker.test.tsx src/components/LibraryDestinationDisclosure.test.tsx src/components/launcher/AddPanel.test.tsx src/app/share/ShareCapture.test.tsx src/app/'(authenticated)'/podcasts/'[podcastId]'/PodcastDetailPaneBody.test.tsx src/lib/androidShell.podcastDetailPaneBody.test.tsx
 ```
 
 Backend:
@@ -943,7 +955,7 @@ make test-android
    - Add share tests.
 
 6. Migrate other destination-picker call sites
-   - `AddContentTray`.
+   - `AddPanel` through `LibraryDestinationDisclosure`.
    - `BrowsePaneBody`.
    - `PodcastsPaneBody`.
    - `PodcastDetailPaneBody`.

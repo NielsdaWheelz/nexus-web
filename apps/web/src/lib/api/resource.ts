@@ -36,6 +36,14 @@ export interface ContributorWorksResourceParams extends ContributorResourceParam
   limit?: number;
 }
 
+export interface ReadingSlateResourceParams {
+  refreshVersion: number;
+}
+
+export interface LibrarySlateResourceParams extends ReadingSlateResourceParams {
+  id: string;
+}
+
 interface NoteBlockResourceParams {
   blockId: string;
 }
@@ -119,6 +127,18 @@ export const contributorWorksResource: ResourceDescriptor<ContributorWorksResour
 // ignores limit, so a mismatch would silently seed a different row count.
 export const AUTHOR_WORKS_LIMIT = 100;
 
+export const lecternSlateResource: ResourceDescriptor<ReadingSlateResourceParams> = {
+  cacheKey: ({ refreshVersion }) => `lectern:slate:${refreshVersion}`,
+  serverPath: () => "/lectern/slate",
+  clientPath: () => "/api/lectern/slate",
+};
+
+export const librarySlateResource: ResourceDescriptor<LibrarySlateResourceParams> = {
+  cacheKey: ({ id, refreshVersion }) => `library:${id}:slate:${refreshVersion}`,
+  serverPath: ({ id }) => `/libraries/${encoded(id)}/slate`,
+  clientPath: ({ id }) => `/api/libraries/${encoded(id)}/slate`,
+};
+
 export const notePagesResource: ResourceDescriptor<NoResourceParams> = {
   cacheKey: () => "notes:pages",
   serverPath: () => "/notes/pages",
@@ -141,12 +161,6 @@ export const settingsAccountResource: ResourceDescriptor<NoResourceParams> = {
   cacheKey: () => "settings-account:me",
   serverPath: () => "/me",
   clientPath: () => "/api/me",
-};
-
-export const settingsKeysResource: ResourceDescriptor<RefreshableResourceParams> = {
-  cacheKey: ({ refreshVersion }) => `settings-keys:${refreshVersion}`,
-  serverPath: () => "/keys",
-  clientPath: () => "/api/keys",
 };
 
 export const billingAccountResource: ResourceDescriptor<RefreshableResourceParams> = {

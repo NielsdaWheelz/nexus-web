@@ -41,7 +41,7 @@ export interface LauncherPane {
   id: string;
   href: string;
   visibility: "visible" | "minimized";
-  title: string;
+  label: string;
 }
 
 export interface LauncherRecentRow {
@@ -85,7 +85,10 @@ export interface LauncherContext {
 }
 
 function androidBlocked(ctx: LauncherContext, href: string): boolean {
-  return ctx.androidShell && isAndroidShellRestrictedRouteId(resolvePaneRoute(href).id);
+  return (
+    ctx.androidShell &&
+    isAndroidShellRestrictedRouteId(resolvePaneRoute(href).id)
+  );
 }
 
 function shortcutFor(ctx: LauncherContext, id: string): string | undefined {
@@ -99,9 +102,9 @@ function contextItems(ctx: LauncherContext): LauncherItem[] {
   return [
     {
       id: `context-${pane.id}`,
-      title: `Continue · ${pane.title}`,
+      title: `Continue · ${pane.label}`,
       subtitle: "Active tab",
-      keywords: [pane.title, pane.href],
+      keywords: [pane.label, pane.href],
       sectionId: "context",
       icon: getPaneRouteIcon(pane.href),
       target: { kind: "pane-open", paneId: pane.id },
@@ -117,8 +120,11 @@ function openTabItems(ctx: LauncherContext): LauncherItem[] {
     .filter((pane) => !androidBlocked(ctx, pane.href))
     .map((pane) => ({
       id: `pane-open-${pane.id}`,
-      title: pane.title,
-      subtitle: pane.visibility === "minimized" ? "Restore minimized tab" : "Switch to open tab",
+      title: pane.label,
+      subtitle:
+        pane.visibility === "minimized"
+          ? "Restore minimized tab"
+          : "Switch to open tab",
       keywords: ["tab", "pane", "switch", pane.href],
       sectionId: "open-tabs",
       icon: PanelLeft,
@@ -128,7 +134,7 @@ function openTabItems(ctx: LauncherContext): LauncherItem[] {
       hasActions: true,
       trailingAction: {
         target: { kind: "pane-close", paneId: pane.id },
-        ariaLabel: `Close ${pane.title}`,
+        ariaLabel: `Close ${pane.label}`,
       },
     }));
 }
@@ -136,7 +142,11 @@ function openTabItems(ctx: LauncherContext): LauncherItem[] {
 function recentItems(ctx: LauncherContext): LauncherItem[] {
   const openHrefs = new Set(ctx.panes.map((pane) => pane.href));
   return ctx.historyRows
-    .filter((row) => !openHrefs.has(row.target_href) && !androidBlocked(ctx, row.target_href))
+    .filter(
+      (row) =>
+        !openHrefs.has(row.target_href) &&
+        !androidBlocked(ctx, row.target_href),
+    )
     .map((row) => ({
       id: `recent-${row.target_key}`,
       title: row.title_snapshot,
@@ -158,7 +168,11 @@ function folioItems(ctx: LauncherContext): LauncherItem[] {
     .map((row) => ({
       id: `oracle-recent-${row.id}`,
       title: `Folio ${toRoman(row.folio_number)} · ${row.folio_theme ?? "Untitled"} · ${row.folio_motto ?? "Untitled"}`,
-      keywords: [row.folio_theme ?? "", row.folio_motto ?? "", `folio ${row.folio_number}`],
+      keywords: [
+        row.folio_theme ?? "",
+        row.folio_motto ?? "",
+        `folio ${row.folio_number}`,
+      ],
       sectionId: "recent-folios",
       icon: Sparkles,
       target: { kind: "href", href: `/oracle/${row.id}`, externalShell: false },
@@ -175,7 +189,7 @@ function commandItems(ctx: LauncherContext): LauncherItem[] {
     keywords: d.keywords,
     sectionId: d.href.startsWith("/settings/") ? "settings" : "go",
     icon: d.icon ?? getPaneRouteIcon(d.href),
-    target: { kind: "href", href: d.href, externalShell: d.externalShell ?? false },
+    target: { kind: "href", href: d.href, externalShell: false },
     source: "static",
     rank: { frecencyBoost: ctx.frecencyBoosts.get(d.href) ?? 0 },
     shortcutLabel: shortcutFor(ctx, d.id),
@@ -215,28 +229,42 @@ function createItems(ctx: LauncherContext): LauncherItem[] {
   }));
 }
 
-function addItems(): LauncherItem[] {
+function addItems(ctx: LauncherContext): LauncherItem[] {
+  if (!ctx.input.text) return [];
   return [
     {
       id: "add-from-url",
       title: "Add from URL…",
       keywords: ["link", "paste", "import", "url"],
       icon: LinkIcon,
-      target: { kind: "open-add", seed: { mode: "url" } } as const,
+      target: {
+        kind: "open-add",
+        seed: { kind: "Content", initialFocus: "Url", initialDestinations: [] },
+      } as const,
     },
     {
       id: "add-upload",
       title: "Upload file…",
       keywords: ["pdf", "epub", "import", "file", "upload"],
       icon: Upload,
-      target: { kind: "open-add", seed: { mode: "file" } } as const,
+      target: {
+        kind: "open-add",
+        seed: {
+          kind: "Content",
+          initialFocus: "File",
+          initialDestinations: [],
+        },
+      } as const,
     },
     {
       id: "add-opml",
       title: "Import OPML…",
       keywords: ["podcast", "opml", "import", "feed"],
       icon: Upload,
-      target: { kind: "open-add", seed: { mode: "opml" } } as const,
+      target: {
+        kind: "open-add",
+        seed: { kind: "Opml", initialDestinations: [] },
+      } as const,
     },
   ].map((row) => ({ ...row, sectionId: "add", source: "static", rank: {} }));
 }
@@ -249,7 +277,9 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
       // Readable/playable media rows expose a trailing "Add to Lectern" action; the
       // default Enter still opens the resource.
       const queueable =
-        (result.type === "media" || result.type === "episode" || result.type === "video") &&
+        (result.type === "media" ||
+          result.type === "episode" ||
+          result.type === "video") &&
         result.mediaId !== null;
       return {
         id: `search-${result.key}`,
@@ -258,13 +288,21 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
         keywords: [],
         sectionId: "search-results",
         icon: SEARCH_TYPE_ICON[result.type],
-        target: { kind: "resource", activation: result.activation, titleHint: result.paneTitleHint },
+        target: {
+          kind: "resource",
+          activation: result.activation,
+          labelHint: result.paneLabelHint,
+        },
         source: "search",
         rank: { searchScore: 1 },
         hasActions: true,
         trailingAction: queueable
           ? {
-              target: { kind: "queue-add", mediaId: result.mediaId!, title: result.primaryText },
+              target: {
+                kind: "queue-add",
+                mediaId: result.mediaId!,
+                title: result.primaryText,
+              },
               ariaLabel: "Add to Lectern",
             }
           : undefined,
@@ -299,13 +337,25 @@ function browseRowHints(result: BrowseResult): {
 } {
   switch (result.type) {
     case "documents":
-      return { key: result.url, subtitle: result.site_name ?? result.document_kind, icon: FileText };
+      return {
+        key: result.url,
+        subtitle: result.site_name ?? result.document_kind,
+        icon: FileText,
+      };
     case "videos":
       return { key: result.provider_video_id, subtitle: "Video", icon: Video };
     case "podcasts":
-      return { key: result.provider_podcast_id, subtitle: "Podcast", icon: Mic };
+      return {
+        key: result.provider_podcast_id,
+        subtitle: "Podcast",
+        icon: Mic,
+      };
     case "podcast_episodes":
-      return { key: result.provider_episode_id, subtitle: result.podcast_title, icon: Mic };
+      return {
+        key: result.provider_episode_id,
+        subtitle: result.podcast_title,
+        icon: Mic,
+      };
   }
 }
 
@@ -370,7 +420,9 @@ function askItem(ctx: LauncherContext, base: LauncherItem[]): LauncherItem[] {
   // exact-title local command already covers the term.
   if (
     ctx.input.explicitLane !== "ask" &&
-    base.some((item) => item.source !== "search" && item.title.toLowerCase() === lower)
+    base.some(
+      (item) => item.source !== "search" && item.title.toLowerCase() === lower,
+    )
   ) {
     return [];
   }
@@ -419,7 +471,11 @@ function seeAllItem(ctx: LauncherContext): LauncherItem[] {
       keywords: [],
       sectionId: "search-results",
       icon: Search,
-      target: { kind: "href", href: searchHref(ctx.input.searchQuery), externalShell: false },
+      target: {
+        kind: "href",
+        href: searchHref(ctx.input.searchQuery),
+        externalShell: false,
+      },
       source: "search",
       rank: {},
       pin: "last",
@@ -435,7 +491,7 @@ export function buildLauncherItems(ctx: LauncherContext): LauncherItem[] {
     ...folioItems(ctx),
     ...commandItems(ctx),
     ...createItems(ctx),
-    ...addItems(),
+    ...addItems(ctx),
     ...searchItems(ctx),
     ...browseItems(ctx),
     ...webItems(ctx),

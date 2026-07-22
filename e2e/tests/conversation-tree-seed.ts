@@ -61,9 +61,6 @@ function seedConversationTree<T>(
       /^postgresql:\/\//,
       "postgresql+psycopg://",
     ),
-    NEXUS_KEY_ENCRYPTION_KEY:
-      process.env.NEXUS_KEY_ENCRYPTION_KEY ??
-      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     NEXUS_E2E_OWNER_USER_ID: ownerUserId,
     NEXUS_E2E_CONVERSATION_SCENARIO: scenario,
   };

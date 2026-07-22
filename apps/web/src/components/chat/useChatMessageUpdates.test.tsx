@@ -20,8 +20,7 @@ function assistantMessage(): ConversationMessage {
     seq: 2,
     role: "assistant",
     status: "complete",
-    error_code: null,
-    can_retry_response: false,
+    can_rerun: false,
     created_at: "2026-06-09T00:00:00Z",
     updated_at: "2026-06-09T00:00:00Z",
     message_document: {

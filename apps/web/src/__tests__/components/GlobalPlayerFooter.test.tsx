@@ -6,7 +6,7 @@ import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { present, absent } from "@/lib/api/presence";
-import type { ChapterOut, LecternItem } from "@/lib/lectern/client";
+import type { ChapterOut, LecternItem } from "@/lib/lectern/contract";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,
@@ -48,6 +48,7 @@ function audioLecternItem(itemId: string, mediaId: string, title: string): Lecte
   return {
     itemId: itemId as LecternItem["itemId"],
     mediaId: mediaId as LecternItem["mediaId"],
+    kind: "podcast_episode",
     title,
     subtitle: absent(),
     href: `/media/${mediaId}` as LecternItem["href"],

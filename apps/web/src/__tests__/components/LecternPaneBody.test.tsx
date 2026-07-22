@@ -1,62 +1,61 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
+import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import LecternPaneBody from "@/app/(authenticated)/lectern/LecternPaneBody";
+import LecternMutationNotice from "@/components/LecternMutationNotice";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
-import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 
 const MEDIA_A = "11111111-0000-4000-8000-000000000001";
 const MEDIA_B = "22222222-0000-4000-8000-000000000002";
 const ITEM_A = "aaaaaaaa-0000-4000-8000-000000000001";
-const ITEM_B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 interface WireItem {
   itemId: string;
   mediaId: string;
+  kind: "web_article";
   title: string;
   subtitle: { kind: "Absent" };
   href: string;
   consumption: { state: "Unread"; progress: { kind: "Absent" } };
-  activation:
-    | { kind: "Readable" }
-    | {
-        kind: "FooterAudio";
-        streamUrl: string;
-        sourceUrl: string;
-        positionMs: number;
-        writeRevision: number;
-        resetEpoch: number;
-        playbackSpeed: number;
-        durationMs: { kind: "Absent" };
-        artworkUrl: { kind: "Absent" };
-        chapters: [];
-      };
+  activation: { kind: "Readable" };
 }
 
-function wireItem(itemId: string, mediaId: string, title: string, audio = false): WireItem {
+function wireItem(itemId: string, mediaId: string, title: string): WireItem {
   return {
     itemId,
     mediaId,
+    kind: "web_article",
     title,
     subtitle: { kind: "Absent" },
     href: `/media/${mediaId}`,
     consumption: { state: "Unread", progress: { kind: "Absent" } },
-    activation: audio
-      ? {
-          kind: "FooterAudio",
-          streamUrl: `https://cdn.example.com/${mediaId}.mp3`,
-          sourceUrl: `https://example.com/${mediaId}`,
-          positionMs: 0,
-          writeRevision: 0,
-          resetEpoch: 0,
-          playbackSpeed: 1,
-          durationMs: { kind: "Absent" },
-          artworkUrl: { kind: "Absent" },
-          chapters: [],
-        }
-      : { kind: "Readable" },
+    activation: { kind: "Readable" },
+  };
+}
+
+function wireSlateItem(mediaId: string, title: string) {
+  return {
+    target: {
+      kind: "Media",
+      ref: `media:${mediaId}`,
+      mediaKind: "web_article",
+      title,
+      subtitle: { kind: "Present", value: "A deterministic suggestion" },
+      imageUrl: { kind: "Absent" },
+      href: `/media/${mediaId}`,
+    },
+    reason: {
+      kind: "Connected",
+      anchor: { ref: `media:${MEDIA_A}`, label: "Queued article" },
+      edgeOrigin: "citation",
+    },
   };
 }
 
@@ -65,66 +64,99 @@ function pathOf(input: RequestInfo | URL): string {
   return new URL(String(input), "http://localhost").pathname;
 }
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
 
-function installLecternMock(initial: WireItem[]) {
-  let items = [...initial];
+function installFetch({
+  slateReads,
+  unknownFirstPlacement = false,
+  holdLecternInitial = false,
+}: {
+  slateReads: unknown[][];
+  unknownFirstPlacement?: boolean;
+  holdLecternInitial?: boolean;
+}) {
+  let queue = [wireItem(ITEM_A, MEDIA_A, "Queued article")];
+  let slateRead = 0;
+  let placementCount = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = pathOf(input);
-    const method = init?.method ?? "GET";
+    const method = (init?.method ?? "GET").toUpperCase();
     if (path === "/api/lectern" && method === "GET") {
+      if (holdLecternInitial) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return jsonResponse({ data: { items: queue } });
+    }
+    if (path === "/api/lectern/slate" && method === "GET") {
+      const items = slateReads[Math.min(slateRead, slateReads.length - 1)] ?? [];
+      slateRead += 1;
       return jsonResponse({ data: { items } });
     }
     if (path === "/api/lectern/commands" && method === "POST") {
       const body = JSON.parse(String(init?.body ?? "{}"));
-      if (body.kind === "RemoveItem") {
-        items = items.filter((item) => item.itemId !== body.itemId);
-        return jsonResponse({ data: { outcome: { kind: "Removed", itemId: body.itemId }, lectern: { items } } });
+      if (body.kind !== "PlaceItems") {
+        throw new Error(`Unexpected Lectern command ${body.kind}`);
       }
-      if (body.kind === "SetOrder") {
-        const byId = new Map(items.map((item) => [item.itemId, item]));
-        items = (body.itemIds as string[])
-          .map((id) => byId.get(id))
-          .filter((item): item is WireItem => item !== undefined);
-        return jsonResponse({ data: { outcome: { kind: "Ordered" }, lectern: { items } } });
+      placementCount += 1;
+      if (unknownFirstPlacement && placementCount === 1) {
+        return jsonResponse(
+          { error: { code: "E_UPSTREAM", message: "Unknown outcome" } },
+          503,
+        );
       }
-      return jsonResponse({ data: { outcome: { kind: "Ordered" }, lectern: { items } } });
+      const placedId = "bbbbbbbb-0000-4000-8000-000000000002";
+      queue = [...queue, wireItem(placedId, MEDIA_B, "Suggested article")];
+      return jsonResponse({
+        data: {
+          outcome: { kind: "Placed", itemIds: [placedId] },
+          lectern: { items: queue },
+        },
+      });
     }
     throw new Error(`Unexpected fetch: ${method} ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, getItems: () => items };
+  return { fetchMock, placementCount: () => placementCount };
 }
 
 function withProviders(node: ReactNode) {
   const href = "/lectern";
-  return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
-        <PaneRuntimeProvider
-          paneId="pane-1"
-          isActive={true}
-          href={href}
-          routeId="lectern"
-          routeKey={resolvePaneRouteIdentity(href).routeKey}
-          canGoBack={false}
-          canGoForward={false}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-          onNavigatePane={vi.fn()}
-          onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
-          onSetPaneTitle={vi.fn()}
-        >
-          {node}
-        </PaneRuntimeProvider>
-      </GlobalPlayerProvider>
-    </LecternProvider>
+  return withRenderEnvironment(
+    <FeedbackProvider>
+      <LecternProvider>
+        <GlobalPlayerProvider>
+          <PaneRuntimeProvider
+            paneId="pane-1"
+            isActive
+            href={href}
+            routeId="lectern"
+            routeKey={resolvePaneRouteIdentity(href).routeKey}
+            canGoBack={false}
+            canGoForward={false}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+            onNavigatePane={vi.fn()}
+            onReplacePane={vi.fn()}
+            onOpenInNewPane={vi.fn()}
+            onSetPaneLabel={vi.fn()}
+          >
+            <LecternMutationNotice />
+            {node}
+          </PaneRuntimeProvider>
+        </GlobalPlayerProvider>
+      </LecternProvider>
+    </FeedbackProvider>,
   );
 }
 
@@ -133,72 +165,124 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("LecternPaneBody", () => {
-  it("renders lectern items in order with the 'On the lectern' kicker", async () => {
-    installLecternMock([
-      wireItem(ITEM_A, MEDIA_A, "A Long Read"),
-      wireItem(ITEM_B, MEDIA_B, "An Episode", true),
-    ]);
-    render(withProviders(<LecternPaneBody />));
-
-    expect(await screen.findByText("A Long Read")).toBeInTheDocument();
-    expect(screen.getByText("An Episode")).toBeInTheDocument();
-    expect(screen.getByText("On the lectern")).toBeInTheDocument();
-  });
-
-  it("shows a quiet empty state when the lectern is empty", async () => {
-    installLecternMock([]);
-    render(withProviders(<LecternPaneBody />));
-
-    expect(await screen.findByText("Nothing on the lectern yet.")).toBeInTheDocument();
-    expect(screen.queryByText("On the lectern")).toBeNull();
-  });
-
-  it("shows a Retry on initial-load failure and recovers when Retry succeeds", async () => {
-    let getCount = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = pathOf(input);
-      const method = init?.method ?? "GET";
-      if (path === "/api/lectern" && method === "GET") {
-        getCount += 1;
-        if (getCount === 1) {
-          return new Response(JSON.stringify({ error: { code: "E_UPSTREAM", message: "boom" } }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        return jsonResponse({ data: { items: [wireItem(ITEM_A, MEDIA_A, "Recovered Read")] } });
-      }
-      throw new Error(`Unexpected fetch: ${method} ${path}`);
+describe("LecternPaneBody Slate host", () => {
+  it("normalizes Add while the canonical Lectern snapshot is still loading", async () => {
+    const suggested = wireSlateItem(MEDIA_B, "Suggested article");
+    const { fetchMock } = installFetch({
+      slateReads: [[suggested]],
+      holdLecternInitial: true,
     });
-    vi.stubGlobal("fetch", fetchMock);
-
+    const user = userEvent.setup();
     render(withProviders(<LecternPaneBody />));
 
-    const retry = await screen.findByRole("button", { name: "Retry" });
-    expect(screen.getByText("Failed to load the Lectern")).toBeInTheDocument();
-
-    fireEvent.click(retry);
-
-    expect(await screen.findByText("Recovered Read")).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load the Lectern")).toBeNull();
+    const add = await screen.findByRole("button", {
+      name: "Add Suggested article to Lectern",
+    });
+    await user.click(add);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The Lectern is still loading.",
+    );
+    expect(add).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          pathOf(input as RequestInfo | URL) === "/api/lectern/commands",
+      ),
+    ).toHaveLength(0);
   });
 
-  it("removes an item via the row action menu", async () => {
-    const { getItems } = installLecternMock([
-      wireItem(ITEM_A, MEDIA_A, "A Long Read"),
-      wireItem(ITEM_B, MEDIA_B, "Another Read"),
-    ]);
+  it("renders the queue and accepts a Slate row through the canonical provider", async () => {
+    const suggested = wireSlateItem(MEDIA_B, "Suggested article");
+    const { fetchMock } = installFetch({ slateReads: [[suggested], []] });
+    const user = userEvent.setup();
     render(withProviders(<LecternPaneBody />));
 
-    await screen.findByText("A Long Read");
-    const triggers = screen.getAllByRole("button", { name: "Actions" });
-    fireEvent.click(triggers[0]);
-    const remove = await screen.findByRole("menuitem", { name: "Remove from Lectern" });
-    fireEvent.click(remove);
+    expect(await screen.findByText("Queued article")).toBeVisible();
+    expect(await screen.findByText("Suggested article")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Add Suggested article to Lectern",
+      }),
+    );
 
-    await waitFor(() => expect(screen.queryByText("A Long Read")).toBeNull());
-    expect(getItems().map((item) => item.itemId)).toEqual([ITEM_B]);
-    expect(screen.getByText("Another Read")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "On the lectern" })).getByText(
+          "Suggested article",
+        ),
+      ).toBeVisible(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "At hand suggestions" }),
+      ).toBeNull(),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          pathOf(input as RequestInfo | URL) === "/api/lectern/commands" &&
+          (init?.method ?? "GET") === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the sole assertive unknown recovery in LecternMutationNotice", async () => {
+    const suggested = wireSlateItem(MEDIA_B, "Suggested article");
+    const host = installFetch({
+      slateReads: [[suggested], []],
+      unknownFirstPlacement: true,
+    });
+    const user = userEvent.setup();
+    render(withProviders(<LecternPaneBody />));
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Add Suggested article to Lectern",
+      }),
+    );
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/Couldn't update the Lectern/);
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    const slate = screen.getByRole("region", { name: "At hand suggestions" });
+    expect(within(slate).getByText("Couldn’t confirm Add.")).toBeVisible();
+    expect(within(slate).queryByRole("status")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(host.placementCount()).toBe(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("keeps the fixed Slate list and controls inside a 320px pane", async () => {
+    const suggested = wireSlateItem(
+      MEDIA_B,
+      "A deliberately long deterministic suggestion title",
+    );
+    installFetch({ slateReads: [[suggested]] });
+    render(
+      withProviders(
+        <div
+          data-testid="narrow-lectern-host"
+          style={{ width: "320px", maxWidth: "320px" }}
+        >
+          <LecternPaneBody />
+        </div>,
+      ),
+    );
+    const add = await screen.findByRole("button", {
+      name: /Add A deliberately long deterministic suggestion title to Lectern/,
+    });
+    const host = screen.getByTestId("narrow-lectern-host");
+
+    expect(host.clientWidth).toBe(320);
+    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+    expect(horizontallyScrollableElements(host)).toEqual([]);
+    expect(add).toBeVisible();
+    expect(screen.getByText("A deterministic suggestion")).toBeVisible();
+    expect(screen.getByText("Connected with Queued article")).toBeVisible();
+    expect(screen.getByRole("list", { name: "At hand suggestions" })).toHaveAttribute(
+      "data-view",
+      "list",
+    );
   });
 });

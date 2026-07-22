@@ -1,3 +1,4 @@
+import threading
 from uuid import UUID, uuid4
 
 import pytest
@@ -5,6 +6,7 @@ from sqlalchemy import text
 
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media_deletion import delete_document_media_if_unreferenced
 from nexus.services.reader_apparatus import (
     get_media_apparatus,
@@ -27,8 +29,8 @@ def _add_media_to_default_library(
     library (`ensure_media_in_default_library`), so freshly created media is
     always reachable there. Fixtures that create a bare `media` row must
     mirror that by seeding the physical entry directly rather than going
-    through the authorization-gated `POST /libraries/{id}/media` filing
-    endpoint, which requires the media to already be reachable.
+    through an actor-authorized filing command, which requires the media to
+    already be reachable.
     """
     me = auth_client.get("/me", headers=auth_headers(user_id))
     library_id = UUID(me.json()["data"]["default_library_id"])
@@ -291,6 +293,147 @@ def test_get_reader_apparatus_missing_state_fails_loudly(auth_client, direct_db)
     assert exc.value.code == ApiErrorCode.E_READER_APPARATUS_STATE_MISSING
 
 
+def test_concurrent_initial_replacements_linearize_on_the_media_row(
+    direct_db: DirectSessionManager,
+) -> None:
+    with direct_db.session() as session:
+        media_id, fragment_id = _create_media(session)
+    _register_cleanup(direct_db, media_id)
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def replace_once(label: str) -> None:
+        try:
+            with direct_db.session() as session:
+                item = _apparatus_item(media_id, fragment_id)
+                item["label"] = label
+                barrier.wait(timeout=10)
+                replace_media_apparatus(
+                    session,
+                    media_id=media_id,
+                    media_kind="web_article",
+                    source_fingerprint_value=source_fingerprint("concurrent-initial", label),
+                    items=[item],
+                    edges=[],
+                )
+                session.commit()
+        except BaseException as exc:  # pragma: no cover - asserted by the parent thread
+            with errors_lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(target=replace_once, args=(label,), daemon=True)
+        for label in ("First", "Second")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    with direct_db.session() as session:
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM reader_apparatus_states WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            )
+            == 1
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM reader_apparatus_items WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            )
+            == 1
+        )
+        assert session.scalar(
+            text("SELECT label FROM reader_apparatus_items WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        ) in {"First", "Second"}
+
+
+def test_apparatus_read_holds_one_generation_against_concurrent_replacement(
+    direct_db: DirectSessionManager,
+) -> None:
+    user_id = create_test_user_id()
+    with direct_db.session() as session:
+        library_id = ensure_user_and_default_library(session, user_id)
+        media_id, fragment_id = _create_media(session)
+        add_media_to_library(session, library_id, media_id)
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("read-generation", "before"),
+            items=[_apparatus_item(media_id, fragment_id)],
+            edges=[],
+        )
+        session.commit()
+    _register_cleanup(direct_db, media_id)
+
+    read_locked = threading.Event()
+    release_read = threading.Event()
+    writer_started = threading.Event()
+    writer_finished = threading.Event()
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def read_generation() -> None:
+        try:
+            with direct_db.session() as session:
+                result = get_media_apparatus(session, user_id, media_id)
+                assert result.items[0].label == "1"
+                read_locked.set()
+                assert release_read.wait(timeout=10)
+                session.commit()
+        except BaseException as exc:  # pragma: no cover - asserted by parent thread
+            with errors_lock:
+                errors.append(exc)
+            read_locked.set()
+
+    def replace_generation() -> None:
+        try:
+            assert read_locked.wait(timeout=10)
+            with direct_db.session() as session:
+                replacement = _apparatus_item(media_id, fragment_id)
+                replacement["label"] = "2"
+                writer_started.set()
+                replace_media_apparatus(
+                    session,
+                    media_id=media_id,
+                    media_kind="web_article",
+                    source_fingerprint_value=source_fingerprint("read-generation", "after"),
+                    items=[replacement],
+                    edges=[],
+                )
+                session.commit()
+                writer_finished.set()
+        except BaseException as exc:  # pragma: no cover - asserted by parent thread
+            with errors_lock:
+                errors.append(exc)
+            writer_finished.set()
+
+    reader = threading.Thread(target=read_generation, daemon=True)
+    writer = threading.Thread(target=replace_generation, daemon=True)
+    reader.start()
+    writer.start()
+    assert writer_started.wait(timeout=10)
+    assert not writer_finished.wait(timeout=0.25)
+    release_read.set()
+    reader.join(timeout=10)
+    writer.join(timeout=10)
+
+    assert not reader.is_alive()
+    assert not writer.is_alive()
+    assert errors == []
+    with direct_db.session() as session:
+        result = get_media_apparatus(session, user_id, media_id)
+        assert result.items[0].label == "2"
+
+
 def test_get_reader_apparatus_returns_empty_failed_and_unsupported_states(auth_client, direct_db):
     user_id = create_test_user_id()
     seen_statuses: list[str] = []
@@ -464,6 +607,182 @@ def test_replace_reader_apparatus_replaces_rows_and_rejects_invalid_empty_state(
         session.commit()
 
     _register_cleanup(direct_db, media_id)
+
+
+def test_replace_reader_apparatus_preserves_surviving_ids_and_graph_edges(direct_db):
+    user_id = create_test_user_id()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        media_id, fragment_id = _create_media(session)
+        initial_items = [
+            _apparatus_item(media_id, fragment_id, stable_key="marker"),
+            _apparatus_item(media_id, fragment_id, stable_key="target", kind="footnote"),
+        ]
+        initial_edge = {
+            "stable_key": "marker->target",
+            "from_stable_key": "marker",
+            "to_stable_key": "target",
+            "relation": "points_to_note",
+            "confidence": "exact",
+            "extraction_method": "html_semantic",
+            "source_ref": {"format": "html"},
+            "sort_key": "000000.edge",
+        }
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("initial", media_id),
+            items=initial_items,
+            edges=[initial_edge],
+        )
+        ids = dict(
+            session.execute(
+                text("SELECT stable_key, id FROM reader_apparatus_items WHERE media_id = :id"),
+                {"id": media_id},
+            ).all()
+        )
+        graph_edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id,
+                    target_scheme, target_id
+                )
+                VALUES (
+                    :user_id, 'context', 'user', 'media', :media_id,
+                    'reader_apparatus_item', :target_id
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "user_id": user_id,
+                "media_id": media_id,
+                "target_id": ids["target"],
+            },
+        ).scalar_one()
+
+        refreshed_items = [dict(item) for item in initial_items]
+        refreshed_items[1]["body_text"] = "Updated source note."
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("refresh", media_id),
+            items=refreshed_items,
+            edges=[initial_edge],
+        )
+        refreshed_ids = dict(
+            session.execute(
+                text("SELECT stable_key, id FROM reader_apparatus_items WHERE media_id = :id"),
+                {"id": media_id},
+            ).all()
+        )
+        assert refreshed_ids == ids
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM resource_edges WHERE id = :id"),
+                {"id": graph_edge_id},
+            )
+            == 1
+        )
+
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind="web_article",
+            source_fingerprint_value=source_fingerprint("remove-target", media_id),
+            items=[initial_items[0]],
+            edges=[],
+        )
+        assert (
+            session.scalar(
+                text(
+                    "SELECT id FROM reader_apparatus_items "
+                    "WHERE media_id = :id AND stable_key = 'marker'"
+                ),
+                {"id": media_id},
+            )
+            == ids["marker"]
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM resource_edges WHERE id = :id"),
+                {"id": graph_edge_id},
+            )
+            == 0
+        )
+        session.commit()
+
+    _register_cleanup(direct_db, media_id)
+    direct_db.register_cleanup("resource_edges", "user_id", user_id)
+    direct_db.register_cleanup("users", "id", user_id)
+
+
+@pytest.mark.parametrize("media_kind", ["web_article", "pdf", "epub"])
+def test_refresh_cleanup_preserves_apparatus_for_stable_key_reconciliation(
+    direct_db, media_kind: str
+):
+    user_id = create_test_user_id()
+    with direct_db.session() as session:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        media_id, fragment_id = _create_media(session, kind=media_kind)
+        item = _apparatus_item(media_id, fragment_id, stable_key="survivor")
+        item["locator"] = None
+        item["locator_status"] = "missing"
+        replace_media_apparatus(
+            session,
+            media_id=media_id,
+            media_kind=media_kind,
+            source_fingerprint_value=source_fingerprint("before-refresh", media_id),
+            items=[item],
+            edges=[],
+        )
+        item_id = session.scalar(
+            text(
+                "SELECT id FROM reader_apparatus_items "
+                "WHERE media_id = :id AND stable_key = 'survivor'"
+            ),
+            {"id": media_id},
+        )
+
+        if media_kind == "web_article":
+            from nexus.services.web_article_artifacts import delete_web_article_artifacts
+
+            delete_web_article_artifacts(
+                session,
+                owner_user_id=user_id,
+                media_id=media_id,
+                include_content_index=False,
+            )
+        elif media_kind == "pdf":
+            from nexus.services.pdf_ingest import delete_pdf_text_artifacts
+
+            delete_pdf_text_artifacts(session, media_id)
+        else:
+            from nexus.services.epub_lifecycle import delete_extraction_artifacts
+
+            delete_extraction_artifacts(session, media_id)
+
+        assert (
+            session.scalar(
+                text("SELECT id FROM reader_apparatus_items WHERE id = :id"),
+                {"id": item_id},
+            )
+            == item_id
+        )
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM reader_apparatus_states WHERE media_id = :id"),
+                {"id": media_id},
+            )
+            == 1
+        )
+        session.commit()
+
+    _register_cleanup(direct_db, media_id)
+    direct_db.register_cleanup("users", "id", user_id)
 
 
 def test_reader_apparatus_missing_locator_persists_as_sql_null(direct_db):

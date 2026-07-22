@@ -10,6 +10,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
 from nexus.schemas.conversation import CHAT_RUN_STATUS_FILTER, ChatRunCreateRequest
+from nexus.services import chat_reruns
 from nexus.services import chat_runs as chat_runs_service
 
 router = APIRouter(tags=["chat-runs"])
@@ -31,9 +32,8 @@ def create_chat_run(
         parent_message_id=body.parent_message_id,
         branch_anchor=body.branch_anchor,
         content=body.content,
-        model_id=body.model_id,
-        reasoning=body.reasoning,
-        key_mode=body.key_mode,
+        profile_id=body.profile_id,
+        reasoning_option_id=body.reasoning_option_id,
         idempotency_key=idempotency_key,
     )
     return ok(result)
@@ -75,30 +75,14 @@ def cancel_chat_run(
     return ok(result)
 
 
-@router.post("/messages/{assistant_message_id}/retry", status_code=200)
-def retry_failed_assistant_response(
+@router.post("/messages/{assistant_message_id}/rerun", status_code=200)
+def rerun_assistant_response(
     assistant_message_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = chat_runs_service.retry_failed_assistant_response(
-        db=db,
-        viewer_id=viewer.user_id,
-        assistant_message_id=assistant_message_id,
-        idempotency_key=idempotency_key,
-    )
-    return ok(result)
-
-
-@router.post("/messages/{assistant_message_id}/resend", status_code=200)
-def resend_assistant_response(
-    assistant_message_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> dict:
-    result = chat_runs_service.resend_assistant_response(
+    result = chat_reruns.rerun_assistant_response(
         db=db,
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,

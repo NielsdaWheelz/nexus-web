@@ -1,0 +1,17 @@
+.loading {
+  min-height: 5rem;
+}
+
+.quietNotice,
+.alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.alert {
+  color: var(--danger-ink, var(--ink));
+}

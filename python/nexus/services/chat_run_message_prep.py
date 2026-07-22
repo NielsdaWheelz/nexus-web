@@ -38,7 +38,6 @@ def prepare_messages(
     parent_message_id: UUID | None,
     branch_anchor: BranchAnchorRequest,
     content: str,
-    model_id: UUID,
 ) -> PreparedMessages:
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
@@ -65,7 +64,6 @@ def prepare_messages(
         content=content,
         message_document=message_document("user", content),
         status="complete",
-        model_id=None,
         parent_message_id=parent_message.id if parent_message is not None else None,
         branch_root_message_id=branch_root_message_id,
         branch_anchor_kind=branch_anchor_kind,
@@ -88,7 +86,6 @@ def prepare_messages(
         content="",
         message_document=message_document("assistant", ""),
         status="pending",
-        model_id=model_id,
         parent_message_id=user_message.id,
         branch_root_message_id=branch_root_message_id,
         branch_anchor_kind="none",

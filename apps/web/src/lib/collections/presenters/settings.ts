@@ -1,14 +1,8 @@
-/**
- * Settings presenter — maps one static settings-nav item to a `CollectionRowView`.
- * Pure data: no React, no fetch. The pane resolves the icon via `getPaneRouteIcon`
- * and passes it in; the presenter does not compute it.
- *
- * `CollectionRowView` has no description field, so the item's description line is
- * carried as a single dimmed signal.
- */
+/** Pure semantic projection for one settings row. */
 
-import type { LucideIcon } from "lucide-react";
+import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export interface SettingsPresenterItem {
   id?: string;
@@ -16,22 +10,32 @@ export interface SettingsPresenterItem {
   description?: string;
   meta?: string;
   href?: string;
-  icon: LucideIcon;
+  actions?: readonly ActionDescriptor[];
 }
 
 export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowView {
-  const signals = [];
-  if (item.description) signals.push({ value: item.description });
-  if (item.meta) signals.push({ value: item.meta });
+  const context = [item.description, item.meta].filter(
+    (value): value is string => value !== undefined && value.length > 0,
+  );
 
   return {
     id: item.id ?? item.href ?? item.title,
     kind: "settings_row",
     primary: item.href
-      ? { kind: "link", href: item.href, paneTitleHint: item.title }
+      ? { kind: "link", href: item.href, paneLabelHint: item.title }
       : { kind: "static" },
-    lead: { icon: item.icon },
-    headline: { text: item.title },
-    signals,
+    title: { text: item.title },
+    contributors: [],
+    publicationDate: absent(),
+    context:
+      context.length > 0
+        ? present({ kind: "Text", text: context.join(" · ") })
+        : absent(),
+    activity: absent(),
+    exceptionalStatus: absent(),
+    connections: absent(),
+    relatedMediaId: absent(),
+    actions: item.actions ?? [],
+    selected: false,
   };
 }

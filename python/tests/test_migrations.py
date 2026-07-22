@@ -478,6 +478,320 @@ class TestMigrationUpgradeDowngrade:
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
 
+    def test_0185_drops_user_pinned_objects(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0184")
+        assert result.returncode == 0, f"upgrade 0184 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                user_id = uuid4()
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                session.execute(
+                    text(
+                        """
+                        INSERT INTO user_pinned_objects (
+                            user_id, object_type, object_id, surface_key, order_key
+                        )
+                        VALUES (:user_id, 'page', :object_id, 'navbar', '0000000001')
+                        """
+                    ),
+                    {"user_id": user_id, "object_id": uuid4()},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0185")
+            assert result.returncode == 0, f"upgrade 0185 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert (
+                    session.scalar(text("SELECT to_regclass('public.user_pinned_objects')")) is None
+                )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_0186_backfills_only_proven_listening_and_adds_top_n_indexes(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0185")
+        assert result.returncode == 0, f"upgrade 0185 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        manual_finished_media_id = uuid4()
+        legacy_progress_media_id = uuid4()
+        positive_heartbeat_media_id = uuid4()
+        zero_heartbeat_media_id = uuid4()
+        manual_unread_media_id = uuid4()
+        completed_media_id = uuid4()
+        engagement_id = uuid4()
+        prior_update = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
+        try:
+            with Session(engine) as session:
+                session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+                for title, media_id in (
+                    ("Manual Finished only", manual_finished_media_id),
+                    ("Pre-fencing progress", legacy_progress_media_id),
+                    ("Positive heartbeat", positive_heartbeat_media_id),
+                    ("Zero-position heartbeat", zero_heartbeat_media_id),
+                    ("Manual Unread after heartbeat", manual_unread_media_id),
+                    ("Completed after heartbeat", completed_media_id),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title)"
+                            " VALUES (:id, 'podcast_episode', :title)"
+                        ),
+                        {"id": media_id, "title": title},
+                    )
+                session.execute(
+                    text(
+                        "INSERT INTO podcast_listening_states"
+                        " (user_id, media_id, position_ms, is_completed,"
+                        " write_revision, reset_epoch, updated_at)"
+                        " VALUES"
+                        " (:user_id, :manual_finished_media_id, 0, true, 0, 0, :updated_at),"
+                        " (:user_id, :legacy_progress_media_id, 1000, false, 0, 0, :updated_at),"
+                        " (:user_id, :positive_heartbeat_media_id, 1000, false, 2, 1, :updated_at),"
+                        " (:user_id, :zero_heartbeat_media_id, 0, false, 2, 0, :updated_at),"
+                        " (:user_id, :manual_unread_media_id, 0, false, 2, 1, :updated_at),"
+                        " (:user_id, :completed_media_id, 1000, true, 2, 0, :updated_at)"
+                    ),
+                    {
+                        "user_id": user_id,
+                        "manual_finished_media_id": manual_finished_media_id,
+                        "legacy_progress_media_id": legacy_progress_media_id,
+                        "positive_heartbeat_media_id": positive_heartbeat_media_id,
+                        "zero_heartbeat_media_id": zero_heartbeat_media_id,
+                        "manual_unread_media_id": manual_unread_media_id,
+                        "completed_media_id": completed_media_id,
+                        "updated_at": prior_update,
+                    },
+                )
+                session.execute(
+                    text(
+                        "INSERT INTO reader_engagement_states"
+                        " (id, user_id, media_id, last_engaged_at)"
+                        " VALUES (:id, :user_id, :media_id, :last_engaged_at)"
+                    ),
+                    {
+                        "id": engagement_id,
+                        "user_id": user_id,
+                        "media_id": legacy_progress_media_id,
+                        "last_engaged_at": prior_update,
+                    },
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0186")
+            assert result.returncode == 0, f"upgrade 0186 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                listening_engagement = dict(
+                    session.execute(
+                        text(
+                            "SELECT media_id, last_engaged_at FROM podcast_listening_states"
+                            " WHERE user_id = :user_id"
+                        ),
+                        {"user_id": user_id},
+                    ).all()
+                )
+                index_rows = session.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes"
+                        " WHERE schemaname = 'public'"
+                        " AND indexname IN ("
+                        " 'ix_podcast_listening_states_user_last_engaged',"
+                        " 'ix_reader_engagement_states_user_last_engaged'"
+                        " )"
+                    )
+                ).all()
+
+            assert listening_engagement == {
+                manual_finished_media_id: None,
+                legacy_progress_media_id: None,
+                positive_heartbeat_media_id: prior_update,
+                zero_heartbeat_media_id: prior_update,
+                manual_unread_media_id: None,
+                completed_media_id: None,
+            }
+            index_defs = {name: definition for name, definition in index_rows}
+            assert set(index_defs) == {
+                "ix_podcast_listening_states_user_last_engaged",
+                "ix_reader_engagement_states_user_last_engaged",
+            }
+            for definition in index_defs.values():
+                assert "user_id, last_engaged_at DESC, media_id DESC" in definition
+            assert (
+                "WHERE (last_engaged_at IS NOT NULL)"
+                in index_defs["ix_podcast_listening_states_user_last_engaged"]
+            )
+
+            result = run_alembic_command("downgrade 0185")
+            assert result.returncode == 0, f"downgrade 0185 failed: {result.stderr}"
+            with Session(engine) as session:
+                column = session.scalar(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND table_name = 'podcast_listening_states'"
+                        " AND column_name = 'last_engaged_at'"
+                    )
+                )
+            assert column is None
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    def test_0187_stores_and_recomputes_source_word_counts(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0186")
+        assert result.returncode == 0, f"upgrade 0186 failed: {result.stderr}"
+
+        engine = create_engine(get_test_database_url())
+        article_id = uuid4()
+        pdf_ids = [uuid4() for _ in range(5)]
+        fragment_rows = [
+            (uuid4(), 0, ""),
+            (uuid4(), 1, " "),
+            (uuid4(), 2, "\t"),
+            (uuid4(), 3, "\n"),
+            (uuid4(), 4, "..."),
+            (uuid4(), 5, "one,two\tthree\nfour!"),
+        ]
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text(
+                        "INSERT INTO media (id, kind, title)"
+                        " VALUES (:id, 'web_article', 'Existing article')"
+                    ),
+                    {"id": article_id},
+                )
+                for title, media_id, plain_text in (
+                    ("Null PDF", pdf_ids[0], None),
+                    ("Empty PDF", pdf_ids[1], ""),
+                    ("Whitespace PDF", pdf_ids[2], " \t\n"),
+                    ("Punctuation PDF", pdf_ids[3], "..."),
+                    ("Mixed PDF", pdf_ids[4], "one,two\tthree\nfour!"),
+                ):
+                    session.execute(
+                        text(
+                            "INSERT INTO media (id, kind, title, plain_text)"
+                            " VALUES (:id, 'pdf', :title, :plain_text)"
+                        ),
+                        {"id": media_id, "title": title, "plain_text": plain_text},
+                    )
+                for fragment_id, idx, canonical_text in fragment_rows:
+                    session.execute(
+                        text(
+                            "INSERT INTO fragments"
+                            " (id, media_id, idx, canonical_text, html_sanitized)"
+                            " VALUES (:id, :media_id, :idx, :canonical_text, '')"
+                        ),
+                        {
+                            "id": fragment_id,
+                            "media_id": article_id,
+                            "idx": idx,
+                            "canonical_text": canonical_text,
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade 0187 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                generated_columns = dict(
+                    session.execute(
+                        text(
+                            "SELECT table_name, is_generated"
+                            " FROM information_schema.columns"
+                            " WHERE table_schema = 'public'"
+                            " AND (table_name, column_name) IN ("
+                            " ('fragments', 'canonical_text_word_count'),"
+                            " ('media', 'plain_text_word_count')"
+                            " )"
+                        )
+                    ).all()
+                )
+                fragment_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT idx, canonical_text_word_count"
+                            " FROM fragments WHERE media_id = :media_id"
+                            " ORDER BY idx"
+                        ),
+                        {"media_id": article_id},
+                    ).all()
+                )
+                pdf_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT id, plain_text_word_count FROM media WHERE id = ANY(:media_ids)"
+                        ),
+                        {"media_ids": pdf_ids},
+                    ).all()
+                )
+
+                assert generated_columns == {"fragments": "ALWAYS", "media": "ALWAYS"}
+                assert fragment_counts == {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 3}
+                assert pdf_counts == {
+                    pdf_ids[0]: None,
+                    pdf_ids[1]: 0,
+                    pdf_ids[2]: 0,
+                    pdf_ids[3]: 1,
+                    pdf_ids[4]: 3,
+                }
+
+                session.execute(
+                    text(
+                        "UPDATE fragments SET canonical_text = 'now four words here' WHERE id = :id"
+                    ),
+                    {"id": fragment_rows[0][0]},
+                )
+                session.execute(
+                    text("UPDATE media SET plain_text = 'two words' WHERE id = :id"),
+                    {"id": pdf_ids[0]},
+                )
+                session.commit()
+
+                assert (
+                    session.scalar(
+                        text("SELECT canonical_text_word_count FROM fragments WHERE id = :id"),
+                        {"id": fragment_rows[0][0]},
+                    )
+                    == 4
+                )
+                assert (
+                    session.scalar(
+                        text("SELECT plain_text_word_count FROM media WHERE id = :id"),
+                        {"id": pdf_ids[0]},
+                    )
+                    == 2
+                )
+
+            result = run_alembic_command("downgrade 0186")
+            assert result.returncode == 0, f"downgrade 0186 failed: {result.stderr}"
+            with Session(engine) as session:
+                remaining_columns = session.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.columns"
+                        " WHERE table_schema = 'public'"
+                        " AND column_name IN ("
+                        " 'canonical_text_word_count', 'plain_text_word_count'"
+                        " )"
+                    )
+                )
+                assert remaining_columns == 0
+        finally:
+            engine.dispose()
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
     def test_0137_rewrites_legacy_processing_statuses_and_replaces_enum(self):
         reset_test_schema()
         assert run_alembic_command("upgrade 0136").returncode == 0
@@ -3862,7 +4176,14 @@ class TestS2HighlightsNotesConstraints:
             ).scalar_one()
             assert count == 2
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -4032,6 +4353,10 @@ class TestS2HighlightsNotesConstraints:
                 {"note_a_id": note_a_id, "note_b_id": note_b_id},
             )
             session.execute(text("DELETE FROM pages WHERE id = :id"), {"id": page_id})
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                {"id": highlight_id},
+            )
             session.execute(text("DELETE FROM highlights WHERE id = :id"), {"id": highlight_id})
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
@@ -4093,7 +4418,14 @@ class TestS2HighlightsNotesConstraints:
             count = result.scalar()
             assert count == len(valid_colors)
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -4172,7 +4504,14 @@ class TestS2HighlightsNotesConstraints:
             )
             assert result.scalar() == 3
 
-            # Clean up
+            # Clean up (child-first: 0184 dropped the anchor FK/trigger cascade)
+            session.execute(
+                text("DELETE FROM highlight_fragment_anchors WHERE fragment_id = :id"),
+                {"id": fragment_id},
+            )
+            session.execute(
+                text("DELETE FROM highlights WHERE anchor_media_id = :id"), {"id": media_id}
+            )
             session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_id})
             session.execute(text("DELETE FROM media WHERE id = :id"), {"id": media_id})
             session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -5238,6 +5577,29 @@ class TestS5Migration0008:
 class TestS3SchemaConstraints:
     """Tests for S3-specific schema constraints (chat, conversations, messages, etc.)."""
 
+    @pytest.fixture
+    def pre_0188_engine(self):
+        """Pinned to 0183, a revision before 0188 drops `models` and
+        `user_api_keys` entirely (hard cutover, no downgrade). These
+        constraints are gone for good at head; this fixture preserves their
+        historical migration-behavior coverage without asserting anything
+        false about the current head schema — same rationale as 0182's
+        `head_engine` (see TestMigration0182LecternPlayerLifecycle).
+        Function-scoped (not class-scoped): this class also uses the
+        module-scoped `migrated_engine` (pinned at head), and a class-scoped
+        override here would leave the schema pinned at 0183 for any
+        `migrated_engine` test that happens to run before this fixture's
+        teardown restores head."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0183")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+        run_alembic_command("upgrade head")
+
     def test_conversation_sharing_constraint(self, migrated_engine):
         """CHECK constraint prevents invalid sharing values."""
         with Session(migrated_engine) as session:
@@ -5434,9 +5796,9 @@ class TestS3SchemaConstraints:
 
         assert rows == []
 
-    def test_user_api_key_nonce_length_constraint(self, migrated_engine):
+    def test_user_api_key_nonce_length_constraint(self, pre_0188_engine):
         """CHECK constraint: nonce must be exactly 24 bytes."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0188_engine) as session:
             user_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
 
@@ -5459,9 +5821,9 @@ class TestS3SchemaConstraints:
             session.rollback()
             assert "ck_user_api_keys_nonce_len" in str(exc_info.value)
 
-    def test_user_api_key_user_provider_unique(self, migrated_engine):
+    def test_user_api_key_user_provider_unique(self, pre_0188_engine):
         """UNIQUE constraint: one key per provider per user."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0188_engine) as session:
             user_id = uuid4()
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
 
@@ -5508,16 +5870,8 @@ class TestS3SchemaConstraints:
             conversation_id = uuid4()
             msg1_id = uuid4()
             msg2_id = uuid4()
-            model_id = uuid4()
 
             session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
-            session.execute(
-                text("""
-                    INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
-                    VALUES (:id, 'openai', :model_name, 4096, true)
-                """),
-                {"id": model_id, "model_name": f"migration-test-{model_id}"},
-            )
             session.execute(
                 text("""
                     INSERT INTO conversations (id, owner_user_id, sharing, next_seq)
@@ -5554,10 +5908,7 @@ class TestS3SchemaConstraints:
                             assistant_message_id,
                             idempotency_key,
                             payload_hash,
-                            status,
-                            model_id,
-                            reasoning,
-                            key_mode
+                            status
                         )
                         VALUES (
                             :user_id,
@@ -5566,10 +5917,7 @@ class TestS3SchemaConstraints:
                             :msg2,
                             :key,
                             'hash',
-                            'queued',
-                            :model_id,
-                            'none',
-                            'auto'
+                            'queued'
                         )
                     """),
                     {
@@ -5578,7 +5926,6 @@ class TestS3SchemaConstraints:
                         "key": "x" * 129,  # Too long
                         "msg1": msg1_id,
                         "msg2": msg2_id,
-                        "model_id": model_id,
                     },
                 )
                 session.commit()
@@ -5794,9 +6141,9 @@ class TestS3SchemaConstraints:
             assert "ix_note_blocks_body_text_tsv" in index_names
             assert "idx_messages_content_tsv" in index_names
 
-    def test_models_provider_model_name_unique(self, migrated_engine):
+    def test_models_provider_model_name_unique(self, pre_0188_engine):
         """UNIQUE constraint on (provider, model_name)."""
-        with Session(migrated_engine) as session:
+        with Session(pre_0188_engine) as session:
             # First model
             session.execute(
                 text("""
@@ -7330,7 +7677,7 @@ class TestLibraryEntriesCutoverMigration:
             )
         assert len(delete_actions) == 3, delete_actions
 
-    def test_head_contains_request_storm_hot_path_indexes(self, migrated_engine):
+    def test_head_contains_surviving_request_storm_hot_path_indexes(self, migrated_engine):
         with Session(migrated_engine) as session:
             indexes = session.execute(
                 text("""
@@ -7339,8 +7686,7 @@ class TestLibraryEntriesCutoverMigration:
                     WHERE schemaname = 'public'
                       AND indexname IN (
                         'ix_library_entries_library_order',
-                        'ix_workspace_sessions_user_updated',
-                        'ix_user_pinned_objects_active_order'
+                        'ix_workspace_sessions_user_updated'
                       )
                 """)
             ).fetchall()
@@ -7349,7 +7695,6 @@ class TestLibraryEntriesCutoverMigration:
         assert set(index_defs) == {
             "ix_library_entries_library_order",
             "ix_workspace_sessions_user_updated",
-            "ix_user_pinned_objects_active_order",
         }
         assert (
             'library_id, "position", created_at DESC, id DESC'
@@ -7358,7 +7703,12 @@ class TestLibraryEntriesCutoverMigration:
         assert (
             "user_id, updated_at DESC, id DESC" in index_defs["ix_workspace_sessions_user_updated"]
         )
-        assert "WHERE (deleted_at IS NULL)" in index_defs["ix_user_pinned_objects_active_order"]
+
+    def test_head_does_not_contain_user_pinned_objects(self, migrated_engine):
+        with Session(migrated_engine) as session:
+            table = session.scalar(text("SELECT to_regclass('public.user_pinned_objects')"))
+
+        assert table is None
 
     def test_upgrade_0046_to_0047_backfills_media_and_podcast_entries(self):
         reset_test_schema()
@@ -9929,15 +10279,21 @@ class TestMigration0145LlmCallLedgerAndErrorFloor:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
-        """A freshly head-migrated engine for this class.
+        """Pinned to 0183 rather than head.
 
         Earlier tests (including this class's own data-move test) call
         ``reset_test_schema()`` in their teardown, so the module-scoped
         ``migrated_engine`` cannot be trusted this late in the file — same
-        rationale as ``li_head_engine`` above.
+        rationale as ``li_head_engine`` above. Pinned to 0183 (not head)
+        because 0188 drops the `provider_route`/`key_mode_requested`/
+        `key_mode_used`/`error_class` columns and the `ck_llm_calls_provider`/
+        `ck_llm_calls_provider_route` checks this class's own constraint test
+        exercises; every column/constraint this class checks is established
+        at or before 0183, so 0183 is the revision this class is actually
+        testing — same "don't chase head" rationale as 0182's class.
         """
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -10706,9 +11062,14 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                     )
                 ).fetchall()
             }
+            # 0184 dropped the broad uq_resource_edges_context_pair in favor of
+            # the three shape-owned partial unique indexes.
+            assert "uq_resource_edges_context_pair" not in indexes
             assert {
                 "uq_resource_edges_citation_ordinal",
-                "uq_resource_edges_context_pair",
+                "uq_resource_edges_user_context_link_pair",
+                "uq_resource_edges_user_stance_directed_pair",
+                "uq_resource_edges_nonuser_orderless_pair",
                 "uq_resource_edges_source_order",
                 "ix_resource_edges_user_source",
                 "ix_resource_edges_user_target",
@@ -10780,7 +11141,9 @@ class TestMigration0148NotesPagesResourceGraphOrder:
                 )
                 session.flush()
             session.rollback()
-        assert "uq_resource_edges_context_pair" in str(exc_info.value)
+        # 0184: the duplicate user/context pair is caught by the shape-owned
+        # partial unique index that replaced uq_resource_edges_context_pair.
+        assert "uq_resource_edges_user_context_link_pair" in str(exc_info.value)
 
     def test_ordered_adjacency_order_is_unique_per_source_at_head(self, head_engine):
         with Session(head_engine) as session:
@@ -10976,8 +11339,13 @@ class TestMigration0151LlmProviderRuntimeCatalog:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        """Pinned to 0183 rather than head: 0188 drops `models`, `user_api_keys`,
+        and the `provider`/`provider_route` CHECKs this class exercises
+        entirely. Every seed row/constraint this class checks is established
+        at or before 0183, so 0183 is the revision this class is actually
+        testing — same "don't chase head" rationale as 0182's class."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -11317,8 +11685,10 @@ class TestMigration0151LlmProviderRuntimeCatalog:
             finally:
                 engine.dispose()
 
-            result = run_alembic_command("upgrade head")
-            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            # Pinned to exactly 0151, the revision under test, not head: 0188
+            # drops the models/user_api_keys tables this assertion reads.
+            result = run_alembic_command("upgrade 0151")
+            assert result.returncode == 0, f"upgrade to 0151 failed: {result.stderr}"
 
             engine = create_engine(get_test_database_url())
             try:
@@ -11997,13 +12367,12 @@ class TestMigration0149SynapseResonance:
                 text(
                     """
                     INSERT INTO llm_calls (
-                        owner_kind, owner_id, call_seq, provider, provider_route, model_name,
-                        llm_operation, streaming, reasoning_effort,
-                        key_mode_requested, key_mode_used, cost_status
+                        owner_kind, owner_id, call_seq, provider, model_name,
+                        llm_operation, streaming, reasoning_effort, cost_status
                     )
                     VALUES (
-                        'synapse_scan', :owner_id, 1, 'anthropic', 'anthropic', 'm',
-                        'synapse_scan', false, 'none', 'auto', 'platform', 'missing_usage'
+                        'synapse_scan', :owner_id, 1, 'anthropic', 'm',
+                        'synapse_scan', false, 'none', 'missing_usage'
                     )
                     """
                 ),
@@ -12031,8 +12400,14 @@ class TestMigration0153ChatRunPolicyConstraints:
 
     @pytest.fixture(scope="class")
     def head_engine(self):
+        """Pinned to 0183 rather than head: 0188 drops `chat_runs.reasoning`/
+        `key_mode` (and `models`, which this class also reads) entirely,
+        replacing them with profile_id/reasoning_option_id. Every
+        column/constraint this class checks is established at or before
+        0183, so 0183 is the revision this class is actually testing — same
+        "don't chase head" rationale as 0182's class."""
         reset_test_schema()
-        result = run_alembic_command("upgrade head")
+        result = run_alembic_command("upgrade 0183")
         if result.returncode != 0:
             pytest.fail(f"Migration upgrade failed: {result.stderr}")
         engine = create_engine(get_test_database_url())
@@ -19050,3 +19425,1719 @@ class TestMigration0183DefaultLibraryVirtualization:
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
+
+
+class TestMigration0188LlmProviderRuntimeHardCutover:
+    """0188: chat_runs gains profile_id/reasoning_option_id + resolved
+    provider/model_name/reasoning_effort/error_origin/support_id, backfilled
+    from the representative llm_calls row per owner; llm_calls collapses
+    provider/provider_route and gains outcome/error_origin/error_code (backfilled
+    from a frozen error_class table) plus upstream_provider/catalog_revision/
+    request_fingerprint/cache_strategy/cache_ttl; models and user_api_keys are
+    dropped along with every FK/CHECK that touched them."""
+
+    _MODEL_ID = "6e73fa9a-278c-5782-aadf-a6373a010eb3"
+
+    @pytest.fixture(scope="class")
+    def head_engine(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        if result.returncode != 0:
+            pytest.fail(f"Migration upgrade failed: {result.stderr}")
+        engine = create_engine(get_test_database_url())
+        yield engine
+        engine.dispose()
+        reset_test_schema()
+
+    def _seed_pre_cutover_user_and_model(self, session: Session, *, user_id) -> None:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+        session.execute(
+            text(
+                """
+                INSERT INTO models (id, provider, model_name, max_context_tokens, is_available)
+                VALUES (:id, 'openai', 'gpt-5.6-terra', 1000000, true)
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            {"id": UUID(self._MODEL_ID)},
+        )
+
+    def _seed_chat_run(
+        self,
+        session: Session,
+        *,
+        run_id,
+        user_id,
+        conversation_id,
+        seq_base: int,
+        reasoning: str,
+        status: str = "complete",
+    ):
+        user_message_id = uuid4()
+        assistant_message_id = uuid4()
+        session.execute(
+            text(
+                """
+                INSERT INTO messages (id, conversation_id, seq, role, content, status, parent_message_id)
+                VALUES (:id, :conversation_id, :seq, 'user', 'seed', 'complete', NULL)
+                """
+            ),
+            {"id": user_message_id, "conversation_id": conversation_id, "seq": seq_base},
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO messages (id, conversation_id, seq, role, content, status, parent_message_id)
+                VALUES (:id, :conversation_id, :seq, 'assistant', 'seed', :status, :parent_id)
+                """
+            ),
+            {
+                "id": assistant_message_id,
+                "conversation_id": conversation_id,
+                "seq": seq_base + 1,
+                "status": "complete" if status != "error" else "error",
+                "parent_id": user_message_id,
+            },
+        )
+        session.execute(
+            text(
+                """
+                INSERT INTO chat_runs (
+                    id, owner_user_id, conversation_id, user_message_id, assistant_message_id,
+                    idempotency_key, payload_hash, status, model_id, reasoning, key_mode
+                )
+                VALUES (
+                    :id, :owner_user_id, :conversation_id, :user_message_id, :assistant_message_id,
+                    :idempotency_key, 'hash', :status, :model_id, :reasoning, 'auto'
+                )
+                """
+            ),
+            {
+                "id": run_id,
+                "owner_user_id": user_id,
+                "conversation_id": conversation_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+                "idempotency_key": f"idem-{run_id}",
+                "status": status,
+                "model_id": UUID(self._MODEL_ID),
+                "reasoning": reasoning,
+            },
+        )
+        return user_message_id, assistant_message_id
+
+    def _seed_llm_call(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        call_seq: int,
+        provider: str,
+        provider_route: str,
+        model_name: str,
+        reasoning_effort: str,
+        terminal_attempt_status: str = "success",
+        error_class: str | None = None,
+        created_at: str = "2026-01-01T00:00:00Z",
+    ) -> None:
+        session.execute(
+            text(
+                """
+                INSERT INTO llm_calls (
+                    owner_kind, owner_id, call_seq, provider, provider_route, model_name,
+                    llm_operation, streaming, reasoning_effort, key_mode_requested, key_mode_used,
+                    cost_status, pricing_snapshot, terminal_attempt_status, error_class, created_at
+                )
+                VALUES (
+                    :owner_kind, :owner_id, :call_seq, :provider, :provider_route, :model_name,
+                    'chat_send', true, :reasoning_effort, 'auto', 'platform',
+                    'missing_usage', '{}'::jsonb, :terminal_attempt_status, :error_class,
+                    CAST(:created_at AS timestamptz)
+                )
+                """
+            ),
+            {
+                "owner_kind": owner_kind,
+                "owner_id": owner_id,
+                "call_seq": call_seq,
+                "provider": provider,
+                "provider_route": provider_route,
+                "model_name": model_name,
+                "reasoning_effort": reasoning_effort,
+                "terminal_attempt_status": terminal_attempt_status,
+                "error_class": error_class,
+                "created_at": created_at,
+            },
+        )
+
+    def test_backfills_chat_runs_resolved_and_selection_snapshots_from_representative_call(self):
+        """Covers the three §11 backfill shapes in one seed: a run whose ledger
+        history exactly matches a frozen profile+reasoning-option target
+        (resolved snapshots AND selection snapshots set); a run whose sole
+        call used the legacy literal 'default' reasoning (resolved effort AND
+        both selection snapshots stay NULL, even though the target itself
+        matches a known profile); and a run with zero llm_calls history at
+        all (every new column stays NULL). Also covers the row_number()
+        tie-break: the matched run has TWO agreeing calls (a tool-loop
+        shape), and the representative pick must not depend on which one it
+        reads.
+        """
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade to 0187 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            matched_run_id = uuid4()
+            default_run_id = uuid4()
+            no_history_run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 10)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+
+                # Run 1: two agreeing calls on openai/gpt-5.6-terra @ medium ->
+                # matches the frozen 'balanced' profile at its 'medium' option.
+                self._seed_chat_run(
+                    session,
+                    run_id=matched_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=matched_run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=matched_run_id,
+                    call_seq=2,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+
+                # Run 2: sole call used the legacy 'default' reasoning literal.
+                self._seed_chat_run(
+                    session,
+                    run_id=default_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=3,
+                    reasoning="default",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=default_run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="default",
+                )
+
+                # Run 3: no llm_calls row at all.
+                self._seed_chat_run(
+                    session,
+                    run_id=no_history_run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=5,
+                    reasoning="high",
+                    status="queued",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["id"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT id, provider, model_name, reasoning_effort,"
+                            " profile_id, reasoning_option_id, error_origin, support_id"
+                            " FROM chat_runs"
+                        )
+                    ).mappings()
+                }
+
+            matched = rows[matched_run_id]
+            assert (matched["provider"], matched["model_name"], matched["reasoning_effort"]) == (
+                "openai",
+                "gpt-5.6-terra",
+                "medium",
+            )
+            assert (matched["profile_id"], matched["reasoning_option_id"]) == ("balanced", "medium")
+            assert matched["error_origin"] is None
+            assert matched["support_id"] is None
+
+            default_row = rows[default_run_id]
+            assert (default_row["provider"], default_row["model_name"]) == (
+                "openai",
+                "gpt-5.6-terra",
+            ), (
+                "the wire provider/model_name resolved snapshots are NOT gated on"
+                " explicit reasoning -- only the effort + selection snapshots are"
+            )
+            assert default_row["reasoning_effort"] is None, (
+                "the legacy literal 'default' must clear the resolved effort snapshot"
+            )
+            assert default_row["profile_id"] is None
+            assert default_row["reasoning_option_id"] is None
+
+            no_history_row = rows[no_history_run_id]
+            assert (
+                no_history_row["provider"],
+                no_history_row["model_name"],
+                no_history_row["reasoning_effort"],
+                no_history_row["profile_id"],
+                no_history_row["reasoning_option_id"],
+            ) == (None, None, None, None, None)
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_preflight_aborts_on_contradictory_call_history(self):
+        """Two calls under one chat_run that disagree on target must abort the
+        upgrade before any mutation, naming the offending chat_run id."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade to 0187 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 3)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                self._seed_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=2,
+                    provider="anthropic",
+                    provider_route="anthropic",
+                    model_name="claude-sonnet-5",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on contradictory call history"
+            assert str(run_id) in result.stderr
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+            assert version == "0187", (
+                "a failed preflight must leave the schema at the prior revision"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_preflight_aborts_on_contradictory_reasoning_effort(self):
+        """The preflight's SECOND branch: one chat_run whose calls agree on
+        (provider_route, model_name) but carry two different non-'default'
+        reasoning_effort values must abort — the migration never guesses which
+        effort was representative. (The first branch is covered by
+        test_preflight_aborts_on_contradictory_call_history.)"""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade to 0187 failed: {result.stderr}"
+
+            user_id = uuid4()
+            conversation_id = uuid4()
+            run_id = uuid4()
+            with Session(engine) as session:
+                self._seed_pre_cutover_user_and_model(session, user_id=user_id)
+                session.execute(
+                    text(
+                        "INSERT INTO conversations (id, owner_user_id, sharing, next_seq)"
+                        " VALUES (:id, :owner_user_id, 'private', 3)"
+                    ),
+                    {"id": conversation_id, "owner_user_id": user_id},
+                )
+                self._seed_chat_run(
+                    session,
+                    run_id=run_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    seq_base=1,
+                    reasoning="medium",
+                )
+                # Same target, two distinct NON-'default' efforts -> branch 2.
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+                self._seed_llm_call(
+                    session,
+                    owner_kind="chat_run",
+                    owner_id=run_id,
+                    call_seq=2,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="high",
+                    created_at="2026-01-01T00:01:00Z",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "upgrade must abort on contradictory reasoning_effort"
+            assert str(run_id) in result.stderr
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+            assert version == "0187", (
+                "a failed preflight must leave the schema at the prior revision"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_collapses_provider_route_into_logical_provider_preserving_transport(self):
+        """0188 collapses llm_calls.provider (legacy TRANSPORT/wire) and
+        provider_route (legacy LOGICAL target) into the surviving LOGICAL
+        `provider`, preserving the old transport as `upstream_provider` ONLY for
+        routed rows (provider <> provider_route). Non-chat owners are used so the
+        collapse is isolated from the chat_runs backfill/preflight."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade to 0187 failed: {result.stderr}"
+
+            routed_owner = uuid4()
+            direct_owner = uuid4()
+            with Session(engine) as session:
+                # A routed call: transport 'openrouter' fronting the logical
+                # 'anthropic' target (both valid under the 0187 provider CHECKs;
+                # 'moonshot' is a post-cutover value the 0187 check would reject).
+                self._seed_llm_call(
+                    session,
+                    owner_kind="synapse_scan",
+                    owner_id=routed_owner,
+                    call_seq=1,
+                    provider="openrouter",
+                    provider_route="anthropic",
+                    model_name="claude-sonnet-5",
+                    reasoning_effort="high",
+                )
+                # A direct call: transport == logical -> no upstream_provider.
+                self._seed_llm_call(
+                    session,
+                    owner_kind="synapse_scan",
+                    owner_id=direct_owner,
+                    call_seq=1,
+                    provider="openai",
+                    provider_route="openai",
+                    model_name="gpt-5.6-terra",
+                    reasoning_effort="medium",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["owner_id"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT owner_id, provider, upstream_provider FROM llm_calls"
+                            " WHERE owner_kind = 'synapse_scan'"
+                        )
+                    ).mappings()
+                }
+
+            routed = rows[routed_owner]
+            assert routed["provider"] == "anthropic", (
+                "routed provider must become the LOGICAL value"
+            )
+            assert routed["upstream_provider"] == "openrouter", (
+                "the old transport provider must be preserved as upstream_provider"
+            )
+            direct = rows[direct_owner]
+            assert direct["provider"] == "openai"
+            assert direct["upstream_provider"] is None, (
+                "a direct call (transport == logical) has no upstream_provider"
+            )
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_frozen_error_class_map_backfills_llm_calls_outcome_origin_code(self):
+        """One row per legacy `error_class` bucket: a recognized transient
+        class (mapped origin/code), the two non-Failed outcome tags
+        (E_CANCELLED/E_LLM_INCOMPLETE -- no origin/code), an unrecognized
+        class (outcome only, origin/code stay NULL), and a clean success."""
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0187")
+            assert result.returncode == 0, f"upgrade to 0187 failed: {result.stderr}"
+
+            owner_id = uuid4()
+            with Session(engine) as session:
+                specs = [
+                    (1, "success", None),
+                    (2, "terminal_error", "E_LLM_TIMEOUT"),
+                    (3, "abandoned", "E_CANCELLED"),
+                    (4, "terminal_error", "E_LLM_INCOMPLETE"),
+                    (5, "terminal_error", "E_LLM_QUOTA_EXCEEDED"),
+                ]
+                for call_seq, terminal_attempt_status, error_class in specs:
+                    self._seed_llm_call(
+                        session,
+                        owner_kind="oracle_reading",
+                        owner_id=owner_id,
+                        call_seq=call_seq,
+                        provider="openai",
+                        provider_route="openai",
+                        model_name="gpt-5.6-luna",
+                        reasoning_effort="low",
+                        terminal_attempt_status=terminal_attempt_status,
+                        error_class=error_class,
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+
+            with Session(engine) as session:
+                rows = {
+                    row["call_seq"]: row
+                    for row in session.execute(
+                        text(
+                            "SELECT call_seq, outcome, error_origin, error_code FROM llm_calls"
+                            " WHERE owner_id = :owner_id"
+                        ),
+                        {"owner_id": owner_id},
+                    ).mappings()
+                }
+
+            assert (rows[1]["outcome"], rows[1]["error_origin"], rows[1]["error_code"]) == (
+                "succeeded",
+                None,
+                None,
+            )
+            assert (rows[2]["outcome"], rows[2]["error_origin"], rows[2]["error_code"]) == (
+                "failed",
+                "transport",
+                "timeout",
+            ), "E_LLM_TIMEOUT is a recognized frozen-table entry"
+            assert (rows[3]["outcome"], rows[3]["error_origin"], rows[3]["error_code"]) == (
+                "cancelled",
+                None,
+                None,
+            ), "E_CANCELLED is a terminal outcome tag, not a Failed origin/code pair"
+            assert (rows[4]["outcome"], rows[4]["error_origin"], rows[4]["error_code"]) == (
+                "incomplete",
+                None,
+                None,
+            ), "E_LLM_INCOMPLETE is a terminal outcome tag, not a Failed origin/code pair"
+            assert (rows[5]["outcome"], rows[5]["error_origin"], rows[5]["error_code"]) == (
+                "failed",
+                None,
+                None,
+            ), "an unrecognized/free error_class still yields outcome=failed but NULL origin/code"
+        finally:
+            engine.dispose()
+            reset_test_schema()
+
+    def test_dropped_columns_checks_and_tables_are_gone(self, head_engine):
+        with Session(head_engine) as session:
+            assert (
+                session.execute(text("SELECT to_regclass('public.models')")).scalar_one() is None
+            ), "models must be dropped"
+            assert (
+                session.execute(text("SELECT to_regclass('public.user_api_keys')")).scalar_one()
+                is None
+            ), "user_api_keys must be dropped"
+
+            columns_by_table = {
+                table_name: {
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns"
+                            " WHERE table_name = :table_name"
+                        ),
+                        {"table_name": table_name},
+                    ).fetchall()
+                }
+                for table_name in ("chat_runs", "llm_calls", "messages", "chat_prompt_assemblies")
+            }
+        assert not {"model_id", "reasoning", "key_mode"} & columns_by_table["chat_runs"]
+        assert {
+            "profile_id",
+            "reasoning_option_id",
+            "provider",
+            "model_name",
+            "reasoning_effort",
+            "error_origin",
+            "support_id",
+        }.issubset(columns_by_table["chat_runs"])
+        assert (
+            not {
+                "provider_route",
+                "error_class",
+                "key_mode_requested",
+                "key_mode_used",
+            }
+            & columns_by_table["llm_calls"]
+        )
+        assert {
+            "provider",
+            "upstream_provider",
+            "outcome",
+            "catalog_revision",
+            "request_fingerprint",
+            "cache_strategy",
+            "cache_ttl",
+            "error_origin",
+            "error_code",
+        }.issubset(columns_by_table["llm_calls"])
+        assert not {"model_id", "error_code"} & columns_by_table["messages"]
+        assert "model_id" not in columns_by_table["chat_prompt_assemblies"]
+
+        with Session(head_engine) as session:
+            constraint_names = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint"
+                        " WHERE conrelid IN ('chat_runs'::regclass, 'llm_calls'::regclass)"
+                    )
+                ).fetchall()
+            }
+        assert (
+            not {
+                "ck_chat_runs_reasoning",
+                "ck_chat_runs_key_mode",
+                "chat_runs_model_id_fkey",
+                "ck_llm_calls_provider",
+                "ck_llm_calls_provider_route",
+            }
+            & constraint_names
+        )
+
+    def test_llm_calls_provider_check_removal_admits_moonshot(self, head_engine):
+        """The dropped `ck_llm_calls_provider` rejected 'moonshot'; the new
+        target union requires it, and no CHECK replaces the old enum (spec
+        §11 point 8: business-policy CHECKs move into application types)."""
+        owner_id = uuid4()
+        with Session(head_engine) as session:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO llm_calls (
+                        owner_kind, owner_id, call_seq, provider, model_name,
+                        llm_operation, streaming, reasoning_effort, cost_status
+                    )
+                    VALUES (
+                        'chat_run', :owner_id, 1, 'moonshot', 'kimi-k3',
+                        'chat_send', true, 'high', 'missing_usage'
+                    )
+                    """
+                ),
+                {"owner_id": owner_id},
+            )
+            session.commit()
+
+            provider = session.execute(
+                text("SELECT provider FROM llm_calls WHERE owner_id = :owner_id"),
+                {"owner_id": owner_id},
+            ).scalar_one()
+            assert provider == "moonshot"
+
+            session.execute(
+                text("DELETE FROM llm_calls WHERE owner_id = :owner_id"), {"owner_id": owner_id}
+            )
+            session.commit()
+
+
+def _load_migration_0184():
+    """Import the 0184 migration file for its frozen inline helpers."""
+    import importlib.util
+    import sys
+
+    name = "migration_0184_universal_link_authoring"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = os.path.join(
+        get_migrations_dir(), "alembic", "versions", "0184_universal_link_authoring.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: dataclass field-type resolution looks the module
+    # up in sys.modules.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestMigration0184InlineHelperParity:
+    """PLAN decision 8: 0184 inlines quote normalization/anchor-key/matching
+    (no service imports); the frozen copies must equal the runtime
+    services/passage_anchors.py + services/text_quote.py outputs on the gold
+    vectors from test_passage_anchors.py."""
+
+    GOLD_TEXTS = [
+        "Café society",
+        "Café  society",  # decomposed e + combining acute, double space
+        "a\r\nb",
+        "a\rb",
+        " \ta 　 b  ",
+        "foo\n\nbar baz",
+        "red one two blue and later green one two yellow",
+        "",
+    ]
+
+    def test_normalize_quote_matches_service(self):
+        from nexus.services import passage_anchors
+
+        mig = _load_migration_0184()
+        for value in self.GOLD_TEXTS:
+            assert mig._normalize_quote(value) == passage_anchors.normalize_quote_text(value), (
+                f"normalization diverged for {value!r}"
+            )
+
+    def test_normalize_with_spans_matches_service(self):
+        from nexus.services.text_quote import normalize_for_match
+
+        mig = _load_migration_0184()
+        for value in self.GOLD_TEXTS:
+            normalized = normalize_for_match(value)
+            text_out, spans_out = mig._normalize_with_spans(value)
+            assert text_out == normalized.text, f"normalized text diverged for {value!r}"
+            assert spans_out == normalized.spans, f"raw spans diverged for {value!r}"
+
+    def test_anchor_key_matches_service_and_pinned_encoding(self):
+        import hashlib as _hashlib
+
+        from nexus.services import passage_anchors
+
+        mig = _load_migration_0184()
+        # The exact canonical-JSON encoding pin from test_passage_anchors.py.
+        pinned = _hashlib.sha256('{"exact":"é x","prefix":"a","suffix":"b"}'.encode()).hexdigest()
+        assert mig._anchor_key(exact="é x", prefix="a", suffix="b") == pinned
+        for exact, prefix, suffix in [
+            ("é x", "a", "b"),
+            ("a", "b", "c"),
+            ("a", "B", "c"),
+            ("kilo lima mike", "india juliet", "november oscar"),
+            ("quote", "", ""),
+        ]:
+            assert mig._anchor_key(
+                exact=exact, prefix=prefix, suffix=suffix
+            ) == passage_anchors.compute_anchor_key(exact=exact, prefix=prefix, suffix=suffix)
+
+    def test_context_window_matches_service(self):
+        from nexus.services.text_quote import context_window, normalize_for_match
+
+        mig = _load_migration_0184()
+        source = (
+            "Alpha bravo charlie delta echo foxtrot golf hotel india juliet "
+            "kilo lima mike november oscar papa quebec romeo sierra tango "
+            "uniform victor whiskey xray yankee zulu."
+        )
+        normalized = normalize_for_match(source)
+        for needle in ("Alpha bravo", "kilo lima mike", "yankee zulu."):
+            start = normalized.text.index(needle)
+            end = start + len(needle)
+            assert mig._context_window(normalized.text, start=start, end=end) == context_window(
+                normalized, start=start, end=end
+            )
+
+
+class TestMigration0184UniversalLinkAuthoring:
+    """0184 materializes passage anchors for derived Link/stance/note-body
+    endpoints, deletes already-lost refs with an exact report, canonicalizes
+    orderless neutral Links (view-state rebind before loser deletion), swaps
+    the broad context-pair index for the three shape-owned indexes, and drops
+    the destructive Highlight trigger/FK cascade."""
+
+    TEXT = (
+        "Alpha bravo charlie delta echo foxtrot golf hotel india juliet "
+        "kilo lima mike november oscar papa quebec romeo sierra tango "
+        "uniform victor whiskey xray yankee zulu."
+    )
+
+    def _insert_user(self, session, user_id):
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+    def _insert_media(self, session, media_id, user_id):
+        session.execute(
+            text(
+                "INSERT INTO media (id, kind, title, processing_status, created_by_user_id)"
+                " VALUES (:id, 'web_article', 'M', 'ready_for_reading', :user_id)"
+            ),
+            {"id": media_id, "user_id": user_id},
+        )
+
+    def _insert_fragment(self, session, fragment_id, media_id, content, idx=0):
+        session.execute(
+            text(
+                "INSERT INTO fragments (id, media_id, idx, canonical_text, html_sanitized)"
+                " VALUES (:id, :media_id, :idx, :content, '<p>f</p>')"
+            ),
+            {"id": fragment_id, "media_id": media_id, "idx": idx, "content": content},
+        )
+
+    def _insert_evidence_span(self, session, span_id, media_id, block_id, span_text):
+        session.execute(
+            text(
+                "INSERT INTO evidence_spans (id, owner_kind, owner_id, start_block_id,"
+                " end_block_id, start_block_offset, end_block_offset, span_text, selector,"
+                " citation_label, resolver_kind)"
+                " VALUES (:id, 'media', :media_id, :block_id, :block_id, 0, 1, :span_text,"
+                " '{}'::jsonb, 'label', 'web')"
+            ),
+            {"id": span_id, "media_id": media_id, "block_id": block_id, "span_text": span_text},
+        )
+
+    def _insert_content_block(self, session, block_id, media_id, canonical_text):
+        session.execute(
+            text(
+                "INSERT INTO content_blocks (id, owner_kind, owner_id, block_idx, block_kind,"
+                " canonical_text, source_start_offset, source_end_offset, heading_path,"
+                " locator, selector, metadata)"
+                " VALUES (:id, 'media', :media_id, 0, 'paragraph', :canonical_text, 0, 1,"
+                " '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)"
+            ),
+            {"id": block_id, "media_id": media_id, "canonical_text": canonical_text},
+        )
+
+    def _insert_note(self, session, note_id, user_id, body_pm_json, body_text):
+        session.execute(
+            text(
+                "INSERT INTO note_blocks (id, user_id, body_pm_json, body_text)"
+                " VALUES (:id, :user_id, CAST(:doc AS jsonb), :body_text)"
+            ),
+            {
+                "id": note_id,
+                "user_id": user_id,
+                "doc": json.dumps(body_pm_json),
+                "body_text": body_text,
+            },
+        )
+
+    def _insert_edge(
+        self,
+        session,
+        edge_id,
+        user_id,
+        source,
+        target,
+        *,
+        kind="context",
+        origin="user",
+        created_at=None,
+        source_order_key=None,
+    ):
+        session.execute(
+            text(
+                "INSERT INTO resource_edges (id, user_id, kind, origin, source_scheme,"
+                " source_id, target_scheme, target_id, source_order_key, created_at)"
+                " VALUES (:id, :user_id, :kind, :origin, :ss, :si, :ts, :ti, :order_key,"
+                " COALESCE(:created_at, now()))"
+            ),
+            {
+                "id": edge_id,
+                "user_id": user_id,
+                "kind": kind,
+                "origin": origin,
+                "ss": source[0],
+                "si": source[1],
+                "ts": target[0],
+                "ti": target[1],
+                "order_key": source_order_key,
+                "created_at": created_at,
+            },
+        )
+
+    def _insert_view_state(
+        self, session, state_id, user_id, surface, edge_id, target, *, updated_at=None
+    ):
+        session.execute(
+            text(
+                "INSERT INTO resource_view_states (id, user_id, surface_scheme, surface_id,"
+                " edge_id, target_scheme, target_id, state, updated_at)"
+                " VALUES (:id, :user_id, :sfs, :sfi, :edge_id, :ts, :ti, '{}'::jsonb,"
+                " COALESCE(:updated_at, now()))"
+            ),
+            {
+                "id": state_id,
+                "user_id": user_id,
+                "sfs": surface[0],
+                "sfi": surface[1],
+                "edge_id": edge_id,
+                "ts": target[0] if target else None,
+                "ti": target[1] if target else None,
+                "updated_at": updated_at,
+            },
+        )
+
+    def _edge_row(self, session, edge_id):
+        return session.execute(
+            text(
+                "SELECT source_scheme, source_id, target_scheme, target_id, kind, origin,"
+                " source_order_key FROM resource_edges WHERE id = :id"
+            ),
+            {"id": edge_id},
+        ).fetchone()
+
+    def test_0184_converts_canonicalizes_and_hardens(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_1 = uuid4()
+            media_2 = uuid4()
+            fragment_1 = uuid4()
+            fragment_dead = uuid4()
+            note_id = uuid4()
+            note_2 = uuid4()
+            block_1 = uuid4()
+            span_unique = uuid4()
+            span_stale = uuid4()
+            highlight_id = uuid4()
+
+            e_link_unique = uuid4()
+            e_link_stale = uuid4()
+            e_note_body = uuid4()
+            e_dead = uuid4()
+            e_dup_a = uuid4()
+            e_dup_b = uuid4()
+            e_flip = uuid4()
+            e_stance = uuid4()
+            e_ordered = uuid4()
+            e_ordered_derived = uuid4()
+
+            vs_dead = uuid4()
+            vs_dup = uuid4()
+            vs_dup_collide = uuid4()
+            vs_conv = uuid4()
+
+            t0 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
+            t1 = datetime(2026, 7, 1, 11, 0, 0, tzinfo=UTC)
+            t2 = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+            doc = {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "See "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "evidence_span",
+                                    "objectId": str(span_unique),
+                                    "label": "a span",
+                                },
+                            },
+                            {"type": "text", "text": " and "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "fragment",
+                                    "objectId": str(fragment_dead),
+                                    "label": "lost chip",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_1, user_id)
+                self._insert_media(session, media_2, user_id)
+                self._insert_fragment(session, fragment_1, media_1, self.TEXT)
+                self._insert_note(session, note_id, user_id, doc, "See a span and lost chip")
+                self._insert_note(session, note_2, user_id, {"type": "doc", "content": []}, "")
+                self._insert_content_block(session, block_1, media_1, self.TEXT)
+                self._insert_evidence_span(session, span_unique, media_1, block_1, "kilo lima mike")
+                self._insert_evidence_span(
+                    session, span_stale, media_1, block_1, "totally absent words"
+                )
+
+                note_ref = ("note_block", note_id)
+                self._insert_edge(
+                    session,
+                    e_link_unique,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_unique),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_link_stale,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_stale),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_note_body,
+                    user_id,
+                    note_ref,
+                    ("evidence_span", span_unique),
+                    origin="note_body",
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_dead,
+                    user_id,
+                    ("media", media_1),
+                    ("fragment", fragment_dead),
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session, e_dup_a, user_id, ("media", media_1), note_ref, created_at=t1
+                )
+                self._insert_edge(
+                    session, e_dup_b, user_id, note_ref, ("media", media_1), created_at=t2
+                )
+                # Stored non-canonically (note_block > media): must flip.
+                self._insert_edge(
+                    session, e_flip, user_id, note_ref, ("media", media_2), created_at=t0
+                )
+                # Directional stance: preserved verbatim, never canonicalized.
+                self._insert_edge(
+                    session,
+                    e_stance,
+                    user_id,
+                    ("note_block", note_2),
+                    ("media", media_1),
+                    kind="supports",
+                    created_at=t0,
+                )
+                # Ordered adjacency: untouched.
+                self._insert_edge(
+                    session,
+                    e_ordered,
+                    user_id,
+                    note_ref,
+                    ("note_block", note_2),
+                    created_at=t0,
+                    source_order_key="a0",
+                )
+                # Ordered adjacency with a derived-scheme endpoint: also
+                # untouched — never inventoried, converted, or aborted on
+                # (AC21: the migration never touches ordered adjacency).
+                self._insert_edge(
+                    session,
+                    e_ordered_derived,
+                    user_id,
+                    note_ref,
+                    ("fragment", fragment_1),
+                    created_at=t0,
+                    source_order_key="a1",
+                )
+
+                self._insert_view_state(
+                    session,
+                    vs_dead,
+                    user_id,
+                    ("media", media_1),
+                    e_dead,
+                    ("fragment", fragment_dead),
+                )
+                # Rebind occurrence collision: the loser edge's view state
+                # (vs_dup, freshest) and the winner edge's own view state
+                # (vs_dup_collide, stale) land on the same
+                # (user, surface, edge) occurrence after rebind; the latest
+                # (updated_at, id) must win (spec step 5, matching 0179).
+                self._insert_view_state(
+                    session,
+                    vs_dup,
+                    user_id,
+                    ("media", media_1),
+                    e_dup_b,
+                    ("note_block", note_id),
+                    updated_at=t2,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_dup_collide,
+                    user_id,
+                    ("media", media_1),
+                    e_dup_a,
+                    ("note_block", note_id),
+                    updated_at=t1,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_conv,
+                    user_id,
+                    ("note_block", note_id),
+                    e_link_unique,
+                    ("evidence_span", span_unique),
+                )
+
+                insert_canonical_fragment_highlight(
+                    session,
+                    highlight_id=highlight_id,
+                    user_id=user_id,
+                    media_id=media_1,
+                    fragment_id=fragment_1,
+                    start_offset=0,
+                    end_offset=10,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            assert f"already lost: fragment:{fragment_dead}" in result.stdout
+            assert f"deleted dead edge {e_dead}" in result.stdout
+
+            with Session(engine) as session:
+                # Two anchors: one uniquely resolved, one durable-but-unresolved.
+                anchors = session.execute(
+                    text(
+                        "SELECT id, user_id, owner_scheme, owner_id, selector_version,"
+                        " selector FROM passage_anchors ORDER BY created_at, id"
+                    )
+                ).fetchall()
+                assert len(anchors) == 2
+                by_exact = {row[5]["quote"]["exact"]: row for row in anchors}
+                resolved = by_exact["kilo lima mike"]
+                unresolved = by_exact["totally absent words"]
+                for row in anchors:
+                    assert str(row[1]) == str(user_id)
+                    assert row[2] == "media"
+                    assert str(row[3]) == str(media_1)
+                    assert row[4] == 1
+                assert resolved[5]["quote"]["prefix"] != ""
+                assert resolved[5]["quote"]["suffix"] != ""
+                assert resolved[5]["locator_hint"] == {
+                    "kind": "text",
+                    "fragment_id": str(fragment_1),
+                    "start_offset": self.TEXT.index("kilo lima mike"),
+                    "end_offset": self.TEXT.index("kilo lima mike") + len("kilo lima mike"),
+                }
+                assert unresolved[5]["quote"]["prefix"] == ""
+                assert unresolved[5]["quote"]["suffix"] == ""
+                assert unresolved[5]["locator_hint"] is None
+                anchor_resolved = str(resolved[0])
+                anchor_unresolved = str(unresolved[0])
+
+                # Link + note_body edges rewritten onto the anchors.
+                row = self._edge_row(session, e_link_unique)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_resolved)
+                row = self._edge_row(session, e_link_stale)
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_unresolved)
+                row = self._edge_row(session, e_note_body)
+                assert row[5] == "note_body"
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_resolved)
+
+                # Already-lost endpoint: dead edge + its view state are gone.
+                assert self._edge_row(session, e_dead) is None
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"), {"id": vs_dead}
+                    ).fetchone()
+                    is None
+                )
+
+                # Duplicate neutral Links (reverse orientation): earliest wins,
+                # loser view state rebinds to the winner before deletion. The
+                # rebind collides with the winner's own occurrence on the same
+                # surface: the latest (updated_at, id) — vs_dup — survives and
+                # is rebound; the stale occurrence is deleted.
+                assert self._edge_row(session, e_dup_b) is None
+                row = self._edge_row(session, e_dup_a)
+                assert (row[0], str(row[1])) == ("media", str(media_1))
+                assert (row[2], str(row[3])) == ("note_block", str(note_id))
+                rebound = session.execute(
+                    text("SELECT edge_id FROM resource_view_states WHERE id = :id"),
+                    {"id": vs_dup},
+                ).scalar_one()
+                assert str(rebound) == str(e_dup_a)
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"),
+                        {"id": vs_dup_collide},
+                    ).fetchone()
+                    is None
+                )
+
+                # Non-canonical single Link is flipped into (scheme, id) order.
+                row = self._edge_row(session, e_flip)
+                assert (row[0], str(row[1])) == ("media", str(media_2))
+                assert (row[2], str(row[3])) == ("note_block", str(note_id))
+
+                # Stance keeps its authored direction; ordered adjacency is
+                # untouched.
+                row = self._edge_row(session, e_stance)
+                assert (row[0], str(row[1])) == ("note_block", str(note_2))
+                assert (row[2], str(row[3])) == ("media", str(media_1))
+                assert row[4] == "supports"
+                row = self._edge_row(session, e_ordered)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("note_block", str(note_2))
+                assert row[6] == "a0"
+                # The ordered edge keeps its derived endpoint verbatim: no
+                # abort, no conversion (the len(anchors) == 2 assertion above
+                # already pins that it was never inventoried).
+                row = self._edge_row(session, e_ordered_derived)
+                assert (row[0], str(row[1])) == ("note_block", str(note_id))
+                assert (row[2], str(row[3])) == ("fragment", str(fragment_1))
+                assert row[6] == "a1"
+
+                # Edge-bound view-state resource refs follow the rewrite.
+                vs_row = session.execute(
+                    text(
+                        "SELECT target_scheme, target_id FROM resource_view_states WHERE id = :id"
+                    ),
+                    {"id": vs_conv},
+                ).fetchone()
+                assert (vs_row[0], str(vs_row[1])) == ("passage_anchor", anchor_resolved)
+
+                # Note JSON: live chip rewritten in place, lost chip unwrapped
+                # to its label text; body_text reprojected.
+                note_row = session.execute(
+                    text("SELECT body_pm_json, body_text FROM note_blocks WHERE id = :id"),
+                    {"id": note_id},
+                ).fetchone()
+                inline = note_row[0]["content"][0]["content"]
+                assert inline[1]["type"] == "object_ref"
+                assert inline[1]["attrs"]["objectType"] == "passage_anchor"
+                assert inline[1]["attrs"]["objectId"] == anchor_resolved
+                assert inline[1]["attrs"]["label"] == "a span"
+                assert inline[3] == {"type": "text", "text": "lost chip"}
+                assert "lost chip" in note_row[1]
+
+                # Index swap: broad index gone, three replacements + retained
+                # ordered-adjacency index present.
+                index_names = {
+                    row[0]
+                    for row in session.execute(
+                        text("SELECT indexname FROM pg_indexes WHERE tablename = 'resource_edges'")
+                    ).fetchall()
+                }
+                assert "uq_resource_edges_context_pair" not in index_names
+                assert "uq_resource_edges_user_context_link_pair" in index_names
+                assert "uq_resource_edges_user_stance_directed_pair" in index_names
+                assert "uq_resource_edges_nonuser_orderless_pair" in index_names
+                assert "uq_resource_edges_source_order" in index_names
+
+                # Trigger + function dropped; fragment cache FK dropped; the
+                # six Highlight-family FKs are non-cascading (NO ACTION).
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT 1 FROM pg_trigger"
+                            " WHERE tgname = 'trg_highlight_fragment_anchor_delete_core'"
+                        )
+                    ).fetchone()
+                    is None
+                )
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT 1 FROM pg_proc"
+                            " WHERE proname = 'delete_fragment_highlight_after_anchor_delete'"
+                        )
+                    ).fetchone()
+                    is None
+                )
+                fk_rows = session.execute(
+                    text(
+                        "SELECT rel.relname, att.attname, con.confdeltype"
+                        " FROM pg_constraint con"
+                        " JOIN pg_class rel ON rel.oid = con.conrelid"
+                        " JOIN pg_attribute att"
+                        "   ON att.attrelid = rel.oid AND att.attnum = con.conkey[1]"
+                        " WHERE con.contype = 'f' AND rel.relname IN"
+                        " ('highlights', 'highlight_fragment_anchors',"
+                        "  'highlight_pdf_anchors', 'highlight_pdf_quads')"
+                    )
+                ).fetchall()
+                fk_map = {(row[0], row[1]): row[2] for row in fk_rows}
+                assert ("highlight_fragment_anchors", "fragment_id") not in fk_map
+                for key in [
+                    ("highlights", "user_id"),
+                    ("highlights", "anchor_media_id"),
+                    ("highlight_fragment_anchors", "highlight_id"),
+                    ("highlight_pdf_anchors", "highlight_id"),
+                    ("highlight_pdf_anchors", "media_id"),
+                    ("highlight_pdf_quads", "highlight_id"),
+                ]:
+                    assert fk_map[key] == "a", f"{key} must be NO ACTION"
+
+            # Behavior: fragment replacement no longer destroys the Highlight
+            # (no FK cascade, no trigger) and anchor-row deletion no longer
+            # deletes the Highlight root.
+            with Session(engine) as session:
+                session.execute(text("DELETE FROM fragments WHERE id = :id"), {"id": fragment_1})
+                session.commit()
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                        {"id": highlight_id},
+                    ).fetchone()
+                    is not None
+                )
+                session.execute(
+                    text("DELETE FROM highlight_fragment_anchors WHERE highlight_id = :id"),
+                    {"id": highlight_id},
+                )
+                session.commit()
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM highlights WHERE id = :id"), {"id": highlight_id}
+                    ).fetchone()
+                    is not None
+                )
+
+            # CHECK vocabulary: link_note origin and passage_anchor scheme are
+            # accepted everywhere the closed contract names them.
+            with Session(engine) as session:
+                self._insert_edge(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("note_block", note_id),
+                    ("media", media_1),
+                    origin="link_note",
+                )
+                self._insert_edge(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("passage_anchor", UUID(anchor_resolved)),
+                    ("media", media_2),
+                )
+                self._insert_view_state(
+                    session,
+                    uuid4(),
+                    user_id,
+                    ("media", media_1),
+                    None,
+                    ("passage_anchor", UUID(anchor_resolved)),
+                )
+                session.commit()
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("note_block", note_id),
+                        ("media", media_1),
+                        origin="bogus",
+                    )
+                assert "ck_resource_edges_origin" in str(exc_info.value)
+            with Session(engine) as session:
+                # The new partial unique index enforces one neutral Link per
+                # directed (canonical) pair.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("media", media_1),
+                        ("note_block", note_id),
+                    )
+                assert "uq_resource_edges_user_context_link_pair" in str(exc_info.value)
+            with Session(engine) as session:
+                # AC4/AC21: the ordered-adjacency uniqueness index the swap
+                # RETAINS still rejects a duplicate ordered occurrence (same
+                # source + order key as the surviving e_ordered). Ordered
+                # adjacency was neither canonicalized, collapsed, nor weakened.
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("note_block", note_id),
+                        ("media", media_2),
+                        source_order_key="a0",
+                    )
+                assert "uq_resource_edges_source_order" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0184_phase4_convergence_self_edge_and_stance_collapse(self):
+        """Phase 4's two convergence branches the primary fixture never reaches.
+
+        (a) An edge whose BOTH derived endpoints materialize onto the same
+        passage anchor becomes a self-edge: phase 4 dead-marks it (never
+        rewrites it) and its edge-bound view state is deleted with it.
+
+        (b) Two live directed stance edges whose distinct derived endpoints
+        canonicalize to the SAME anchor mint an exact duplicate that phase 4
+        itself collapses (NOT phase-5 Link canonicalization) to the earliest
+        (created_at, id) winner, before the stance uniqueness index is created;
+        the loser's view state rebinds to the winner and its derived ref is
+        remapped onto the anchor.
+        """
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_1 = uuid4()
+            media_stance = uuid4()
+            block_1 = uuid4()
+            # media_1 has NO fragments, so every span quote below resolves to
+            # no_match and its anchor is durable-but-unresolved. Spans that share
+            # an owner and an (unresolved) quote converge onto one anchor.
+            span_self_a = uuid4()
+            span_self_b = uuid4()
+            span_stance_a = uuid4()
+            span_stance_b = uuid4()
+
+            e_self = uuid4()
+            e_stance_win = uuid4()
+            e_stance_lose = uuid4()
+            vs_self = uuid4()
+            vs_stance_lose = uuid4()
+
+            t0 = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
+            t1 = datetime(2026, 7, 1, 11, 0, 0, tzinfo=UTC)
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_1, user_id)
+                self._insert_media(session, media_stance, user_id)
+                self._insert_content_block(session, block_1, media_1, self.TEXT)
+                self._insert_evidence_span(
+                    session, span_self_a, media_1, block_1, "zzz self edge quote"
+                )
+                self._insert_evidence_span(
+                    session, span_self_b, media_1, block_1, "zzz self edge quote"
+                )
+                self._insert_evidence_span(
+                    session, span_stance_a, media_1, block_1, "zzz stance dup quote"
+                )
+                self._insert_evidence_span(
+                    session, span_stance_b, media_1, block_1, "zzz stance dup quote"
+                )
+
+                # (a) Both endpoints derived + convergent -> self-edge on rewrite.
+                self._insert_edge(
+                    session,
+                    e_self,
+                    user_id,
+                    ("evidence_span", span_self_a),
+                    ("evidence_span", span_self_b),
+                    created_at=t0,
+                )
+                self._insert_view_state(
+                    session,
+                    vs_self,
+                    user_id,
+                    ("media", media_1),
+                    e_self,
+                    ("evidence_span", span_self_a),
+                )
+
+                # (b) Two directed stances with distinct derived targets that
+                # converge onto one anchor: the earliest (t0) wins, the later
+                # (t1) is collapsed by phase 4's dedupe.
+                self._insert_edge(
+                    session,
+                    e_stance_win,
+                    user_id,
+                    ("media", media_stance),
+                    ("evidence_span", span_stance_a),
+                    kind="supports",
+                    created_at=t0,
+                )
+                self._insert_edge(
+                    session,
+                    e_stance_lose,
+                    user_id,
+                    ("media", media_stance),
+                    ("evidence_span", span_stance_b),
+                    kind="supports",
+                    created_at=t1,
+                )
+                # The loser's view state must rebind to the winner (its derived
+                # target remapped onto the shared anchor) before loser deletion.
+                self._insert_view_state(
+                    session,
+                    vs_stance_lose,
+                    user_id,
+                    ("media", media_stance),
+                    e_stance_lose,
+                    ("evidence_span", span_stance_b),
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+            assert "self edge after materialization" in result.stdout
+            assert f"deleted dead edge {e_self}" in result.stdout
+            assert f"collapsed duplicate stance edge {e_stance_lose}" in result.stdout
+            assert str(e_stance_win) in result.stdout
+
+            with Session(engine) as session:
+                # Exactly two anchors: one per convergent quote identity, both
+                # durable-but-unresolved (no owner fragment text to resolve to).
+                anchor_rows = session.execute(
+                    text(
+                        "SELECT id, selector FROM passage_anchors"
+                        " WHERE user_id = :u ORDER BY created_at, id"
+                    ),
+                    {"u": user_id},
+                ).fetchall()
+                assert len(anchor_rows) == 2
+                anchor_by_exact = {row[1]["quote"]["exact"]: str(row[0]) for row in anchor_rows}
+                for row in anchor_rows:
+                    assert row[1]["quote"]["prefix"] == ""
+                    assert row[1]["quote"]["suffix"] == ""
+                    assert row[1]["locator_hint"] is None
+                anchor_stance = anchor_by_exact["zzz stance dup quote"]
+
+                # (a) The self-edge is gone; no self-loop survives anywhere, and
+                # its edge-bound view state was deleted with the dead edge.
+                assert self._edge_row(session, e_self) is None
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT id FROM resource_edges"
+                            " WHERE source_scheme = target_scheme AND source_id = target_id"
+                        )
+                    ).fetchall()
+                    == []
+                )
+                assert (
+                    session.execute(
+                        text("SELECT 1 FROM resource_view_states WHERE id = :id"),
+                        {"id": vs_self},
+                    ).fetchone()
+                    is None
+                )
+
+                # (b) Exactly one stance survives — the earliest winner — now
+                # pointing at the shared anchor with its direction preserved.
+                assert self._edge_row(session, e_stance_lose) is None
+                row = self._edge_row(session, e_stance_win)
+                assert row is not None
+                assert (row[0], str(row[1])) == ("media", str(media_stance))
+                assert (row[2], str(row[3])) == ("passage_anchor", anchor_stance)
+                assert row[4] == "supports"
+                assert (
+                    session.execute(
+                        text(
+                            "SELECT count(*) FROM resource_edges"
+                            " WHERE kind = 'supports' AND user_id = :u"
+                        ),
+                        {"u": user_id},
+                    ).scalar_one()
+                    == 1
+                )
+                # The loser's view state rebound onto the winner and its derived
+                # target was remapped onto the anchor.
+                vs_row = session.execute(
+                    text(
+                        "SELECT edge_id, target_scheme, target_id"
+                        " FROM resource_view_states WHERE id = :id"
+                    ),
+                    {"id": vs_stance_lose},
+                ).fetchone()
+                assert str(vs_row[0]) == str(e_stance_win)
+                assert (vs_row[1], str(vs_row[2])) == ("passage_anchor", anchor_stance)
+
+            # The stance uniqueness index phase 4 protects by collapsing is live:
+            # re-inserting the collapsed duplicate is now rejected.
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_edge(
+                        session,
+                        uuid4(),
+                        user_id,
+                        ("media", media_stance),
+                        ("passage_anchor", UUID(anchor_stance)),
+                        kind="supports",
+                    )
+                assert "uq_resource_edges_user_stance_directed_pair" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0184_aborts_on_live_unconvertible_ref_with_no_partial_state(self):
+        reset_test_schema()
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0183")
+            assert result.returncode == 0, f"upgrade 0183 failed: {result.stderr}"
+
+            user_id = uuid4()
+            media_id = uuid4()
+            fragment_empty = uuid4()
+            edge_id = uuid4()
+            note_id = uuid4()
+            view_state_id = uuid4()
+
+            # The unconvertible ref is reached three ways so the abort must name
+            # all of them (spec step 2): a Link edge, a note object_ref chip
+            # (with its exact JSON path), and an edge-bound view state.
+            doc = {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "See "},
+                            {
+                                "type": "object_ref",
+                                "attrs": {
+                                    "objectType": "fragment",
+                                    "objectId": str(fragment_empty),
+                                    "label": "an empty span",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id, user_id)
+                # Live fragment with no durable quote identity: readable but
+                # unconvertible — the migration must abort, never guess.
+                self._insert_fragment(session, fragment_empty, media_id, "")
+                self._insert_note(session, note_id, user_id, doc, "See an empty span")
+                self._insert_edge(
+                    session,
+                    edge_id,
+                    user_id,
+                    ("media", media_id),
+                    ("fragment", fragment_empty),
+                )
+                self._insert_view_state(
+                    session,
+                    view_state_id,
+                    user_id,
+                    ("media", media_id),
+                    edge_id,
+                    ("fragment", fragment_empty),
+                )
+                session.commit()
+
+            with Session(engine) as session:
+                counts = {
+                    table: session.execute(
+                        text(f"SELECT count(*) FROM {table}")  # noqa: S608
+                    ).scalar_one()
+                    for table in ("resource_edges", "resource_view_states", "note_blocks")
+                }
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "0184 must abort on a live unconvertible ref"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert "unconvertible" in combined
+            # The abort names the raw ref, the referencing edge, the note chip
+            # with its exact JSON path, and the edge-bound view state (step 2).
+            assert f"fragment:{fragment_empty}" in combined
+            assert str(edge_id) in combined
+            assert str(note_id) in combined
+            assert "content[0].content[1]" in combined
+            assert str(view_state_id) in combined
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0183", "a failed 0184 must leave the version at 0183"
+                assert (
+                    session.execute(text("SELECT to_regclass('public.passage_anchors')")).scalar()
+                    is None
+                )
+                for table, expected in counts.items():
+                    actual = session.execute(
+                        text(f"SELECT count(*) FROM {table}")  # noqa: S608
+                    ).scalar_one()
+                    assert actual == expected, f"{table} changed during a failed run"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

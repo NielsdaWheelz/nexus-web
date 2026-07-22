@@ -14,9 +14,8 @@ import type {
 export function buildChatRunBody(input: {
   conversationId: string;
   content: string;
-  modelId: string;
-  reasoning: ChatRunCreateRequest["reasoning"];
-  keyMode: NonNullable<ChatRunCreateRequest["key_mode"]>;
+  profileId: string;
+  reasoningOptionId: string;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   chatSubject: ChatSubjectInput | null;
@@ -37,9 +36,8 @@ export function buildChatRunBody(input: {
   return {
     conversation_id: input.conversationId,
     content: input.content,
-    model_id: input.modelId,
-    reasoning: input.reasoning,
-    key_mode: input.keyMode,
+    profile_id: input.profileId,
+    reasoning_option_id: input.reasoningOptionId,
     ...(replyParentMessageId
       ? { parent_message_id: replyParentMessageId }
       : {}),

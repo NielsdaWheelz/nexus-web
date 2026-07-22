@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, isApiError } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/client";
+import { assumeLecternItemId, assumeMediaId } from "@/lib/lectern/contract";
 import {
   LECTERN_COMMAND_DEADLINE_MS,
   LecternProvider,
@@ -27,6 +27,7 @@ function wireItem(itemId: string, mediaId: string, title: string): Record<string
   return {
     itemId,
     mediaId,
+    kind: "podcast_episode",
     title,
     subtitle: { kind: "Absent" },
     href: `/media/${mediaId}`,
@@ -327,6 +328,60 @@ describe("LecternProvider deadline and retry", () => {
     expect(bodies[0]).not.toBeNull();
     expect(bodies[0]).toBe(bodies[1]); // hang + retry are byte-identical
     expect(bodies[1]).not.toBe(bodies[2]); // the follow-up B command is a different body
+  });
+
+  it("reports a parked unknown to the narrow place observer without transferring Retry ownership", async () => {
+    const mock = installLecternFetchMock();
+    mock.handlers.get = async () => jsonResponse({ data: wireSnapshot(ITEMS_AB) });
+    let postCount = 0;
+    mock.handlers.postLectern = (_body, signal) => {
+      postCount += 1;
+      if (postCount === 1) return hangUntilAbort(signal);
+      return Promise.resolve(
+        jsonResponse({
+          data: {
+            outcome: { kind: "Placed", itemIds: [ITEM_C] },
+            lectern: wireSnapshot([
+              ...ITEMS_AB,
+              wireItem(ITEM_C, MEDIA_C, "Charlie"),
+            ]),
+          },
+        }),
+      );
+    };
+    const observation = new AbortController();
+    const onUnknown = vi.fn();
+    const { result } = renderLectern();
+    await waitFor(() => expect(result.current.resource.status).toBe("ready"));
+
+    vi.useFakeTimers();
+    let placement!: Promise<unknown>;
+    act(() => {
+      placement = result.current.placeItems({
+        mediaIds: [assumeMediaId(MEDIA_C)],
+        placement: { kind: "Last" },
+        unknownObservation: { signal: observation.signal, onUnknown },
+      });
+    });
+    await drain();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LECTERN_COMMAND_DEADLINE_MS);
+    });
+
+    expect(result.current.mutation.kind).toBe("RetryableFailure");
+    expect(onUnknown).toHaveBeenCalledOnce();
+    expect(onUnknown.mock.calls[0][0]).toBeInstanceOf(ApiError);
+
+    observation.abort();
+    act(() => {
+      const state = result.current.mutation;
+      if (state.kind === "RetryableFailure") state.retry();
+    });
+    await act(async () => placement);
+
+    expect(onUnknown).toHaveBeenCalledOnce();
+    expect(result.current.mutation.kind).toBe("Idle");
+    expect(titles(result.current)).toEqual(["Alpha", "Bravo", "Charlie"]);
   });
 });
 

@@ -199,6 +199,11 @@ def _media_order(items: list[dict]) -> list[str]:
 
 
 class TestLecternSnapshot:
+    def test_supported_media_kind_contract_is_exact(self):
+        assert _lectern_store.SUPPORTED_MEDIA_KINDS == frozenset(
+            {"web_article", "epub", "pdf", "video", "podcast_episode"}
+        )
+
     def test_snapshot_shape_and_activation_derivation(
         self, auth_client, direct_db: DirectSessionManager
     ):
@@ -216,6 +221,7 @@ class TestLecternSnapshot:
         by_media = {item["mediaId"]: item for item in items}
 
         article_item = by_media[str(article)]
+        assert article_item["kind"] == "web_article"
         assert article_item["activation"] == {"kind": "Readable"}, article_item
         assert article_item["subtitle"] == {"kind": "Absent"}, "article has no subtitle"
         assert article_item["consumption"]["state"] == "Unread"
@@ -223,11 +229,13 @@ class TestLecternSnapshot:
         assert article_item["href"] == f"/media/{article}"
 
         video_item = by_media[str(video)]
+        assert video_item["kind"] == "video"
         assert video_item["activation"] == {"kind": "OpenPane"}, (
             f"video must never derive FooterAudio: {video_item['activation']}"
         )
 
         episode_item = by_media[str(episode)]
+        assert episode_item["kind"] == "podcast_episode"
         activation = episode_item["activation"]
         assert activation["kind"] == "FooterAudio", activation
         assert activation["positionMs"] == 0
@@ -254,6 +262,7 @@ class TestLecternSnapshot:
         placed = _place(auth_client, user_id, [episode], {"kind": "Last"})
         assert placed.status_code == 200, placed.text
         item = placed.json()["data"]["lectern"]["items"][0]
+        assert item["kind"] == "podcast_episode"
         assert item["activation"] == {"kind": "OpenPane"}, item
 
 

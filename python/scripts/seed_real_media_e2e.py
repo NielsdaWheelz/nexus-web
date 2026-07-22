@@ -20,6 +20,7 @@ from uuid import UUID
 from supabase_auth_config import load_supabase_auth_config_or_exit
 
 E2E_USER_EMAIL = os.environ.get("E2E_USER_EMAIL", "e2e-test@nexus.local")
+AUTHENTICATED_HOME_PATH = "/lectern"
 SUPABASE_URL, SUPABASE_AUTH_ADMIN_KEY = load_supabase_auth_config_or_exit()
 for key in (
     "SUPABASE_AUTH_ADMIN_KEY",
@@ -716,7 +717,7 @@ def _real_auth_headers(supabase_url: str, supabase_auth_admin_key: str) -> dict[
             json={
                 "type": "magiclink",
                 "email": E2E_USER_EMAIL,
-                "options": {"redirectTo": f"{app_base_url.rstrip('/')}/libraries"},
+                "options": {"redirectTo": f"{app_base_url.rstrip('/')}{AUTHENTICATED_HOME_PATH}"},
             },
         )
         if link_response.status_code not in (200, 201):

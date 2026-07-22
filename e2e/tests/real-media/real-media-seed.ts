@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import {
-  expect,
-  type Page,
-  type TestInfo,
-} from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
 import { openAddContentPanel } from "../add-content";
 import { stateChangingApiHeaders } from "../api";
 import { openEvidencePane } from "../reader";
@@ -52,7 +48,8 @@ export type RealMediaContentKind = (typeof REAL_MEDIA_CONTENT_KINDS)[number];
 
 const REAL_MEDIA_WORKSPACE_DEVICE_ID = "real-media-e2e";
 let realMediaWorkspaceSequence = 0;
-const VISIBLE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-minimized="false"]';
+const VISIBLE_WORKSPACE_PANE_SELECTOR =
+  '[data-pane-id][data-minimized="false"]';
 
 export interface RealMediaSearchResult {
   type: string;
@@ -159,7 +156,16 @@ export async function uploadFreshRealMediaFileThroughUi({
     : fixtureBytes;
 
   await gotoRealMediaSinglePane(page, "/libraries");
-  const addContentPanel = await openAddContentPanel(page, "file");
+  const addContentPanel = await openAddContentPanel(page);
+
+  await addContentPanel.getByLabel("Choose PDF or EPUB files").setInputFiles({
+    name: filename,
+    mimeType,
+    buffer: uploadBytes,
+  });
+  await expect(
+    addContentPanel.getByRole("button", { name: "Add 1 item" }),
+  ).toBeEnabled();
 
   const [ingestResponse] = await Promise.all([
     page.waitForResponse(
@@ -168,11 +174,7 @@ export async function uploadFreshRealMediaFileThroughUi({
         /\/api\/media\/[^/]+\/ingest$/.test(new URL(response.url()).pathname),
       { timeout: 30_000 },
     ),
-    addContentPanel.getByLabel("Upload file").setInputFiles({
-      name: filename,
-      mimeType,
-      buffer: uploadBytes,
-    }),
+    addContentPanel.getByRole("button", { name: "Add 1 item" }).click(),
   ]);
   const ingestText = await ingestResponse.text();
   expect(
@@ -184,6 +186,11 @@ export async function uploadFreshRealMediaFileThroughUi({
   expect(ingest.data.duplicate).toBe(false);
   expect(ingest.data.ingest_enqueued).toBe(true);
   expect(ingest.data.media_id).not.toBe(seededMediaId);
+  await expect(addContentPanel).toBeVisible();
+  await expect(
+    addContentPanel.getByRole("button", { name: "Open" }),
+  ).toBeVisible();
+  await addContentPanel.getByRole("button", { name: "Open" }).click();
   await expectCurrentMediaUrl(page, ingest.data.media_id, 30_000);
 
   const worker = await drainRealMediaWorkerForMediaReady(
@@ -507,9 +514,14 @@ export async function openActivePaneOptions(
     if (await item.isVisible().catch(() => false)) {
       return;
     }
-    lastMenuItems = (await page.getByRole("menuitem").allTextContents().catch(
-      () => [],
-    )).map((label) => label.trim()).filter(Boolean);
+    lastMenuItems = (
+      await page
+        .getByRole("menuitem")
+        .allTextContents()
+        .catch(() => [])
+    )
+      .map((label) => label.trim())
+      .filter(Boolean);
     if (!(await menu.isVisible().catch(() => false))) {
       await trigger.click();
       await expect(menu).toBeVisible({ timeout: 2_000 });
@@ -568,9 +580,7 @@ export async function expectVisibleTextEvidenceHighlight(
         .first(),
     ).toBeAttached({ timeout: 15_000 });
     await expect(
-      page
-        .locator(`${VISIBLE_WORKSPACE_PANE_SELECTOR} .hl-evidence`)
-        .first(),
+      page.locator(`${VISIBLE_WORKSPACE_PANE_SELECTOR} .hl-evidence`).first(),
     ).toBeVisible({ timeout: 15_000 });
     return;
   }
@@ -785,8 +795,12 @@ export async function createPdfHighlightThroughVisibleSelection(
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
-  await highlightActions.getByRole("button", { name: "Highlight color" }).click();
-  const greenHighlightButton = page.getByRole("button", { name: /^Green$/ }).first();
+  await highlightActions
+    .getByRole("button", { name: "Highlight color" })
+    .click();
+  const greenHighlightButton = page
+    .getByRole("button", { name: /^Green$/ })
+    .first();
   await expect(greenHighlightButton).toBeVisible({ timeout: 5_000 });
   const createdHighlightResponsePromise = page.waitForResponse(
     (response) =>
@@ -831,8 +845,7 @@ export async function createPdfHighlightThroughVisibleSelection(
     exact: createdHighlight.data.exact,
     selected_text: selectedText,
     container_selector: textLayerSelector,
-    action_selector:
-      'button[aria-label="Green"]',
+    action_selector: 'button[aria-label="Green"]',
     request_url: createdHighlightResponse.url(),
   };
 }
@@ -883,7 +896,9 @@ export async function createFragmentHighlightThroughVisibleSelection(
     name: /selection actions/i,
   });
   await expect(highlightActions).toBeVisible({ timeout: 5_000 });
-  await highlightActions.getByRole("button", { name: "Highlight color" }).click();
+  await highlightActions
+    .getByRole("button", { name: "Highlight color" })
+    .click();
   const [createdHighlightResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -928,7 +943,8 @@ export async function createFragmentHighlightThroughVisibleSelection(
     } catch (error) {
       const debug = await page.evaluate(
         ({ activeSelector, containerSelector, highlightId, selectedText }) => {
-          const activePane = document.querySelector<HTMLElement>(activeSelector);
+          const activePane =
+            document.querySelector<HTMLElement>(activeSelector);
           const container = document.querySelector(containerSelector);
           const escapedId = CSS.escape(highlightId);
           const targets = Array.from(

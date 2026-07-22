@@ -39,7 +39,7 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     settings = get_settings()
     if settings.nexus_env.value == "test":
         pytest.fail("live provider gate must run with NEXUS_ENV=local, staging, or prod")
-    if not settings.enable_openai or not os.environ.get("OPENAI_API_KEY"):
+    if not settings.openai_api_key or not os.environ.get("OPENAI_API_KEY"):
         pytest.fail("OPENAI_API_KEY and ENABLE_OPENAI=true are required for live podcast ingest")
     if (
         not settings.podcast_index_api_key

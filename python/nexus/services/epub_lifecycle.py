@@ -12,8 +12,6 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
     FragmentBlock,
-    Highlight,
-    HighlightFragmentAnchor,
     Media,
     ProcessingStatus,
 )
@@ -27,7 +25,6 @@ from nexus.services.epub_ingest import (
 )
 from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
 from nexus.services.media_author_observation_seam import attach_author_observation
-from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
@@ -117,8 +114,10 @@ def materialize_epub_source(
 
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
-    """Delete all EPUB extraction and chunk/embedding artifacts for a media row."""
-    delete_media_apparatus(db, media_id)
+    """Delete rewriteable EPUB extraction artifacts for a media row.
+
+    Apparatus remains until extraction reconciles it by stable key.
+    """
     delete_content_index(db, owner=IndexOwner("media", media_id))
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
@@ -136,17 +135,15 @@ def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
     )
 
     if fragment_ids:
-        db.execute(
-            delete(Highlight).where(
-                Highlight.id.in_(
-                    select(HighlightFragmentAnchor.highlight_id).where(
-                        HighlightFragmentAnchor.fragment_id.in_(fragment_ids)
-                    )
-                )
-            )
-        )
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
 
+    # Highlights are authored user data and are NOT deleted here: refresh
+    # publishes new fragments, then authored selectors (Highlights, passage
+    # anchors) resolve against the new current content (spec "Highlight
+    # Durability", Invariant 9). Fragment deletion only invalidates the
+    # highlight_fragment_anchors locator cache (fragment_id FK is non-cascading,
+    # non-owning); the Highlight root survives and is resolved via LEFT JOIN
+    # + quote re-resolution.
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
     db.flush()
     return list(storage_paths)

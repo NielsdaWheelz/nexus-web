@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import {
@@ -27,12 +21,14 @@ interface LibraryMembershipPanelProps {
   open: boolean;
   title: string;
   anchorEl: HTMLElement | null;
+  returnFocusFallback?: () => HTMLElement | null;
   libraries: LibraryTargetPickerItem[];
   loading?: boolean;
   busy?: boolean;
   error?: string | FeedbackContent | null;
   emptyMessage?: string;
   onClose: () => void;
+  onRetry?: () => void;
   onAddToLibrary: (libraryId: string) => void;
   onRemoveFromLibrary: (libraryId: string) => void;
 }
@@ -41,12 +37,14 @@ export default function LibraryMembershipPanel({
   open,
   title,
   anchorEl,
+  returnFocusFallback,
   libraries,
   loading = false,
   busy = false,
   error = null,
   emptyMessage = "No libraries found.",
   onClose,
+  onRetry,
   onAddToLibrary,
   onRemoveFromLibrary,
 }: LibraryMembershipPanelProps) {
@@ -70,18 +68,29 @@ export default function LibraryMembershipPanel({
       return libraries;
     }
     return libraries.filter((library) =>
-      library.name.toLowerCase().includes(trimmed)
+      library.name.toLowerCase().includes(trimmed),
     );
   }, [libraries, query]);
 
   const restoreAnchorFocus = useCallback(() => {
-    if (!anchorEl || !anchorEl.isConnected) {
-      return;
-    }
     requestAnimationFrame(() => {
-      anchorEl.focus();
+      const anchorDisabled =
+        anchorEl instanceof HTMLButtonElement && anchorEl.disabled;
+      if (
+        anchorEl?.isConnected &&
+        !anchorDisabled &&
+        anchorEl.getAttribute("aria-disabled") !== "true" &&
+        !anchorEl.closest("[inert]")
+      ) {
+        anchorEl.focus();
+        if (document.activeElement === anchorEl) return;
+      }
+      const fallback = returnFocusFallback?.() ?? null;
+      if (fallback?.isConnected && !fallback.closest("[inert]")) {
+        fallback.focus();
+      }
     });
-  }, [anchorEl]);
+  }, [anchorEl, returnFocusFallback]);
 
   const handleClose = useCallback(() => {
     onClose();
@@ -126,9 +135,33 @@ export default function LibraryMembershipPanel({
       </div>
 
       {typeof error === "string" ? (
-        <div className={styles.error}>{error}</div>
+        <div className={styles.errorRow}>
+          <div className={styles.error}>{error}</div>
+          {onRetry ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onRetry}
+              disabled={busy}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
       ) : error ? (
-        <FeedbackNotice feedback={error} />
+        <div className={styles.errorRow}>
+          <FeedbackNotice feedback={error} />
+          {onRetry ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onRetry}
+              disabled={busy}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       <div className={styles.list}>
@@ -139,7 +172,8 @@ export default function LibraryMembershipPanel({
         ) : (
           filteredLibraries.map((library) => {
             const rowDisabled =
-              busy || (library.isInLibrary ? !library.canRemove : !library.canAdd);
+              busy ||
+              (library.isInLibrary ? !library.canRemove : !library.canAdd);
             return (
               <button
                 key={library.id}
@@ -162,10 +196,14 @@ export default function LibraryMembershipPanel({
                     {library.name}
                   </span>
                   <span className={styles.itemMeta}>
-                    {library.isInLibrary ? "Remove from this library" : "Add to library"}
+                    {library.isInLibrary
+                      ? "Remove from this library"
+                      : "Add to library"}
                   </span>
                 </span>
-                {library.isInLibrary ? <Check size={16} aria-hidden="true" /> : null}
+                {library.isInLibrary ? (
+                  <Check size={16} aria-hidden="true" />
+                ) : null}
               </button>
             );
           })
@@ -176,7 +214,13 @@ export default function LibraryMembershipPanel({
 
   if (isMobile) {
     return (
-      <Dialog open={open} onClose={handleClose} title={title}>
+      <Dialog
+        open={open}
+        onClose={handleClose}
+        title={title}
+        returnFocusTo={() => anchorEl}
+        returnFocusFallback={returnFocusFallback}
+      >
         {content}
       </Dialog>
     );
@@ -204,6 +248,6 @@ export default function LibraryMembershipPanel({
       </div>
       {content}
     </div>,
-    document.body
+    document.body,
   );
 }

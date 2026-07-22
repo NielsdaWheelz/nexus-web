@@ -9,6 +9,13 @@ Base: branch from `6bf4a71a` ("Make note connections editable"). Built in
 worktree `synapse-resonance` while the notes-pages object-graph cutover is in
 flight in the main checkout — see §13 merge notes.
 
+Current-state amendment, 2026-07-20: migration `0173` widened Synapse targets
+to media-owned `evidence_span` refs, and the reader connection projection
+resolves those passage-grain targets. The object-grain-only language retained
+elsewhere in this historical build plan is superseded by that shipped contract
+and by
+[`reader-evidence-scope-associations-hard-cutover.md`](reader-evidence-scope-associations-hard-cutover.md).
+
 ## 0. North Star
 
 Nexus means *connection*. Today every connection in `resource_edges` is written
@@ -76,8 +83,9 @@ G6. Disable-able: `SYNAPSE_ENABLED=false` turns every trigger into a no-op.
 
 N1. No graph traversal/visualization product; the read surface stays the
 existing Connections section + media pane mount.
-N2. No per-span resonance targets — connections are object-grain (`media`,
-`page`, `note_block`); span/chunk precision remains the citation system's job.
+N2. No edge-owned or free-form passage geometry. Passage-grain resonance uses
+media-owned `evidence_span` targets; object-grain `media` and `note_block`
+targets remain valid where no passage target is selected.
 N3. No confidence scores, no ranking column, no auto-decay. The model's
 include/exclude judgment is the filter (AI-first: trust the model).
 N4. No scheduled full-corpus sweeps in this slice (the daily-pulse cutover

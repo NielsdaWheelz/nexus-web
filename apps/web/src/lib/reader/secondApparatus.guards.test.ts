@@ -16,10 +16,13 @@ const MACHINE_TOKENS = ["--font-machine", "--ink-machine", "--rail-machine"];
 
 describe("Second Apparatus cutover source gates", () => {
   // §13.2 — Second Apparatus adds no origin. The amanuensis cutover (same batch)
-  // adds exactly one — `assistant`, the house agent's hand — so EDGE_ORIGINS holds
-  // these eight and no others.
-  it("keeps EDGE_ORIGINS to the sanctioned origins (assistant is the only agent add)", () => {
-    const edges = sourceText("src/lib/resourceGraph/edges.ts");
+  // added exactly one — `assistant`, the house agent's hand. Universal Link
+  // Authoring (docs/cutovers/universal-link-authoring-hard-cutover.md, §Graph
+  // Shapes) narrowly supersedes this gate with exactly one further sanctioned
+  // add — `link_note`, the Link-note structural attachment origin — so
+  // EDGE_ORIGINS holds these nine and no others.
+  it("keeps EDGE_ORIGINS to the sanctioned origins (assistant, then link_note, are the only agent adds)", () => {
+    const edges = sourceText("src/lib/resourceGraph/connections.ts");
     const block = edges.slice(edges.indexOf("EDGE_ORIGINS = ["));
     const literals = block.slice(0, block.indexOf("]")).match(/"[a-z_]+"/g) ?? [];
     expect(literals).toEqual([
@@ -31,14 +34,18 @@ describe("Second Apparatus cutover source gates", () => {
       '"synapse"',
       '"document_embed"',
       '"assistant"',
+      '"link_note"',
     ]);
   });
 
-  // §13.4 — the Cite/stance composers never build or send a snapshot on a user edge.
-  it("keeps snapshots out of the Cite/stance composers", () => {
+  // §13.4 — the Link/stance clients never build or send a snapshot on a user edge.
+  // (Universal Link Authoring retired the Cite composer; the Link session
+  // `useLinkComposer.ts` and the `links.ts`/`stances.ts` clients are its heirs.)
+  it("keeps snapshots out of the Link/stance clients", () => {
     for (const path of [
-      "src/lib/reader/useCiteComposer.ts",
-      "src/lib/reader/useStanceComposer.ts",
+      "src/lib/resourceGraph/links.ts",
+      "src/lib/resourceGraph/stances.ts",
+      "src/lib/reader/useLinkComposer.ts",
     ]) {
       const src = sourceText(path);
       expect(src).not.toMatch(/CitationSnapshot/);

@@ -19,8 +19,8 @@ from pydantic import (
     model_validator,
 )
 
-from nexus.llm_catalog import LLMKeyMode, ReasoningMode
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
+from nexus.schemas.llm import ExpectedChatFailure
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
 from nexus.schemas.search import SEARCH_RESULT_TYPES
@@ -130,9 +130,7 @@ class MessageOut(BaseModel):
     branch_anchor_kind: BRANCH_ANCHOR_KINDS = "none"
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
     status: str  # "pending" | "complete" | "error" | "cancelled"
-    error_code: str | None = None
-    can_retry_response: bool = False
-    can_resend_response: bool = False
+    can_rerun: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -217,8 +215,8 @@ class ChatRunMetaEventPayload(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    model_id: UUID
-    provider: str = Field(min_length=1)
+    profile_id: str = Field(min_length=1)
+    reasoning_option_id: str = Field(min_length=1)
     chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
@@ -418,14 +416,15 @@ class TrustPromptAssemblyOut(BaseModel):
 
 class TrustRunOut(BaseModel):
     run_id: UUID
-    model_id: UUID
-    provider: str
-    model_name: str
-    reasoning_mode: str | None = None
-    key_mode: str | None = None
+    profile_id: str | None = None
+    reasoning_option_id: str | None = None
+    provider: str | None = None
+    model_name: str | None = None
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
+    error_origin: str | None = None
+    failure: ExpectedChatFailure | None = None
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -712,9 +711,8 @@ class ChatRunCreateRequest(BaseModel):
     parent_message_id: UUID | None = None
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
     content: str
-    model_id: UUID
-    reasoning: ReasoningMode
-    key_mode: LLMKeyMode
+    profile_id: str = Field(min_length=1)
+    reasoning_option_id: str = Field(min_length=1)
     chat_subject: ChatSubjectRequest | None = None
     reader_selection: ReaderSelectionRequest | None = None
 
@@ -722,16 +720,29 @@ class ChatRunCreateRequest(BaseModel):
 
 
 class ChatRunOut(BaseModel):
-    """Response schema for a durable chat run."""
+    """Response schema for a durable chat run.
+
+    ``profile_id``/``reasoning_option_id`` are the product-selection snapshot
+    taken at creation; ``provider``/``model_name``/``reasoning_effort`` are the
+    resolved operator facts filled in from the plan at execution (``None``
+    until then). ``failure`` is the one ``chat_failure_projection`` read —
+    ``None`` for a run that is not a card-bearing failure (still running, or a
+    defect with no stored closed code).
+    """
 
     id: UUID
     status: CHAT_RUN_STATUSES
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    model_id: UUID
-    reasoning: str
-    key_mode: str
+    profile_id: str | None = None
+    reasoning_option_id: str | None = None
+    provider: str | None = None
+    model_name: str | None = None
+    reasoning_effort: str | None = None
+    error_origin: str | None = None
+    support_id: str | None = None
+    failure: ExpectedChatFailure | None = None
     cancel_requested_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

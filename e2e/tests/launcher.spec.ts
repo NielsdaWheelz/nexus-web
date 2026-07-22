@@ -57,6 +57,55 @@ function workspaceWithSearchPane(): WorkspaceState {
 }
 
 test.describe("launcher", () => {
+  test("desktop: Add aliases open the source workbench without a chooser", async ({
+    page,
+  }) => {
+    await page.goto("/libraries?launcher=1");
+
+    const launcher = launcherDialog(page);
+    const input = launcherInput(launcher);
+    await input.fill("upload file");
+    await launcher.getByRole("option", { name: /^Upload file/ }).click();
+
+    const add = page.getByRole("dialog", { name: "Add content" });
+    await expect(
+      add.getByRole("heading", { name: "Add content" }),
+    ).toBeVisible();
+    await expect(
+      add.getByRole("button", { name: "Choose PDF or EPUB" }),
+    ).toBeFocused();
+    await expect(
+      add.getByRole("option", { name: /^Add from URL/ }),
+    ).toHaveCount(0);
+
+    await add.getByRole("button", { name: "Back" }).click();
+    const root = launcherDialog(page);
+    await launcherInput(root).fill("import opml");
+    await root.getByRole("option", { name: /^Import OPML/ }).click();
+
+    const opml = page.getByRole("dialog", { name: "Import OPML" });
+    await expect(
+      opml.getByRole("heading", { name: "Import OPML" }),
+    ).toBeVisible();
+    await expect(opml.getByLabel("Choose OPML file")).toBeAttached();
+    await expect(opml.getByRole("tab")).toHaveCount(0);
+  });
+
+  test("desktop: the removed Add lane deep link falls back to Launcher root", async ({
+    page,
+  }) => {
+    await page.goto("/libraries?launcher=1&lane=add");
+
+    const launcher = launcherDialog(page);
+    await expect(launcherInput(launcher)).toBeVisible();
+    await expect(
+      launcher.getByRole("button", { name: "Add", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Add content" })).toHaveCount(
+      0,
+    );
+  });
+
   test("desktop: open with a query, arrow + Enter run a command", async ({
     page,
   }) => {
@@ -65,7 +114,9 @@ test.describe("launcher", () => {
 
     const dialog = launcherDialog(page);
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Clear scope" })).toHaveCount(0);
+    await expect(
+      dialog.getByRole("button", { name: "Clear scope" }),
+    ).toHaveCount(0);
     const input = launcherInput(dialog);
     await expect(input).toBeFocused();
     await input.click();
@@ -109,12 +160,16 @@ test.describe("launcher", () => {
     await expect(dialog).toBeVisible();
 
     const listbox = launcherListbox(dialog);
-    const searchTab = listbox.getByRole("option", { name: /Search.*Switch to open tab/i });
+    const searchTab = listbox.getByRole("option", {
+      name: /Search.*Switch to open tab/i,
+    });
     await expect(searchTab).toHaveCount(1);
 
     // The deleted close-row pattern must not return: no row's accessible name
     // should start with "Close " (close lives only on the inline button).
-    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(0);
+    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(
+      0,
+    );
 
     // The inline close button lives inside the row and carries its own aria-label.
     const closeButton = searchTab.getByRole("button", { name: /^Close / });
@@ -138,7 +193,9 @@ test.describe("launcher mobile", () => {
 
     const dialog = launcherDialog(page);
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Clear scope" })).toHaveCount(0);
+    await expect(
+      dialog.getByRole("button", { name: "Clear scope" }),
+    ).toHaveCount(0);
 
     const input = launcherInput(dialog);
     await input.fill("keyboard shortcuts");
@@ -166,9 +223,13 @@ test.describe("launcher mobile", () => {
     await expect(dialog).toBeVisible();
 
     const listbox = launcherListbox(dialog);
-    const searchTab = listbox.getByRole("option", { name: /Search.*Switch to open tab/i });
+    const searchTab = listbox.getByRole("option", {
+      name: /Search.*Switch to open tab/i,
+    });
     await expect(searchTab).toHaveCount(1);
-    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(0);
+    await expect(listbox.getByRole("option", { name: /^Close / })).toHaveCount(
+      0,
+    );
 
     const closeButton = searchTab.getByRole("button", { name: /^Close / });
     await expect(closeButton).toBeVisible();

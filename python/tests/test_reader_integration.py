@@ -39,7 +39,7 @@ def _add_media_to_user_library(auth_client, direct_db: DirectSessionManager, use
 
     Seeds a physical `library_entries` row directly, bypassing the REST filing
     endpoint's membership-reachability gate: bare factory-created media isn't
-    membership-reachable, so POST /libraries/{id}/media 404s on it. Production
+    membership-reachable, so actor-authorized filing rejects it. Production
     ingest always auto-files freshly-created media into the creator's default
     library (ensure_media_in_default_library); this mirrors that reachability
     for fixture media created via a bare Media row rather than real ingest."""

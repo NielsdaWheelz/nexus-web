@@ -29,6 +29,10 @@
   overflow: auto;
 }
 
+.body[hidden] {
+  display: none;
+}
+
 .resizeHandle {
   position: absolute;
   top: 0;

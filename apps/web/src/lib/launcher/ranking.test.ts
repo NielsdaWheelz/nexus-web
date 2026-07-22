@@ -13,7 +13,8 @@ import type { LauncherContext } from "./providers";
 const stubIcon = (() => null) as unknown as LauncherItem["icon"];
 
 function item(
-  overrides: Partial<LauncherItem> & Pick<LauncherItem, "id" | "title" | "sectionId">,
+  overrides: Partial<LauncherItem> &
+    Pick<LauncherItem, "id" | "title" | "sectionId">,
 ): LauncherItem {
   return {
     subtitle: undefined,
@@ -70,9 +71,10 @@ describe("rankLauncher — resting vs querying state", () => {
     let prev = -1;
     for (const id of groupIds) {
       const pos = sectionOrder.indexOf(id);
-      expect(pos, `section "${id}" must appear after position ${prev} in SECTIONS`).toBeGreaterThan(
-        prev,
-      );
+      expect(
+        pos,
+        `section "${id}" must appear after position ${prev} in SECTIONS`,
+      ).toBeGreaterThan(prev);
       prev = pos;
     }
     expect(groupIds).toEqual(["recent", "add", "go"]);
@@ -98,9 +100,24 @@ describe("rankLauncher — resting vs querying state", () => {
   it("resting section is truncated at its per-section cap", () => {
     // "context" section has cap: 1 — only the top-scored item should appear.
     const items = [
-      item({ id: "ctx-1", title: "Context A", sectionId: "context", rank: { scopeBoost: 100 } }),
-      item({ id: "ctx-2", title: "Context B", sectionId: "context", rank: { scopeBoost: 50 } }),
-      item({ id: "ctx-3", title: "Context C", sectionId: "context", rank: { scopeBoost: 10 } }),
+      item({
+        id: "ctx-1",
+        title: "Context A",
+        sectionId: "context",
+        rank: { scopeBoost: 100 },
+      }),
+      item({
+        id: "ctx-2",
+        title: "Context B",
+        sectionId: "context",
+        rank: { scopeBoost: 50 },
+      }),
+      item({
+        id: "ctx-3",
+        title: "Context C",
+        sectionId: "context",
+        rank: { scopeBoost: 10 },
+      }),
     ];
     const view = rankLauncher(ctx({}), items);
 
@@ -113,9 +130,24 @@ describe("rankLauncher — resting vs querying state", () => {
 
   it("rows within a resting section are ordered by score descending", () => {
     const items = [
-      item({ id: "low", title: "Older page", sectionId: "recent", rank: { frecencyBoost: 10 } }),
-      item({ id: "high", title: "Newer page", sectionId: "recent", rank: { frecencyBoost: 900 } }),
-      item({ id: "mid", title: "Middle page", sectionId: "recent", rank: { frecencyBoost: 400 } }),
+      item({
+        id: "low",
+        title: "Older page",
+        sectionId: "recent",
+        rank: { frecencyBoost: 10 },
+      }),
+      item({
+        id: "high",
+        title: "Newer page",
+        sectionId: "recent",
+        rank: { frecencyBoost: 900 },
+      }),
+      item({
+        id: "mid",
+        title: "Middle page",
+        sectionId: "recent",
+        rank: { frecencyBoost: 400 },
+      }),
     ];
     const view = rankLauncher(ctx({}), items);
 
@@ -180,7 +212,12 @@ describe("rankLauncher — lane filter matrix", () => {
   it("lane:open admits context / open-tabs / recent / recent-folios only", () => {
     const ids = restingSectionIds("open");
     expect(new Set(ids)).toEqual(
-      new Set<LauncherSectionId>(["context", "open-tabs", "recent", "recent-folios"]),
+      new Set<LauncherSectionId>([
+        "context",
+        "open-tabs",
+        "recent",
+        "recent-folios",
+      ]),
     );
     expect(ids).not.toContain("search-results");
     expect(ids).not.toContain("go");
@@ -195,10 +232,6 @@ describe("rankLauncher — lane filter matrix", () => {
     expect(restingSectionIds("browse")).toEqual(["browse-results"]);
   });
 
-  it("lane:add admits add only", () => {
-    expect(restingSectionIds("add")).toEqual(["add"]);
-  });
-
   it("lane:create admits create only", () => {
     expect(restingSectionIds("create")).toEqual(["create"]);
   });
@@ -209,7 +242,9 @@ describe("rankLauncher — lane filter matrix", () => {
 
   it("lane:go admits go + settings only", () => {
     const ids = restingSectionIds("go");
-    expect(new Set(ids)).toEqual(new Set<LauncherSectionId>(["go", "settings"]));
+    expect(new Set(ids)).toEqual(
+      new Set<LauncherSectionId>(["go", "settings"]),
+    );
     // ordered subset of SECTIONS → go before settings
     expect(ids).toEqual(["go", "settings"]);
     expect(ids).not.toContain("recent");
@@ -236,8 +271,18 @@ describe("rankLauncher — querying order", () => {
     const items = [
       item({ id: "subseq", title: "work area", sectionId: "go" }),
       item({ id: "titlesubstr", title: "labora", sectionId: "go" }),
-      item({ id: "kwsubstr", title: "kw substr", sectionId: "go", keywords: ["moral"] }),
-      item({ id: "kwexact", title: "kw exact", sectionId: "go", keywords: ["ora"] }),
+      item({
+        id: "kwsubstr",
+        title: "kw substr",
+        sectionId: "go",
+        keywords: ["moral"],
+      }),
+      item({
+        id: "kwexact",
+        title: "kw exact",
+        sectionId: "go",
+        keywords: ["ora"],
+      }),
       item({ id: "wordstart", title: "day oracle", sectionId: "go" }),
       item({ id: "prefix", title: "oracle", sectionId: "go" }),
       item({ id: "exact", title: "ora", sectionId: "go" }),
@@ -336,11 +381,17 @@ describe("rankLauncher — querying order", () => {
     const ids = view.results.map((i) => i.id);
     // The non-pinned exact match leads; all pin:last rows sink below it.
     expect(ids.indexOf("go-library")).toBeLessThan(ids.indexOf("ask-ai"));
-    expect(ids.indexOf("go-library")).toBeLessThan(ids.indexOf("create-note-quick"));
+    expect(ids.indexOf("go-library")).toBeLessThan(
+      ids.indexOf("create-note-quick"),
+    );
     expect(ids.indexOf("go-library")).toBeLessThan(ids.indexOf("see-all"));
     // pin:last rows keep their original relative order (ask, create, see-all).
-    expect(ids.indexOf("ask-ai")).toBeLessThan(ids.indexOf("create-note-quick"));
-    expect(ids.indexOf("create-note-quick")).toBeLessThan(ids.indexOf("see-all"));
+    expect(ids.indexOf("ask-ai")).toBeLessThan(
+      ids.indexOf("create-note-quick"),
+    );
+    expect(ids.indexOf("create-note-quick")).toBeLessThan(
+      ids.indexOf("see-all"),
+    );
   });
 
   it("href === currentHref adds +250 and outranks an otherwise-equal item", () => {
@@ -358,7 +409,10 @@ describe("rankLauncher — querying order", () => {
         target: { kind: "href", href: "/other", externalShell: false },
       }),
     ];
-    const view = rankLauncher(ctx({ text: "libraries", currentHref: "/libraries" }), items);
+    const view = rankLauncher(
+      ctx({ text: "libraries", currentHref: "/libraries" }),
+      items,
+    );
 
     expect(view.state).toBe("querying");
     if (view.state !== "querying") throw new Error("narrowing");
@@ -367,8 +421,18 @@ describe("rankLauncher — querying order", () => {
 
   it("frecencyBoost raises rank within a querying list", () => {
     const items = [
-      item({ id: "boosted", title: "notable note", sectionId: "recent", rank: { frecencyBoost: 2000 } }),
-      item({ id: "plain", title: "notable note", sectionId: "recent", rank: {} }),
+      item({
+        id: "boosted",
+        title: "notable note",
+        sectionId: "recent",
+        rank: { frecencyBoost: 2000 },
+      }),
+      item({
+        id: "plain",
+        title: "notable note",
+        sectionId: "recent",
+        rank: {},
+      }),
     ];
     const view = rankLauncher(ctx({ text: "notable" }), items);
 
@@ -404,7 +468,12 @@ describe("rankLauncher — querying order", () => {
   it("context-section items are excluded from querying (resting-only)", () => {
     const items = [
       // exact title match → would score 10000, but context rows never appear in querying.
-      item({ id: "ctx", title: "continue", sectionId: "context", source: "workspace" }),
+      item({
+        id: "ctx",
+        title: "continue",
+        sectionId: "context",
+        source: "workspace",
+      }),
       item({ id: "go", title: "continue", sectionId: "go" }),
     ];
     const view = rankLauncher(ctx({ text: "continue" }), items);
@@ -420,7 +489,12 @@ describe("rankLauncher — querying order", () => {
     const items = [
       item({ id: "a", title: "library", sectionId: "go" }), // exact → 10000
       item({ id: "b", title: "library resources", sectionId: "go" }), // startsWith → 8500
-      item({ id: "c", title: "resource", sectionId: "go", keywords: ["library"] }), // kw exact → 6500
+      item({
+        id: "c",
+        title: "resource",
+        sectionId: "go",
+        keywords: ["library"],
+      }), // kw exact → 6500
     ];
     const view = rankLauncher(ctx({ text: "library" }), items);
 

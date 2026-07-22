@@ -39,7 +39,7 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
               title: "Seeded Work",
               href: "/media/work-seed-1",
               contentKind: "epub",
-              date: "2021-05-04",
+              date: { kind: "Present", value: "2021-05-04" },
               roleFacts: [
                 { creditedName: "Hydrated Author", role: "author", rawRole: null },
               ],
@@ -55,6 +55,7 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
       await screen.findByRole("heading", { name: "Hydrated Author" }),
     ).toBeVisible();
     expect(screen.getByRole("link", { name: "Seeded Work" })).toBeVisible();
+    expect(screen.getByText("May 4, 2021")).toBeVisible();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

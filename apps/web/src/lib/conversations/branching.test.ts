@@ -12,8 +12,7 @@ import type {
 
 const base = {
   status: "complete",
-  error_code: null,
-  can_retry_response: false,
+  can_rerun: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 } as const;
@@ -73,9 +72,14 @@ function runData(parentMessageId: string): ChatRunResponse["data"] {
       conversation_id: "conversation-1",
       user_message_id: user.id,
       assistant_message_id: "fork-assistant",
-      model_id: "model-1",
-      reasoning: "default",
-      key_mode: "auto",
+      profile_id: "profile-1",
+      reasoning_option_id: "reasoning-default",
+      provider: null,
+      model_name: null,
+      reasoning_effort: null,
+      error_origin: null,
+      support_id: null,
+      failure: null,
       cancel_requested_at: null,
       started_at: null,
       completed_at: null,

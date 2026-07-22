@@ -5,6 +5,8 @@ import { Plus } from "lucide-react";
 import Input from "@/components/ui/Input";
 import { useContributorSearch } from "@/lib/contributors/useContributorSearch";
 import type { ContributorSearchItem } from "@/lib/contributors/types";
+import { useEscapeKey } from "@/lib/ui/useEscapeKey";
+import { useContainingModalLayer } from "@/lib/ui/useModalLayer";
 import styles from "./AuthorSearchField.module.css";
 
 /**
@@ -18,10 +20,10 @@ import styles from "./AuthorSearchField.module.css";
  * stale-response suppression). Request failures surface as a visible retryable
  * error, never as an empty list.
  *
- * The field is the single Escape owner while it is mounted: the first Escape
- * closes the listbox (and `stopPropagation`s so the Dialog/MobileSheet dismiss
- * owner does not also fire); a further Escape past the listbox-close abandons the
- * search with no selection (`onDismiss`).
+ * The focused field owns Escape: the first Escape closes its listbox; a further
+ * Escape past the listbox-close abandons that search with no selection
+ * (`onDismiss`). Focus gating is load-bearing when several rows are being
+ * edited and while a sibling confirmation prompt owns focus.
  */
 
 export const MAX_AUTHOR_NAME_CODE_POINTS = 200;
@@ -87,12 +89,14 @@ export default function AuthorSearchField({
   const listboxId = `${id}-listbox`;
   const politeId = `${id}-status`;
   const optionId = (rowId: string) => `${id}-option-${rowId}`;
+  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const [query, setQuery] = useState(initialQuery);
   const [open, setOpen] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
+  const modalToken = useContainingModalLayer();
 
   const trimmed = query.trim();
   const codePoints = [...trimmed].length;
@@ -185,6 +189,25 @@ export default function AuthorSearchField({
     onCreateNew(trimmed);
   }
 
+  useEscapeKey(
+    true,
+    () => {
+      if (composingRef.current) return;
+      if (listboxVisible) setOpen(false);
+      else onDismiss();
+    },
+    {
+      layer: "transient",
+      modalToken,
+      isEligible: () => {
+        const root = rootRef.current;
+        if (!root) return false;
+        const activeElement = document.activeElement;
+        return Boolean(activeElement && root.contains(activeElement));
+      },
+    },
+  );
+
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (composingRef.current) return;
     if (
@@ -221,27 +244,10 @@ export default function AuthorSearchField({
       if (option) activate(option);
       return;
     }
-    if (event.key === "Escape") {
-      // Single Escape owner while mounted: consume the event either way. React's
-      // synthetic `stopPropagation` stops parent React handlers and native
-      // ancestors, but the Dialog/MobileSheet install `useEscapeKey` as a raw
-      // document listener. When React is rooted at `document` (Next App Router),
-      // that owner sits on the same node and a synthetic stop can't reach it — so
-      // also `stopImmediatePropagation` on the native event to keep exactly one
-      // Escape owner (content spec §7.4).
-      event.preventDefault();
-      event.stopPropagation();
-      event.nativeEvent.stopImmediatePropagation();
-      if (listboxVisible) {
-        setOpen(false);
-      } else {
-        onDismiss();
-      }
-    }
   }
 
   return (
-    <div className={styles.root}>
+    <div ref={rootRef} className={styles.root}>
       <label className={styles.srOnly} htmlFor={`${id}-input`}>
         Search authors
       </label>

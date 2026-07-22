@@ -1,6 +1,13 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import MediaAuthorsEditor, { type MediaAuthorsEditorProps } from "./MediaAuthorsEditor";
+import { useRef, useState, type ComponentProps } from "react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import MediaAuthorsEditor from "./MediaAuthorsEditor";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { assumeContributorHandle } from "@/lib/contributors/handle";
@@ -76,6 +83,24 @@ const BASE_AUTHORS: MediaAuthorCredit[] = [
   author("brian-attebery", "Brian Attebery"),
 ];
 
+let fakeHistoryState: unknown = null;
+
+beforeEach(() => {
+  fakeHistoryState = null;
+  vi.spyOn(history, "pushState").mockImplementation((state) => {
+    fakeHistoryState = state;
+  });
+  vi.spyOn(history, "replaceState").mockImplementation((state) => {
+    fakeHistoryState = state;
+  });
+  vi.spyOn(history, "back").mockImplementation(() => {
+    fakeHistoryState = null;
+  });
+  vi.spyOn(history, "state", "get").mockImplementation(
+    () => fakeHistoryState,
+  );
+});
+
 function searchItem(handle: string, name: string): ContributorSearchItem {
   return {
     handle: assumeContributorHandle(handle),
@@ -88,14 +113,16 @@ function searchItem(handle: string, name: string): ContributorSearchItem {
 }
 
 function renderEditor(
-  overrides: Partial<MediaAuthorsEditorProps> = {},
+  overrides: Partial<ComponentProps<typeof MediaAuthorsEditor>> = {},
   env: Parameters<typeof withRenderEnvironment>[1] = {},
 ) {
-  const props: MediaAuthorsEditorProps = {
+  const props: ComponentProps<typeof MediaAuthorsEditor> = {
     open: true,
     mediaId: "media-1",
     authors: BASE_AUTHORS,
     authorMode: "automatic",
+    returnFocusTo: () => null,
+    returnFocusFallback: () => null,
     onClose: vi.fn(),
     onSaved: vi.fn(),
     ...overrides,
@@ -132,7 +159,8 @@ function setMobileViewport() {
   );
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => Promise.resolve());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -147,6 +175,37 @@ describe("MediaAuthorsEditor", () => {
     expect(inputs).toHaveLength(2);
     expect(inputs[0]).toHaveValue("Ursula K. Le Guin");
     expect(screen.getByText("Brian Attebery")).toBeInTheDocument();
+  });
+
+  it("returns focus to the explicit Options trigger when it closes", async () => {
+    installFetch();
+
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      const triggerRef = useRef<HTMLButtonElement>(null);
+      return (
+        <FeedbackProvider>
+          <button ref={triggerRef} type="button">
+            Options
+          </button>
+          <MediaAuthorsEditor
+            open={open}
+            mediaId="media-1"
+            authors={BASE_AUTHORS}
+            authorMode="automatic"
+            returnFocusTo={() => triggerRef.current}
+            returnFocusFallback={() => null}
+            onClose={() => setOpen(false)}
+            onSaved={vi.fn()}
+          />
+        </FeedbackProvider>
+      );
+    }
+
+    render(withRenderEnvironment(<Harness />));
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Edit authors" })).toBeVisible());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Options" })).toHaveFocus());
   });
 
   it("keeps Save disabled when unchanged and performs no PUT on close (AC 16)", () => {
@@ -318,8 +377,12 @@ describe("MediaAuthorsEditor", () => {
   it("gives the open combobox sole Escape ownership: first Escape closes only the listbox", async () => {
     installFetch({ searchItems: [searchItem("octavia-butler", "Octavia E. Butler")] });
     const { props } = renderEditor();
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("Credited as")[0]!).toHaveFocus(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add author" }));
     const combobox = screen.getByRole("combobox");
+    expect(combobox).toHaveFocus();
     fireEvent.change(combobox, { target: { value: "oct" } });
     await screen.findByRole("option", { name: /Octavia/ });
 
@@ -443,10 +506,12 @@ describe("MediaAuthorsEditor", () => {
     installFetch();
     const { props } = renderEditor({}, { initialViewport: "mobile" });
     fireEvent.change(screen.getAllByLabelText("Credited as")[0]!, { target: { value: "Edited" } });
+    fakeHistoryState = null;
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(screen.getByRole("alertdialog", { name: "Discard changes?" })).toBeInTheDocument();
     expect(props.onClose).not.toHaveBeenCalled();
     // Second immediate Back: still blocked (marker re-armed), no navigation.
+    fakeHistoryState = null;
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(props.onClose).not.toHaveBeenCalled();
   });
