@@ -45,35 +45,6 @@ check_tool() {
     fi
 }
 
-is_true() {
-    case "$1" in
-        1|true|TRUE|True|yes|YES|Yes) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-env_file_value() {
-    awk -v wanted="$1" '
-        /^[[:space:]]*(#|$)/ { next }
-        index($0, "=") == 0 { next }
-        {
-            key = substr($0, 1, index($0, "=") - 1)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
-            if (key == wanted) {
-                value = substr($0, index($0, "=") + 1)
-                found = 1
-            }
-        }
-        END {
-            if (found) {
-                print value
-                exit 0
-            }
-            exit 1
-        }
-    ' "$2"
-}
-
 echo "Checking required tools..."
 check_tool uv
 check_tool git
@@ -203,24 +174,6 @@ bun install --frozen-lockfile
 echo "Node ingest worker dependencies installed"
 echo ""
 
-echo "Preparing key encryption key..."
-EXISTING_NEXUS_KEY_ENCRYPTION_KEY=""
-if ! is_true "${NEXUS_RESET_KEY_ENCRYPTION_KEY:-false}"; then
-    EXISTING_NEXUS_KEY_ENCRYPTION_KEY="${NEXUS_KEY_ENCRYPTION_KEY:-}"
-    if [ -z "$EXISTING_NEXUS_KEY_ENCRYPTION_KEY" ] && [ -f "$PROJECT_ROOT/.env" ]; then
-        EXISTING_NEXUS_KEY_ENCRYPTION_KEY=$(env_file_value NEXUS_KEY_ENCRYPTION_KEY "$PROJECT_ROOT/.env" 2>/dev/null || true)
-    fi
-fi
-
-if [ -n "$EXISTING_NEXUS_KEY_ENCRYPTION_KEY" ]; then
-    NEXUS_KEY_ENCRYPTION_KEY="$EXISTING_NEXUS_KEY_ENCRYPTION_KEY"
-    echo "Preserved existing key encryption key"
-else
-    NEXUS_KEY_ENCRYPTION_KEY=$(python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())")
-    echo "Key encryption key generated"
-fi
-echo ""
-
 # Database URLs using standalone local Postgres
 DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/postgres"
 DATABASE_URL_TEST="postgresql+psycopg://postgres:postgres@localhost:${POSTGRES_PORT}/nexus_test"
@@ -299,8 +252,6 @@ R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
 R2_BUCKET=${R2_BUCKET}
 R2_REGION=${R2_REGION}
 
-# Key encryption for BYOK API keys (XChaCha20-Poly1305)
-NEXUS_KEY_ENCRYPTION_KEY=${NEXUS_KEY_ENCRYPTION_KEY}
 EOF
 echo "Created .env file"
 echo ""

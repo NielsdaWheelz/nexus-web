@@ -2688,6 +2688,12 @@ def test_byok_and_key_mode_absent_from_live_surface():
     assert not hits, f"BYOK/key-mode/key-encryption surface in live code:\n{_fmt(hits)}"
 
 
+def test_agency_setup_does_not_regenerate_removed_byok_encryption_key():
+    setup = (_REPO_ROOT / "scripts" / "agency_setup.sh").read_text(encoding="utf-8")
+    assert "NEXUS_KEY_ENCRYPTION_KEY" not in setup
+    assert "NEXUS_RESET_KEY_ENCRYPTION_KEY" not in setup
+
+
 def test_provider_enable_flags_absent_from_live_surface():
     # §4/§14: missing platform config is a startup error, never a product-portfolio
     # toggle — there is no per-provider enable flag.
