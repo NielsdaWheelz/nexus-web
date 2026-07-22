@@ -1,7 +1,13 @@
 "use client";
 
 import { useId, type FocusEvent } from "react";
-import { ChevronDown, ExternalLink, LocateFixed, X } from "lucide-react";
+import {
+  ChevronDown,
+  ExternalLink,
+  LocateFixed,
+  MessageSquare,
+  X,
+} from "lucide-react";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
@@ -16,6 +22,7 @@ import type {
   ReaderEvidenceAssociation,
   ReaderEvidenceHighlight,
   ReaderEvidenceItem,
+  ReaderEvidenceLink,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
@@ -31,7 +38,7 @@ export interface EvidenceHighlightActions {
   isReflowable: boolean;
   onFocusHighlight: (highlightId: string) => void;
   onQuoteToChat: (highlightId: string) => void;
-  onCite: (target: HighlightActionTarget) => void;
+  onLink: (target: HighlightActionTarget) => void;
   onColorChange: (highlightId: string, color: HighlightColor) => Promise<void>;
   onDelete: (highlightId: string) => Promise<void>;
   onStartEditBounds: () => void;
@@ -50,6 +57,32 @@ export interface EvidenceHighlightActions {
     shouldApply: () => boolean,
   ) => Promise<void>;
   onOpenNoteLink: (href: string, options: { newPane: boolean }) => void;
+}
+
+/**
+ * Controls for the stable user-Link facts that survive from Universal Link
+ * Authoring, re-expressed on main's Evidence model: a neutral (context) Link
+ * carries a Remove control (→ `deleteLink`) and an add/replace/remove note
+ * affordance (→ `putLinkNote`/`deleteLinkNote`). The Link's edge id is the
+ * mutation key, mirroring the Synapse-dismiss branch on evidence items.
+ */
+export interface EvidenceLinkActions {
+  editingLinkId: string | null;
+  onRemoveLink: (item: ReaderEvidenceLink) => void;
+  onEditLink: (linkId: string | null) => void;
+  onSaveLinkNote: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  onDeleteLinkNote: (linkId: string) => Promise<void>;
+}
+
+/** A user-authored, neutral (context) Link the reader may remove or annotate. */
+function isRemovableUserLink(
+  item: ReaderEvidenceItem,
+): item is ReaderEvidenceLink {
+  return item.kind === "Link" && item.origin === "user";
 }
 
 type ActivateEvidenceObject = (
@@ -76,6 +109,7 @@ export function EvidenceItemRow({
   onActivateSourceTarget,
   onHoverItem,
   onDismissSynapse,
+  linkActions,
 }: {
   item: ReaderEvidenceItem;
   group: ReaderEvidencePassageGroup | null;
@@ -90,7 +124,12 @@ export function EvidenceItemRow({
   onActivateSourceTarget: ActivateEvidenceSourceTarget;
   onHoverItem: HoverEvidenceItem;
   onDismissSynapse: (edgeId: string) => void;
+  linkActions: EvidenceLinkActions;
 }) {
+  const removableLink = isRemovableUserLink(item) ? item : null;
+  const editingLinkNote =
+    removableLink !== null &&
+    linkActions.editingLinkId === removableLink.edge_id;
   const relationshipCount =
     item.associations.length +
     (item.kind === "SourceReference" ? item.targets.length : 0);
@@ -161,8 +200,8 @@ export function EvidenceItemRow({
                 highlightActions.onColorChange(highlight.id, color)
               }
               onAddNote={() => onEditHighlight(highlight.id)}
-              onCite={() =>
-                highlightActions.onCite({ kind: "existing", highlight })
+              onLink={() =>
+                highlightActions.onLink({ kind: "existing", highlight })
               }
               onDelete={() => highlightActions.onDelete(highlight.id)}
               onQuoteToNewChat={() =>
@@ -200,8 +239,65 @@ export function EvidenceItemRow({
               <X size={14} aria-hidden="true" />
             </button>
           ) : null}
+          {removableLink ? (
+            <>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-pressed={editingLinkNote}
+                aria-label={`Note on link ${removableLink.label}`}
+                onClick={() =>
+                  linkActions.onEditLink(
+                    editingLinkNote ? null : removableLink.edge_id,
+                  )
+                }
+              >
+                <MessageSquare size={14} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={`Remove link ${removableLink.label}`}
+                onClick={() => linkActions.onRemoveLink(removableLink)}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
+      {editingLinkNote && removableLink ? (
+        <div className={styles.noteEditor}>
+          <HighlightNoteEditor
+            highlightId={removableLink.edge_id}
+            note={null}
+            editable
+            onSave={async (linkId, noteBlockId, createBlockId, bodyPmJson) => {
+              const saved = await linkActions.onSaveLinkNote(
+                linkId,
+                noteBlockId ?? createBlockId,
+                bodyPmJson,
+              );
+              return {
+                note_block_id: saved.note_block_id,
+                body_pm_json: bodyPmJson,
+                body_text: "",
+              };
+            }}
+            onDelete={async (linkId) => {
+              await linkActions.onDeleteLinkNote(linkId);
+            }}
+            onOpenLink={highlightActions.onOpenNoteLink}
+          />
+          <button
+            type="button"
+            className={styles.doneButton}
+            onClick={() => linkActions.onEditLink(null)}
+          >
+            Done editing note
+          </button>
+        </div>
+      ) : null}
       {editing && item.kind === "Highlight" ? (
         <div className={styles.noteEditor}>
           <HighlightNoteEditor

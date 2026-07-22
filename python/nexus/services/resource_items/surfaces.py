@@ -16,6 +16,7 @@ from nexus.schemas.resource_items import (
     ResourceSurfaceMutationOut,
     ResourceSurfaceMutationRequest,
     ResourceSurfaceOut,
+    ResourceUserRelationPolicyOut,
 )
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph.refs import (
@@ -178,7 +179,11 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
         activation=activation,
         missing=resolved.missing,
         capabilities=ResourceItemCapabilitiesOut(
-            linkable=capability.linkable,
+            user_relation=ResourceUserRelationPolicyOut(
+                user_link_source=capability.user_relation.user_link_source,
+                user_link_target=capability.user_relation.user_link_target,
+                note_reference_target=capability.user_relation.note_reference_target,
+            ),
             attachable=capability.attachable,
             chat_subject=capability.chat_subject,
             readable=capability.readable,

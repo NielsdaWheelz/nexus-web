@@ -75,18 +75,13 @@ def write_current_transcript(
         {"lock_key": f"transcript-current:{media_id}"},
     )
 
-    db.execute(
-        text(
-            """
-            DELETE FROM highlights h
-            USING highlight_fragment_anchors hfa
-            JOIN fragments f ON f.id = hfa.fragment_id
-            WHERE h.id = hfa.highlight_id
-              AND f.media_id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    )
+    # Highlights are authored user data and are NOT deleted here: refresh
+    # publishes new fragments, then authored selectors (Highlights, passage
+    # anchors) resolve against the new current content (spec "Highlight
+    # Durability", Invariant 9). Fragment deletion below only invalidates the
+    # highlight_fragment_anchors locator cache (fragment_id FK is non-cascading,
+    # non-owning); the Highlight root survives and is resolved via LEFT JOIN
+    # + quote re-resolution.
     db.execute(
         text("DELETE FROM podcast_transcript_segments WHERE media_id = :media_id"),
         {"media_id": media_id},

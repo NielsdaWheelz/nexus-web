@@ -23,6 +23,22 @@ PODCAST_EPISODE_SORT_OPTIONS = {"newest", "oldest", "duration_asc", "duration_de
 PODCAST_EPISODE_SHOW_NOTES_LIST_PREVIEW_MAX_CHARS = 300
 
 
+def episode_publication_rows_sql() -> str:
+    """Policy-neutral exact episode-publication facts.
+
+    Columns: ``media_id``, ``podcast_id``, and nullable exact
+    ``published_at``. Visibility and subscription policy belong to the
+    composing query.
+    """
+    return """
+        SELECT
+            pe.media_id,
+            pe.podcast_id,
+            pe.published_at
+        FROM podcast_episodes pe
+    """
+
+
 def list_podcast_episodes_for_viewer(
     db: Session,
     viewer_id: UUID,

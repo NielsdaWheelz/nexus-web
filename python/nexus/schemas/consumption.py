@@ -12,7 +12,6 @@ and alternate casing are rejected.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -30,8 +29,6 @@ _OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra=
 ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
 ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
-RECENT_CONSUMPTION_MAX_ITEMS = 50
-
 _NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
 
 
@@ -130,28 +127,6 @@ class PlayerDescriptor(BaseModel):
     title: str
     subtitle: Presence[str]
     activation: FooterAudioActivation
-
-
-class RecentConsumptionItemOut(BaseModel):
-    """One visible item with truthful reader/listener engagement recency."""
-
-    model_config = _OUT_CONFIG
-
-    media_id: UUID
-    kind: ConsumptionMediaKind
-    title: str
-    href: str
-    consumption: ConsumptionOut
-    last_engaged_at: datetime
-    player_descriptor: Presence[PlayerDescriptor]
-
-
-class RecentConsumptionSnapshot(BaseModel):
-    """Bounded daily-return surface; independent from the ordered Lectern."""
-
-    model_config = _OUT_CONFIG
-
-    items: list[RecentConsumptionItemOut] = Field(max_length=RECENT_CONSUMPTION_MAX_ITEMS)
 
 
 # ---------------------------------------------------------------------------

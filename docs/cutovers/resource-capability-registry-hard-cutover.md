@@ -5,6 +5,19 @@ Author: Codex
 Type: hard cutover
 Date: 2026-06-17
 
+**Narrowed by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):** this
+document's one-capability-authority architecture remains authoritative, but
+the scalar `linkable: bool` field on `ResourceItemCapability` (and the
+`resource_can_link`/manifest `"linkable"` shape above) cannot distinguish a
+direct user-Link endpoint from one that must first materialize a
+`passage_anchor`. It is replaced — with no alias kept — by
+`ResourceUserRelationPolicy(user_link_source: bool, user_link_target:
+"none" | "direct" | "materialize_passage")` in
+`services/resource_items/capabilities.py`, with `note_reference_target`
+derived as `user_link_target == "direct"`. Every other named query/policy
+field on this page (route, attach, chat-subject, read, inspect, citation,
+search, expansion, adjacency) is unaffected.
+
 ## North Star
 
 Nexus has one per-resource-scheme capability authority.

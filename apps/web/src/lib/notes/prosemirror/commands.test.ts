@@ -79,7 +79,7 @@ describe("notes ProseMirror commands", () => {
     ]);
   });
 
-  it("turns linkable resource schemes into object-ref chips", () => {
+  it("turns note-reference-target resource schemes into object-ref chips", () => {
     const objectId = "33333333-3333-4333-8333-333333333333";
     const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["in "]));
     const state = EditorState.create({
@@ -103,7 +103,7 @@ describe("notes ProseMirror commands", () => {
     ]);
   });
 
-  it("leaves non-linkable resource schemes as text", () => {
+  it("leaves non-note-reference-target resource schemes as text", () => {
     const objectId = "44444444-4444-4444-8444-444444444444";
     const doc = outlineSchema.nodeFromJSON(outlineJsonFromTexts(["see "]));
     const state = EditorState.create({

@@ -174,6 +174,7 @@ describe("Reader Document Map contract", () => {
           start_offset: startOffset,
           end_offset: startOffset + 2,
         },
+        passage_anchor_id: null,
       },
       order_key: `document:${startOffset}`,
     });
@@ -304,6 +305,7 @@ describe("Reader Document Map contract", () => {
                   start_offset: 0,
                   end_offset: 1,
                 },
+                passage_anchor_id: null,
               },
               order_key: "document:1",
             },

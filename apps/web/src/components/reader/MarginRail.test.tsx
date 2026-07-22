@@ -44,6 +44,18 @@ describe("MarginItemBody", () => {
     expect(onActivateItem).toHaveBeenCalledWith("source-reference:ref-1");
   });
 
+  it("renders a link with a small-caps kicker and the target label", () => {
+    render(
+      <MarginItemBody
+        item={item("link", { label: "The Other Work" })}
+        onActivateItem={vi.fn()}
+        onDismissSynapse={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Link")).toBeInTheDocument();
+    expect(screen.getByText("The Other Work")).toBeInTheDocument();
+  });
+
   it("renders Synapse rationale as machine text with an independent dismiss action", async () => {
     const onActivateItem = vi.fn();
     const onDismiss = vi.fn();

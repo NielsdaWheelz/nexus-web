@@ -6,7 +6,7 @@ import {
 import { HIGHLIGHT_COLORS } from "@/lib/highlights/segmenter";
 import { decodeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import { decodeMediaNavigation } from "@/lib/media/readerNavigation";
-import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/edges";
+import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import {
@@ -227,7 +227,7 @@ function decodeResolution(
 }
 
 function decodeAnchor(raw: unknown, name: string): ReaderEvidenceAnchor {
-  const value = expectExactRecord(raw, ["locator"], name);
+  const value = expectExactRecord(raw, ["locator", "passage_anchor_id"], name);
   if (
     !isRetrievalLocator(value.locator) ||
     !isMediaRetrievalLocator(value.locator)
@@ -236,6 +236,10 @@ function decodeAnchor(raw: unknown, name: string): ReaderEvidenceAnchor {
   }
   return {
     locator: value.locator,
+    passage_anchor_id: expectNullableString(
+      value.passage_anchor_id,
+      `${name}.passage_anchor_id`,
+    ),
   };
 }
 

@@ -19,10 +19,14 @@ export default function ConnectionRail({
   related?: ConnectionEndpointOut[];
   relatedStatus?: "idle" | "loading" | "error" | "ready";
 }) {
+  const connectedRefs = new Set(peers.map((peer) => peer.ref));
+  const distinctRelated = (related ?? []).filter(
+    (peer) => !connectedRefs.has(peer.ref),
+  );
   return (
     <div className={styles.rail}>
       <PeerGroup label="Connected" peers={peers} />
-      <RelatedGroup peers={related ?? []} status={relatedStatus} />
+      <RelatedGroup peers={distinctRelated} status={relatedStatus} />
     </div>
   );
 }

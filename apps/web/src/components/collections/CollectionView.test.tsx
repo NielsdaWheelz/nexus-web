@@ -7,13 +7,8 @@ import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOv
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { useMediaRelated } from "@/lib/collections/useMediaRelated";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import CollectionView from "./CollectionView";
-
-vi.mock("@/lib/collections/useMediaRelated", () => ({
-  useMediaRelated: vi.fn(() => ({ data: null, loading: false, error: null })),
-}));
 
 // Icon-only leads (no `remoteUrl`) so the gallery card and row thumb render an
 // inline Lucide icon tile instead of next/image — keeps these browser tests
@@ -61,8 +56,6 @@ const relatedPeer: ConnectionEndpointOut = {
   missing: false,
 };
 
-const useMediaRelatedMock = vi.mocked(useMediaRelated);
-
 const originalStartViewTransition = (
   document as Document & { startViewTransition?: unknown }
 ).startViewTransition;
@@ -101,7 +94,6 @@ function renderView(props: Partial<Parameters<typeof CollectionView>[0]> = {}) {
 describe("CollectionView", () => {
   beforeEach(() => {
     installViewTransitions();
-    useMediaRelatedMock.mockReturnValue({ data: null, loading: false, error: null });
   });
 
   afterEach(() => {
@@ -636,6 +628,7 @@ describe("CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
+          relatedMediaId: null,
           connections: {
             total: 1,
             dominantKind: "context",
@@ -654,36 +647,6 @@ describe("CollectionView", () => {
       "href",
       "/media/peer-1",
     );
-  });
-
-  it("exposes related peers even when a media row has no provenance connections", async () => {
-    useMediaRelatedMock.mockReturnValue({
-      data: [relatedPeer],
-      loading: false,
-      error: null,
-    });
-    renderView({ rows: [ROWS[0]] });
-
-    await userEvent.click(screen.getByRole("button", { name: "Related" }));
-
-    expect(useMediaRelatedMock).toHaveBeenCalledWith("a");
-    expect(screen.getByRole("link", { name: /Related document/ })).toHaveAttribute(
-      "href",
-      "/media/peer-1",
-    );
-  });
-
-  it("uses relatedMediaId for media-backed rows with entry-scoped row ids", async () => {
-    useMediaRelatedMock.mockReturnValue({
-      data: [relatedPeer],
-      loading: false,
-      error: null,
-    });
-    renderView({ rows: [{ ...ROWS[0], id: "entry-a", relatedMediaId: "a" }] });
-
-    await userEvent.click(screen.getByRole("button", { name: "Related" }));
-
-    expect(useMediaRelatedMock).toHaveBeenCalledWith("a");
   });
 
   it("exposes scoped row transition names without media-reader names at rest", async () => {

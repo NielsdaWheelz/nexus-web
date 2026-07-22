@@ -206,11 +206,11 @@ def credited_visible_contributor_ids_cte_sql() -> str:
     """Contributors with at least one visible credited target. Binds :viewer_id.
 
     The narrow picker/search predicate (spec 2.8, D-8): used by ``GET
-    /contributors`` search, the search-package contributors retriever, and
-    ``object_refs`` contributor search, so retained key owners or graph-referenced
-    identities with zero visible credits never surface as eternal "0 works"
-    choices. Detail, works, hydration, and mutation handle-binding keep the broad
-    :func:`visible_contributor_ids_cte_sql` below.
+    /contributors`` search and the search-package contributors retriever, so
+    retained key owners or graph-referenced identities with zero visible credits
+    never surface as eternal "0 works" choices. Detail, works, hydration, and
+    mutation handle-binding keep the broad :func:`visible_contributor_ids_cte_sql`
+    below.
     """
     return f"""
         SELECT DISTINCT vcc.contributor_id
@@ -372,6 +372,26 @@ def highlight_library_intersection_exists(
         )
         .exists()
     )
+
+
+def highlight_shared_library_exists_sql(highlight_alias: str = "h") -> str:
+    """Text-SQL twin of :func:`highlight_library_intersection_exists`. Binds :viewer_id.
+
+    EXISTS predicate: viewer and highlight author share membership in at least
+    one library containing the highlight's anchor media. Correlates with the
+    outer query's ``{highlight_alias}.anchor_media_id`` / ``{highlight_alias}.user_id``.
+    Co-located with the ORM expression above so the two forms of the one
+    shared-library highlight-visibility rule cannot drift.
+    """
+    return f"""EXISTS (
+        SELECT 1
+        FROM library_entries le
+        JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
+        JOIN memberships author_m ON author_m.library_id = le.library_id
+        WHERE le.media_id = {highlight_alias}.anchor_media_id
+          AND viewer_m.user_id = :viewer_id
+          AND author_m.user_id = {highlight_alias}.user_id
+    )"""
 
 
 def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:

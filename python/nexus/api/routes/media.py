@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.media import MediaLibrariesRequest
@@ -25,11 +25,11 @@ from nexus.services import (
 from nexus.services import (
     library_entries,
     media_intelligence,
-    media_related,
     media_source_ingest,
 )
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
+from nexus.services.resonance import service as resonance_service
 from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
@@ -158,7 +158,7 @@ def get_media_fragments(
 def get_related_media(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
     limit: int = Query(default=8, ge=_RELATED_LIMIT_MIN, le=_RELATED_LIMIT_MAX),
 ) -> dict:
     """Deterministic related peers for a media: embedding NN + shared-author.
@@ -168,8 +168,7 @@ def get_related_media(
     label + href; deleted/forbidden peers come back ``missing``. Returns 404 if
     the media does not exist or the viewer cannot read it (masks existence).
     """
-    media_service.get_media_for_viewer(db, viewer.user_id, media_id)
-    peers = media_related.related_media(
+    peers = resonance_service.related_media(
         db, viewer_id=viewer.user_id, media_id=media_id, limit=limit
     )
     return ok(RelatedMediaOut(peers=[_endpoint_out(peer) for peer in peers]))

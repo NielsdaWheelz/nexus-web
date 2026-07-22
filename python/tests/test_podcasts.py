@@ -9219,9 +9219,13 @@ class TestPodcastTranscriptStateVersioningAndAudit:
         assert segment_count == 2
         assert chunk_count == 2
 
-    def test_retranscription_replaces_current_transcript_and_removes_old_fragment_highlight(
+    def test_retranscription_replaces_current_transcript_and_preserves_highlight(
         self, auth_client, monkeypatch, direct_db
     ):
+        """Highlight Durability (invariant 9): retranscription replaces the
+        current transcript's segments/fragments wholesale but never deletes
+        highlights — the highlight and its anchor row (stale locator cache)
+        survive and read back as visibly unresolved."""
         seeded = self._seed_metadata_only_episode(
             auth_client=auth_client,
             monkeypatch=monkeypatch,
@@ -9356,13 +9360,115 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             ).scalar()
         assert transcript_row == (2, 2, "beta transcript line|beta follow up")
         assert original_fragment_row is None
-        assert highlight_anchor_count == 0
+        # The anchor row survives as a stale locator cache pointing at the
+        # replaced fragment; the highlight root is untouched.
+        assert highlight_anchor_count == 1
 
         highlight_detail = auth_client.get(
             f"/highlights/{highlight_id}",
             headers=auth_headers(user_id),
         )
-        assert highlight_detail.status_code == 404
+        assert highlight_detail.status_code == 200
+
+        # The authored quote does not exist in the beta transcript, so the
+        # media-wide read returns the surviving highlight as unresolved.
+        media_highlights = auth_client.get(
+            f"/media/{media_id}/highlights",
+            headers=auth_headers(user_id),
+        )
+        assert media_highlights.status_code == 200, media_highlights.text
+        rows = media_highlights.json()["data"]["highlights"]
+        assert [row["id"] for row in rows] == [str(highlight_id)]
+        assert rows[0]["anchor"]["fragment_id"] is None
+
+    def test_transcription_reset_preserves_highlights(self, auth_client, monkeypatch, direct_db):
+        """Regression for the dropped trg_highlight_fragment_anchor_delete_core
+        trigger: the source-attempt transcript reset deletes fragments with no
+        Highlight-touching code, and previously destroyed highlights purely via
+        FK cascade + trigger. Post-0184 the highlight and its anchor row must
+        survive the reset."""
+        seeded = self._seed_metadata_only_episode(
+            auth_client=auth_client,
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+        )
+        user_id = seeded["user_id"]
+        media_id = seeded["media_id"]
+
+        first_request = auth_client.post(
+            f"/media/{media_id}/transcript/request",
+            json={"reason": "episode_open"},
+            headers=auth_headers(user_id),
+        )
+        assert first_request.status_code == 202
+
+        first_run = self._run_transcription_now(
+            monkeypatch=monkeypatch,
+            direct_db=direct_db,
+            media_id=media_id,
+            user_id=user_id,
+            segments=[
+                {
+                    "t_start_ms": 0,
+                    "t_end_ms": 1200,
+                    "text": "alpha transcript line",
+                    "speaker_label": "SpeakerA",
+                },
+            ],
+        )
+        assert first_run.status == "completed"
+
+        fragments_response = auth_client.get(
+            f"/media/{media_id}/fragments",
+            headers=auth_headers(user_id),
+        )
+        assert fragments_response.status_code == 200
+        fragment_id = UUID(fragments_response.json()["data"][0]["id"])
+
+        highlight_response = auth_client.post(
+            f"/fragments/{fragment_id}/highlights",
+            json={"start_offset": 0, "end_offset": 5, "color": "yellow"},
+            headers=auth_headers(user_id),
+        )
+        assert highlight_response.status_code == 201, highlight_response.text
+        highlight_id = UUID(highlight_response.json()["data"]["id"])
+
+        from nexus.services.podcasts.transcription import (
+            _reset_media_transcript_state_for_source_attempt,
+        )
+
+        with direct_db.session() as session:
+            _reset_media_transcript_state_for_source_attempt(
+                session,
+                media_id=media_id,
+                request_reason="operator_requeue",
+                now=datetime.now(UTC),
+            )
+            session.commit()
+
+        with direct_db.session() as session:
+            fragment_count = session.execute(
+                text("SELECT COUNT(*) FROM fragments WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar()
+            anchor_count = session.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM highlight_fragment_anchors
+                    WHERE highlight_id = :highlight_id
+                    """
+                ),
+                {"highlight_id": highlight_id},
+            ).scalar()
+        assert fragment_count == 0
+        # The highlight and its anchor row (stale locator cache) survive.
+        assert anchor_count == 1
+        highlight_detail = auth_client.get(
+            f"/highlights/{highlight_id}",
+            headers=auth_headers(user_id),
+        )
+        assert highlight_detail.status_code == 200
 
     def test_highlight_offset_updates_fragment_anchor_offsets(
         self, auth_client, monkeypatch, direct_db

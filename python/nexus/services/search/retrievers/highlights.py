@@ -8,7 +8,10 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.auth.permissions import (
+    highlight_shared_library_exists_sql,
+    visible_media_ids_cte_sql,
+)
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.search.projection import _direct_fragment_locator, _truncate_snippet
 from nexus.services.search.results import (
@@ -126,15 +129,7 @@ def _search_highlights(
                         )
                     )
               )
-              AND EXISTS (
-                    SELECT 1
-                    FROM library_entries le
-                    JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
-                    JOIN memberships author_m ON author_m.library_id = le.library_id
-                    WHERE le.media_id = h.anchor_media_id
-                      AND viewer_m.user_id = :viewer_id
-                      AND author_m.user_id = h.user_id
-              )
+              AND {highlight_shared_library_exists_sql("h")}
             {scope_filter}
             ORDER BY score DESC, h.id ASC
             LIMIT :limit

@@ -931,17 +931,6 @@
   overflow: hidden;
 }
 
-/* Cite picker overlay — a light scrim centering the scoped passage picker. */
-.citePickerOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--overlay-scrim);
-}
-
 /* Non-interactive status row in the resource menu (e.g. the PDF source-colors
    note): matches .menuItem rhythm but is genuinely static. */
 .readerMenuStatusRow {

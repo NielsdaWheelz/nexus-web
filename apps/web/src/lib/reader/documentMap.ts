@@ -5,7 +5,7 @@ import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
-import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/edges";
+import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import { decodeReaderDocumentMapContract } from "./documentMapContract";
 
@@ -32,6 +32,9 @@ export type ReaderEvidenceConfidence = "exact" | "strong" | "probable";
 
 export interface ReaderEvidenceAnchor {
   locator: MediaRetrievalLocator;
+  // Present when the resolved locus is a durable passage anchor, so a mutation
+  // can key off the anchor rather than the edge. Null for every other locus.
+  passage_anchor_id: string | null;
 }
 
 export type ReaderEvidenceResolution =

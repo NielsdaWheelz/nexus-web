@@ -10,7 +10,7 @@ import { keymap } from "prosemirror-keymap";
 import { createRandomId } from "@/lib/createRandomId";
 import { outlineSchema } from "@/lib/notes/prosemirror/schema";
 import { isResourceScheme } from "@/lib/resourceGraph/resourceRef";
-import { resourceSchemeIsLinkable } from "@/lib/resources/resourceCapabilities.generated";
+import { resourceCanBeNoteReferenceTarget } from "@/lib/resources/resourceCapabilities.generated";
 
 interface DraftBlock {
   id: string;
@@ -627,7 +627,7 @@ export function createObjectRefSyntaxPlugin() {
           const objectType = match[1]!;
           if (
             !isResourceScheme(objectType) ||
-            !resourceSchemeIsLinkable(objectType)
+            !resourceCanBeNoteReferenceTarget(objectType)
           ) {
             continue;
           }

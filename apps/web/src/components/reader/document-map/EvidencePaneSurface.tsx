@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import type {
   ReaderEvidence,
   ReaderEvidenceItem,
+  ReaderEvidenceLink,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceSourceTarget,
@@ -31,6 +32,7 @@ import {
   AssociationDisclosure,
   EvidenceItemRow,
   type EvidenceHighlightActions,
+  type EvidenceLinkActions,
 } from "./EvidenceItemRow";
 
 type EvidenceScope = "passages" | "document";
@@ -56,6 +58,19 @@ export interface EvidencePaneSurfaceProps {
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
   onDismissSynapse: (edgeId: string) => void;
+  /** Remove a stable user Link fact; the caller deletes it via `links.ts`
+   * `deleteLink(item.edge_id)`. */
+  onRemoveLink: (item: ReaderEvidenceLink) => void;
+  /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
+   * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
+  onSaveLinkNote: (
+    linkId: string,
+    noteBlockId: string,
+    bodyPmJson: Record<string, unknown>,
+  ) => Promise<{ note_block_id: string }>;
+  /** Remove the Link's note; mirrors `links.ts` `deleteLinkNote(linkId)`. The Link
+   * itself is preserved. */
+  onDeleteLinkNote: (linkId: string) => Promise<void>;
 }
 
 export default function EvidencePaneSurface({
@@ -73,6 +88,9 @@ export default function EvidencePaneSurface({
   onActivateSourceTarget,
   onHoverItem,
   onDismissSynapse,
+  onRemoveLink,
+  onSaveLinkNote,
+  onDeleteLinkNote,
 }: EvidencePaneSurfaceProps) {
   const [scope, setScope] = useState<EvidenceScope>("passages");
   const [openDisclosureIds, setOpenDisclosureIds] = useState<Set<string>>(
@@ -81,6 +99,9 @@ export default function EvidencePaneSurface({
   const [editingHighlightId, setEditingHighlightId] = useState<string | null>(
     null,
   );
+  // The one open link-note editor, keyed by the Link's edge id (mirrors
+  // editingHighlightId's single-editor rule for the folded link note).
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [followPaused, setFollowPaused] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -128,6 +149,24 @@ export default function EvidencePaneSurface({
       evidence.counts.links +
       evidence.counts.synapses
     : 0;
+
+  // Drop the open link-note editor when its Link fact leaves the evidence set.
+  useEffect(() => {
+    if (!editingLinkId || !evidence) return;
+    const exists = [
+      ...evidence.passage_groups.flatMap((group) => group.items),
+      ...evidence.document_items,
+    ].some((item) => item.kind === "Link" && item.edge_id === editingLinkId);
+    if (!exists) setEditingLinkId(null);
+  }, [editingLinkId, evidence]);
+
+  const linkActions: EvidenceLinkActions = {
+    editingLinkId,
+    onRemoveLink,
+    onEditLink: setEditingLinkId,
+    onSaveLinkNote,
+    onDeleteLinkNote,
+  };
 
   useEffect(() => {
     if (!activeItemId || followPaused) return;
@@ -302,6 +341,7 @@ export default function EvidencePaneSurface({
             onActivateSourceTarget={onActivateSourceTarget}
             onHoverItem={onHoverItem}
             onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
           />
         ))}
         {unavailableGroups.length > 0 ? (
@@ -329,6 +369,7 @@ export default function EvidencePaneSurface({
                 onActivateSourceTarget={onActivateSourceTarget}
                 onHoverItem={onHoverItem}
                 onDismissSynapse={onDismissSynapse}
+                linkActions={linkActions}
               />
             ))}
           </section>
@@ -357,6 +398,7 @@ export default function EvidencePaneSurface({
             onActivateSourceTarget={onActivateSourceTarget}
             onHoverItem={onHoverItem}
             onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
           />
         ))}
       </div>
@@ -441,6 +483,7 @@ function PassageGroup({
   onActivateSourceTarget,
   onHoverItem,
   onDismissSynapse,
+  linkActions,
 }: {
   group: ReaderEvidencePassageGroup;
   items: ReaderEvidenceItem[];
@@ -456,6 +499,7 @@ function PassageGroup({
   onActivateSourceTarget: EvidencePaneSurfaceProps["onActivateSourceTarget"];
   onHoverItem: EvidencePaneSurfaceProps["onHoverItem"];
   onDismissSynapse: (edgeId: string) => void;
+  linkActions: EvidenceLinkActions;
 }) {
   const resolved = group.resolution.kind === "Resolved";
   const active = group.items.some((item) => item.id === activeItemId);
@@ -512,6 +556,7 @@ function PassageGroup({
             onActivateSourceTarget={onActivateSourceTarget}
             onHoverItem={onHoverItem}
             onDismissSynapse={onDismissSynapse}
+            linkActions={linkActions}
           />
         ))}
       </div>

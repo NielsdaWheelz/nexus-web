@@ -7,11 +7,7 @@ import {
   decodeLecternResult,
   decodeLecternSnapshot,
   decodeListeningState,
-  decodeRecentConsumptionEnvelope,
-  decodeRecentConsumptionItem,
-  decodeRecentConsumptionSnapshot,
 } from "./contract";
-import { getRecentConsumption } from "./client";
 
 const MEDIA_ID = "11111111-1111-1111-1111-111111111111";
 const ITEM_ID = "22222222-2222-2222-2222-222222222222";
@@ -43,27 +39,6 @@ function item(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     href: "/media/abc",
     consumption: { state: "InProgress", progress: { kind: "Present", value: 0.4 } },
     activation: footerAudio(),
-    ...overrides,
-  };
-}
-
-function recentItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    mediaId: MEDIA_ID,
-    kind: "podcast_episode",
-    title: "Recently heard",
-    href: `/media/${MEDIA_ID}`,
-    consumption: { state: "InProgress", progress: { kind: "Present", value: 0.4 } },
-    lastEngagedAt: "2026-07-20T12:34:56.123456Z",
-    playerDescriptor: {
-      kind: "Present",
-      value: {
-        mediaId: MEDIA_ID,
-        title: "Recently heard",
-        subtitle: { kind: "Present", value: "A show" },
-        activation: footerAudio(),
-      },
-    },
     ...overrides,
   };
 }
@@ -231,44 +206,6 @@ describe("decodeLecternSnapshot", () => {
 
   it("rejects a missing items field", () => {
     expect(() => decodeLecternSnapshot({})).toThrow();
-  });
-});
-
-describe("recent consumption decoders", () => {
-  it("decodes the exact recent item and nested player descriptor contract", () => {
-    const decoded = decodeRecentConsumptionItem(recentItem());
-    expect(decoded.mediaId).toBe(MEDIA_ID);
-    expect(decoded.kind).toBe("podcast_episode");
-    expect(decoded.lastEngagedAt).toBe("2026-07-20T12:34:56.123456Z");
-    expect(decoded.playerDescriptor.kind).toBe("Present");
-  });
-
-  it("decodes the exact data envelope", () => {
-    expect(
-      decodeRecentConsumptionEnvelope({ data: { items: [recentItem()] } }).items,
-    ).toHaveLength(1);
-  });
-
-  it("rejects extra fields, invalid kinds, and non-timestamps", () => {
-    expect(() => decodeRecentConsumptionItem(recentItem({ extra: true }))).toThrow();
-    expect(() => decodeRecentConsumptionItem(recentItem({ kind: "audio" }))).toThrow();
-    expect(() =>
-      decodeRecentConsumptionItem(recentItem({ lastEngagedAt: "last Tuesday" })),
-    ).toThrow();
-  });
-
-  it("rejects more than 50 recent rows", () => {
-    expect(() =>
-      decodeRecentConsumptionSnapshot({
-        items: Array.from({ length: 51 }, () => recentItem()),
-      }),
-    ).toThrow();
-  });
-
-  it("rejects an out-of-contract request limit before transport", async () => {
-    await expect(getRecentConsumption(51)).rejects.toThrow(
-      "Invalid recent-consumption limit",
-    );
   });
 });
 

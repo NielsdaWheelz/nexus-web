@@ -29,11 +29,28 @@ ResourceExpansionPolicy = Literal[
     "note_block_owned_evidence",
     "artifact_revisions",
 ]
+UserLinkTargetMode = Literal["none", "direct", "materialize_passage"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceUserRelationPolicy:
+    """Universal Link authoring capability (universal-link-authoring-hard-cutover.md,
+    Capability Contract). Replaces the scalar ``linkable`` boolean, which could not
+    distinguish a direct durable endpoint from raw material a search hit must
+    materialize into a ``passage_anchor`` before it can be linked (Invariant 4).
+    """
+
+    user_link_source: bool
+    user_link_target: UserLinkTargetMode
+
+    @property
+    def note_reference_target(self) -> bool:
+        return self.user_link_target == "direct"
 
 
 @dataclass(frozen=True, slots=True)
 class ResourceItemCapability:
-    linkable: bool
+    user_relation: ResourceUserRelationPolicy
     attachable: bool
     chat_subject: ResourceChatSubjectMode
     readable: ResourceReadMode
@@ -54,7 +71,7 @@ class ResourceItemCapability:
 
 RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "media": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
         readable="media",
@@ -69,7 +86,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "library": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="scope",
         readable="scope",
@@ -84,7 +101,9 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "evidence_span": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(
+            user_link_source=False, user_link_target="materialize_passage"
+        ),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -99,7 +118,9 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "content_chunk": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(
+            user_link_source=False, user_link_target="materialize_passage"
+        ),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -114,7 +135,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "highlight": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="quote",
         readable="body",
@@ -129,7 +150,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "page": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -144,7 +165,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "note_block": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -159,7 +180,9 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "fragment": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(
+            user_link_source=False, user_link_target="materialize_passage"
+        ),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -174,7 +197,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "conversation": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
         readable="body",
@@ -189,7 +212,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "message": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -204,7 +227,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "oracle_reading": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
         readable="body",
@@ -219,7 +242,9 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "oracle_passage_anchor": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(
+            user_link_source=False, user_link_target="materialize_passage"
+        ),
         attachable=False,
         chat_subject="none",
         readable="body",
@@ -234,7 +259,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "artifact": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
         readable="body",
@@ -249,7 +274,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "artifact_revision": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
         readable="body",
@@ -264,7 +289,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "external_snapshot": ResourceItemCapability(
-        linkable=False,
+        user_relation=ResourceUserRelationPolicy(user_link_source=False, user_link_target="none"),
         attachable=False,
         chat_subject="none",
         readable="none",
@@ -279,7 +304,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=False,
     ),
     "contributor": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
         readable="none",
@@ -294,7 +319,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "podcast": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
         readable="none",
@@ -309,7 +334,9 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "reader_apparatus_item": ResourceItemCapability(
-        linkable=True,
+        user_relation=ResourceUserRelationPolicy(
+            user_link_source=False, user_link_target="materialize_passage"
+        ),
         attachable=True,
         chat_subject="readable",
         readable="body",
@@ -319,6 +346,21 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         conversation_search_scope=False,
         citation_output_source=False,
         prompt_render="inline_body",
+        expansion_policy="none",
+        adjacency_source=False,
+        adjacency_target=True,
+    ),
+    "passage_anchor": ResourceItemCapability(
+        user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
+        attachable=True,
+        chat_subject="quote",
+        readable="body",
+        inspectable="none",
+        citable_result_type=None,
+        app_search_scope=False,
+        conversation_search_scope=False,
+        citation_output_source=False,
+        prompt_render="quote",
         expansion_policy="none",
         adjacency_source=False,
         adjacency_target=True,
@@ -337,8 +379,27 @@ def capability_for_ref(ref: ResourceRef) -> ResourceItemCapability:
     return capability_for_scheme(ref.scheme)
 
 
-def resource_can_link(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).linkable
+def resource_can_link_source(ref: ResourceRef) -> bool:
+    """Whether ``ref`` can be the source of a durable, direct-endpoint Link edge."""
+    return capability_for_ref(ref).user_relation.user_link_source
+
+
+def resource_user_link_target_mode(ref: ResourceRef) -> UserLinkTargetMode:
+    return capability_for_ref(ref).user_relation.user_link_target
+
+
+def resource_can_link_target(ref: ResourceRef) -> bool:
+    """Whether ``ref`` can be the target of a durable, direct-endpoint edge.
+
+    ``materialize_passage`` targets are raw material a search hit must convert
+    into a ``passage_anchor`` first (Invariant 4); they are never themselves a
+    direct edge endpoint.
+    """
+    return resource_user_link_target_mode(ref) == "direct"
+
+
+def resource_can_be_note_reference_target(ref: ResourceRef) -> bool:
+    return capability_for_ref(ref).user_relation.note_reference_target
 
 
 def resource_can_attach(ref: ResourceRef) -> bool:
@@ -458,6 +519,14 @@ def expand_owned_child_refs(
                 "reader_apparatus_item",
                 "SELECT id FROM reader_apparatus_items WHERE media_id = :id",
                 ref.id,
+            ),
+            *_child_refs(
+                db,
+                "passage_anchor",
+                "SELECT id FROM passage_anchors "
+                "WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id",
+                ref.id,
+                viewer_id=viewer_id,
             ),
         )
     if policy == "page_note_blocks":

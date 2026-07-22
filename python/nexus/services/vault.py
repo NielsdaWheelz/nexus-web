@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from nexus.db.models import (
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services import notes as notes_service
 from nexus.services.highlights import (
+    delete_highlight_rows,
     derive_exact_prefix_suffix,
     map_integrity_error,
     validate_offsets_or_400,
@@ -42,7 +43,6 @@ from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.notes import delete_page, pm_doc_from_markdown_projection
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
-from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
 from nexus.services.vault_contracts import (
@@ -1239,8 +1239,8 @@ def _resolve_fragment_selector(
 
 
 def _delete_highlight(db: Session, highlight: Highlight) -> None:
-    delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="highlight", id=highlight.id))
-    db.execute(delete(Highlight).where(Highlight.id == highlight.id))
+    # Explicit child-first cleanup: no Highlight-family DB cascades remain.
+    delete_highlight_rows(db, highlight)
 
 
 def _highlight_media_id(highlight: Highlight) -> UUID | None:

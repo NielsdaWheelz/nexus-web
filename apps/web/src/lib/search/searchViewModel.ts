@@ -50,6 +50,10 @@ function buildSourceMeta(result: SearchApiResult): string | null {
     return result.source_label ?? "conversation";
   }
 
+  if (result.type === "artifact") {
+    return result.source_label ?? "distillate";
+  }
+
   if (result.type === "evidence_span") {
     return result.source_label ?? result.citation_label;
   }
@@ -133,6 +137,9 @@ function buildPrimaryText(result: SearchApiResult): string {
   if (result.type === "conversation") {
     return result.title || sanitizeSnippet(result.snippet) || "Conversation";
   }
+  if (result.type === "artifact") {
+    return result.title || sanitizeSnippet(result.snippet) || "Distillate";
+  }
   if (result.type === "evidence_span") {
     return sanitizeSnippet(result.snippet) || result.citation_label;
   }
@@ -197,6 +204,8 @@ export function adaptSearchResultRow(
               ? result.citation_label
             : result.type === "conversation"
               ? "conversation"
+            : result.type === "artifact"
+              ? "distillate"
             : result.type === "web_result"
               ? "web result"
             : result.type,

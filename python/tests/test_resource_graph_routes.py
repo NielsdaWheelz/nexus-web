@@ -2,12 +2,13 @@
 
 Covers the spec §10 surface:
 - /conversations/{id}/context-refs (replaces /conversations/{id}/references)
-- /resource-graph/edges (replaces /object-links)
+- /resource-graph/connections/query + /connections/summary (hydrated reads)
 - /resource-graph/resolve
 
-Assertions go through the API per testing standards. The one direct ORM write
-seeds a non-user-origin edge to exercise the route-level delete gate, since no
-API writes non-user origins by design.
+Assertions go through the API per testing standards. Link/stance authoring moved
+to the dedicated /resource-graph/links and /stances commands (see
+test_user_relations.py); connection READ tests seed ``origin='user'`` rows
+directly through ``_seed_user_edge`` since no read-surface writes edges.
 """
 
 from __future__ import annotations
@@ -17,9 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
-from nexus.db.models import NoteBlock, ResourceEdge
-from nexus.schemas.notes import CreatePageRequest
-from nexus.services import notes
+from nexus.db.models import ResourceEdge
 from nexus.services.resource_graph.context import (
     admits_resource_for_conversation_read,
     batch_conversations_with_any_edge_to_ref,
@@ -46,22 +45,6 @@ CONTEXT_REF_KEYS = {
     "label",
     "summary",
     "missing",
-    "created_at",
-}
-EDGE_KEYS = {
-    "id",
-    "kind",
-    "origin",
-    "source_ref",
-    "target_ref",
-    "source_order_key",
-    "target_order_key",
-    "ordinal",
-    "snapshot",
-    "source_label",
-    "source_missing",
-    "target_label",
-    "target_missing",
     "created_at",
 }
 RESOLVED_KEYS = {"ref", "label", "summary", "missing"}
@@ -142,6 +125,46 @@ def _seed_citation_edge(
         ).scalar_one()
         session.commit()
     return edge_id
+
+
+def _seed_user_edge(
+    direct_db: DirectSessionManager,
+    *,
+    user_id: UUID,
+    source_ref: str,
+    target_ref: str,
+    kind: str = "context",
+) -> str:
+    """Seed an origin='user' edge directly (Links/stances are now authored via the
+    dedicated /resource-graph/links and /stances commands; connection READ tests
+    only need the row in place)."""
+    source_scheme, source_id = source_ref.split(":", 1)
+    target_scheme, target_id = target_ref.split(":", 1)
+    with direct_db.session() as session:
+        edge_id = session.execute(
+            text(
+                """
+                INSERT INTO resource_edges (
+                    user_id, kind, origin, source_scheme, source_id, target_scheme, target_id
+                )
+                VALUES (
+                    :user_id, :kind, 'user', :source_scheme, :source_id,
+                    :target_scheme, :target_id
+                )
+                RETURNING id
+                """
+            ),
+            {
+                "user_id": user_id,
+                "kind": kind,
+                "source_scheme": source_scheme,
+                "source_id": source_id,
+                "target_scheme": target_scheme,
+                "target_id": target_id,
+            },
+        ).scalar_one()
+        session.commit()
+    return str(edge_id)
 
 
 def _seed_synapse_edge(
@@ -595,200 +618,6 @@ def test_context_refs_owner_only(auth_client, direct_db: DirectSessionManager):
 # =============================================================================
 
 
-def test_create_edge_defaults_to_context_kind_and_user_origin(
-    auth_client, direct_db: DirectSessionManager
-):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    source_media_id = _create_media(direct_db, user_id, title="Link Source")
-    target_media_id = _create_media(direct_db, user_id, title="Link Target")
-
-    response = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(user_id),
-        json={"source_ref": f"media:{source_media_id}", "target_ref": f"media:{target_media_id}"},
-    )
-
-    assert response.status_code == 201, response.text
-    data = response.json()["data"]
-    assert set(data) == EDGE_KEYS, (
-        f"Edge payload must carry exactly {sorted(EDGE_KEYS)}; got {sorted(data)}"
-    )
-    assert data["kind"] == "context", f"kind must default to context; got {data['kind']}"
-    assert data["origin"] == "user", f"origin must be forced to user; got {data['origin']}"
-    assert data["source_ref"] == f"media:{source_media_id}"
-    assert data["target_ref"] == f"media:{target_media_id}"
-    assert data["ordinal"] is None
-    assert data["snapshot"] is None
-    assert "Link Source" in data["source_label"], f"Hydrated source label: {data['source_label']}"
-    assert "Link Target" in data["target_label"], f"Hydrated target label: {data['target_label']}"
-    assert data["source_missing"] is False
-    assert data["target_missing"] is False
-
-
-def test_create_edge_accepts_stance_kind(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    source_media_id = _create_media(direct_db, user_id, title="Claim Doc")
-    target_media_id = _create_media(direct_db, user_id, title="Counter Doc")
-
-    response = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(user_id),
-        json={
-            "source_ref": f"media:{source_media_id}",
-            "target_ref": f"media:{target_media_id}",
-            "kind": "contradicts",
-        },
-    )
-
-    assert response.status_code == 201, response.text
-    assert response.json()["data"]["kind"] == "contradicts"
-
-
-def test_create_edge_accepts_page_and_note_media_attachments(
-    auth_client, direct_db: DirectSessionManager
-):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    direct_db.register_cleanup("resource_view_states", "user_id", user_id)
-    direct_db.register_cleanup("note_blocks", "user_id", user_id)
-    direct_db.register_cleanup("pages", "user_id", user_id)
-    media_id = _create_media(direct_db, user_id, title="Attached PDF")
-    with direct_db.session() as session:
-        page = notes.create_page(
-            session,
-            user_id,
-            CreatePageRequest(title="Attachment page"),
-        )
-        page_id = page.id
-        block = NoteBlock(
-            id=uuid4(),
-            user_id=user_id,
-            body_pm_json={
-                "type": "paragraph",
-                "content": [{"type": "text", "text": "Attach here"}],
-            },
-            body_text="Attach here",
-        )
-        block_id = block.id
-        session.add(block)
-        session.flush()
-        session.add(
-            ResourceEdge(
-                id=uuid4(),
-                user_id=user_id,
-                kind="context",
-                origin="user",
-                source_scheme="page",
-                source_id=page_id,
-                target_scheme="note_block",
-                target_id=block_id,
-                source_order_key="0000000001",
-            )
-        )
-        session.commit()
-
-    headers = auth_headers(user_id)
-    page_response = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": f"page:{page_id}", "target_ref": f"media:{media_id}"},
-    )
-    block_response = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": f"note_block:{block_id}", "target_ref": f"media:{media_id}"},
-    )
-
-    assert page_response.status_code == 201, page_response.text
-    assert block_response.status_code == 201, block_response.text
-    assert page_response.json()["data"]["origin"] == "user"
-    assert block_response.json()["data"]["origin"] == "user"
-    assert page_response.json()["data"]["target_ref"] == f"media:{media_id}"
-    assert block_response.json()["data"]["target_ref"] == f"media:{media_id}"
-
-
-def test_create_edge_rejects_unknown_kind(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    source_media_id = _create_media(direct_db, user_id, title="Kind Doc")
-
-    response = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(user_id),
-        json={
-            "source_ref": f"media:{source_media_id}",
-            "target_ref": f"media:{source_media_id}",
-            "kind": "refutes",
-        },
-    )
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
-
-
-def test_create_edge_rejects_malformed_ref(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-
-    response = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(user_id),
-        json={"source_ref": "junk", "target_ref": f"media:{uuid4()}"},
-    )
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
-
-
-def test_create_edge_missing_target_returns_404(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    source_media_id = _create_media(direct_db, user_id, title="Real Source")
-
-    response = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(user_id),
-        json={"source_ref": f"media:{source_media_id}", "target_ref": f"media:{uuid4()}"},
-    )
-
-    assert response.status_code == 404, (
-        f"Writes must reject missing targets (spec §7.3): {response.text}"
-    )
-
-
-def test_create_edge_duplicate_pair_rejected_both_directions(
-    auth_client, direct_db: DirectSessionManager
-):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    headers = auth_headers(user_id)
-    a_media_id = _create_media(direct_db, user_id, title="Pair A")
-    b_media_id = _create_media(direct_db, user_id, title="Pair B")
-    a_ref = f"media:{a_media_id}"
-    b_ref = f"media:{b_media_id}"
-
-    first = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": a_ref, "target_ref": b_ref},
-    )
-    assert first.status_code == 201, first.text
-
-    duplicate = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": a_ref, "target_ref": b_ref},
-    )
-    assert duplicate.status_code == 400, (
-        f"Duplicate user pair must be rejected; got {duplicate.status_code}: {duplicate.text}"
-    )
-
-    reversed_duplicate = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": b_ref, "target_ref": a_ref},
-    )
-    assert reversed_duplicate.status_code == 400, (
-        f"User-link dedup is undirected; got {reversed_duplicate.status_code}: "
-        f"{reversed_duplicate.text}"
-    )
-
-
 def test_query_connections_returns_edges_from_either_endpoint(
     auth_client, direct_db: DirectSessionManager
 ):
@@ -797,13 +626,12 @@ def test_query_connections_returns_edges_from_either_endpoint(
     a_media_id = _create_media(direct_db, user_id, title="Endpoint A")
     b_media_id = _create_media(direct_db, user_id, title="Endpoint B")
 
-    created = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": f"media:{a_media_id}", "target_ref": f"media:{b_media_id}"},
+    edge_id = _seed_user_edge(
+        direct_db,
+        user_id=user_id,
+        source_ref=f"media:{a_media_id}",
+        target_ref=f"media:{b_media_id}",
     )
-    assert created.status_code == 201, created.text
-    edge_id = created.json()["data"]["id"]
 
     for ref in (f"media:{a_media_id}", f"media:{b_media_id}"):
         listing = _query_connections(auth_client, headers, ref)
@@ -820,18 +648,14 @@ def test_query_connections_filters_by_kind_and_origin(auth_client, direct_db: Di
     c_media_id = _create_media(direct_db, user_id, title="Filter C")
     a_ref = f"media:{a_media_id}"
 
-    context_edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": a_ref, "target_ref": f"media:{b_media_id}"},
+    _seed_user_edge(direct_db, user_id=user_id, source_ref=a_ref, target_ref=f"media:{b_media_id}")
+    _seed_user_edge(
+        direct_db,
+        user_id=user_id,
+        source_ref=a_ref,
+        target_ref=f"media:{c_media_id}",
+        kind="supports",
     )
-    assert context_edge.status_code == 201, context_edge.text
-    supports_edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": a_ref, "target_ref": f"media:{c_media_id}", "kind": "supports"},
-    )
-    assert supports_edge.status_code == 201, supports_edge.text
 
     kind_filtered = _query_connections(auth_client, headers, a_ref, filters={"kinds": ["supports"]})
     assert kind_filtered.status_code == 200, kind_filtered.text
@@ -880,12 +704,9 @@ def test_connection_summary_counts_by_kind_and_excludes_synapse(
     subject_ref = f"media:{subject_media_id}"
 
     # One user 'context' edge to user_peer.
-    user_edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": subject_ref, "target_ref": f"media:{user_peer_id}"},
+    _seed_user_edge(
+        direct_db, user_id=user_id, source_ref=subject_ref, target_ref=f"media:{user_peer_id}"
     )
-    assert user_edge.status_code == 201, user_edge.text
     # One 'citation' edge FROM a message TO the subject media (subject is the target).
     with direct_db.session() as session:
         _conversation_id, message_id = create_test_conversation_with_message(
@@ -963,12 +784,9 @@ def test_connection_summary_dominant_kind_is_highest_count(
     subject_ref = f"media:{subject_media_id}"
 
     # One user 'context' edge + two 'supports' citation edges -> dominant=supports.
-    user_edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": subject_ref, "target_ref": f"media:{context_peer_id}"},
+    _seed_user_edge(
+        direct_db, user_id=user_id, source_ref=subject_ref, target_ref=f"media:{context_peer_id}"
     )
-    assert user_edge.status_code == 201, user_edge.text
     with direct_db.session() as session:
         _conversation_id, message_id = create_test_conversation_with_message(
             session, user_id, role="assistant"
@@ -1014,12 +832,9 @@ def test_connection_summary_deleted_peer_comes_back_missing(
     doomed_peer_id = _create_media(direct_db, user_id, title="Doomed Peer")
     subject_ref = f"media:{subject_media_id}"
 
-    user_edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": subject_ref, "target_ref": f"media:{doomed_peer_id}"},
+    _seed_user_edge(
+        direct_db, user_id=user_id, source_ref=subject_ref, target_ref=f"media:{doomed_peer_id}"
     )
-    assert user_edge.status_code == 201, user_edge.text
 
     # Delete the peer media out from under the edge (edges have no FKs by design),
     # leaving a dangling edge — the peer must hydrate missing, never leaked.
@@ -1053,12 +868,9 @@ def test_connection_summary_returns_one_entry_per_ref_in_order(
     connected_ref = f"media:{connected_id}"
     isolated_ref = f"media:{isolated_id}"
 
-    edge = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": connected_ref, "target_ref": f"media:{peer_id}"},
+    _seed_user_edge(
+        direct_db, user_id=user_id, source_ref=connected_ref, target_ref=f"media:{peer_id}"
     )
-    assert edge.status_code == 201, edge.text
 
     response = _summarize_connections(auth_client, headers, [isolated_ref, connected_ref])
     assert response.status_code == 200, response.text
@@ -1088,104 +900,6 @@ def test_connection_summary_rejects_malformed_ref_and_over_limit(
     )
     assert over_limit.status_code == 400, over_limit.text
     assert over_limit.json()["error"]["code"] == "E_INVALID_REQUEST"
-
-
-def test_delete_edge_removes_user_edge(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    headers = auth_headers(user_id)
-    a_media_id = _create_media(direct_db, user_id, title="Delete A")
-    b_media_id = _create_media(direct_db, user_id, title="Delete B")
-    a_ref = f"media:{a_media_id}"
-
-    created = auth_client.post(
-        "/resource-graph/edges",
-        headers=headers,
-        json={"source_ref": a_ref, "target_ref": f"media:{b_media_id}"},
-    )
-    assert created.status_code == 201, created.text
-    edge_id = created.json()["data"]["id"]
-
-    deleted = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
-    assert deleted.status_code == 204, deleted.text
-
-    listing = _query_connections(auth_client, headers, a_ref)
-    assert listing.json()["data"]["items"] == [], "Edge should be gone after delete"
-
-    deleted_again = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
-    assert deleted_again.status_code == 404, deleted_again.text
-
-
-def test_delete_edge_refuses_non_user_origin_rows(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-    headers = auth_headers(user_id)
-    media_id = _create_media(direct_db, user_id, title="Cited Doc")
-    with direct_db.session() as session:
-        conversation_id = create_test_conversation(session, user_id)
-        # Seeded directly: no API writes non-user origins by design (the
-        # citation pipeline owns them), so the gate needs an ORM fixture.
-        edge = ResourceEdge(
-            user_id=user_id,
-            kind="context",
-            origin="citation",
-            source_scheme="conversation",
-            source_id=conversation_id,
-            target_scheme="media",
-            target_id=media_id,
-        )
-        session.add(edge)
-        session.commit()
-        edge_id = edge.id
-
-    response = auth_client.delete(f"/resource-graph/edges/{edge_id}", headers=headers)
-    assert response.status_code == 403, (
-        f"Non-user-origin rows must not be deletable here: {response.text}"
-    )
-    assert response.json()["error"]["code"] == "E_FORBIDDEN"
-
-    listing = _query_connections(
-        auth_client, headers, f"media:{media_id}", filters={"origins": ["citation"]}
-    )
-    assert listing.status_code == 200, listing.text
-    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [str(edge_id)], (
-        "Citation edge must survive the refused delete"
-    )
-
-
-def test_delete_edge_unknown_id_returns_404(auth_client, direct_db: DirectSessionManager):
-    user_id = _bootstrap_user(auth_client, direct_db)
-
-    response = auth_client.delete(f"/resource-graph/edges/{uuid4()}", headers=auth_headers(user_id))
-
-    assert response.status_code == 404, response.text
-
-
-def test_delete_edge_another_users_edge_returns_404(auth_client, direct_db: DirectSessionManager):
-    """The viewer-scoped accessor 404s another user's edge — it must not leak its
-    existence (and must not 403, which would confirm the row)."""
-    owner_id = _bootstrap_user(auth_client, direct_db)
-    intruder_id = _bootstrap_user(auth_client, direct_db)
-    source_media_id = _create_media(direct_db, owner_id, title="Owner Source")
-    target_media_id = _create_media(direct_db, owner_id, title="Owner Target")
-
-    created = auth_client.post(
-        "/resource-graph/edges",
-        headers=auth_headers(owner_id),
-        json={"source_ref": f"media:{source_media_id}", "target_ref": f"media:{target_media_id}"},
-    )
-    assert created.status_code == 201, created.text
-    edge_id = created.json()["data"]["id"]
-
-    response = auth_client.delete(
-        f"/resource-graph/edges/{edge_id}", headers=auth_headers(intruder_id)
-    )
-    assert response.status_code == 404, (
-        f"Another user's edge must 404, not leak existence: {response.text}"
-    )
-
-    listing = _query_connections(auth_client, auth_headers(owner_id), f"media:{source_media_id}")
-    assert [edge["edge_id"] for edge in listing.json()["data"]["items"]] == [edge_id], (
-        "The owner's edge must survive an intruder's refused delete"
-    )
 
 
 # =============================================================================

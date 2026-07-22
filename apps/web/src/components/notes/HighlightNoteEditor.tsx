@@ -5,7 +5,8 @@ import type { Node as ProseMirrorNode } from "prosemirror-model";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { isObjectType, resolveObjectRefs } from "@/lib/objectRefs";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import {
   createOutlineDocFromBlock,
   firstOutlineBlockFromDoc,
@@ -198,11 +199,14 @@ export default function HighlightNoteEditor({
 
   const openObject = useCallback(
     async (objectType: string, objectId: string, openInNewPane: boolean) => {
-      if (!isObjectType(objectType)) return;
+      const ref = `${objectType}:${objectId}`;
+      if (!parseResourceRef(ref)) return;
       let href: string | null = null;
       try {
-        const [resolved] = await resolveObjectRefs([{ objectType, objectId }]);
-        href = resolved?.route ?? null;
+        const [resolved] = await resolveResourceLocators([
+          { kind: "resource_ref", ref },
+        ]);
+        href = resolved?.resourceItem.route ?? null;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
         feedback.show(toFeedback(error, { fallback: "Linked object could not be opened." }));

@@ -65,7 +65,7 @@ import {
   useWorkspaceHostStore,
   type WorkspacePaneLabelDescriptor,
 } from "@/lib/workspace/store";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import { usePaneCanvas } from "./usePaneCanvas";
 import PaneRouteBoundary from "./PaneRouteBoundary";

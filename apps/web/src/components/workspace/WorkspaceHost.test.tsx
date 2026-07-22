@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { useContext, useEffect, useMemo, useRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ResourceItem } from "@/lib/notes/api";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
@@ -156,7 +156,11 @@ function mediaResourceItem(id: string): ResourceItem {
     },
     missing: false,
     capabilities: {
-      linkable: true,
+      userRelation: {
+        userLinkSource: true,
+        userLinkTarget: "direct",
+        noteReferenceTarget: true,
+      },
       attachable: true,
       chatSubject: "readable",
       readable: "media",

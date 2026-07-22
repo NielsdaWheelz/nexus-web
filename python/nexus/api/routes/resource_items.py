@@ -16,10 +16,11 @@ from nexus.schemas.resource_items import (
     ResourceSurfaceMutationRequest,
     ResourceTitleMutationRequest,
 )
+from nexus.schemas.resource_targets import ResourceTargetSearchRequest
 from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import locators as locator_service
-from nexus.services.resource_items import mutations, surfaces
+from nexus.services.resource_items import mutations, surfaces, targets
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
 
@@ -64,6 +65,18 @@ def resolve_resource_locators(
                 locators=request.locators,
             )
         ),
+        by_alias=True,
+    )
+
+
+@router.post("/targets/search")
+def search_resource_targets(
+    request: ResourceTargetSearchRequest,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return ok(
+        targets.search_targets(db, viewer_id=viewer.user_id, request=request),
         by_alias=True,
     )
 

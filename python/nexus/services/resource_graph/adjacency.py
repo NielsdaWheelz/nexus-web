@@ -97,10 +97,18 @@ def replace_ordered_targets(
     if not resource_can_own_ordered_adjacency(source):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own ordered adjacency")
     seen_order: set[str] = set()
+    seen_targets: set[tuple[str, UUID]] = set()
     for target in targets:
         if target.source_order_key in seen_order:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items need unique order keys")
         seen_order.add(target.source_order_key)
+        # The broad ordinal-null pair index is gone (it collided ordered edges
+        # with neutral Links); a repeated target ref in one set is now rejected
+        # in application validation so outline semantics do not weaken.
+        target_key = (target.target.scheme, target.target.id)
+        if target_key in seen_targets:
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items must be distinct")
+        seen_targets.add(target_key)
         _assert_target_visible(db, user_id=user_id, target=target.target)
         if not resource_can_be_ordered_adjacency_target(target.target):
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be an ordered target")
@@ -125,20 +133,10 @@ def replace_ordered_targets(
 
     out: list[UUID] = []
     for target in targets:
-        db.execute(
-            delete(ResourceEdge).where(
-                ResourceEdge.user_id == user_id,
-                ResourceEdge.kind == "context",
-                ResourceEdge.origin == "user",
-                ResourceEdge.source_scheme == source.scheme,
-                ResourceEdge.source_id == source.id,
-                ResourceEdge.target_scheme == target.target.scheme,
-                ResourceEdge.target_id == target.target.id,
-                ResourceEdge.ordinal.is_(None),
-                ResourceEdge.source_order_key.is_(None),
-                ResourceEdge.target_order_key.is_(None),
-            )
-        )
+        # A neutral Link on this same pair is NOT deleted: an ordered occurrence
+        # (source_order_key set) and a neutral Link (order keys null) now live
+        # under separate unique indexes and coexist (§ Graph Shapes). Deleting it
+        # here was a live data-loss bug.
         edge = ResourceEdge(
             user_id=user_id,
             kind="context",

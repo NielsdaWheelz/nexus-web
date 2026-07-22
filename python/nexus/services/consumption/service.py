@@ -3,8 +3,8 @@
 Command facades (``run_lectern_command`` / ``run_consumption_command``) each open
 a fresh session and own one ``retry_serializable`` transaction: viewer lock ->
 replay claim -> validation -> domain writes -> semantic memo -> snapshot read
-(spec §5). Read facades (``get_lectern`` / ``get_recent_consumption`` /
-``get_listening_state``) run on the request-scoped session. The heartbeat facade is the separately specified
+(spec §5). Read facades (``get_lectern`` / ``get_listening_state``) run on the
+request-scoped session. The heartbeat facade is the separately specified
 unreplayable CAS mutation. Narrow in-transaction helpers exist only for media
 lifecycle cleanup and the trusted ensure path.
 """
@@ -51,7 +51,6 @@ from nexus.schemas.consumption import (
     PlacedOutcome,
     PlaceItemsCommand,
     PlayerDescriptor,
-    RecentConsumptionSnapshot,
     RemovedOutcome,
     RemoveItemCommand,
     SetBatchStateCommand,
@@ -95,11 +94,38 @@ def get_lectern(db: Session, viewer_id: UUID) -> LecternSnapshot:
     return _projection.build_snapshot(db, viewer_id=viewer_id, rows=rows)
 
 
-def get_recent_consumption(
+def engagement_fact_rows_sql() -> str:
+    """Canonical consumption-fact relation; binds ``:viewer_id``.
+
+    Columns: ``media_id``, ``read_state``, ``progress_fraction``, and
+    ``last_engaged_at``.
+    """
+    return _projection.engagement_fact_rows_sql()
+
+
+def lectern_membership_rows_sql() -> str:
+    """Complete Lectern membership relation; binds ``:viewer_id``.
+
+    Columns: ``media_id``. Hidden rows are intentionally included.
+    """
+    return _projection.lectern_membership_rows_sql()
+
+
+def lectern_item_count(db: Session, *, viewer_id: UUID) -> int:
+    """Count every Lectern row, including hidden rows."""
+    return _projection.lectern_item_count(db, viewer_id=viewer_id)
+
+
+def lectern_has_capacity(db: Session, *, viewer_id: UUID) -> bool:
+    """Whether the complete Lectern membership is below its owned row cap."""
+    return lectern_item_count(db, viewer_id=viewer_id) < _lectern_store.LECTERN_MAX_ITEMS
+
+
+def recent_engagement_anchor_facts(
     db: Session, *, viewer_id: UUID, limit: int
-) -> RecentConsumptionSnapshot:
-    """Bounded visible media ordered by truthful reader/listener engagement."""
-    return _projection.recent_consumption(db, viewer_id=viewer_id, limit=limit)
+) -> tuple[_projection.RecentEngagementAnchorFact, ...]:
+    """Newest distinct visible media engagement facts, capped by ``limit``."""
+    return _projection.recent_engagement_anchor_facts(db, viewer_id=viewer_id, limit=limit)
 
 
 def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> ListeningStateOut:

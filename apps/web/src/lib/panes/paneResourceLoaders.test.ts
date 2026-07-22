@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  LECTERN_RECENT_LIMIT,
-  lecternRecentResource,
+  lecternSlateResource,
   libraryEntriesResource,
   libraryResource,
   mediaFragmentsResource,
@@ -13,7 +12,7 @@ import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { ApiError } from "@/lib/api/client";
 
 describe("Lectern pane resource loader", () => {
-  it("seeds only the independent strict recent-consumption snapshot", async () => {
+  it("seeds only the independent strict reading slate", async () => {
     const requestSpy = vi.fn();
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
@@ -23,17 +22,13 @@ describe("Lectern pane resource loader", () => {
       return { data: { items: [] } } as T;
     };
     const loader = paneResourceLoaders.lectern;
-    if (!loader) throw new Error("Lectern recent loader missing");
+    if (!loader) throw new Error("Lectern slate loader missing");
 
     expect(loader.cacheKey({})).toBe(
-      lecternRecentResource.cacheKey({
-        limit: LECTERN_RECENT_LIMIT,
-        refreshVersion: 0,
-      }),
+      lecternSlateResource.cacheKey({ refreshVersion: 0 }),
     );
     await expect(loader.load(request, {})).resolves.toEqual({ items: [] });
-    expect(requestSpy).toHaveBeenCalledWith(lecternRecentResource, {
-      limit: LECTERN_RECENT_LIMIT,
+    expect(requestSpy).toHaveBeenCalledWith(lecternSlateResource, {
       refreshVersion: 0,
     });
   });

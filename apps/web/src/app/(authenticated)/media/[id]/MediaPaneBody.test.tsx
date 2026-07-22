@@ -339,6 +339,7 @@ function sourceReferencePassage({
       kind: "Resolved",
       anchor: {
         locator,
+        passage_anchor_id: null,
       },
       order_key: orderKey,
     },
@@ -374,6 +375,7 @@ function sourceReferencePassage({
               kind: "Resolved",
               anchor: {
                 locator: target.locator,
+                passage_anchor_id: null,
               },
               order_key: target.orderKey,
             },
@@ -413,6 +415,7 @@ function pdfHighlightPassage() {
           ],
           exact: "PDF hover target",
         },
+        passage_anchor_id: null,
       },
       order_key: "0001.0001",
     },

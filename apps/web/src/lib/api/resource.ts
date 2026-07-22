@@ -1,5 +1,4 @@
 import type { ApiPath } from "@/lib/api/client";
-import { RECENT_CONSUMPTION_MAX_ITEMS } from "@/lib/lectern/contract";
 
 export interface ResourceDescriptor<TParams> {
   cacheKey: (params: TParams) => string;
@@ -37,10 +36,12 @@ export interface ContributorWorksResourceParams extends ContributorResourceParam
   limit?: number;
 }
 
-export interface LecternRecentResourceParams {
-  limit: number;
-  /** Cache identity only; the backend query contract is unchanged. */
+export interface ReadingSlateResourceParams {
   refreshVersion: number;
+}
+
+export interface LibrarySlateResourceParams extends ReadingSlateResourceParams {
+  id: string;
 }
 
 interface NoteBlockResourceParams {
@@ -126,14 +127,16 @@ export const contributorWorksResource: ResourceDescriptor<ContributorWorksResour
 // ignores limit, so a mismatch would silently seed a different row count.
 export const AUTHOR_WORKS_LIMIT = 100;
 
-// Fetch the bounded endpoint maximum before queue de-dupe so a full top slice
-// of queued items cannot hide the next useful recent item. The pane shows six.
-export const LECTERN_RECENT_LIMIT = RECENT_CONSUMPTION_MAX_ITEMS;
+export const lecternSlateResource: ResourceDescriptor<ReadingSlateResourceParams> = {
+  cacheKey: ({ refreshVersion }) => `lectern:slate:${refreshVersion}`,
+  serverPath: () => "/lectern/slate",
+  clientPath: () => "/api/lectern/slate",
+};
 
-export const lecternRecentResource: ResourceDescriptor<LecternRecentResourceParams> = {
-  cacheKey: ({ limit, refreshVersion }) => `lectern:recent:${limit}:${refreshVersion}`,
-  serverPath: ({ limit }) => `/lectern/recent?limit=${limit}`,
-  clientPath: ({ limit }) => `/api/lectern/recent?limit=${limit}`,
+export const librarySlateResource: ResourceDescriptor<LibrarySlateResourceParams> = {
+  cacheKey: ({ id, refreshVersion }) => `library:${id}:slate:${refreshVersion}`,
+  serverPath: ({ id }) => `/libraries/${encoded(id)}/slate`,
+  clientPath: ({ id }) => `/api/libraries/${encoded(id)}/slate`,
 };
 
 export const notePagesResource: ResourceDescriptor<NoResourceParams> = {

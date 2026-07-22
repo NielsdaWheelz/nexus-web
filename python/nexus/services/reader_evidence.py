@@ -456,7 +456,9 @@ def _add_remaining_connections(
             locus_ref=locus_ref,
             resolution=resolution,
             item=ReaderEvidenceLinkOut(
-                id=f"link:{row.connection.edge_id}",
+                # A same-media Link surfaces one item per local endpoint; the
+                # anchored locus keys each so the two rows never collide on id.
+                id=f"link:{row.connection.edge_id}:anchor:{locus_ref}",
                 label=row.title or related.label,
                 excerpt=present(row.excerpt) if row.excerpt else absent(),
                 edge_id=row.connection.edge_id,
@@ -736,17 +738,19 @@ def _object_for_endpoint(
 
 
 def _matched_ref(row: ReaderConnectionRow) -> str:
+    # The connection already resolved which endpoint is the far object (``other``);
+    # the matched locus is its opposite. Never re-derive the locus from storage
+    # direction — a neutral Link is undirected (§ Reader Projection), so ``other``
+    # is the only authoritative signal for which endpoint sits on this document.
     return (
-        row.connection.target_ref
-        if row.connection.direction == "incoming"
-        else row.connection.source_ref
+        row.connection.source_ref
+        if row.connection.other.ref == row.connection.target_ref
+        else row.connection.target_ref
     )
 
 
 def _other_endpoint(row: ReaderConnectionRow) -> ConnectionEndpointOut:
-    return (
-        row.connection.source if row.connection.direction == "incoming" else row.connection.target
-    )
+    return row.connection.other
 
 
 def _resolution_for_connection(
@@ -768,6 +772,7 @@ def _resolution_for_connection(
                 resolved = _resolved(
                     locator=locator,
                     order_key=order_key,
+                    passage_anchor_id=row.anchor.passage_anchor_id,
                 )
             except ValidationError:
                 pass
@@ -807,9 +812,10 @@ def _resolved(
     *,
     locator: dict[str, object],
     order_key: str,
+    passage_anchor_id: UUID | None = None,
 ) -> ReaderEvidenceResolvedOut:
     return ReaderEvidenceResolvedOut(
-        anchor=ReaderEvidenceAnchorOut(locator=locator),
+        anchor=ReaderEvidenceAnchorOut(locator=locator, passage_anchor_id=passage_anchor_id),
         order_key=order_key,
     )
 

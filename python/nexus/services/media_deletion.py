@@ -38,6 +38,7 @@ from nexus.services import (
     library_entries,
     library_governance,
     media_intelligence,
+    passage_anchors,
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -495,14 +496,20 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # Graph cleanup, one call per resource ref this deletion destroys (§9.6,
     # AC12): the media row, its highlights, and its fragments. The media's
     # evidence spans and content chunks are cleaned inside delete_content_index
-    # by their owner. Bare edges touching a destroyed ref die; cited edges
-    # sourced elsewhere survive on their snapshots (the evidence invariant).
+    # by their owner; its passage anchors (and edges/view states touching them)
+    # by delete_for_owner below. Bare edges touching a destroyed ref die; cited
+    # edges sourced elsewhere survive on their snapshots (the evidence
+    # invariant). Attached note prose is never deleted here — highlight/link
+    # notes lose only their edges and survive as standalone notes.
     for ref in _destroyed_media_refs(db, media_id):
         cleanup.delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
         text("UPDATE message_retrievals SET media_id = NULL WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    # True owner deletion: all users' passage anchors on this media, then the
+    # Highlight children/root (explicit child-first — no DB cascades remain).
+    passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id)
     db.execute(
         text("""
             DELETE FROM highlight_pdf_quads
@@ -522,11 +529,14 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         """),
         {"media_id": media_id},
     )
+    # Scope by highlight, not the disposable fragment_id cache: a refresh that
+    # replaced fragments leaves anchors pointing at deleted fragment rows, and
+    # those must die here too or the Highlight-root delete below hits its FK.
     db.execute(
         text("""
             DELETE FROM highlight_fragment_anchors
-            WHERE fragment_id IN (
-                SELECT id FROM fragments WHERE media_id = :media_id
+            WHERE highlight_id IN (
+                SELECT id FROM highlights WHERE anchor_media_id = :media_id
             )
         """),
         {"media_id": media_id},
@@ -668,10 +678,11 @@ def _destroyed_media_refs(db: Session, media_id: UUID) -> list[ResourceRef]:
 
 
 def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    # The viewer's highlights are the only resources this path destroys; the
-    # media itself may survive for other holders, so graph cleanup is scoped to
-    # the deleted refs (§9.6). When the media is hard-deleted right after, its
-    # own edges die in delete_document_media_if_unreferenced.
+    # The viewer's highlights and passage anchors are the only resources this
+    # path destroys; the media itself may survive for other holders, so graph
+    # cleanup is scoped to the deleted refs (§9.6). When the media is
+    # hard-deleted right after, its own edges die in
+    # delete_document_media_if_unreferenced.
     highlight_ids = (
         db.execute(
             text(
@@ -687,6 +698,10 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
         cleanup.delete_edges_for_deleted_resource(
             db, ref=ResourceRef(scheme="highlight", id=highlight_id)
         )
+    # The viewer's own passage anchors on this media die with their workspace
+    # removal (their edges/view states first, inside delete_for_owner); other
+    # users' anchors survive until true media deletion.
+    passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id, user_id=viewer_id)
     db.execute(
         text("""
             UPDATE message_retrievals mr
