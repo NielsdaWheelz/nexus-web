@@ -272,7 +272,9 @@ def _insert_media(
     )
 
 
-def _register_user_and_media_cleanup(direct_db: DirectSessionManager, *, media_id: UUID, user_id: UUID | None) -> None:
+def _register_user_and_media_cleanup(
+    direct_db: DirectSessionManager, *, media_id: UUID, user_id: UUID | None
+) -> None:
     # Registration order is parent-first; DirectSessionManager.cleanup() deletes
     # in reverse (LIFO), so this yields child-first, FK-safe deletion:
     # llm_calls, contributor_credits, media, users.
@@ -351,7 +353,11 @@ class TestEnrichMetadata:
                 },
             )
             _insert_media(
-                session, media_id, kind="podcast_episode", title="Episode 7", created_by_user_id=user_id
+                session,
+                media_id,
+                kind="podcast_episode",
+                title="Episode 7",
+                created_by_user_id=user_id,
             )
             session.execute(
                 text(
@@ -398,7 +404,9 @@ class TestEnrichMetadata:
         assert "Systems Show" in prompt
         assert "feedback loops" in prompt
 
-        media_row = _media_row(direct_db, media_id, "publisher, language, description, published_date")
+        media_row = _media_row(
+            direct_db, media_id, "publisher, language, description, published_date"
+        )
         author_rows = _author_rows(direct_db, media_id)
 
         assert media_row == (
@@ -646,14 +654,20 @@ class TestEnrichMetadata:
 
         assert result["status"] == "failed"
         assert result["reason"] == "llm_failed"
-        assert result["error_code"] == "provider_unavailable", f"Expected llm_failed result, got {result}"
+        assert result["error_code"] == "provider_unavailable", (
+            f"Expected llm_failed result, got {result}"
+        )
 
         row = _media_row(
-            direct_db, media_id, "failure_stage, last_error_code, last_error_message, processing_status"
+            direct_db,
+            media_id,
+            "failure_stage, last_error_code, last_error_message, processing_status",
         )
         assert row is not None
         failure_stage, last_error_code, last_error_message, processing_status = row
-        assert failure_stage == "metadata", f"Expected failure_stage='metadata', got {failure_stage!r}"
+        assert failure_stage == "metadata", (
+            f"Expected failure_stage='metadata', got {failure_stage!r}"
+        )
         assert last_error_code == "provider_unavailable", (
             f"Expected the runtime failure code, got {last_error_code!r}"
         )
@@ -830,7 +844,10 @@ class TestEnrichMetadata:
             _insert_media(session, media_disabled, created_by_user_id=user_id)
             # not_ready: still extracting
             _insert_media(
-                session, media_extracting, processing_status="extracting", created_by_user_id=user_id
+                session,
+                media_extracting,
+                processing_status="extracting",
+                created_by_user_id=user_id,
             )
             session.commit()
 

@@ -461,9 +461,7 @@ def test_build_synthesis_intent_shape():
     assert intent == GenerateIntent(
         target=profile.target,
         messages=(
-            SystemMessage(
-                blocks=(PromptBlock(text="SYSTEM", stability=Stable(GlobalScope())),)
-            ),
+            SystemMessage(blocks=(PromptBlock(text="SYSTEM", stability=Stable(GlobalScope())),)),
             UserMessage(blocks=(PromptBlock(text="USER", stability=Dynamic()),)),
         ),
         max_output_tokens=256,
@@ -526,9 +524,7 @@ def test_ground_indices_uses_index_of_accessor():
 
 
 def test_decode_valid_payload_validates_into_schema():
-    value = decode_structured_synthesis(
-        _succeeded({"title": "Folio", "count": 3}), schema=_Output
-    )
+    value = decode_structured_synthesis(_succeeded({"title": "Folio", "count": 3}), schema=_Output)
     assert value == _Output(title="Folio", count=3)
 
 

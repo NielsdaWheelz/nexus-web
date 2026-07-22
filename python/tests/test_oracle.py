@@ -1736,9 +1736,7 @@ def test_execute_reading_passage_event_carries_citation_for_user_media(
         question="Where does the lantern lead?",
     )
 
-    asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime())
-    )
+    asyncio.run(execute_reading(db_session, reading_id=reading_id, runtime=_SelectLibraryRuntime()))
 
     events = (
         db_session.execute(
@@ -2165,9 +2163,7 @@ def test_execute_reading_has_no_provider_or_corpus_identity_columns(
 
     router = _PublicOnlyRuntime()
     first = asyncio.run(execute_reading(db_session, reading_id=first_reading_id, runtime=router))
-    second = asyncio.run(
-        execute_reading(db_session, reading_id=second_reading_id, runtime=router)
-    )
+    second = asyncio.run(execute_reading(db_session, reading_id=second_reading_id, runtime=router))
 
     columns = {column["name"] for column in inspect(db_session.bind).get_columns("oracle_readings")}
     statuses = (
@@ -2233,7 +2229,9 @@ def test_execute_reading_reserves_and_commits_oracle_token_budget(
     assert reserve_event[2] is not None and reserve_event[2] == commit_event[2], (
         "reserve and commit settle the same generation reservation"
     )
-    assert reserve_event[2] != reading_id, "the reservation id is the generation id, not the reading"
+    assert reserve_event[2] != reading_id, (
+        "the reservation id is the generation id, not the reading"
+    )
     assert reserve_event[3] is not None and reserve_event[3] >= 2000
 
 
@@ -2759,7 +2757,9 @@ def test_execute_reading_provider_failure_uses_feedback_safe_error_message(
             meta=_oracle_meta(),
             failure=TransientExhausted(attempts=3, cause=ProviderRateLimit(retry_after=Absent())),
         ),
-        Failed(meta=_oracle_meta(), failure=TransientExhausted(attempts=3, cause=ProviderTimeout())),
+        Failed(
+            meta=_oracle_meta(), failure=TransientExhausted(attempts=3, cause=ProviderTimeout())
+        ),
         Failed(
             meta=_oracle_meta(),
             failure=TransientExhausted(attempts=3, cause=ProviderHttpUnavailable()),
@@ -2841,7 +2841,9 @@ def test_execute_reading_maps_provider_error_codes_explicitly(
     assert row["status"] == "failed"
     assert row["error_code"] == expected_code
     if expected_detail is not None:
-        assert row["error_detail"] == expected_detail, "operator detail is the outcome's safe detail"
+        assert row["error_detail"] == expected_detail, (
+            "operator detail is the outcome's safe detail"
+        )
     assert event_payloads[-1] == {"status": "failed", "error_code": expected_code}
 
 
@@ -3213,7 +3215,9 @@ def test_execute_reading_rejects_out_of_list_theme(
     )
 
     result = asyncio.run(
-        execute_reading(db_session, reading_id=reading_id, runtime=_InvalidSchemaRuntime("bad_theme"))
+        execute_reading(
+            db_session, reading_id=reading_id, runtime=_InvalidSchemaRuntime("bad_theme")
+        )
     )
 
     assert result == {"status": "failed", "error_code": "invalid_structured_output"}

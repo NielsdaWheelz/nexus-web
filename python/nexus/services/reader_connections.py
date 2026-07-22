@@ -116,10 +116,16 @@ def list_reader_connections(
             target_anchor = anchor_for(connection, connection.target_ref)
             if source_anchor is not None and target_anchor is not None:
                 rows.append(
-                    _row(connection=replace(connection, other=connection.target), anchor=source_anchor)
+                    _row(
+                        connection=replace(connection, other=connection.target),
+                        anchor=source_anchor,
+                    )
                 )
                 rows.append(
-                    _row(connection=replace(connection, other=connection.source), anchor=target_anchor)
+                    _row(
+                        connection=replace(connection, other=connection.source),
+                        anchor=target_anchor,
+                    )
                 )
                 continue
             anchor_ref = _anchor_ref(connection)

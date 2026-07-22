@@ -251,6 +251,7 @@ def _owner_session_factory(monkeypatch, db_session):
     ``E_BILLING_REQUIRED`` and every unit build / reduce silently fails. Both
     owners are patched: ``media_intelligence`` for the inline (and
     ``_ready_unit_media``) unit builds, ``artifacts.engine`` for the reduce."""
+
     def factory():
         return task_session_factory(db_session)
 
@@ -401,7 +402,9 @@ def _succeeded_unit_outcome(*, summary_md: str, claims: list[tuple[str, int]]) -
     the fake-runtime analog of the old `_UnitRouter`."""
     payload = {
         "summary_md": summary_md,
-        "claims": [{"claim_text": claim_text, "candidate_index": idx} for claim_text, idx in claims],
+        "claims": [
+            {"claim_text": claim_text, "candidate_index": idx} for claim_text, idx in claims
+        ],
     }
     return Succeeded(
         meta=_unit_meta(),
@@ -483,7 +486,9 @@ def _ready_unit_media(db: Session, user_id: UUID, library_id: UUID, *, title: st
     media_id = create_searchable_media_in_library(db, user_id, library_id, title=title)
     ensure_media_unit(db, media_id=media_id)
     runtime = _ScriptedRuntime(
-        outcome=_succeeded_unit_outcome(summary_md=f"Abstract of {title}.", claims=[("Key claim.", 0)])
+        outcome=_succeeded_unit_outcome(
+            summary_md=f"Abstract of {title}.", claims=[("Key claim.", 0)]
+        )
     )
     asyncio.run(run_media_unit_build(db, media_id=media_id, runtime=runtime))
     db.expire_all()
@@ -553,7 +558,9 @@ def _make_episode_media(db: Session, user_id: UUID, podcast_id: UUID, *, title: 
     db.commit()
     ensure_media_unit(db, media_id=media.id)
     runtime = _ScriptedRuntime(
-        outcome=_succeeded_unit_outcome(summary_md=f"Abstract of {title}.", claims=[("Key claim.", 0)])
+        outcome=_succeeded_unit_outcome(
+            summary_md=f"Abstract of {title}.", claims=[("Key claim.", 0)]
+        )
     )
     asyncio.run(run_media_unit_build(db, media_id=media.id, runtime=runtime))
     db.expire_all()
@@ -597,7 +604,9 @@ def _add_podcast_to_library(db: Session, library_id: UUID, *, title: str) -> UUI
     return podcast.id
 
 
-def _drive_generation(db: Session, *, owner_id: UUID, library_id: UUID, token: str, runtime) -> UUID:
+def _drive_generation(
+    db: Session, *, owner_id: UUID, library_id: UUID, token: str, runtime
+) -> UUID:
     ref = generate_artifact(db, viewer_id=owner_id, library_id=library_id, idempotency_key=token)
     asyncio.run(run_artifact_generation(db, revision_id=ref.revision_id, runtime=runtime))
     db.expire_all()
@@ -837,7 +846,9 @@ class TestGenerateReduce:
         db_session.commit()
 
         runtime = _DispatchingRuntime(
-            unit_outcome=_succeeded_unit_outcome(summary_md="Abstract.", claims=[("Key claim.", 0)]),
+            unit_outcome=_succeeded_unit_outcome(
+                summary_md="Abstract.", claims=[("Key claim.", 0)]
+            ),
             reduce_outcome=_succeeded_reduce_outcome(
                 content_md="Overview [1].", citations=[(1, 0, "supports")]
             ),
@@ -1183,7 +1194,9 @@ class TestVirtualMediaSet:
         _ready_unit_media(db_session, owner_id, library_id, title="Owner Source")
 
         runtime = _ScriptedRuntime(
-            outcome=_succeeded_reduce_outcome(content_md="Overview [1].", citations=[(1, 0, "supports")])
+            outcome=_succeeded_reduce_outcome(
+                content_md="Overview [1].", citations=[(1, 0, "supports")]
+            )
         )
         revision_id = _drive_generation(
             db_session, owner_id=member_id, library_id=library_id, token="t1", runtime=runtime
@@ -1213,7 +1226,9 @@ class TestVirtualMediaSet:
         _ready_unit_media(db_session, owner_id, library_id, title="Source")
 
         runtime = _ScriptedRuntime(
-            outcome=_succeeded_reduce_outcome(content_md="Overview [1].", citations=[(1, 0, "supports")])
+            outcome=_succeeded_reduce_outcome(
+                content_md="Overview [1].", citations=[(1, 0, "supports")]
+            )
         )
         revision_id = _drive_generation(
             db_session, owner_id=owner_id, library_id=library_id, token="t1", runtime=runtime
@@ -1506,7 +1521,9 @@ class TestWorkerBoundary:
             db_session, viewer_id=owner_id, library_id=library_id, idempotency_key="t1"
         )
         failure = TransientExhausted(attempts=1, cause=ProviderHttpUnavailable())
-        runtime = _ScriptedRuntime(outcome=Failed(meta=_reduce_meta(usage=Absent()), failure=failure))
+        runtime = _ScriptedRuntime(
+            outcome=Failed(meta=_reduce_meta(usage=Absent()), failure=failure)
+        )
 
         asyncio.run(
             run_artifact_generation(db_session, revision_id=ref.revision_id, runtime=runtime)

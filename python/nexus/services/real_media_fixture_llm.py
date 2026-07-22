@@ -79,9 +79,7 @@ class RealMediaFixtureExecutionRuntime:
             return Succeeded(
                 meta=_meta(intent, canned_json),
                 response=ResponsePayload(
-                    content=StructuredContent(
-                        payload=json.loads(canned_json), text=canned_json
-                    ),
+                    content=StructuredContent(payload=json.loads(canned_json), text=canned_json),
                     continuation=Absent(),
                 ),
             )

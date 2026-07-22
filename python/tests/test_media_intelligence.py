@@ -649,7 +649,9 @@ class TestFailAfterWorkerException:
 
     def test_noop_when_already_ready(self, db_session: Session) -> None:
         media_id = _seed_unit_media(db_session)
-        runtime = _ScriptedRuntime(outcome=_succeeded_unit_outcome(summary_md="kept", claims=[("c", 0)]))
+        runtime = _ScriptedRuntime(
+            outcome=_succeeded_unit_outcome(summary_md="kept", claims=[("c", 0)])
+        )
         ensure_media_unit(db_session, media_id=media_id)
         asyncio.run(run_media_unit_build(db_session, media_id=media_id, runtime=runtime))
         db_session.expire_all()

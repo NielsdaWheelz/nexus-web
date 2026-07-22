@@ -198,16 +198,24 @@ def test_unrecognized_error_code_degrades_to_none() -> None:
 
 
 def test_retired_profile_makes_conditionally_rerunnable_not_rerunnable() -> None:
-    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
-                    profile_id=_INACTIVE_PROFILE_ID)
+    run = _make_run(
+        status="error",
+        error_code="incomplete",
+        error_origin="provider_response",
+        profile_id=_INACTIVE_PROFILE_ID,
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert isinstance(result, IncompleteChatFailure)
     assert result.can_rerun is False
 
 
 def test_missing_reasoning_option_selection_is_not_rerunnable() -> None:
-    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
-                    reasoning_option_id=None)
+    run = _make_run(
+        status="error",
+        error_code="incomplete",
+        error_origin="provider_response",
+        reasoning_option_id=None,
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert isinstance(result, IncompleteChatFailure)
     assert result.can_rerun is False
@@ -215,8 +223,12 @@ def test_missing_reasoning_option_selection_is_not_rerunnable() -> None:
 
 def test_reasoning_option_no_longer_offered_is_not_rerunnable() -> None:
     # 'minimal' is offered by gemini, not by the active 'balanced' profile.
-    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
-                    reasoning_option_id="minimal")
+    run = _make_run(
+        status="error",
+        error_code="incomplete",
+        error_origin="provider_response",
+        reasoning_option_id="minimal",
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert result is not None
     assert result.can_rerun is False
@@ -225,8 +237,13 @@ def test_reasoning_option_no_longer_offered_is_not_rerunnable() -> None:
 def test_drifted_target_snapshot_makes_it_not_rerunnable() -> None:
     # Operator repointed the profile: the run's recorded resolved target no
     # longer matches what 'balanced' resolves to today (openai/gpt-5.6-terra).
-    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
-                    provider="anthropic", model_name="claude-sonnet-5")
+    run = _make_run(
+        status="error",
+        error_code="incomplete",
+        error_origin="provider_response",
+        provider="anthropic",
+        model_name="claude-sonnet-5",
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert isinstance(result, IncompleteChatFailure)
     assert result.can_rerun is False
@@ -234,9 +251,14 @@ def test_drifted_target_snapshot_makes_it_not_rerunnable() -> None:
 
 def test_matching_target_snapshot_stays_rerunnable() -> None:
     # Snapshot matches the current 'balanced' resolution ⇒ no drift ⇒ rerunnable.
-    run = _make_run(status="error", error_code="incomplete", error_origin="provider_response",
-                    provider="openai", model_name="gpt-5.6-terra",
-                    reasoning_effort=_ACTIVE_REASONING_OPTION_ID)
+    run = _make_run(
+        status="error",
+        error_code="incomplete",
+        error_origin="provider_response",
+        provider="openai",
+        model_name="gpt-5.6-terra",
+        reasoning_effort=_ACTIVE_REASONING_OPTION_ID,
+    )
     result = chat_failure_projection(run, has_write_tool_attempt=False)
     assert isinstance(result, IncompleteChatFailure)
     assert result.can_rerun is True

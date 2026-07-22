@@ -61,6 +61,7 @@ class _UnrepresentableTerminal(Exception):
     this degrades to the generic non-rerunnable card (`failure=None`), never a
     500 — see `chat_failure_projection`. The write side stays strict."""
 
+
 # The closed §10 code set a terminal ChatRun can carry as error_code, plus the
 # statusonly "cancelled" pseudo-code (ChatRun never stores error_code=
 # 'cancelled'; run.status == 'cancelled' alone drives that variant).

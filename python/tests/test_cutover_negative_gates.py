@@ -2730,7 +2730,9 @@ def test_llm_profile_targets_current_and_no_retired_model_slug_active():
     # anywhere in the LLM selection/execution/runtime surface. (redact.py's safe_kv
     # docstring example is a logging-guard illustration, not an active target, and is not
     # part of this surface.)
-    retired = r"gpt-4|gpt-3|claude-3|claude-haiku|claude-opus|gemini-1\.|gemini-2\.|kimi-k2|deepseek|@cf/"
+    retired = (
+        r"gpt-4|gpt-3|claude-3|claude-haiku|claude-opus|gemini-1\.|gemini-2\.|kimi-k2|deepseek|@cf/"
+    )
     llm_surface = (
         _PY_ROOT / "services" / "llm_profiles.py",
         _PY_ROOT / "services" / "llm_execution.py",
@@ -2739,7 +2741,9 @@ def test_llm_profile_targets_current_and_no_retired_model_slug_active():
         _PY_ROOT / "api" / "routes" / "llm_profiles.py",
     )
     hits = _grep(retired, *llm_surface)
-    assert not hits, f"retired model slug active in the LLM selection/runtime surface:\n{_fmt(hits)}"
+    assert not hits, (
+        f"retired model slug active in the LLM selection/runtime surface:\n{_fmt(hits)}"
+    )
 
 
 def test_generic_provider_branch_client_absent_from_live_code():
@@ -2763,7 +2767,9 @@ def test_cache_stripping_schema_mutation_and_json_repair_absent():
         r"normalize_schema|force_add_required|add_required_fields"
     )
     hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
-    assert not hits, f"cache-stripping / schema-mutation / JSON-repair surface in live code:\n{_fmt(hits)}"
+    assert not hits, (
+        f"cache-stripping / schema-mutation / JSON-repair surface in live code:\n{_fmt(hits)}"
+    )
 
 
 def test_sampling_knobs_absent_from_live_code():
@@ -2801,6 +2807,8 @@ def test_automatic_provider_fallback_absent_from_live_code():
     )
     hits = _filtered(pattern, _PY_ROOT, _WEB_ROOT, exclude=_FRONTEND_TEST)
     assert not hits, f"automatic provider/model fallback in live code:\n{_fmt(hits)}"
+
+
 # Universal Link Authoring hard cutover
 # (docs/cutovers/universal-link-authoring-hard-cutover.md, AC23/AC25)
 #

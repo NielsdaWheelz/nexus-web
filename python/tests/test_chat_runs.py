@@ -838,17 +838,13 @@ class TestChatRunCreate:
         first = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(
-                conversation_id=str(conversation_id), content="First prompt"
-            ),
+            _create_run_payload(conversation_id=str(conversation_id), content="First prompt"),
             "chat-run-mismatch",
         )
         second = _post_chat_run(
             auth_client,
             user_id,
-            _create_run_payload(
-                conversation_id=str(conversation_id), content="Different prompt"
-            ),
+            _create_run_payload(conversation_id=str(conversation_id), content="Different prompt"),
             "chat-run-mismatch",
         )
 
