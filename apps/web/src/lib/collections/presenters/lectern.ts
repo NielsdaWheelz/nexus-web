@@ -1,27 +1,58 @@
-/**
- * Lectern collection presenters. These pure mappings own the item-row
- * hierarchy and actions; the pane owns resource state and renders playable
- * controls because those controls bind to the global player capability.
- */
+/** Pure semantic projection for one Lectern row. */
 
-import { Trash2 } from "lucide-react";
-import type { CollectionRowView, ReadStatus } from "@/lib/collections/types";
-import type { ConsumptionInfo, LecternItem } from "@/lib/lectern/contract";
-import { mediaKindIcon } from "@/lib/resources/resourceKind";
+import { absent, present, type Presence } from "@/lib/api/presence";
+import type {
+  CollectionActivity,
+  CollectionRowView,
+  ConsumptionModality,
+} from "@/lib/collections/types";
+import type {
+  ConsumptionInfo,
+  LecternActivityFacts,
+  LecternItem,
+} from "@/lib/lectern/contract";
 
-function presentConsumption(
-  consumption: ConsumptionInfo,
-): CollectionRowView["consumption"] {
-  const fraction =
-    consumption.progress.kind === "Present" ? consumption.progress.value : undefined;
-  if (consumption.state === "Unread" && fraction === undefined) return undefined;
-  const status: ReadStatus =
-    consumption.state === "Finished"
-      ? "finished"
-      : consumption.state === "InProgress"
-        ? "in_progress"
-        : "unread";
-  return fraction === undefined ? { status } : { status, fraction };
+function modalityFor(item: LecternItem): ConsumptionModality {
+  if (item.activation.kind === "FooterAudio") return "Listen";
+  if (item.kind === "video") return "Watch";
+  return "Read";
+}
+
+function presentActivity(
+  item: LecternItem,
+  facts: LecternActivityFacts,
+): Presence<CollectionActivity> {
+  const modality = modalityFor(item);
+  switch (item.consumption.state) {
+    case "Unread":
+      return present({ kind: "Unread", modality, totalMinutes: facts.totalMinutes });
+    case "InProgress": {
+      const fraction = facts.fraction;
+      if (fraction.kind === "Present") {
+        return present({
+          kind: "InProgress",
+          modality,
+          fraction,
+          remainingMinutes: facts.remainingMinutes,
+        });
+      }
+      if (facts.remainingMinutes.kind === "Absent") {
+        return absent();
+      }
+      return present({
+        kind: "InProgress",
+        modality,
+        fraction,
+        remainingMinutes: facts.remainingMinutes,
+      });
+    }
+    case "Finished":
+      return present({ kind: "Finished", modality });
+    default: {
+      const exhaustive: never = item.consumption.state;
+      throw new Error(`Unsupported Lectern consumption state: ${exhaustive}`);
+    }
+  }
 }
 
 export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | "Resume" {
@@ -33,16 +64,23 @@ export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | 
 export function presentLecternItem(
   item: LecternItem,
   onRemove: (triggerEl: HTMLButtonElement | null) => void,
+  activityFacts: LecternActivityFacts,
 ): CollectionRowView {
   return {
     id: item.itemId,
     kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
     primary: { kind: "link", href: item.href, paneLabelHint: item.title },
-    lead: { icon: mediaKindIcon(item.kind) },
-    headline: { text: item.title },
-    signals: item.subtitle.kind === "Present" ? [{ value: item.subtitle.value }] : [],
-    consumption: presentConsumption(item.consumption),
-    relatedMediaId: null,
+    title: { text: item.title },
+    contributors: [],
+    publicationDate: absent(),
+    context:
+      item.subtitle.kind === "Present"
+        ? present({ kind: "Text", text: item.subtitle.value })
+        : absent(),
+    activity: presentActivity(item, activityFacts),
+    exceptionalStatus: absent(),
+    connections: absent(),
+    relatedMediaId: absent(),
     actions: [
       {
         kind: "command",
@@ -53,14 +91,6 @@ export function presentLecternItem(
         onSelect: ({ triggerEl }) => onRemove(triggerEl),
       },
     ],
-    swipeActions: [
-      {
-        id: "remove-from-lectern",
-        label: "Remove",
-        icon: Trash2,
-        tone: "danger",
-        onActivate: () => onRemove(null),
-      },
-    ],
+    selected: false,
   };
 }

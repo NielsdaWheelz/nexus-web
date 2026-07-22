@@ -1,15 +1,18 @@
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import type { Presence } from "@/lib/api/presence";
+import type { PositiveCount } from "@/lib/consumption/activityFacts";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
+import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
+import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
 import { pluralize } from "@/lib/text/pluralize";
+import {
+  decodePodcastSyncStatus,
+  type PodcastSyncStatus,
+} from "@/lib/status/podcastSync";
 
-export type PodcastSubscriptionSyncStatus =
-  | "pending"
-  | "running"
-  | "partial"
-  | "complete"
-  | "source_limited"
-  | "failed";
+export type PodcastSubscriptionSyncStatus = PodcastSyncStatus;
 
 export type PodcastSummary = {
   id: string;
@@ -55,12 +58,38 @@ export type PodcastDetailResponse = {
   subscription: PodcastSubscriptionDetail | null;
 };
 
-export type PodcastSubscriptionListItem = PodcastSubscriptionRecord & {
+export type PodcastSubscriptionListItemWire = PodcastSubscriptionRecord & {
   unplayed_count: number;
   latest_episode_published_at: string | null;
   visible_libraries: PodcastVisibleLibrary[];
   podcast: PodcastSummary;
 };
+
+export type PodcastSubscriptionListItem = PodcastSubscriptionListItemWire & {
+  unplayedCount: Presence<PositiveCount>;
+  publicationDate: Presence<PublicationDate>;
+  syncStatus: Presence<PodcastSyncStatus>;
+};
+
+export function decodePodcastSubscriptionListItem(
+  item: PodcastSubscriptionListItemWire,
+): PodcastSubscriptionListItem {
+  return {
+    ...item,
+    unplayedCount: decodePodcastUnplayedCount(item.unplayed_count),
+    publicationDate: decodeOptionalPublicationDate(
+      item.latest_episode_published_at,
+      "podcast latest_episode_published_at",
+    ),
+    syncStatus: {
+      kind: "Present",
+      value: decodePodcastSyncStatus(
+        item.sync_status,
+        "podcast sync_status",
+      ),
+    },
+  };
+}
 
 type PodcastLibraryResponseItem = {
   id: string;

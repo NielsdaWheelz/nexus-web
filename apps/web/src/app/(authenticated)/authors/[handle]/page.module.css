@@ -50,83 +50,14 @@
   overflow-wrap: anywhere;
 }
 
-/* Works — an editorial row list, never a card grid. */
-.works {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .empty {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
 }
 
-.workList {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.workRow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-4) 0;
-  border-top: 1px solid var(--edge-subtle);
-}
-
-.workRow:first-child {
-  border-top: none;
-  padding-top: 0;
-}
-
-.workTitle {
-  color: var(--ink);
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.workTitle:hover,
-.workTitle:focus-visible {
-  text-decoration: underline;
-}
-
-.workMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
-}
-
-.workKind {
-  text-transform: capitalize;
-}
-
-.workFacts {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.fact {
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-
-.loadMore {
-  align-self: flex-start;
+.worksFooter {
+  margin-top: var(--space-4);
 }
 
 .worksError {
@@ -134,6 +65,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 /* Rename dialog */

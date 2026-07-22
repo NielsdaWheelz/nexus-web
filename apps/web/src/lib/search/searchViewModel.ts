@@ -1,4 +1,9 @@
 import type { ContributorCredit } from "@/lib/contributors/types";
+import { absent, type Presence } from "@/lib/api/presence";
+import {
+  decodeOptionalPublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { normalizeSearchResult } from "./normalizeSearchResult";
 import type { SearchApiResult, SearchResultRowViewModel } from "./types";
@@ -92,14 +97,27 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   }
 
   const parts = [result.source.title];
-  if (result.source.published_date) {
-    parts.push(result.source.published_date);
-  }
   if (result.source.media_kind) {
     parts.push(result.source.media_kind.replace(/_/g, " "));
   }
 
   return parts.filter(Boolean).join(" — ") || null;
+}
+
+function publicationDateFor(
+  result: SearchApiResult,
+): Presence<PublicationDate> {
+  if (result.type === "web_result") {
+    return decodeOptionalPublicationDate(
+      result.published_at,
+      "search web_result published_at",
+    );
+  }
+  if (!("source" in result)) return absent();
+  return decodeOptionalPublicationDate(
+    result.source.published_date,
+    `search ${result.type} source.published_date`,
+  );
 }
 
 function buildPrimaryText(result: SearchApiResult): string {
@@ -212,6 +230,7 @@ export function adaptSearchResultRow(
     primaryText,
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
+    publicationDate: publicationDateFor(result),
     contributorCredits: getContributorCredits(result),
     noteBody: result.type === "note_block" ? result.body_text : null,
   };

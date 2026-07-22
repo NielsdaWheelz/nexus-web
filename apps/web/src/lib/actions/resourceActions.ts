@@ -1,4 +1,4 @@
-import type { ReadStatus } from "@/lib/collections/types";
+import type { ReadStatus } from "@/lib/collections/readState";
 import type { ActionDescriptor, ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { isRecord } from "@/lib/validation";
 
@@ -285,6 +285,13 @@ export function episodeResourceOptions(input: {
   onRetryMetadata?: () => void;
   onTogglePlayed: () => void;
   onAddToLectern?: () => void;
+  episodePanelId: string;
+  showNotesExpanded?: boolean;
+  onToggleShowNotes?: () => void;
+  playNextDisabled?: boolean;
+  onPlayNext?: () => void;
+  transcriptPanelExpanded?: boolean;
+  onRequestTranscript?: () => void;
 }): ActionDescriptor[] {
   const options = mediaResourceOptions({
     media: input.media,
@@ -312,11 +319,69 @@ export function episodeResourceOptions(input: {
     disabled: input.markingBusy,
     onSelect: input.onTogglePlayed,
   };
+  const episodeOptions: ActionDescriptor[] = [];
+  if (input.onToggleShowNotes) {
+    const expanded = input.showNotesExpanded === true;
+    episodeOptions.push({
+      kind: "command",
+      id: "toggle-episode-notes",
+      label: expanded ? "Hide notes" : "Show notes",
+      state: expanded
+        ? {
+            kind: "disclosure",
+            expanded: true,
+            controls: input.episodePanelId,
+            menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
+          }
+        : {
+            kind: "disclosure",
+            expanded: false,
+            menuLabels: { collapsed: "Show notes", expanded: "Hide notes" },
+          },
+      onSelect: input.onToggleShowNotes,
+    });
+  }
+  if (input.onPlayNext) {
+    episodeOptions.push({
+      kind: "command",
+      id: "play-episode-next",
+      label: "Play next",
+      disabled: input.playNextDisabled,
+      onSelect: input.onPlayNext,
+    });
+  }
+  if (input.onRequestTranscript) {
+    const expanded = input.transcriptPanelExpanded === true;
+    episodeOptions.push({
+      kind: "command",
+      id: "request-episode-transcript",
+      label: expanded ? "Hide transcript request" : "Request transcript...",
+      state: expanded
+        ? {
+            kind: "disclosure",
+            expanded: true,
+            controls: input.episodePanelId,
+            menuLabels: {
+              collapsed: "Request transcript...",
+              expanded: "Hide transcript request",
+            },
+          }
+        : {
+            kind: "disclosure",
+            expanded: false,
+            menuLabels: {
+              collapsed: "Request transcript...",
+              expanded: "Hide transcript request",
+            },
+          },
+      onSelect: input.onRequestTranscript,
+    });
+  }
   const dangerIndex = options.findIndex((option) => option.tone === "danger");
   if (dangerIndex === -1) {
-    options.push(playbackOption);
+    options.push(...episodeOptions, playbackOption);
   } else {
-    options.splice(dangerIndex, 0, playbackOption);
+    options.splice(dangerIndex, 0, ...episodeOptions, playbackOption);
   }
   return options;
 }

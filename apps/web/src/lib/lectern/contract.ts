@@ -18,6 +18,10 @@
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import type {
+  PositiveMinutes,
+  ProgressFraction,
+} from "@/lib/consumption/activityFacts";
 import { isRecord } from "@/lib/validation";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
@@ -117,6 +121,53 @@ export interface LecternItem {
   href: AppHref;
   consumption: ConsumptionInfo;
   activation: Activation;
+}
+
+export interface LecternActivityFacts {
+  totalMinutes: Presence<PositiveMinutes>;
+  fraction: Presence<ProgressFraction>;
+  remainingMinutes: Presence<PositiveMinutes>;
+}
+
+export function lecternActivityFacts(item: LecternItem): LecternActivityFacts {
+  const fraction =
+    item.consumption.progress.kind === "Present"
+      ? {
+          kind: "Present" as const,
+          value: { value: item.consumption.progress.value },
+        }
+      : { kind: "Absent" as const };
+  if (
+    item.activation.kind !== "FooterAudio" ||
+    item.activation.durationMs.kind === "Absent"
+  ) {
+    return {
+      totalMinutes: { kind: "Absent" },
+      fraction,
+      remainingMinutes: { kind: "Absent" },
+    };
+  }
+  const durationMs = item.activation.durationMs.value;
+  if (durationMs <= 0 || item.activation.positionMs > durationMs) {
+    throw new TypeError(
+      "Lectern FooterAudio duration must be positive and at least positionMs",
+    );
+  }
+  const remainingMs = durationMs - item.activation.positionMs;
+  return {
+    totalMinutes: {
+      kind: "Present",
+      value: { value: Math.ceil(durationMs / 60_000) },
+    },
+    fraction,
+    remainingMinutes:
+      remainingMs > 0
+        ? {
+            kind: "Present",
+            value: { value: Math.ceil(remainingMs / 60_000) },
+          }
+        : { kind: "Absent" },
+  };
 }
 
 export interface LecternSnapshot {

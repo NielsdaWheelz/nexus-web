@@ -1,6 +1,6 @@
 # Lightweight Author Deduplication Hard Cutover
 
-**Status:** Proposed implementation specification · 2026-07-15
+**Status:** Implemented — merged and deployed (migration 0179) · 2026-07-16
 **Posture:** Irreversible coordinated cutover. No dual reads, dual writes,
 fallbacks, compatibility DTOs, legacy routes, or mixed-version deployment.
 

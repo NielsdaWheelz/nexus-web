@@ -1,17 +1,21 @@
-import { FileText } from "lucide-react";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
-import ContributorCreditList from "@/components/contributors/ContributorCreditList";
 import ResourceList from "@/components/ui/ResourceList";
 import ResourceRow from "@/components/ui/ResourceRow";
-import ResourceThumb from "@/components/ui/ResourceThumb";
+
+function computedLineHeightPx(style: CSSStyleDeclaration): number {
+  const lineHeight = Number.parseFloat(style.lineHeight);
+  return Number.isFinite(lineHeight)
+    ? lineHeight
+    : Number.parseFloat(style.fontSize) * 1.2;
+}
 
 describe("ResourceRow", () => {
-  it("renders a real link row and keeps actions outside the link", () => {
+  it("keeps supporting links and controls outside the title activation", () => {
     render(
-      <ResourceList>
+      <ResourceList ariaLabel="Resources">
         <ResourceRow
           primary={{
             kind: "link",
@@ -19,165 +23,146 @@ describe("ResourceRow", () => {
             paneLabelHint: "Media title",
           }}
           title="Media title"
-          actions={<a href="https://example.test/authors/author-1">Author Name</a>}
+          supporting={<a href="https://example.test/authors/ada">Ada Author</a>}
+          primaryControl={<button type="button">Primary control</button>}
+          actions={<button type="button">More actions</button>}
         />
       </ResourceList>,
     );
 
-    const rowLink = screen.getByRole("link", { name: "Media title" });
-    const actionLink = screen.getByRole("link", { name: "Author Name" });
-
-    expect(rowLink).toHaveAttribute("href", "/media/media-1");
-    expect(rowLink).toHaveAttribute("data-pane-label-hint", "Media title");
-    expect(actionLink).toHaveAttribute(
-      "href",
-      "https://example.test/authors/author-1",
+    const title = screen.getByRole("link", { name: "Media title" });
+    const contributor = screen.getByRole("link", { name: "Ada Author" });
+    expect(title).toHaveAttribute("href", "/media/media-1");
+    expect(title).toHaveAttribute("data-pane-label-hint", "Media title");
+    expect(screen.getByText("Media title")).toHaveAttribute("dir", "auto");
+    expect(title).not.toContainElement(contributor);
+    expect(title).not.toContainElement(
+      screen.getByRole("button", { name: "Primary control" }),
     );
-    expect(rowLink).not.toContainElement(actionLink);
+    expect(title).not.toContainElement(
+      screen.getByRole("button", { name: "More actions" }),
+    );
   });
 
-  it("keeps contributor links outside the primary link", () => {
+  it("renders one exceptional state instead of normal activity", () => {
     render(
-      <ResourceList>
+      <ResourceList ariaLabel="Resources">
         <ResourceRow
-          primary={{ kind: "link", href: "/media/media-1" }}
-          title="Media title"
-          contributors={<a href="https://example.test/authors/author-1">Author Name</a>}
+          primary={{ kind: "static" }}
+          title="Static item"
+          activity={<span>Finished</span>}
+          exceptionalStatus={<span>Failed</span>}
         />
       </ResourceList>,
     );
 
-    const rowLink = screen.getByRole("link", { name: "Media title" });
-    const contributorLink = screen.getByRole("link", { name: "Author Name" });
-
-    expect(rowLink).not.toContainElement(contributorLink);
+    expect(screen.getByText("Failed")).toBeVisible();
+    expect(screen.queryByText("Finished")).toBeNull();
   });
 
-  it("renders a real button row and keeps actions from activating it", async () => {
-    const user = userEvent.setup();
+  it("keeps action activation independent from button primary activation", async () => {
     const onActivate = vi.fn();
     const onAction = vi.fn();
-
     render(
-      <ResourceList>
+      <ResourceList ariaLabel="Resources">
         <ResourceRow
-          primary={{
-            kind: "button",
-            label: "Open item",
-            onActivate,
-          }}
+          primary={{ kind: "button", label: "Open item", onActivate }}
           title="Item title"
           actions={<button onClick={onAction}>Row action</button>}
         />
       </ResourceList>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Row action" }));
-    expect(onAction).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Row action" }));
+    expect(onAction).toHaveBeenCalledOnce();
     expect(onActivate).not.toHaveBeenCalled();
 
-    const primary = screen.getByRole("button", { name: "Open item" });
-    await user.click(primary);
-    expect(onActivate).toHaveBeenCalledTimes(1);
-
-    await user.click(screen.getByText("Item title"));
-    expect(onActivate).toHaveBeenCalledTimes(2);
-
-    primary.focus();
-    await user.keyboard("{Enter}");
-    expect(onActivate).toHaveBeenCalledTimes(3);
+    await userEvent.click(screen.getByRole("button", { name: "Open item" }));
+    expect(onActivate).toHaveBeenCalledOnce();
   });
 
-  it("disables busy button rows", () => {
-    const onActivate = vi.fn();
+  it.each([320, 390, 960])(
+    "stays within a populated %ipx container with the correct title clamp",
+    (width) => {
+      const titleText =
+        "A very long resource title that can occupy two lines without widening its container";
+      render(
+        <div data-testid="host" style={{ width: `${width}px`, maxWidth: `${width}px` }}>
+          <ResourceList ariaLabel="Resources">
+            <ResourceRow
+              primary={{ kind: "link", href: "/media/long-row" }}
+              title={titleText}
+              supporting="Ada Author · February 2025 · A long compact context that must truncate"
+              activity={<span>42% · ≈5 min left</span>}
+              primaryControl={<button type="button">Open</button>}
+              actions={<button type="button">…</button>}
+            />
+          </ResourceList>
+        </div>,
+      );
 
+      const host = screen.getByTestId("host");
+      expect(host.clientWidth).toBe(width);
+      expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+      expect(horizontallyScrollableElements(host)).toEqual([]);
+      expect(screen.queryByRole("img")).toBeNull();
+      const title = screen.getByText(titleText);
+      const titleStyle = getComputedStyle(title);
+      const titleLineHeight = computedLineHeightPx(titleStyle);
+      expect(titleStyle.webkitLineClamp).toBe(
+        width <= 520 ? "2" : "none",
+      );
+      expect(title.getBoundingClientRect().height).toBeLessThanOrEqual(
+        titleLineHeight * (width <= 520 ? 2 : 1) + 1,
+      );
+
+      const support = screen.getByText(
+        "Ada Author · February 2025 · A long compact context that must truncate",
+      );
+      const supportStyle = getComputedStyle(support);
+      expect(supportStyle.whiteSpace).toBe("nowrap");
+      expect(support.getBoundingClientRect().height).toBeLessThanOrEqual(
+        computedLineHeightPx(supportStyle) + 1,
+      );
+
+      const state = screen.getByText("42% · ≈5 min left");
+      const stateStyle = getComputedStyle(state);
+      expect(stateStyle.whiteSpace).toBe("nowrap");
+      expect(state.getBoundingClientRect().height).toBeLessThanOrEqual(
+        computedLineHeightPx(stateStyle) + 1,
+      );
+      if (width <= 520) {
+        expect(Math.abs(
+          support.getBoundingClientRect().top - state.getBoundingClientRect().top,
+        )).toBeLessThanOrEqual(2);
+      }
+      expect(screen.getByText("…").getBoundingClientRect().right).toBeLessThanOrEqual(
+        host.getBoundingClientRect().right + 1,
+      );
+    },
+  );
+
+  it("left-aligns a state-only narrow secondary line", () => {
     render(
-      <ResourceList>
-        <ResourceRow
-          primary={{
-            kind: "button",
-            label: "Open item",
-            busy: true,
-            onActivate,
-          }}
-          title="Item title"
-        />
-      </ResourceList>,
-    );
-
-    const button = screen.getByRole("button", { name: "Open item" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("aria-busy", "true");
-
-    expect(onActivate).not.toHaveBeenCalled();
-  });
-
-  it("renders static rows without an activation role", () => {
-    render(
-      <ResourceList>
-        <ResourceRow primary={{ kind: "static" }} title="Static item" />
-      </ResourceList>,
-    );
-
-    expect(screen.getByText("Static item")).toBeInTheDocument();
-    expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
-  it("keeps populated rows inside a 320px narrow container", () => {
-    render(
-      <div
-        data-testid="narrow-row-host"
-        style={{ width: "320px", maxWidth: "320px" }}
-      >
-        <ResourceList>
+      <div data-testid="host" style={{ width: "320px", maxWidth: "320px" }}>
+        <ResourceList ariaLabel="Resources">
           <ResourceRow
-            primary={{ kind: "link", href: "/media/long-row" }}
-            leading={
-              <ResourceThumb
-                spec={{ icon: FileText }}
-                alt="A very long narrow resource row"
-              />
-            }
-            title="A very long narrow resource row title that should stay readable without creating horizontal overflow"
-            description="This description represents secondary context that should not force the card wider than the viewport."
-            meta="Publisher With A Very Long Name · 2026 · A signal that needs to clamp on narrow rows"
-            badges={<span>Research status with a long label</span>}
-            contributors={
-              <ContributorCreditList
-                credits={[
-                  {
-                    contributor_handle: "first-contributor",
-                    contributor_display_name: "First Contributor With A Long Name",
-                    credited_name: "First Contributor With A Long Name",
-                    role: "author",
-                    href: "/authors/first-contributor",
-                  },
-                  {
-                    contributor_handle: "second-contributor",
-                    contributor_display_name: "Second Contributor With A Long Name",
-                    credited_name: "Second Contributor With A Long Name",
-                    role: "editor",
-                    href: "/authors/second-contributor",
-                  },
-                ]}
-                showRole
-              />
-            }
-            secondary={<button type="button">↳ 14 connected</button>}
-            actions={<button type="button">Secondary action with long label</button>}
+            primary={{ kind: "link", href: "/media/processing" }}
+            title="A processing item with a title that uses two lines"
+            exceptionalStatus={<span>Processing</span>}
+            actions={<button type="button">…</button>}
           />
         </ResourceList>
       </div>,
     );
 
-    const host = screen.getByTestId("narrow-row-host");
-    expect(host.clientWidth).toBe(320);
-    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-    expect(horizontallyScrollableElements(host)).toEqual([]);
-    expect(screen.getByRole("link", { name: /narrow resource row title/ })).toHaveAttribute(
-      "href",
-      "/media/long-row",
+    const title = screen.getByText(
+      "A processing item with a title that uses two lines",
     );
+    const state = screen.getByText("Processing");
+    expect(Math.abs(
+      title.getBoundingClientRect().left - state.getBoundingClientRect().left,
+    )).toBeLessThanOrEqual(1);
+    expect(screen.getByTestId("host").scrollWidth).toBeLessThanOrEqual(321);
   });
 });

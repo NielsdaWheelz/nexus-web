@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  contributorResource,
+  contributorWorksResource,
   lecternSlateResource,
   libraryEntriesResource,
   libraryResource,
@@ -43,6 +45,8 @@ describe("Library pane resource loader", () => {
       processing_status: "ready_for_reading",
       read_state: "unread",
       progress_fraction: null,
+      published_date: null,
+      canonical_source_url: "https://example.test/article",
       capabilities: { can_quote: true },
     },
     readingTimeEstimate: {
@@ -71,7 +75,24 @@ describe("Library pane resource loader", () => {
 
     await expect(loader.load(request, { id: "library-1" })).resolves.toEqual({
       library,
-      entries: [entry],
+      entries: [
+        {
+          ...entry,
+          media: {
+            ...entry.media,
+            progressFraction: { kind: "Absent" },
+            publicationDate: { kind: "Absent" },
+            sourceHost: { kind: "Present", value: "example.test" },
+          },
+          readingTimeEstimate: {
+            kind: "Present",
+            value: {
+              totalMinutes: { value: 15 },
+              remainingMinutes: { kind: "Absent" },
+            },
+          },
+        },
+      ],
       entriesPage: page,
     });
   });
@@ -96,6 +117,101 @@ describe("Library pane resource loader", () => {
     await expect(loader.load(request, { id: "library-1" })).rejects.toThrow(
       /Invalid Presence/,
     );
+  });
+});
+
+describe("Author pane resource loader", () => {
+  it("uses the shared strict work decoder for first-paint seeds", async () => {
+    const request: ResourceFetcher = async <P, T>(
+      descriptor: ResourceDescriptor<P>,
+    ): Promise<T> => {
+      if (descriptor === contributorResource) {
+        return {
+          data: {
+            handle: "ursula-le-guin",
+            href: "/authors/ursula-le-guin",
+            displayName: "Ursula K. Le Guin",
+            otherNames: [],
+            canRename: false,
+          },
+        } as T;
+      }
+      if (descriptor === contributorWorksResource) {
+        return {
+          data: {
+            works: [
+              {
+                title: "A Wizard of Earthsea",
+                href: "/media/earthsea",
+                contentKind: "epub",
+                date: "1968",
+                roleFacts: [
+                  {
+                    creditedName: "Ursula K. Le Guin",
+                    role: "author",
+                    rawRole: null,
+                  },
+                ],
+              },
+            ],
+            nextCursor: null,
+          },
+        } as T;
+      }
+      throw new Error("Unexpected resource descriptor");
+    };
+    const loader = paneResourceLoaders.author;
+    if (!loader) throw new Error("Author loader missing");
+
+    await expect(
+      loader.load(request, { handle: "ursula-le-guin" }),
+    ).resolves.toMatchObject({
+      works: [
+        {
+          date: { kind: "Present", value: "1968" },
+          roleFacts: [{ role: "author", rawRole: null }],
+        },
+      ],
+      worksNextCursor: null,
+    });
+  });
+
+  it("defects when the first-paint work contract is incomplete", async () => {
+    const request: ResourceFetcher = async <P, T>(
+      descriptor: ResourceDescriptor<P>,
+    ): Promise<T> => {
+      if (descriptor === contributorResource) {
+        return {
+          data: {
+            handle: "ursula-le-guin",
+            href: "/authors/ursula-le-guin",
+            displayName: "Ursula K. Le Guin",
+          },
+        } as T;
+      }
+      if (descriptor === contributorWorksResource) {
+        return {
+          data: {
+            works: [
+              {
+                title: "Incomplete",
+                href: "/media/incomplete",
+                contentKind: "epub",
+                date: null,
+              },
+            ],
+            nextCursor: null,
+          },
+        } as T;
+      }
+      throw new Error("Unexpected resource descriptor");
+    };
+    const loader = paneResourceLoaders.author;
+    if (!loader) throw new Error("Author loader missing");
+
+    await expect(
+      loader.load(request, { handle: "ursula-le-guin" }),
+    ).rejects.toThrow(/ContributorWorkItem/);
   });
 });
 

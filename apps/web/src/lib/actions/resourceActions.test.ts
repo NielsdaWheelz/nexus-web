@@ -309,6 +309,7 @@ describe("episodeResourceOptions", () => {
       deleteBusy: true,
       played: false,
       markingBusy: true,
+      episodePanelId: "episode-panel-episode-1",
       onManageLibraries: () => {},
       onOpenChat: () => {},
       onRetry: () => {},
@@ -354,11 +355,54 @@ describe("episodeResourceOptions", () => {
         capabilities: {},
       },
       played: false,
+      episodePanelId: "episode-panel-episode-2",
       onManageLibraries: () => {},
       onTogglePlayed: () => {},
       onAddToLectern: () => {},
     });
     expect(options.map((option) => option.id)).toContain("add-to-lectern");
+  });
+
+  it("keeps episode notes, queue, and transcript commands in the row menu", () => {
+    const options = episodeResourceOptions({
+      media: {
+        id: "episode-3",
+        title: "Episode 3",
+        canonical_source_url: null,
+        capabilities: {},
+      },
+      played: false,
+      episodePanelId: "episode-panel-episode-3",
+      showNotesExpanded: true,
+      transcriptPanelExpanded: true,
+      onManageLibraries: () => {},
+      onTogglePlayed: () => {},
+      onToggleShowNotes: () => {},
+      onPlayNext: () => {},
+      onRequestTranscript: () => {},
+    });
+
+    expect(options.map((option) => option.id)).toEqual([
+      "manage-media-libraries",
+      "toggle-episode-notes",
+      "play-episode-next",
+      "request-episode-transcript",
+      "toggle-episode-played",
+    ]);
+    expect(options[1]).toMatchObject({
+      state: {
+        kind: "disclosure",
+        expanded: true,
+        controls: "episode-panel-episode-3",
+      },
+    });
+    expect(options[3]).toMatchObject({
+      state: {
+        kind: "disclosure",
+        expanded: true,
+        controls: "episode-panel-episode-3",
+      },
+    });
   });
 });
 

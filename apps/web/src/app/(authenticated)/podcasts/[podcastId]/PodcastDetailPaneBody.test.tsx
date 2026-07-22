@@ -236,7 +236,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
               updated_at: "2026-03-06T00:00:00Z",
             },
           ],
-          page: { next_cursor: null },
+          page: { has_more: false, next_cursor: null },
         });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
@@ -291,7 +291,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({ data: [], page: { next_cursor: null } });
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -302,12 +305,16 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     render(<Wrapped />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Show notes for Episode 1" }),
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
     );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Show notes" }));
     expect(await screen.findByText("Detailed show notes")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Hide notes for Episode 1" }),
+      screen.getByRole("button", { name: "More actions for Episode 1" }),
     );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Hide notes" }));
 
     await waitFor(() => {
       expect(screen.queryByText("Detailed show notes")).not.toBeInTheDocument();
@@ -350,7 +357,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({ data: [], page: { next_cursor: null } });
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
       }
       if (url.pathname === "/api/lectern") {
         return jsonResponse({ data: { items: [] } });
@@ -404,7 +414,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
-        return jsonResponse({ data: [], page: { next_cursor: null } });
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
       }
       if (url.pathname === "/api/media/transcript/forecasts") {
         forecastCalls += 1;

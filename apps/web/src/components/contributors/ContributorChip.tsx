@@ -6,7 +6,7 @@ import { contributorAuthorHref } from "@/lib/contributors/routes";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorChip.module.css";
 
-// A single credited name (pill retired, §0.5 / D-9): a name with a handle is an
+// A single credited name: a name with a handle is an
 // inline link to author detail; a handle-less text fact (podcast preview) is plain
 // inline text. Names are `dir="auto"` so RTL names read correctly; the role, when
 // shown, is app chrome (not `dir="auto"`). No border, no radius, no fill.

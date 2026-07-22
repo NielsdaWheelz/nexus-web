@@ -36,7 +36,10 @@ type ActionMenuTriggerAttributes = Pick<
 
 interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
   ref: Ref<HTMLButtonElement>;
+  type: "button";
+  className: string;
   id: string;
+  "aria-label": string;
   "aria-haspopup": "menu";
   "aria-controls": string | undefined;
   "aria-expanded": boolean;
@@ -59,6 +62,8 @@ interface ActionMenuProps {
   renderTrigger?: (props: ActionMenuTriggerProps) => ReactNode;
   /** Extra attributes for composite widgets that keep their trigger programmatic. */
   triggerAttributes?: ActionMenuTriggerAttributes;
+  /** Shares the native trigger node with another behavior such as drag activation. */
+  triggerRef?: (node: HTMLButtonElement | null) => void;
 }
 
 const MENU_ITEM_SELECTOR =
@@ -96,6 +101,7 @@ export default function ActionMenu({
   align = "end",
   renderTrigger,
   triggerAttributes,
+  triggerRef,
 }: ActionMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
@@ -105,6 +111,13 @@ export default function ActionMenu({
   const menuId = useId();
   const modalToken = useContainingModalLayer();
   const modalIsTopmost = useIsModalLayerTopmost(modalToken);
+  const setToggleNode = useCallback(
+    (node: HTMLButtonElement | null) => {
+      toggleRef.current = node;
+      triggerRef?.(node);
+    },
+    [triggerRef],
+  );
   const {
     ref: menuRef,
     style: menuStyle,
@@ -363,8 +376,11 @@ export default function ActionMenu({
 
   const triggerProps: ActionMenuTriggerProps = {
     ...triggerAttributes,
-    ref: toggleRef,
+    ref: setToggleNode,
+    type: "button",
+    className: styles.trigger,
     id: triggerId,
+    "aria-label": label,
     "aria-haspopup": "menu",
     "aria-controls": menuOpen ? menuId : undefined,
     "aria-expanded": menuOpen,
@@ -397,7 +413,7 @@ export default function ActionMenu({
       {renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
-        <button {...triggerProps} type="button" className={styles.trigger} aria-label={label}>
+        <button {...triggerProps}>
           &hellip;
         </button>
       )}

@@ -2,6 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
+import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import {
   fetchCallsForPath,
   fetchInputPath,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/launcher/launcherEvents";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
+import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // AC-4 hydration-hit: when the server prefetched the library pane's primary
@@ -62,44 +64,20 @@ function seededSystemLibraryWithMutableMedia() {
       can_edit_entries: false,
     },
     entries: [
-      {
-        id: "entry-1",
-        kind: "media",
-        position: 0,
-        created_at: "2026-01-01T00:00:00Z",
-        media: {
-          id: "media-1",
-          kind: "web_article",
-          title: "Corpus Work",
-          contributors: [],
-          published_date: null,
-          publisher: null,
-          canonical_source_url: null,
-          processing_status: "ready_for_reading",
-          read_state: "unread",
-          progress_fraction: null,
-          capabilities: {
-            can_quote: true,
-            can_delete: true,
-            can_refresh_source: true,
-            can_retry: true,
-            can_retry_metadata: true,
-          },
+      seededMediaEntry("entry-1", "media-1", "Corpus Work", {
+        capabilities: {
+          can_delete: true,
+          can_refresh_source: true,
+          can_retry: true,
+          can_retry_metadata: true,
         },
-        readingTimeEstimate: {
-          kind: "Present",
-          value: {
-            totalMinutes: 15,
-            remainingMinutes: { kind: "Absent" },
-          },
-        },
-      },
+      }),
     ],
     entriesPage: { has_more: false, next_cursor: null },
   };
 }
 
-function seededMediaEntry(
+function mediaEntryWire(
   id: string,
   mediaId: string,
   title: string,
@@ -140,6 +118,12 @@ function seededMediaEntry(
       },
     },
   };
+}
+
+function seededMediaEntry(
+  ...args: Parameters<typeof mediaEntryWire>
+) {
+  return decodeLibraryReadingTimeEntry(mediaEntryWire(...args));
 }
 
 function fetchInputPathWithSearch(input: unknown): string {
@@ -192,6 +176,47 @@ afterEach(() => {
 });
 
 describe("LibraryPaneBody (AC-4 hydration hit)", () => {
+  it.each([320, 390, 960])(
+    "keeps a populated canonical row within the real %ipx Library pane host",
+    async (width) => {
+      stubFetch(async (input) => {
+        const lectern = lecternGetResponse(input);
+        if (lectern) return lectern;
+        return Response.json({});
+      });
+      const longTitle =
+        "A deliberately long Library title that must wrap compactly without widening the pane";
+
+      renderHydratedPane({
+        href: `/libraries/${LIBRARY_ID}`,
+        resources: {
+          [LIBRARY_ID]: {
+            library: seededLibrary(),
+            entries: [seededMediaEntry("entry-width", ACTION_MEDIA_ID, longTitle)],
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        },
+        children: (
+          <div
+            data-testid={`library-host-${width}`}
+            style={{ width: `${width}px`, maxWidth: `${width}px` }}
+          >
+            {paneWithLectern}
+          </div>
+        ),
+      });
+
+      expect(await screen.findByText(longTitle)).toBeVisible();
+      const host = screen.getByTestId(`library-host-${width}`);
+      expect(host.clientWidth).toBe(width);
+      expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
+      expect(horizontallyScrollableElements(host)).toEqual([]);
+      expect(screen.getByRole("list", { name: "Library entries" })).toBeVisible();
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(screen.queryByRole("progressbar")).toBeNull();
+    },
+  );
+
   it("paints from the bootstrap seed without fetching the library resource", async () => {
     // Any fetch of the library resource is a failure signal; reject it loudly
     // and resolve everything else empty so a stray call never masks the assertion.
@@ -330,7 +355,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     expect(await screen.findByText("Corpus Work")).toBeInTheDocument();
 
     await user.click(
-      await screen.findByRole("button", { name: "Actions for Corpus Work" }),
+      await screen.findByRole("button", { name: "More actions for Corpus Work" }),
     );
 
     expect(
@@ -365,7 +390,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
       ) {
         return Response.json({
-          data: [seededMediaEntry("entry-2", "media-2", "Second Page Work")],
+          data: [mediaEntryWire("entry-2", "media-2", "Second Page Work")],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -407,7 +432,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
         return Response.json({
           data: [
-            seededMediaEntry("entry-r1", "media-r1", "First Resonance Work"),
+            mediaEntryWire("entry-r1", "media-r1", "First Resonance Work"),
           ],
           page: { has_more: true, next_cursor: "cursor-r2" },
         });
@@ -418,7 +443,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ) {
         return Response.json({
           data: [
-            seededMediaEntry("entry-r2", "media-r2", "Second Resonance Work"),
+            mediaEntryWire("entry-r2", "media-r2", "Second Resonance Work"),
           ],
           page: { has_more: false, next_cursor: null },
         });
@@ -462,7 +487,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
       ) {
-        const invalid = seededMediaEntry("entry-2", "media-2", "Invalid Work");
+        const invalid = mediaEntryWire("entry-2", "media-2", "Invalid Work");
         Reflect.deleteProperty(invalid, "readingTimeEstimate");
         return Response.json({
           data: [invalid],
@@ -503,7 +528,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchInputPathWithSearch(input) ===
         `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`
       ) {
-        const invalid = seededMediaEntry(
+        const invalid = mediaEntryWire(
           "entry-r1",
           "media-r1",
           "Invalid Resonance Work",
@@ -540,7 +565,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("optimistically shows total time and restores remaining without losing a concurrent page", async () => {
+  it("optimistically shows finished state and restores progress without losing a concurrent page", async () => {
     const user = userEvent.setup();
     let resolveConsumption!: (response: Response) => void;
     const pendingConsumption = new Promise<Response>((resolve) => {
@@ -555,7 +580,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       }
       if (path === `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`) {
         return Response.json({
-          data: [seededMediaEntry("entry-2", "media-2", "Concurrent Work")],
+          data: [mediaEntryWire("entry-2", "media-2", "Concurrent Work")],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -583,17 +608,17 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("≈ 5 min left")).toBeInTheDocument();
+    expect(await screen.findByText("50% · ≈5 min left")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
     await user.click(
-      screen.getByRole("button", { name: "Actions for Progressive Work" }),
+      screen.getByRole("button", { name: "More actions for Progressive Work" }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
-    expect(await screen.findByText("≈ 15 min read")).toBeInTheDocument();
+    expect(await screen.findByText("Finished")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Load more entries" }));
     expect(await screen.findByText("Concurrent Work")).toBeInTheDocument();
@@ -605,7 +630,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       ),
     );
 
-    expect(await screen.findByText("≈ 5 min left")).toBeInTheDocument();
+    expect(await screen.findByText("50% · ≈5 min left")).toBeInTheDocument();
     expect(screen.getByText("Concurrent Work")).toBeInTheDocument();
   });
 
@@ -649,25 +674,24 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("≈ 5 min left")).toBeInTheDocument();
+    expect(await screen.findByText("50% · ≈5 min left")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByTestId("lectern-status")).toHaveTextContent("ready"),
     );
     await user.click(
-      screen.getByRole("button", { name: "Actions for Progressive Work" }),
+      screen.getByRole("button", { name: "More actions for Progressive Work" }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
     );
-    expect(await screen.findByText("≈ 15 min read")).toBeInTheDocument();
+    expect(await screen.findByText("Finished")).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Actions for Progressive Work" }),
+      screen.getByRole("button", { name: "More actions for Progressive Work" }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Mark as unread" }),
     );
-    expect(await screen.findByText("Unread")).toBeInTheDocument();
-    expect(screen.getByText("≈ 15 min read")).toBeInTheDocument();
+    expect(await screen.findByText("Unread · ≈15 min")).toBeInTheDocument();
 
     resolveFirst(
       Response.json(
@@ -681,9 +705,9 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
         fetchCallsForPath(fetchMock, "/api/consumption/commands"),
       ).toHaveLength(2),
     );
-    expect(screen.getByText("Unread")).toBeInTheDocument();
+    expect(screen.getByText("Unread · ≈15 min")).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Actions for Progressive Work" }),
+      screen.getByRole("button", { name: "More actions for Progressive Work" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Mark as finished" }),
@@ -699,7 +723,7 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       if (path === `/api/libraries/${LIBRARY_ID}/entries?sort=resonance`) {
         return Response.json({
           data: [
-            seededMediaEntry("entry-r1", ACTION_MEDIA_ID, "Refreshing Work", {
+            mediaEntryWire("entry-r1", ACTION_MEDIA_ID, "Refreshing Work", {
               readState: "in_progress",
               progressFraction: 0.5,
               remainingMinutes: 5,
@@ -759,15 +783,15 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       children: paneWithLectern,
     });
 
-    expect(await screen.findByText("≈ 5 min left")).toBeInTheDocument();
+    expect(await screen.findByText("50% · ≈5 min left")).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Actions for Refreshing Work" }),
+      screen.getByRole("button", { name: "More actions for Refreshing Work" }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Refresh source" }),
     );
     await waitFor(() =>
-      expect(screen.queryByText("≈ 5 min left")).not.toBeInTheDocument(),
+      expect(screen.queryByText("50% · ≈5 min left")).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Processing")).toBeInTheDocument();
 
@@ -776,6 +800,6 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       "manual",
     );
     expect(await screen.findByText("Processing")).toBeInTheDocument();
-    expect(screen.queryByText("≈ 5 min left")).not.toBeInTheDocument();
+    expect(screen.queryByText("50% · ≈5 min left")).not.toBeInTheDocument();
   });
 });

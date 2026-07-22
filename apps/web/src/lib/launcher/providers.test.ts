@@ -100,6 +100,7 @@ function makeSearchResult(
     paneLabelHint: "Search Hit",
     snippetSegments: [],
     sourceMeta: null,
+    publicationDate: { kind: "Absent" },
     contributorCredits: [],
     noteBody: null,
     ...partial,

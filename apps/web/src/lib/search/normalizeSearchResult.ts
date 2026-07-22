@@ -473,6 +473,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         row.locator.type !== "external_url" ||
         !Array.isArray(row.extra_snippets) ||
         !row.extra_snippets.every((snippet) => typeof snippet === "string") ||
+        (row.published_at !== null &&
+          typeof row.published_at !== "string") ||
         typeof row.selected !== "boolean"
       ) {
         return null;
@@ -487,8 +489,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         display_url:
           typeof row.display_url === "string" ? row.display_url : null,
         extra_snippets: row.extra_snippets,
-        published_at:
-          typeof row.published_at === "string" ? row.published_at : null,
+        published_at: row.published_at,
         source_name:
           typeof row.source_name === "string" ? row.source_name : null,
         rank: typeof row.rank === "number" ? row.rank : null,

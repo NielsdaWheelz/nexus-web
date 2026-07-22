@@ -13,12 +13,10 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import {
   FeedbackNotice,
@@ -27,8 +25,10 @@ import {
 } from "@/components/feedback/Feedback";
 import {
   getPodcastSubscriptionSettingsPatch,
+  decodePodcastSubscriptionListItem,
   type PodcastLibraryMembership,
   type PodcastSubscriptionListItem,
+  type PodcastSubscriptionListItemWire,
 } from "./podcastSubscriptions";
 import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
@@ -108,8 +108,6 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const { displayState, setDisplayState } =
-    useCollectionDisplayState("/podcasts");
   const podcastListCodec = useMemo(
     () => ({
       basePath: "/podcasts",
@@ -192,11 +190,11 @@ export default function PodcastsPaneBody() {
       if (selectedLibraryId) {
         params.set("library_id", selectedLibraryId);
       }
-      const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
+      const response = await apiFetch<{ data: PodcastSubscriptionListItemWire[] }>(
         `/api/podcasts/subscriptions?${params.toString()}`,
         { signal },
       );
-      return response.data;
+      return response.data.map(decodePodcastSubscriptionListItem);
     },
   });
 
@@ -279,14 +277,15 @@ export default function PodcastsPaneBody() {
       if (selectedLibraryId) {
         params.set("library_id", selectedLibraryId);
       }
-      const response = await apiFetch<{ data: PodcastSubscriptionListItem[] }>(
+      const response = await apiFetch<{ data: PodcastSubscriptionListItemWire[] }>(
         `/api/podcasts/subscriptions?${params.toString()}`,
         { signal: controller.signal },
       );
       if (subscriptionRequestIdRef.current !== requestId) {
         return;
       }
-      setRows((prev) => [...prev, ...response.data]);
+      const nextRows = response.data.map(decodePodcastSubscriptionListItem);
+      setRows((prev) => [...prev, ...nextRows]);
       setHasMore(response.data.length === PAGE_SIZE);
       setNextOffset(offset + response.data.length);
     } catch (loadError) {
@@ -498,11 +497,10 @@ export default function PodcastsPaneBody() {
       {
         id: row.podcast_id,
         title: row.podcast.title,
-        image_url: row.podcast.image_url,
         contributors: row.podcast.contributors,
-        unplayed_count: row.unplayed_count,
-        sync_status: row.sync_status,
-        latest_episode_published_at: row.latest_episode_published_at,
+        unplayedCount: row.unplayedCount,
+        publicationDate: row.publicationDate,
+        syncStatus: row.syncStatus,
       },
       {
         canUsePodcastActions: true,
@@ -530,8 +528,6 @@ export default function PodcastsPaneBody() {
     <>
       <CollectionView
         rows={collectionRows}
-        view={displayState.view}
-        density={displayState.density}
         status={loading ? "loading" : "ready"}
         ariaLabel="Followed podcasts"
         opener={<SectionOpener heading="Podcasts" />}
@@ -623,10 +619,6 @@ export default function PodcastsPaneBody() {
                 <span className={styles.summaryCount}>
                   {pluralize(activeCount, "followed show")}
                 </span>
-                <CollectionDisplayControls
-                  value={displayState}
-                  onChange={setDisplayState}
-                />
                 {hasActiveFilters ? (
                   <Button variant="secondary" size="md" onClick={clearFilters}>
                     Clear filters

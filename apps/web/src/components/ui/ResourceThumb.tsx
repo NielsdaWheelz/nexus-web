@@ -1,13 +1,18 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { ResourceThumbSpec } from "@/lib/collections/types";
+import type { LucideIcon } from "lucide-react";
 import MediaImage from "@/components/ui/MediaImage";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ResourceThumb.module.css";
 
 const SIZE_PX = { sm: 32, md: 44, lg: 64 } as const;
 type ResourceThumbSize = keyof typeof SIZE_PX | "fill";
+
+export interface ResourceThumbSpec {
+  readonly icon: LucideIcon;
+  readonly remoteUrl?: string;
+}
 
 const sizeClass: Record<keyof typeof SIZE_PX, string> = {
   sm: styles.sizeSm,

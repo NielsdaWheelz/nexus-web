@@ -8,9 +8,7 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import { presentEpisode } from "@/lib/collections/presenters/episode";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
@@ -18,7 +16,11 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
   deriveEpisodeState,
+  decodeEpisodeTimingFacts,
+  decodeEpisodePublicationDate,
   episodePlayerDescriptor,
+  canRequestTranscriptForEpisode,
+  shouldPollTranscriptProvisioningForEpisode,
   type EpisodeSort,
   type EpisodeStateFilter,
   type PodcastEpisodeMedia,
@@ -33,7 +35,6 @@ type EpisodeTranscriptController = ReturnType<
 type StringIdSet = ReturnType<typeof useStringIdSet>;
 
 interface PodcastEpisodeListProps {
-  basePath: string;
   episodes: PodcastEpisodeMedia[];
   loading: boolean;
   error: FeedbackContent | null;
@@ -45,7 +46,6 @@ interface PodcastEpisodeListProps {
   setEpisodeSearchInput: Dispatch<SetStateAction<string>>;
   transcript: EpisodeTranscriptController;
   transcriptionAllowed: boolean;
-  billingDisabled: boolean;
   busyMediaIds: StringIdSet;
   markingEpisodeIds: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
@@ -70,7 +70,6 @@ interface PodcastEpisodeListProps {
 }
 
 export default function PodcastEpisodeList({
-  basePath,
   episodes,
   loading,
   error,
@@ -82,7 +81,6 @@ export default function PodcastEpisodeList({
   setEpisodeSearchInput,
   transcript,
   transcriptionAllowed,
-  billingDisabled,
   busyMediaIds,
   markingEpisodeIds,
   expandedShowNotesMediaIds,
@@ -104,8 +102,6 @@ export default function PodcastEpisodeList({
   onDelete,
   onTogglePlayed,
 }: PodcastEpisodeListProps) {
-  const { displayState, setDisplayState } = useCollectionDisplayState(basePath);
-  const listDisplayState = { ...displayState, view: "list" as const };
   // The per-episode library picker is lifted here (one panel for the list,
   // keyed by the active episode) so the presenter ctx's `onManageLibraries`
   // can anchor it without per-row hook state.
@@ -135,8 +131,12 @@ export default function PodcastEpisodeList({
     [episodes],
   );
 
-  const rows = episodes.map((episode) =>
-    presentEpisode(
+  const rows = episodes.map((episode) => {
+    const panelId = `episode-panel-${episode.id}`;
+    const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
+    const transcriptPanelExpanded =
+      transcript.expandedTranscriptMediaIds.ids.has(episode.id);
+    return presentEpisode(
       {
         id: episode.id,
         title: episode.title,
@@ -148,8 +148,8 @@ export default function PodcastEpisodeList({
         canonical_source_url: episode.canonical_source_url,
         contributors: episode.contributors,
         capabilities: episode.capabilities,
-        published_date: episode.published_date,
-        listening_state: episode.listening_state,
+        publicationDate: decodeEpisodePublicationDate(episode.published_date),
+        activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
       },
       {
         connectionSummary: connectionSummaries.get(`media:${episode.id}`),
@@ -158,6 +158,27 @@ export default function PodcastEpisodeList({
         refreshBusy: busyMediaIds.ids.has(episode.id),
         deleteBusy: busyMediaIds.ids.has(episode.id),
         markingBusy: markingEpisodeIds.ids.has(episode.id),
+        episodePanelId: panelId,
+        showNotesExpanded,
+        onToggleShowNotes: episode.description_text?.trim()
+          ? () => onToggleShowNotes(episode.id)
+          : undefined,
+        playNextDisabled:
+          !lecternReady || episode.id === playNextDisabledMediaId,
+        onPlayNext: audioEpisodeIds.has(episode.id)
+          ? () => onPlayNext(episode.id)
+          : undefined,
+        transcriptPanelExpanded,
+        onRequestTranscript:
+          transcriptionAllowed && canRequestTranscriptForEpisode(episode)
+            ? () => {
+                if (transcriptPanelExpanded) {
+                  transcript.expandedTranscriptMediaIds.remove(episode.id);
+                } else {
+                  transcript.expandedTranscriptMediaIds.add(episode.id);
+                }
+              }
+            : undefined,
         onManageLibraries: ({ triggerEl }) => {
           setMembershipEpisodeId(episode.id);
           setMembershipTriggerEl(triggerEl);
@@ -185,31 +206,34 @@ export default function PodcastEpisodeList({
           onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
         },
         onAddToLectern:
-          audioEpisodeIds.has(episode.id) && lecternReady
+          audioEpisodeIds.has(episode.id) &&
+          lecternReady &&
+          !lecternMediaIds.has(episode.id)
             ? () => {
                 onAddToLectern(episode.id);
               }
             : undefined,
       },
-    ),
-  );
+    );
+  });
 
   const rowPanels = episodes.reduce<Record<string, ReactNode>>(
     (panels, episode) => {
+      const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
+      const transcriptPanelExpanded =
+        transcript.expandedTranscriptMediaIds.ids.has(episode.id);
+      const transcriptInFlight =
+        transcript.requestingTranscriptMediaIds.ids.has(episode.id) ||
+        shouldPollTranscriptProvisioningForEpisode(episode);
+      if (!showNotesExpanded && !transcriptPanelExpanded && !transcriptInFlight) {
+        return panels;
+      }
       panels[episode.id] = (
         <EpisodeControls
           episode={episode}
-          isAudioEpisode={audioEpisodeIds.has(episode.id)}
-          onLectern={lecternMediaIds.has(episode.id)}
-          playNextDisabled={episode.id === playNextDisabledMediaId}
-          lecternReady={lecternReady}
-          transcriptionAllowed={transcriptionAllowed}
-          billingDisabled={billingDisabled}
-          showNotesExpanded={expandedShowNotesMediaIds.ids.has(episode.id)}
+          showNotesExpanded={showNotesExpanded}
           transcript={transcript}
-          onToggleShowNotes={onToggleShowNotes}
-          onPlayNext={onPlayNext}
-          onAddToLectern={onAddToLectern}
+          transcriptionAllowed={transcriptionAllowed}
         />
       );
       return panels;
@@ -246,11 +270,6 @@ export default function PodcastEpisodeList({
               onSelect: () => onMarkAllVisibleUnplayedAsPlayed(),
             },
           ]}
-        />
-        <CollectionDisplayControls
-          value={listDisplayState}
-          onChange={setDisplayState}
-          gallery={false}
         />
       </div>
 
@@ -314,8 +333,6 @@ export default function PodcastEpisodeList({
 
       <CollectionView
         rows={rows}
-        view="list"
-        density={displayState.density}
         status="ready"
         ariaLabel="Episodes"
         rowPanels={rowPanels}

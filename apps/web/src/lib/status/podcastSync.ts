@@ -1,33 +1,19 @@
-import type { PillTone } from "@/components/ui/Pill";
+import { expectOneOf } from "@/lib/validation";
 
-export type PodcastSyncStatus =
-  | "pending"
-  | "running"
-  | "partial"
-  | "complete"
-  | "source_limited"
-  | "failed";
+const PODCAST_SYNC_STATUSES = [
+  "pending",
+  "running",
+  "partial",
+  "complete",
+  "source_limited",
+  "failed",
+] as const;
 
-/** Returns a pill for noteworthy sync states; null when complete (no chip needed). */
-export function podcastSyncStatusPill(
-  status: PodcastSyncStatus,
-): { tone: PillTone; label: string } | null {
-  switch (status) {
-    case "complete":
-      return null;
-    case "pending":
-      return { tone: "neutral", label: "Sync pending" };
-    case "running":
-      return { tone: "info", label: "Syncing" };
-    case "partial":
-      return { tone: "warning", label: "Partial sync" };
-    case "source_limited":
-      return { tone: "warning", label: "Source-limited" };
-    case "failed":
-      return { tone: "danger", label: "Sync failed" };
-    default: {
-      const _exhaustive: never = status;
-      return null;
-    }
-  }
+export type PodcastSyncStatus = (typeof PODCAST_SYNC_STATUSES)[number];
+
+export function decodePodcastSyncStatus(
+  raw: unknown,
+  name: string,
+): PodcastSyncStatus {
+  return expectOneOf(raw, PODCAST_SYNC_STATUSES, name);
 }

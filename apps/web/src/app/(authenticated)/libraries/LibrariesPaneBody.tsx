@@ -18,12 +18,10 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
@@ -51,7 +49,6 @@ interface Library {
 }
 
 export default function LibrariesPaneBody() {
-  const { displayState, setDisplayState } = useCollectionDisplayState("/libraries");
   const [localLibraries, setLocalLibraries] = useState<Library[] | null>(null);
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
@@ -331,8 +328,6 @@ export default function LibrariesPaneBody() {
             onDelete: () => void handleDeleteLibrary(library),
           }),
         )}
-        view={displayState.view}
-        density={displayState.density}
         status={status}
         ariaLabel="Libraries"
         opener={<SectionOpener heading="Libraries" />}
@@ -377,12 +372,6 @@ export default function LibrariesPaneBody() {
                   {creating ? "Creating..." : "Create"}
                 </Button>
               </form>
-            }
-            controls={
-              <CollectionDisplayControls
-                value={displayState}
-                onChange={setDisplayState}
-              />
             }
           />
         }

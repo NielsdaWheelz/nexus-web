@@ -1,6 +1,17 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import type { ReadStatus } from "@/lib/collections/types";
-import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
+import type {
+  PositiveMinutes,
+  ProgressFraction,
+} from "@/lib/consumption/activityFacts";
+import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
+import {
+  decodePodcastSyncStatus,
+  type PodcastSyncStatus,
+} from "@/lib/status/podcastSync";
+import {
+  decodeOptionalPublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import {
   expectBoolean,
   expectExactRecord,
@@ -29,17 +40,38 @@ const READ_STATES = ["unread", "in_progress", "finished"] as const;
 export type LibraryMediaKind = (typeof MEDIA_KINDS)[number];
 
 export interface ReadingTimeEstimate {
-  totalMinutes: number;
-  remainingMinutes: Presence<number>;
+  totalMinutes: PositiveMinutes;
+  remainingMinutes: Presence<PositiveMinutes>;
 }
 
 export type ReadingTimeEstimatePresence = Presence<ReadingTimeEstimate>;
 
-type DecodedReadingTimeEntry<T> = T extends object
-  ? Omit<T, "readingTimeEstimate"> & {
+type DecodedReadingTimeEntry<T> = T extends {
+  kind: "media";
+  media: infer Media;
+}
+  ? Omit<T, "media" | "readingTimeEstimate"> & {
+      media: Media & {
+        progressFraction: Presence<ProgressFraction>;
+        publicationDate: Presence<PublicationDate>;
+        sourceHost: Presence<string>;
+      };
       readingTimeEstimate: ReadingTimeEstimatePresence;
     }
-  : never;
+  : T extends { kind: "podcast"; podcast: infer Podcast }
+    ? Omit<T, "podcast" | "readingTimeEstimate"> & {
+        podcast: Podcast & {
+          unplayedCount: ReturnType<typeof decodePodcastUnplayedCount>;
+          publicationDate: Presence<PublicationDate>;
+          syncStatus: Presence<PodcastSyncStatus>;
+        };
+        readingTimeEstimate: ReadingTimeEstimatePresence;
+      }
+    : T extends object
+      ? Omit<T, "readingTimeEstimate"> & {
+          readingTimeEstimate: ReadingTimeEstimatePresence;
+        }
+      : never;
 
 function decodeMinutes(raw: unknown, name: string): number {
   const value = expectInteger(raw, name);
@@ -55,22 +87,44 @@ function decodeEstimate(raw: unknown): ReadingTimeEstimate {
     ["totalMinutes", "remainingMinutes"],
     "readingTimeEstimate.value",
   );
-  const totalMinutes = decodeMinutes(
-    value.totalMinutes,
-    "readingTimeEstimate.value.totalMinutes",
-  );
+  const totalMinutes = {
+    value: decodeMinutes(
+      value.totalMinutes,
+      "readingTimeEstimate.value.totalMinutes",
+    ),
+  };
   const remainingMinutes = decodePresence(value.remainingMinutes, (minutes) =>
-    decodeMinutes(minutes, "readingTimeEstimate.value.remainingMinutes.value"),
+    ({
+      value: decodeMinutes(
+        minutes,
+        "readingTimeEstimate.value.remainingMinutes.value",
+      ),
+    }),
   );
   if (
     remainingMinutes.kind === "Present" &&
-    remainingMinutes.value > totalMinutes
+    remainingMinutes.value.value > totalMinutes.value
   ) {
     throw new TypeError(
       "remaining reading time must not exceed total reading time",
     );
   }
   return { totalMinutes, remainingMinutes };
+}
+
+function decodeSourceHost(
+  kind: LibraryMediaKind,
+  raw: unknown,
+): Presence<string> {
+  if (kind !== "web_article" || raw === null) return { kind: "Absent" };
+  if (typeof raw !== "string") {
+    throw new TypeError("Library media canonical_source_url must be a URL or null");
+  }
+  const host = new URL(raw).hostname;
+  if (host.length === 0) {
+    throw new TypeError("Library media canonical_source_url must have a host");
+  }
+  return { kind: "Present", value: host };
 }
 
 export function decodeLibraryReadingTimeEntry<T extends object>(
@@ -97,11 +151,48 @@ export function decodeLibraryReadingTimeEntry(
     if (estimate.kind === "Present") {
       throw new TypeError("Podcast Library entries cannot carry reading time");
     }
-    return { ...raw, readingTimeEstimate: estimate };
+    const podcast = expectRecord(entry.podcast, "Library entry podcast");
+    const syncStatus: Presence<PodcastSyncStatus> =
+      entry.subscription === null
+        ? { kind: "Absent" }
+        : (() => {
+            const subscription = expectRecord(
+              entry.subscription,
+              "Library entry subscription",
+            );
+            const status = expectOneOf(
+              subscription.status,
+              ["active", "unsubscribed"] as const,
+              "Library entry subscription.status",
+            );
+            const decodedSyncStatus = decodePodcastSyncStatus(
+              subscription.sync_status,
+              "Library entry subscription.sync_status",
+            );
+            return status === "active"
+              ? { kind: "Present", value: decodedSyncStatus }
+              : { kind: "Absent" };
+          })();
+    const decoded = {
+      ...raw,
+      podcast: {
+        ...podcast,
+        unplayedCount: decodePodcastUnplayedCount(podcast.unplayed_count),
+        publicationDate: { kind: "Absent" as const },
+        syncStatus,
+      },
+      readingTimeEstimate: estimate,
+    };
+    return decoded;
   }
 
   const media = expectRecord(entry.media, "Library entry media");
+  const publicationDate = decodeOptionalPublicationDate(
+    media.published_date,
+    "Library media published_date",
+  );
   const mediaKind = expectOneOf(media.kind, MEDIA_KINDS, "Library media kind");
+  const sourceHost = decodeSourceHost(mediaKind, media.canonical_source_url);
   const processingStatus = expectOneOf(
     media.processing_status,
     PROCESSING_STATUSES,
@@ -127,6 +218,10 @@ export function decodeLibraryReadingTimeEntry(
       "Library media progress_fraction must be in [0, 1] or null",
     );
   }
+  const decodedProgressFraction: Presence<ProgressFraction> =
+    progressFraction === null
+      ? { kind: "Absent" }
+      : { kind: "Present", value: { value: progressFraction } };
   const capabilities = expectRecord(
     media.capabilities,
     "Library media capabilities",
@@ -165,45 +260,15 @@ export function decodeLibraryReadingTimeEntry(
     }
   }
 
-  return { ...raw, readingTimeEstimate: estimate };
-}
-
-function formatReadingDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder === 0 ? `${hours} hr` : `${hours} hr ${remainder} min`;
-}
-
-export function readingTimeSignal(
-  estimate: ReadingTimeEstimatePresence,
-  media: {
-    processing_status: MediaProcessingStatus;
-    read_state: ReadStatus;
-    capabilities: { can_quote: boolean };
-  },
-): string | null {
-  if (
-    estimate.kind === "Absent" ||
-    media.processing_status !== "ready_for_reading" ||
-    !media.capabilities.can_quote
-  ) {
-    return null;
-  }
-  switch (media.read_state) {
-    case "in_progress":
-      if (estimate.value.remainingMinutes.kind === "Present") {
-        return `≈ ${formatReadingDuration(
-          estimate.value.remainingMinutes.value,
-        )} left`;
-      }
-      return `≈ ${formatReadingDuration(estimate.value.totalMinutes)} read`;
-    case "unread":
-    case "finished":
-      return `≈ ${formatReadingDuration(estimate.value.totalMinutes)} read`;
-    default: {
-      const exhaustive: never = media.read_state;
-      throw new Error(`Unsupported Library read state: ${exhaustive}`);
-    }
-  }
+  const decoded = {
+    ...raw,
+    media: {
+      ...media,
+      progressFraction: decodedProgressFraction,
+      publicationDate,
+      sourceHost,
+    },
+    readingTimeEstimate: estimate,
+  };
+  return decoded;
 }

@@ -171,7 +171,6 @@ export default function PodcastDetailPaneBody() {
     },
   });
   const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
-  const billingDisabled = billingAccount?.billing_enabled === false;
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
@@ -865,7 +864,6 @@ export default function PodcastDetailPaneBody() {
   ).length;
   const episodePaneContent = (
     <PodcastEpisodeList
-      basePath={`/podcasts/${podcastId ?? ""}`}
       episodes={episodes}
       loading={loading}
       error={error}
@@ -877,7 +875,6 @@ export default function PodcastDetailPaneBody() {
       setEpisodeSearchInput={setEpisodeSearchInput}
       transcript={transcript}
       transcriptionAllowed={transcriptionAllowed}
-      billingDisabled={billingDisabled}
       busyMediaIds={busyMediaIds}
       markingEpisodeIds={markingEpisodeIds}
       expandedShowNotesMediaIds={expandedShowNotesMediaIds}

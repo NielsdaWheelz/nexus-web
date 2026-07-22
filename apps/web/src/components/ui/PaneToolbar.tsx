@@ -12,7 +12,7 @@ export default function PaneToolbar({
 }: {
   search?: ReactNode; // a text input the pane owns
   filters?: ReactNode; // filter chips/selects the pane owns
-  controls?: ReactNode; // right-aligned view/density/sort controls
+  controls?: ReactNode; // right-aligned contextual toolbar controls
   className?: string;
 }) {
   return (

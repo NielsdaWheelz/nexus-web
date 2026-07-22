@@ -4,7 +4,6 @@ import CollectionView from "@/components/collections/CollectionView";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
-import { getPaneRouteIcon } from "@/lib/panes/paneRouteTable";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 
 const SETTINGS_ITEMS: {
@@ -55,11 +54,8 @@ export default function SettingsPaneBody() {
           title: item.title,
           description: item.description,
           href: item.href,
-          icon: getPaneRouteIcon(item.href),
         }),
       )}
-      view="list"
-      density="comfortable"
       status="ready"
       ariaLabel="Settings"
       opener={<SectionOpener heading="Settings" />}

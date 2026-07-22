@@ -63,9 +63,9 @@ export function resourceIconForScheme(scheme: string): LucideIcon {
 }
 
 /**
- * Lead icon for a media row by its `kind`. All media share the `media` scheme,
- * so this is the one owner of the finer book/pdf/audio/video distinction the
- * collection lead falls back to when there is no cover.
+ * Detail-header icon for media by its `kind`. Collection rows deliberately
+ * carry no lead image or type icon; MediaPane remains the owner of this finer
+ * book/pdf/audio/video distinction.
  */
 export function mediaKindIcon(kind: string): LucideIcon {
   switch (kind) {

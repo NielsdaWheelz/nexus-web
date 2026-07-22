@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import type { Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   libraryEntriesResource,
@@ -48,12 +49,16 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import CollectionView from "@/components/collections/CollectionView";
 import ReadingSlateSection from "@/components/collections/ReadingSlateSection";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import SortSelect from "@/components/ui/SortSelect";
 import type { CollectionRowView } from "@/lib/collections/types";
+import type {
+  PositiveCount,
+  ProgressFraction,
+} from "@/lib/consumption/activityFacts";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
+import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibraryEditDialog from "@/components/LibraryEditDialog";
 import {
@@ -83,7 +88,6 @@ import {
 } from "@/lib/libraries/readingTime";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
-import styles from "./page.module.css";
 
 interface Library {
   id: string;
@@ -104,11 +108,14 @@ interface LibraryMediaEntry {
   title: string;
   contributors: ContributorCredit[];
   published_date: string | null;
+  publicationDate: Presence<PublicationDate>;
   publisher: string | null;
   canonical_source_url: string | null;
+  sourceHost: Presence<string>;
   processing_status: DocumentProcessingStatus;
   read_state: "unread" | "in_progress" | "finished";
   progress_fraction: number | null;
+  progressFraction: Presence<ProgressFraction>;
   last_engaged_at?: string | null;
   capabilities: Partial<MediaActionCapabilities> &
     Pick<MediaActionCapabilities, "can_quote">;
@@ -127,6 +134,9 @@ interface LibraryPodcastEntry {
   website_url: string | null;
   image_url: string | null;
   unplayed_count: number;
+  unplayedCount: Presence<PositiveCount>;
+  publicationDate: Presence<PublicationDate>;
+  syncStatus: Presence<PodcastSyncStatus>;
 }
 
 interface LibraryPodcastSubscription {
@@ -160,6 +170,24 @@ interface LibraryPodcastListEntry extends LibraryEntryBase {
 
 type LibraryEntry = LibraryMediaListEntry | LibraryPodcastListEntry;
 
+type LibraryMediaEntryWire = Omit<
+  LibraryMediaEntry,
+  "progressFraction" | "publicationDate" | "sourceHost"
+>;
+type LibraryPodcastEntryWire = Omit<
+  LibraryPodcastEntry,
+  "unplayedCount" | "publicationDate" | "syncStatus"
+>;
+type LibraryEntryWire =
+  | (Omit<LibraryMediaListEntry, "media" | "readingTimeEstimate"> & {
+      media: LibraryMediaEntryWire;
+      readingTimeEstimate: unknown;
+    })
+  | (Omit<LibraryPodcastListEntry, "podcast" | "readingTimeEstimate"> & {
+      podcast: LibraryPodcastEntryWire;
+      readingTimeEstimate: unknown;
+    });
+
 interface LibraryPageInfo {
   has_more: boolean;
   next_cursor: string | null;
@@ -170,7 +198,12 @@ interface LibraryEntryPage {
   page: LibraryPageInfo;
 }
 
-function decodeLibraryEntryPage(page: LibraryEntryPage): LibraryEntryPage {
+interface LibraryEntryPageWire {
+  data: LibraryEntryWire[];
+  page: LibraryPageInfo;
+}
+
+function decodeLibraryEntryPage(page: LibraryEntryPageWire): LibraryEntryPage {
   return {
     ...page,
     data: page.data.map(decodeLibraryReadingTimeEntry),
@@ -224,9 +257,6 @@ export default function LibraryPaneBody() {
   }
   const router = usePaneRouter();
   const paneSearchParams = usePaneSearchParams();
-  const { displayState, setDisplayState } = useCollectionDisplayState(
-    `/libraries/${id}`,
-  );
   const paneRuntime = usePaneRuntime();
   const { openInNewPane } = paneRuntime ?? {};
   const isPaneActive = paneRuntime?.isActive ?? true;
@@ -344,7 +374,7 @@ export default function LibraryPaneBody() {
     sort === "resonance" ? resonanceEntriesPath : null,
     async (signal) =>
       decodeLibraryEntryPage(
-        await apiFetch<LibraryEntryPage>(resonanceEntriesPath, { signal }),
+        await apiFetch<LibraryEntryPageWire>(resonanceEntriesPath, { signal }),
       ),
   );
 
@@ -395,7 +425,7 @@ export default function LibraryPaneBody() {
         id,
         sort: requestedSort === "resonance" ? "resonance" : undefined,
       });
-      void apiFetch<LibraryEntryPage>(path, { signal: controller.signal })
+      void apiFetch<LibraryEntryPageWire>(path, { signal: controller.signal })
         .then(decodeLibraryEntryPage)
         .then((page) => {
           if (
@@ -1124,7 +1154,7 @@ export default function LibraryPaneBody() {
       } else {
         setManualLoadMoreError(null);
       }
-      void apiFetch<LibraryEntryPage>(
+      void apiFetch<LibraryEntryPageWire>(
         libraryEntriesResource.clientPath({
           id,
           cursor,
@@ -1366,13 +1396,10 @@ export default function LibraryPaneBody() {
         {
           id: item.podcast.id,
           title: item.podcast.title,
-          image_url: item.podcast.image_url,
           contributors: item.podcast.contributors,
-          unplayed_count: item.podcast.unplayed_count,
-          sync_status:
-            item.subscription?.status === "active"
-              ? item.subscription.sync_status
-              : "complete",
+          unplayedCount: item.podcast.unplayedCount,
+          publicationDate: item.podcast.publicationDate,
+          syncStatus: item.podcast.syncStatus,
         },
         {
           canUsePodcastActions: canEditEntries,
@@ -1431,7 +1458,6 @@ export default function LibraryPaneBody() {
     return {
       ...row,
       id: libraryRowKey(item, isDefaultLibrary),
-      relatedMediaId: item.media.id,
     };
   };
   const visibleEntryRows = visibleEntries.map(entryRowView);
@@ -1476,10 +1502,6 @@ export default function LibraryPaneBody() {
                       }
                     />
                   )}
-                  <CollectionDisplayControls
-                    value={displayState}
-                    onChange={setDisplayState}
-                  />
                 </>
               }
             />
@@ -1497,8 +1519,6 @@ export default function LibraryPaneBody() {
         {sort === "resonance" ? (
           <CollectionView
             rows={visibleResonanceEntries.map(entryRowView)}
-            view={displayState.view}
-            density={displayState.density}
             status={resonanceStatus}
             ariaLabel="Library by resonance"
             empty={
@@ -1520,64 +1540,33 @@ export default function LibraryPaneBody() {
             surface={false}
           />
         ) : visibleEntries.length > 0 ? (
-          <>
-            {displayState.view === "gallery" ? (
-              <CollectionView
-                rows={visibleEntryRows}
-                view="gallery"
-                density={displayState.density}
-                status="ready"
-                ariaLabel="Library entries"
-                footer={entryFooter}
-                surface={false}
-              />
-            ) : (
-              <CollectionView
-                rows={visibleEntryRows}
-                view="list"
-                density={displayState.density}
-                status="ready"
-                ariaLabel="Library entries"
-                footer={entryFooter}
-                surface={false}
-                sortable={
-                  canReorderVisibleEntries
-                    ? {
-                        className: styles.mediaList,
-                        itemClassName: styles.mediaListItem,
-                        onReorder: (nextRows) => {
-                          const byEntryId = new Map(
-                            visibleEntries.map((entry) => [entry.id, entry]),
-                          );
-                          const nextEntries = nextRows
-                            .map((row) => byEntryId.get(row.id))
-                            .filter(
-                              (entry): entry is LibraryEntry =>
-                                entry !== undefined,
-                            );
-                          if (nextEntries.length === visibleEntries.length) {
-                            handleReorderEntries(nextEntries);
-                          }
-                        },
-                        renderControls: (row, { handleProps }) => (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className={styles.dragHandle}
-                            aria-label={`Reorder ${row.headline.text}`}
-                            disabled={reorderBusy}
-                            {...handleProps.attributes}
-                            {...handleProps.listeners}
-                          >
-                            ⋮⋮
-                          </Button>
-                        ),
+          <CollectionView
+            rows={visibleEntryRows}
+            status="ready"
+            ariaLabel="Library entries"
+            footer={entryFooter}
+            surface={false}
+            sortable={
+              canReorderVisibleEntries
+                ? {
+                    disabled: reorderBusy,
+                    onReorder: (nextRows) => {
+                      const byEntryId = new Map(
+                        visibleEntries.map((entry) => [entry.id, entry]),
+                      );
+                      const nextEntries = nextRows
+                        .map((row) => byEntryId.get(row.id))
+                        .filter(
+                          (entry): entry is LibraryEntry => entry !== undefined,
+                        );
+                      if (nextEntries.length === visibleEntries.length) {
+                        handleReorderEntries(nextEntries);
                       }
-                    : undefined
-                }
-              />
-            )}
-          </>
+                    },
+                  }
+                : undefined
+            }
+          />
         ) : (
           <FeedbackNotice
             severity="neutral"

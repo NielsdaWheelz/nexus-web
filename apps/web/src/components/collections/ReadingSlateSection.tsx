@@ -331,13 +331,10 @@ export default function ReadingSlateSection({
       ) : (
         <CollectionView
           rows={renderedRows}
-          view="list"
-          density="comfortable"
           status="ready"
           ariaLabel={ariaLabel}
           notice={stateNotice(state)}
           rowControls={controls}
-          rowActionsVisibility="always"
           surface={false}
         />
       )}

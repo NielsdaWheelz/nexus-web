@@ -1,50 +1,51 @@
-import { FileText } from "lucide-react";
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
-import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
+import { describe, expect, it, vi } from "vitest";
+import { absent, present } from "@/lib/api/presence";
+import { decodePublicationDate } from "@/lib/dates/publicationDate";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import CollectionView from "./CollectionView";
 
-// Icon-only leads (no `remoteUrl`) so the gallery card and row thumb render an
-// inline Lucide icon tile instead of next/image — keeps these browser tests
-// off the image-optimizer codepath.
-function row(id: string, text: string, href: string): CollectionRowView {
+function row(id: string, title: string): CollectionRowView {
   return {
     id,
     kind: "media",
-    primary: { kind: "link", href },
-    lead: { icon: FileText },
-    headline: { text },
-    signals: [],
+    primary: { kind: "link", href: `/media/${id}` },
+    title: { text: title },
+    contributors: [],
+    publicationDate: absent(),
+    context: absent(),
+    activity: absent(),
+    exceptionalStatus: absent(),
+    connections: absent(),
+    relatedMediaId: absent(),
+    actions: [],
+    selected: false,
   };
 }
 
-function contributor(index: number): ContributorCredit {
-  return {
-    contributor_handle: `contributor-${index}`,
-    contributor_display_name: `Contributor ${index}`,
-    credited_name: `Contributor ${index}`,
-    role: "author",
-    href: `/authors/contributor-${index}`,
-  };
-}
-
-const ROWS: CollectionRowView[] = [
-  row("a", "First document", "/media/a"),
-  row("b", "Second document", "/media/b"),
-  row("c", "Third document", "/media/c"),
+const ROWS = [
+  row("a", "First document"),
+  row("b", "Second document"),
+  row("c", "Third document"),
 ];
 
-const relatedPeer: ConnectionEndpointOut = {
+const contributor: ContributorCredit = {
+  contributor_handle: "ada",
+  contributor_display_name: "Ada Author",
+  credited_name: "Ada Author",
+  role: "author",
+  href: "/authors/ada",
+};
+
+const connectedPeer: ConnectionEndpointOut = {
   ref: "media:peer-1",
   scheme: "media",
   id: "peer-1",
-  label: "Related document",
+  label: "Connected document",
   description: null,
   activation: {
     resourceRef: "media:peer-1",
@@ -56,490 +57,71 @@ const relatedPeer: ConnectionEndpointOut = {
   missing: false,
 };
 
-const originalStartViewTransition = (
-  document as Document & { startViewTransition?: unknown }
-).startViewTransition;
-
-function installViewTransitions() {
-  Object.defineProperty(document, "startViewTransition", {
-    configurable: true,
-    value: vi.fn((callback: () => void | Promise<void>) => {
-      const result = callback();
-      const done = Promise.resolve(result);
-      return {
-        ready: done,
-        updateCallbackDone: done,
-        finished: done,
-        skipTransition: vi.fn(),
-      };
-    }),
-  });
-}
-
 function renderView(props: Partial<Parameters<typeof CollectionView>[0]> = {}) {
   return render(
-    withRenderEnvironment(
-      <CollectionView
-        rows={ROWS}
-        view="list"
-        density="comfortable"
-        status="ready"
-        ariaLabel="Documents"
-        {...props}
-      />,
-    ),
+    <CollectionView
+      rows={ROWS}
+      status="ready"
+      ariaLabel="Documents"
+      surface={false}
+      {...props}
+    />,
   );
 }
 
-describe("CollectionView", () => {
-  beforeEach(() => {
-    installViewTransitions();
-  });
-
-  afterEach(() => {
-    if (originalStartViewTransition === undefined) {
-      Reflect.deleteProperty(document, "startViewTransition");
-      return;
-    }
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: originalStartViewTransition,
-    });
-  });
-
-  it("shows the loading placeholder while status is loading", () => {
-    renderView({ status: "loading", rows: [] });
-
-    // PaneLoadingState exposes an sr-only label inside a polite live region.
-    expect(screen.getByText("Loading Documents…")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
-  it("renders the supplied error node when status is error", () => {
-    renderView({
-      status: "error",
-      rows: [],
-      error: <p>Could not load documents</p>,
-    });
-
-    expect(screen.getByText("Could not load documents")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
-  it("renders the empty node when ready with no rows", () => {
-    renderView({
-      status: "ready",
-      rows: [],
-      empty: <p>No documents yet</p>,
-    });
-
-    expect(screen.getByText("No documents yet")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
-  it("renders each ready row's headline as a link to its primary href (list view)", () => {
+describe("canonical CollectionView", () => {
+  it("uses one native list path without thumbnail, view, or density modes", () => {
     renderView();
 
-    const first = screen.getByRole("link", { name: /First document/ });
-    expect(first).toHaveAttribute("href", "/media/a");
-    expect(screen.getByRole("link", { name: /Second document/ })).toHaveAttribute(
+    const list = screen.getByRole("list", { name: "Documents" });
+    expect(list).toBeVisible();
+    expect(list).not.toHaveAttribute("data-view");
+    expect(list).not.toHaveAttribute("data-density");
+    expect(screen.getByRole("link", { name: "First document" })).toHaveAttribute(
       "href",
-      "/media/b",
-    );
-    expect(screen.getByRole("link", { name: /Third document/ })).toHaveAttribute(
-      "href",
-      "/media/c",
-    );
-  });
-
-  it.each(["list", "gallery"] as const)(
-    "gives the %s activation one title and reading-time announcement",
-    (view) => {
-      renderView({
-        view,
-        rows: [
-          {
-            ...ROWS[0],
-            signals: [{ value: "≈ 15 min read" }],
-          },
-        ],
-      });
-
-      const activation = screen.getByRole("link");
-      expect(activation).toHaveAccessibleName("First document ≈ 15 min read");
-      expect(within(activation).queryByRole("img")).toBeNull();
-    },
-  );
-
-  it("shows unread consumption state at rest", () => {
-    renderView({ rows: [{ ...ROWS[0], consumption: { status: "unread" } }] });
-
-    expect(screen.getByText("Unread")).toBeInTheDocument();
-  });
-
-  it("labels listening state, progress, and recency semantically", () => {
-    renderView({
-      rows: [
-        {
-          ...ROWS[0],
-          kind: "podcast_episode",
-          consumption: { status: "in_progress" },
-          recency: { at: "2026-05-25T12:00:00Z" },
-        },
-        {
-          ...ROWS[1],
-          kind: "podcast_episode",
-          consumption: { status: "in_progress", fraction: 0.42 },
-        },
-      ],
-    });
-
-    expect(screen.getByText("Listening")).toBeInTheDocument();
-    expect(screen.getByRole("time")).toHaveAttribute("datetime", "2026-05-25T12:00:00Z");
-    expect(
-      screen.getByRole("progressbar", { name: "Listening progress for Second document" }),
-    ).toHaveAttribute("aria-valuenow", "42");
-  });
-
-  it("keeps compact collection rows inside a 320px mobile width", async () => {
-    const onAction = vi.fn();
-    render(
-      withRenderEnvironment(
-        <div
-          data-testid="mobile-collection-host"
-          style={{ width: "320px", maxWidth: "320px" }}
-        >
-          <CollectionView
-            rows={[
-              {
-                ...ROWS[0],
-                headline: {
-                  text: "A compact collection row with a very long title that should clamp on mobile",
-                },
-                signals: [
-                  { value: "≈ 35791394 hr 7 min read" },
-                  { value: "Very Long Publisher Name" },
-                  { value: "2026" },
-                ],
-                contributors: {
-                  credits: [contributor(1), contributor(2), contributor(3)],
-                  maxVisible: 3,
-                },
-                actions: [
-                  {
-                    kind: "command",
-                    id: "archive",
-                    label: "Archive",
-                    onSelect: onAction,
-                  },
-                ],
-                status: {
-                  tone: "neutral",
-                  label: "Extremely Long Status Label",
-                },
-              },
-            ]}
-            view="list"
-            density="compact"
-            status="ready"
-            ariaLabel="Documents"
-            rowControls={{
-              a: <button type="button">Pin</button>,
-            }}
-          />
-        </div>,
-      ),
-    );
-
-    const host = await screen.findByTestId("mobile-collection-host");
-    expect(host.clientWidth).toBe(320);
-    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-    expect(horizontallyScrollableElements(host)).toEqual([]);
-    expect(screen.getAllByRole("link", { name: /Contributor/ })).toHaveLength(2);
-    expect(screen.getByText(", +1 more")).toBeInTheDocument();
-    // The thumbnail is intentionally absent from the accessibility tree.
-    // eslint-disable-next-line testing-library/no-node-access -- inspect decorative layout only
-    const thumb = host.querySelector<HTMLElement>(
-      '[data-view-transition-part="thumb"]',
-    );
-    expect(thumb).not.toBeNull();
-    expect(thumb).toHaveAttribute("aria-hidden", "true");
-    expect(thumb).toHaveStyle({
-      width: "32px",
-      height: "32px",
-    });
-
-    const primary = screen.getByRole("link", { name: /compact collection row/ });
-    primary.focus();
-    expect(primary).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("button", { name: "Related" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveFocus();
-    expect(screen.getByRole("link", { name: "Contributor 1" })).toHaveStyle({
-      outlineOffset: "2px",
-    });
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("link", { name: "Contributor 2" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("button", { name: "Pin" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(screen.getByRole("link", { name: "Contributor 2" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("button", { name: "Pin" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
-
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", {
-          name: "Actions for A compact collection row with a very long title that should clamp on mobile",
-        }),
-      ).toHaveFocus(),
-    );
-  });
-
-  it("keeps gallery fallback icons inside the narrowest grid card", async () => {
-    render(
-      withRenderEnvironment(
-        <div
-          data-testid="narrow-gallery-host"
-          style={{ width: "168px", maxWidth: "168px" }}
-        >
-          <CollectionView
-            rows={[
-              {
-                ...ROWS[0],
-                signals: [{ value: "≈ 35791394 hr 7 min read" }],
-              },
-            ]}
-            view="gallery"
-            density="comfortable"
-            status="ready"
-            ariaLabel="Documents"
-          />
-        </div>,
-      ),
-    );
-
-    const host = await screen.findByTestId("narrow-gallery-host");
-    // The thumbnail is intentionally absent from the accessibility tree.
-    // eslint-disable-next-line testing-library/no-node-access -- inspect decorative layout only
-    const iconTile = host.querySelector<HTMLElement>(
-      '[data-view-transition-part="thumb"]',
-    );
-    expect(iconTile).not.toBeNull();
-    if (!iconTile) throw new Error("Gallery thumbnail missing");
-    const iconTileStyle = getComputedStyle(iconTile);
-
-    expect(host.clientWidth).toBe(168);
-    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-    expect(iconTileStyle.getPropertyValue("--resource-thumb-icon-size").trim()).toBe(
-      "min(50%, 8rem)",
-    );
-    expect(horizontallyScrollableElements(host)).toEqual([]);
-    expect(screen.getByRole("link")).toHaveAccessibleName(
-      "First document ≈ 35791394 hr 7 min read",
+      "/media/a",
     );
     expect(screen.queryByRole("img")).toBeNull();
   });
 
-  it("keeps compact sortable rows inside a 320px mobile width", async () => {
-    const onReorder = vi.fn();
-    render(
-      withRenderEnvironment(
-        <div
-          data-testid="mobile-sortable-host"
-          style={{ width: "320px", maxWidth: "320px" }}
-        >
-          <CollectionView
-            rows={[
-              {
-                ...ROWS[0],
-                headline: {
-                  text: "A sortable compact row with enough text to prove the div row path",
-                },
-                signals: [{ value: "Manual order" }, { value: "Long collection metadata" }],
-                contributors: {
-                  credits: [contributor(1), contributor(2), contributor(3)],
-                  maxVisible: 3,
-                },
-              },
-            ]}
-            view="list"
-            density="compact"
-            status="ready"
-            ariaLabel="Documents"
-            sortable={{
-              onReorder,
-              renderControls: (_row, { handleProps }) => (
-                <button
-                  type="button"
-                  aria-label="Drag row"
-                  {...handleProps.attributes}
-                  {...handleProps.listeners}
-                >
-                  Drag
-                </button>
-              ),
-            }}
-          />
-        </div>,
-      ),
-    );
-
-    const host = await screen.findByTestId("mobile-sortable-host");
-    expect(host.clientWidth).toBe(320);
-    expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
-    expect(horizontallyScrollableElements(host)).toEqual([]);
-    expect(screen.getByRole("button", { name: "Drag row" })).toBeInTheDocument();
-    expect(onReorder).not.toHaveBeenCalled();
-  });
-
-  it("reorders sortable rows from the keyboard handle", async () => {
-    const onReorder = vi.fn();
-
-    function SortableCollectionHarness() {
-      const [rows, setRows] = useState(ROWS);
-      return (
-        <CollectionView
-          rows={rows}
-          view="list"
-          density="comfortable"
-          status="ready"
-          ariaLabel="Documents"
-          sortable={{
-            onReorder: (nextRows) => {
-              onReorder(nextRows);
-              setRows(nextRows);
-            },
-            renderControls: (row, { handleProps }) => (
-              <button
-                type="button"
-                aria-label={`Reorder ${row.headline.text}`}
-                {...handleProps.attributes}
-                {...handleProps.listeners}
-              >
-                Drag
-              </button>
-            ),
-          }}
-        />
-      );
-    }
-
-    render(withRenderEnvironment(<SortableCollectionHarness />));
-
-    screen.getByRole("button", { name: "Reorder First document" }).focus();
-    await userEvent.keyboard("{ArrowDown}");
-
-    await waitFor(() => {
-      expect(onReorder).toHaveBeenCalledWith([ROWS[1], ROWS[0], ROWS[2]]);
-    });
-    expect(
-      screen.getAllByRole("link").map((link) => link.textContent),
-    ).toEqual(["Second document", "First document", "Third document"]);
-  });
-
-  it("moves focus from the first row to the second on ArrowDown", async () => {
-    renderView();
-
-    const first = screen.getByRole("link", { name: /First document/ });
-    const second = screen.getByRole("link", { name: /Second document/ });
-
-    first.focus();
-    expect(first).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowDown}");
-
-    expect(second).toHaveFocus();
-  });
-
-  it("normalizes the list to one tabbable row primary", async () => {
-    renderView();
-
-    const first = screen.getByRole("link", { name: /First document/ });
-    const second = screen.getByRole("link", { name: /Second document/ });
-    const third = screen.getByRole("link", { name: /Third document/ });
-
-    await waitFor(() => expect(first).toHaveAttribute("tabindex", "0"));
-    expect(second).toHaveAttribute("tabindex", "-1");
-    expect(third).toHaveAttribute("tabindex", "-1");
-  });
-
-  it("moves by Home, End, and type-ahead inside the roving list", async () => {
-    renderView();
-
-    const first = screen.getByRole("link", { name: /First document/ });
-    const second = screen.getByRole("link", { name: /Second document/ });
-    const third = screen.getByRole("link", { name: /Third document/ });
-
-    first.focus();
-    await userEvent.keyboard("{End}");
-    expect(third).toHaveFocus();
-
-    await userEvent.keyboard("{Home}");
-    expect(first).toHaveFocus();
-
-    await userEvent.keyboard("s");
-    expect(second).toHaveFocus();
-  });
-
-  it("keeps row controls out of Tab order but reachable from the focused row", async () => {
-    const onAction = vi.fn();
+  it("renders contributors, partial date, and context as one sibling support line", () => {
     renderView({
       rows: [
         {
           ...ROWS[0],
-          actions: [
-            {
-              kind: "command",
-              id: "archive",
-              label: "Archive",
-              onSelect: onAction,
-            },
-          ],
+          contributors: [contributor],
+          publicationDate: present(decodePublicationDate("2025-02", "date")),
+          context: present({ kind: "Text", text: "A compact context" }),
         },
-        ROWS[1],
       ],
+      rowControls: { a: <button type="button">Primary control</button> },
     });
 
-    const first = screen.getByRole("link", { name: /First document/ });
-    first.focus();
-
-    const firstRow = within(screen.getAllByRole("listitem")[0]);
-    const trigger = screen.getByRole("button", { name: "Actions for First document" });
-    const related = firstRow.getByRole("button", { name: "Related" });
-    await waitFor(() => expect(trigger).toHaveAttribute("tabindex", "-1"));
-    expect(related).toHaveAttribute("tabindex", "-1");
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(related).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(first).toHaveFocus();
-
-    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
-
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(trigger).toHaveFocus());
+    const title = screen.getByRole("link", { name: "First document" });
+    const contributorLink = screen.getByRole("link", { name: "Ada Author" });
+    const date = screen.getByText("February 2025");
+    expect(title).not.toContainElement(contributorLink);
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      /Ada Author.*February 2025.*A compact context/,
+    );
+    expect(getComputedStyle(contributorLink).fontSize).toBe(
+      getComputedStyle(date).fontSize,
+    );
+    expect(getComputedStyle(contributorLink).lineHeight).toBe(
+      getComputedStyle(date).lineHeight,
+    );
+    expect(getComputedStyle(contributorLink).color).toBe(
+      getComputedStyle(date).color,
+    );
   });
 
-  it("keeps row control keyboard access when View Transitions are unavailable", async () => {
-    Reflect.deleteProperty(document, "startViewTransition");
+  it("keeps native Tab order: title, contributor, primary control, menu", async () => {
+    const user = userEvent.setup();
     renderView({
       rows: [
         {
           ...ROWS[0],
+          contributors: [contributor],
           actions: [
             {
               kind: "command",
@@ -550,178 +132,416 @@ describe("CollectionView", () => {
           ],
         },
       ],
+      rowControls: { a: <button type="button">Primary control</button> },
     });
 
-    const first = screen.getByRole("link", { name: /First document/ });
-    first.focus();
-
-    await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("button", { name: "Related" })).toHaveFocus();
-
-    await userEvent.keyboard("{ArrowLeft}");
-    expect(first).toHaveFocus();
-
-    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    expect(await screen.findByRole("menuitem", { name: "Archive" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "First document" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Ada Author" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Primary control" })).toHaveFocus();
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "More actions for First document" }),
+    ).toHaveFocus();
   });
 
-  it("renders headlines as links in gallery view", () => {
-    renderView({ view: "gallery" });
-
-    expect(screen.getByRole("link", { name: /First document/ })).toHaveAttribute(
-      "href",
-      "/media/a",
-    );
-    expect(screen.getByRole("link", { name: /Second document/ })).toHaveAttribute(
-      "href",
-      "/media/b",
-    );
-  });
-
-  it("keeps gallery activation on the shared row contract", () => {
+  it("gives exceptional operation status priority over normal activity", () => {
     renderView({
-      view: "gallery",
       rows: [
         {
           ...ROWS[0],
-          primary: {
-            kind: "link",
-            href: "/media/a",
-            target: "_blank",
-            rel: "noopener noreferrer",
-          },
+          activity: present({ kind: "Finished", modality: "Read" }),
+          exceptionalStatus: present({
+            kind: "MediaProcessing",
+            status: "failed",
+          }),
         },
       ],
     });
 
-    const link = screen.getByRole("link", { name: /First document/ });
-    expect(link).toHaveAttribute("href", "/media/a");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.getByText("Processing failed")).toBeVisible();
+    expect(screen.queryByText("Finished")).toBeNull();
   });
 
-  it("renders gallery button rows with busy disabled semantics", () => {
-    const onActivate = vi.fn();
-    renderView({
-      view: "gallery",
-      rows: [
-        {
-          ...ROWS[0],
-          primary: {
-            kind: "button",
-            label: "Open first document",
-            busy: true,
-            onActivate,
-          },
-        },
-      ],
-    });
-
-    const button = screen.getByRole("button", { name: "Open first document" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("aria-busy", "true");
-    expect(onActivate).not.toHaveBeenCalled();
-  });
-
-  it("keeps the connection toggle outside the primary link", async () => {
+  it("reveals connections through the overflow instead of a standing button", async () => {
+    const user = userEvent.setup();
     renderView({
       rows: [
         {
           ...ROWS[0],
-          relatedMediaId: null,
-          connections: {
+          connections: present({
             total: 1,
-            dominantKind: "context",
-            topPeers: [relatedPeer],
-          },
+            dominantKind: absent(),
+            topPeers: [connectedPeer],
+          }),
         },
       ],
     });
 
-    const rowLink = screen.getByRole("link", { name: /First document/ });
-    const toggle = screen.getByRole("button", { name: /1 connected/ });
-    expect(rowLink).not.toContainElement(toggle);
-
-    await userEvent.click(toggle);
-    expect(screen.getByRole("link", { name: /Related document/ })).toHaveAttribute(
-      "href",
-      "/media/peer-1",
+    expect(screen.queryByRole("button", { name: /connected/i })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "More actions for First document" }),
     );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "Show connections and related",
+      }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Connected document" }),
+    ).toHaveAttribute("href", "/media/peer-1");
   });
 
-  it("exposes scoped row transition names without media-reader names at rest", async () => {
-    renderView();
+  it("uses the ellipsis as both menu trigger and drag activator", async () => {
+    const onReorder = vi.fn();
 
-    const rowItem = screen.getAllByRole("listitem")[0];
-    const row = within(rowItem);
-    // eslint-disable-next-line testing-library/no-node-access -- transition marker is non-semantic
-    const thumb = rowItem.querySelector<HTMLElement>(
-      '[data-view-transition-part="thumb"]',
-    );
-    if (!thumb) throw new Error("Row thumbnail missing");
-    const title = row.getByText("First document");
-
-    expect(rowItem).toHaveAttribute("data-collection-row-id", "a");
-    await waitFor(() =>
-      expect(rowItem.style.viewTransitionName).toContain("nexus-collection-row"),
-    );
-    expect(thumb.style.viewTransitionName).toBe("");
-    expect(title.style.viewTransitionName).toBe("");
-  });
-
-  it("keeps gallery cards on the same transition contract", async () => {
-    renderView({ view: "gallery" });
-
-    const rowItem = screen.getAllByRole("listitem")[0];
-    const row = within(rowItem);
-
-    expect(rowItem).toHaveAttribute("data-collection-row-id", "a");
-    await waitFor(() =>
-      expect(rowItem.style.viewTransitionName).toContain("nexus-collection-row"),
-    );
-    // eslint-disable-next-line testing-library/no-node-access -- transition marker is non-semantic
-    const thumb = rowItem.querySelector<HTMLElement>(
-      '[data-view-transition-part="thumb"]',
-    );
-    expect(thumb).toHaveAttribute(
-      "data-view-transition-part",
-      "thumb",
-    );
-    expect(row.getByText("First document")).toHaveAttribute(
-      "data-view-transition-part",
-      "title",
-    );
-  });
-
-  it("wraps ready row-order replacements in a view transition", async () => {
-    const view = renderView();
-    const startViewTransition = (document as Document & {
-      startViewTransition: ReturnType<typeof vi.fn>;
-    }).startViewTransition;
-
-    await waitFor(() =>
-      expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
-        "data-collection-row-id",
-        "a",
-      ),
-    );
-
-    view.rerender(
-      withRenderEnvironment(
+    function Harness() {
+      const [rows, setRows] = useState(ROWS);
+      return (
         <CollectionView
-          rows={[ROWS[2], ROWS[1], ROWS[0]]}
-          view="list"
-          density="comfortable"
+          rows={rows}
           status="ready"
           ariaLabel="Documents"
-        />,
-      ),
+          surface={false}
+          sortable={{
+            onReorder: (nextRows) => {
+              onReorder(nextRows);
+              setRows(nextRows);
+            },
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const firstTrigger = screen.getByRole("button", {
+      name: "More actions for First document",
+    });
+    expect(firstTrigger).toHaveAttribute("data-sortable-activator", "true");
+    expect(firstTrigger).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Alt+ArrowUp Alt+ArrowDown",
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+
+    await userEvent.setup().click(firstTrigger);
+    expect(await screen.findByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    await userEvent.setup().click(
+      screen.getByRole("menuitem", { name: "Move down" }),
     );
 
-    await waitFor(() => expect(startViewTransition).toHaveBeenCalled());
-    expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
-      "data-collection-row-id",
-      "c",
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Second document", "First document", "Third document"]),
     );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved to position 2 of 3",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "More actions for First document",
+        }),
+      ).toHaveFocus(),
+    );
+
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: "More actions for First document",
+      }),
+    );
+    await userEvent.setup().click(
+      screen.getByRole("menuitem", { name: "Move up" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["First document", "Second document", "Third document"]),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved to position 1 of 3",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "More actions for First document",
+        }),
+      ).toHaveFocus(),
+    );
+
+    await userEvent.setup().keyboard("{Alt>}{ArrowDown}{/Alt}");
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("link").map((link) => link.textContent),
+      ).toEqual(["Second document", "First document", "Third document"]),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved to position 2 of 3",
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "More actions for First document",
+      }),
+    ).toHaveFocus();
+
+    const dragSource = screen.getByRole("button", {
+      name: "More actions for First document",
+    });
+    const dragTarget = screen.getByRole("button", {
+      name: "More actions for Third document",
+    });
+    const sourceRect = dragSource.getBoundingClientRect();
+    const targetRect = dragTarget.getBoundingClientRect();
+    const sourceX = sourceRect.left + sourceRect.width / 2;
+    const sourceY = sourceRect.top + sourceRect.height / 2;
+    const targetX = targetRect.left + targetRect.width / 2;
+    const targetY = targetRect.top + targetRect.height / 2;
+    fireEvent.mouseDown(dragSource, {
+      button: 0,
+      buttons: 1,
+      clientX: sourceX,
+      clientY: sourceY,
+    });
+    fireEvent.mouseMove(document, {
+      buttons: 1,
+      clientX: sourceX,
+      clientY: sourceY + 7,
+    });
+    expect(onReorder).toHaveBeenCalledTimes(3);
+    expect(screen.getAllByRole("listitem")[1]).toHaveAttribute(
+      "data-dragging",
+      "false",
+    );
+    fireEvent.mouseMove(document, {
+      buttons: 1,
+      clientX: targetX,
+      clientY: targetY,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    fireEvent.mouseMove(document, {
+      buttons: 1,
+      clientX: targetX,
+      clientY: targetY,
+    });
+    fireEvent.mouseUp(document, {
+      button: 0,
+      clientX: targetX,
+      clientY: targetY,
+    });
+    await waitFor(() => expect(onReorder).toHaveBeenCalledTimes(4));
+    fireEvent.click(dragSource);
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Moved to position 3 of 3",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "More actions for First document",
+        }),
+      ).toHaveFocus(),
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 60));
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: "More actions for First document",
+      }),
+    );
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: /top|bottom/i })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape", code: "Escape" });
+  });
+
+  it("keeps sub-threshold clicks and Escape cancellation on the same trigger", async () => {
+    const onReorder = vi.fn();
+    renderView({ rows: ROWS, sortable: { onReorder } });
+    const trigger = screen.getByRole("button", {
+      name: "More actions for First document",
+    });
+    const rect = trigger.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    fireEvent.mouseDown(trigger, { button: 0, buttons: 1, clientX: x, clientY: y });
+    fireEvent.mouseMove(document, { buttons: 1, clientX: x, clientY: y + 7 });
+    fireEvent.mouseUp(document, { button: 0, clientX: x, clientY: y + 7 });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "Move down" })).toBeVisible();
+    expect(onReorder).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape", code: "Escape" });
+
+    fireEvent.mouseDown(trigger, { button: 0, buttons: 1, clientX: x, clientY: y });
+    fireEvent.mouseMove(document, { buttons: 1, clientX: x, clientY: y + 9 });
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
+        "data-dragging",
+        "true",
+      ),
+    );
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
+        "data-dragging",
+        "false",
+      ),
+    );
+    expect(onReorder).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("requires a 250ms touch hold and cancels a scrolling gesture", async () => {
+    const onReorder = vi.fn();
+
+    function Harness() {
+      const [rows, setRows] = useState(ROWS);
+      return (
+        <CollectionView
+          rows={rows}
+          status="ready"
+          ariaLabel="Documents"
+          surface={false}
+          sortable={{
+            onReorder: (nextRows) => {
+              onReorder(nextRows);
+              setRows(nextRows);
+            },
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const source = screen.getByRole("button", {
+      name: "More actions for First document",
+    });
+    const target = screen.getByRole("button", {
+      name: "More actions for Third document",
+    });
+    const sourceRect = source.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const sourceX = sourceRect.left + sourceRect.width / 2;
+    const sourceY = sourceRect.top + sourceRect.height / 2;
+    const targetX = targetRect.left + targetRect.width / 2;
+    const targetY = targetRect.top + targetRect.height / 2;
+    const touch = (clientX: number, clientY: number) =>
+      new Touch({
+        identifier: 1,
+        clientX,
+        clientY,
+        pageX: clientX,
+        pageY: clientY,
+        screenX: clientX,
+        screenY: clientY,
+        target: source,
+      });
+
+    fireEvent.touchStart(source, { touches: [touch(sourceX, sourceY)] });
+    const scrollGestureWasNotCancelled = fireEvent.touchMove(source, {
+      touches: [touch(sourceX, sourceY + 9)],
+    });
+    expect(scrollGestureWasNotCancelled).toBe(true);
+    fireEvent.touchEnd(source, {
+      touches: [],
+      changedTouches: [touch(sourceX, sourceY + 9)],
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 275));
+    expect(onReorder).not.toHaveBeenCalled();
+
+    fireEvent.touchStart(source, { touches: [touch(sourceX, sourceY)] });
+    await new Promise((resolve) => window.setTimeout(resolve, 275));
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
+        "data-dragging",
+        "true",
+      ),
+    );
+    fireEvent.touchMove(source, {
+      touches: [touch(targetX, targetY)],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    fireEvent.touchMove(source, {
+      touches: [touch(targetX, targetY)],
+    });
+    fireEvent.touchEnd(source, {
+      touches: [],
+      changedTouches: [touch(targetX, targetY)],
+    });
+    await waitFor(() => expect(onReorder).toHaveBeenCalledOnce());
+    fireEvent.click(source);
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Moved to position 3 of 3",
+      ),
+    );
+    await waitFor(() => expect(source).toHaveFocus());
+  });
+
+  it("disables only reorder while leaving unrelated menu actions available", async () => {
+    const user = userEvent.setup();
+    const onReorder = vi.fn();
+    const onArchive = vi.fn();
+    renderView({
+      rows: [
+        {
+          ...ROWS[0],
+          actions: [
+            {
+              kind: "command",
+              id: "archive",
+              label: "Archive",
+              onSelect: onArchive,
+            },
+          ],
+        },
+      ],
+      sortable: { disabled: true, onReorder },
+    });
+
+    const trigger = screen.getByRole("button", {
+      name: "More actions for First document",
+    });
+    expect(trigger).not.toHaveAttribute("aria-keyshortcuts");
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+    await new Promise((resolve) => window.setTimeout(resolve, 60));
+    await user.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(onArchive).toHaveBeenCalledOnce();
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("renders loading, error, and empty ownership without row chrome", () => {
+    const view = renderView({ status: "loading", rows: [] });
+    expect(screen.getByText("Loading Documents…")).toBeVisible();
+
+    view.rerender(
+      <CollectionView
+        rows={[]}
+        status="error"
+        ariaLabel="Documents"
+        error={<p>Could not load</p>}
+        surface={false}
+      />,
+    );
+    expect(screen.getByText("Could not load")).toBeVisible();
+
+    view.rerender(
+      <CollectionView
+        rows={[]}
+        status="ready"
+        ariaLabel="Documents"
+        empty={<p>No documents</p>}
+        surface={false}
+      />,
+    );
+    expect(screen.getByText("No documents")).toBeVisible();
   });
 });

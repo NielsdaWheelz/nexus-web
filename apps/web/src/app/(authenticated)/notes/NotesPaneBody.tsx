@@ -6,7 +6,6 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
@@ -20,7 +19,6 @@ import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { presentNote } from "@/lib/collections/presenters/note";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import styles from "./notes.module.css";
 
@@ -33,7 +31,6 @@ export default function NotesPaneBody() {
     inputProps: titleInputProps,
   } = useHydrationPreservedInput();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const { displayState, setDisplayState } = useCollectionDisplayState("/notes");
   const pagesResource = useResource<NotePageSummary[], NoResourceParams>({
     descriptor: notePagesResource,
     params: {},
@@ -98,8 +95,6 @@ export default function NotesPaneBody() {
   return (
     <CollectionView
       rows={pages.map((page) => presentNote(page))}
-      view={displayState.view}
-      density={displayState.density}
       status={loading ? "loading" : "ready"}
       ariaLabel="Notes"
       opener={<SectionOpener heading="Notes" />}
@@ -131,10 +126,6 @@ export default function NotesPaneBody() {
           >
             Today
           </Button>
-          <CollectionDisplayControls
-            value={displayState}
-            onChange={setDisplayState}
-          />
         </>
       }
     />

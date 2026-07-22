@@ -1,6 +1,8 @@
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { Presence } from "@/lib/api/presence";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
 
 // Canonical internal result-type discriminants (the response union tags). Kept as
 // the validator for normalizeSearchResult — NOT a user-facing filter taxonomy.
@@ -200,6 +202,7 @@ export interface SearchResultRowViewModel {
     emphasized: boolean;
   }>;
   sourceMeta: string | null;
+  publicationDate: Presence<PublicationDate>;
   contributorCredits: ContributorCredit[];
   noteBody: string | null;
 }

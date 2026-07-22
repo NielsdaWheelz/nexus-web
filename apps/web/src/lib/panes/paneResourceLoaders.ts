@@ -22,6 +22,8 @@ import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
+import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
+import { expectArray, expectNullableString } from "@/lib/validation";
 import type {
   ContributorDetail,
   ContributorWorkItem,
@@ -51,29 +53,6 @@ function decodeAuthorDetail(raw: unknown): ContributorDetail {
     displayName: detail.displayName,
     otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
     canRename: Boolean(detail.canRename),
-  };
-}
-
-function decodeAuthorWork(raw: unknown): ContributorWorkItem {
-  const work = raw as {
-    title: string;
-    href: string;
-    contentKind: string;
-    date?: string | null;
-    roleFacts?: Array<{ creditedName: string; role: string; rawRole?: string | null }> | null;
-  };
-  return {
-    title: work.title,
-    href: work.href,
-    contentKind: work.contentKind,
-    date: work.date ?? null,
-    roleFacts: Array.isArray(work.roleFacts)
-      ? work.roleFacts.map((fact) => ({
-          creditedName: fact.creditedName,
-          role: fact.role,
-          rawRole: fact.rawRole ?? null,
-        }))
-      : [],
   };
 }
 
@@ -192,14 +171,20 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
         }),
         request<
           { handle: string; limit: number },
-          { data: { works?: unknown[]; nextCursor?: string | null } }
+          { data: { works: unknown; nextCursor: unknown } }
         >(contributorWorksResource, { handle: p.handle, limit: AUTHOR_WORKS_LIMIT }),
       ]);
-      const works = Array.isArray(worksEnv.data.works) ? worksEnv.data.works : [];
       return {
         detail: decodeAuthorDetail(detailEnv.data),
-        works: works.map(decodeAuthorWork),
-        worksNextCursor: worksEnv.data.nextCursor ?? null,
+        works: expectArray(
+          worksEnv.data.works,
+          decodeContributorWorkItem,
+          "ContributorWorkPage.works",
+        ),
+        worksNextCursor: expectNullableString(
+          worksEnv.data.nextCursor,
+          "ContributorWorkPage.nextCursor",
+        ),
       };
     },
   },

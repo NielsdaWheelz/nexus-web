@@ -9,6 +9,7 @@ import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 const LIBRARY_ID = "reading-slate-library";
@@ -83,7 +84,16 @@ function SwitchingHarness({
   );
 }
 
-function entry(id: string, mediaId: string, title: string) {
+function entryWire(
+  id: string,
+  mediaId: string,
+  title: string,
+  presentation: {
+    publisher?: string | null;
+    image_url?: string | null;
+    thumbnail_url?: string | null;
+  } = {},
+) {
   return {
     id,
     kind: "media",
@@ -95,7 +105,9 @@ function entry(id: string, mediaId: string, title: string) {
       title,
       contributors: [],
       published_date: null,
-      publisher: null,
+      publisher: presentation.publisher ?? null,
+      image_url: presentation.image_url ?? null,
+      thumbnail_url: presentation.thumbnail_url ?? null,
       canonical_source_url: null,
       processing_status: "ready_for_reading",
       read_state: "unread",
@@ -107,6 +119,10 @@ function entry(id: string, mediaId: string, title: string) {
       value: { totalMinutes: 12, remainingMinutes: { kind: "Absent" } },
     },
   };
+}
+
+function entry(...args: Parameters<typeof entryWire>) {
+  return decodeLibraryReadingTimeEntry(entryWire(...args));
 }
 
 function slateItem() {
@@ -161,17 +177,14 @@ function Harness({
   isActive,
   initialEntries = [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")],
   sort = "resonance",
-  view = "list",
 }: {
   children: ReactNode;
   isActive: boolean;
   initialEntries?: ReturnType<typeof entry>[];
   sort?: "manual" | "resonance";
-  view?: "list" | "gallery";
 }) {
   const params = new URLSearchParams();
   if (sort === "resonance") params.set("sort", "resonance");
-  if (view === "gallery") params.set("view", "gallery");
   const query = params.toString();
   const href = `/libraries/${LIBRARY_ID}${query ? `?${query}` : ""}`;
   const identity = resolvePaneRouteIdentity(href);
@@ -246,7 +259,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
       ) {
         secondEntryReads += 1;
         return response({
-          data: [entry("entry-3", SECOND_MEDIA_ID, "Archived work")],
+          data: [entryWire("entry-3", SECOND_MEDIA_ID, "Archived work")],
           page: { has_more: false, next_cursor: null },
         });
       }
@@ -332,10 +345,9 @@ describe("LibraryPaneBody Reading Slate host", () => {
       await screen.findByText("No podcasts or media in this library yet."),
     ).toBeVisible();
     expect(await screen.findByText("Suggested work")).toBeVisible();
-    expect(screen.getByRole("list", { name: "Suggestions for Research" })).toHaveAttribute(
-      "data-view",
-      "list",
-    );
+    expect(
+      screen.getByRole("list", { name: "Suggestions for Research" }),
+    ).toBeVisible();
   });
 
   it("accepts a podcast from the mixed-media Slate through the library command", async () => {
@@ -383,7 +395,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     expect(await screen.findByText("Added to Research")).toBeVisible();
   });
 
-  it("keeps subtitle, reason, and Add visible in a fixed List inside a 320px Gallery", async () => {
+  it("keeps the single list compact and complete in a 320px host", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -402,7 +414,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         data-testid="narrow-library-host"
         style={{ width: "320px", maxWidth: "320px" }}
       >
-        <Harness isActive sort="manual" view="gallery">
+        <Harness isActive sort="manual">
           <LibraryPaneBody />
         </Harness>
       </div>,
@@ -412,19 +424,58 @@ describe("LibraryPaneBody Reading Slate host", () => {
     const slate = await screen.findByRole("region", {
       name: "Suggestions for Research",
     });
-    expect(screen.getByRole("list", { name: "Library entries" })).toHaveAttribute(
-      "data-view",
-      "gallery",
-    );
-    expect(within(slate).getByRole("list")).toHaveAttribute("data-view", "list");
-    expect(within(slate).getByText("Worth reading next")).toBeVisible();
-    expect(within(slate).getByText("Connected with Existing work")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Library entries" })).toBeVisible();
+    expect(within(slate).getByRole("list")).toBeVisible();
+    expect(
+      within(slate).getByText(
+        "Worth reading next · Connected with Existing work",
+      ),
+    ).toBeVisible();
     expect(
       within(slate).getByRole("button", { name: "Add Suggested work to Research" }),
     ).toBeVisible();
     expect(host.clientWidth).toBe(320);
     expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
     expect(horizontallyScrollableElements(host)).toEqual([]);
+  });
+
+  it("does not render publisher or row imagery from Library media payloads", async () => {
+    const publisher = "DISTINCTIVE PUBLISHER CHROME";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = pathWithSearch(input);
+        if (path === "/api/lectern") {
+          return response({ data: { items: [] } });
+        }
+        if (path === `/api/libraries/${LIBRARY_ID}/slate`) {
+          return response({ data: { items: [] } });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+    render(
+      <Harness
+        isActive
+        sort="manual"
+        initialEntries={[
+          entry("entry-1", EXISTING_MEDIA_ID, "Minimal row", {
+            publisher,
+            image_url: "https://example.test/distinctive-cover.jpg",
+            thumbnail_url: "https://example.test/legacy-thumbnail.jpg",
+          }),
+        ]}
+      >
+        <LibraryPaneBody />
+      </Harness>,
+    );
+
+    expect(await screen.findByText("Minimal row")).toBeVisible();
+    expect(screen.queryByText(publisher)).not.toBeInTheDocument();
+    expect(screen.queryByText("ready_for_reading")).not.toBeInTheDocument();
+    expect(screen.queryByText("web_article")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
   it("retries the exact Add, preserves main rows, and reconciles only the current sort", async () => {
@@ -471,10 +522,10 @@ describe("LibraryPaneBody Reading Slate host", () => {
         return response({
           data:
             resonanceReads === 1
-              ? [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")]
+              ? [entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work")]
               : [
-                  entry("entry-1", EXISTING_MEDIA_ID, "Existing work"),
-                  entry("entry-2", SUGGESTED_MEDIA_ID, "Suggested work"),
+                  entryWire("entry-1", EXISTING_MEDIA_ID, "Existing work"),
+                  entryWire("entry-2", SUGGESTED_MEDIA_ID, "Suggested work"),
                 ],
           page: { has_more: false, next_cursor: null },
         });

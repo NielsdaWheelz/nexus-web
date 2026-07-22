@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { KeyRound } from "lucide-react";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
@@ -80,43 +79,34 @@ export function PasswordRow({
     description: emailIdentity
       ? `Password is set on ${emailIdentity.email ?? "your account"}`
       : "Sign in with email and password",
-    icon: KeyRound,
+    actions:
+      emailIdentity && removable
+        ? [
+            {
+              kind: "command",
+              id: "remove-password",
+              label: pending ? "Removing..." : "Remove password",
+              tone: "danger",
+              disabled: pending,
+              onSelect: remove,
+            },
+          ]
+        : [],
   });
 
   const actions = emailIdentity ? (
-    <div className={styles.rowActions}>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => {
-          setPassword("");
-          setDialogError(null);
-          setMode("change");
-        }}
-        disabled={pending}
-      >
-        Change password
-      </Button>
-      {removable ? (
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={remove}
-          disabled={pending}
-        >
-          {pending ? "Removing..." : "Remove password"}
-        </Button>
-      ) : (
-        <>
-          <Button variant="danger" size="sm" disabled>
-            Remove password
-          </Button>
-          <span className={styles.unlinkHint}>
-            Add a linked provider first
-          </span>
-        </>
-      )}
-    </div>
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={() => {
+        setPassword("");
+        setDialogError(null);
+        setMode("change");
+      }}
+      disabled={pending}
+    >
+      Change password
+    </Button>
   ) : (
     <Button
       variant="pill"
@@ -135,13 +125,10 @@ export function PasswordRow({
     <>
       <CollectionView
         rows={[row]}
-        view="list"
-        density="comfortable"
         status="ready"
         ariaLabel="Password"
         surface={false}
         rowControls={{ password: actions }}
-        rowActionsVisibility="always"
       />
 
       {rowError ? <FeedbackNotice severity="error" title={rowError} /> : null}

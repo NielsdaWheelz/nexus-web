@@ -1,6 +1,11 @@
 /** Strict same-system transport contract for Resonance reading slates. */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import type { ProgressFraction } from "@/lib/consumption/activityFacts";
+import {
+  decodePublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { isRecord } from "@/lib/validation";
@@ -46,12 +51,12 @@ export type SlateTarget =
 export type SlateReason =
   | {
       kind: "Continue";
-      progress: Presence<number>;
+      progress: Presence<ProgressFraction>;
       lastEngagedAt: string;
     }
   | { kind: "AddedToNexus"; addedAt: string }
-  | { kind: "Published"; publishedOn: string }
-  | { kind: "NewEpisode"; publishedAt: string }
+  | { kind: "Published"; publishedOn: PublicationDate }
+  | { kind: "NewEpisode"; publishedAt: PublicationDate }
   | {
       kind: "Connected";
       anchor: SlateAnchor;
@@ -140,17 +145,6 @@ function asInstant(raw: unknown, context: string): string {
     Number.isNaN(Date.parse(value))
   ) {
     throw new Error(`Invalid ${context}: expected an ISO 8601 instant`);
-  }
-  return value;
-}
-
-function asDate(raw: unknown, context: string): string {
-  const value = asString(raw, context);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`Invalid ${context}: expected an ISO date`);
-  }
-  if (!isRealCalendarDate(value)) {
-    throw new Error(`Invalid ${context}: expected a real calendar date`);
   }
   return value;
 }
@@ -256,7 +250,9 @@ function decodeReason(raw: unknown): SlateReason {
       return {
         kind,
         progress: decodePresence(value.progress, (progress) =>
-          asFraction(progress, "SlateReasonOut.Continue.progress"),
+          ({
+            value: asFraction(progress, "SlateReasonOut.Continue.progress"),
+          }),
         ),
         lastEngagedAt: asInstant(
           value.lastEngagedAt,
@@ -273,13 +269,16 @@ function decodeReason(raw: unknown): SlateReason {
       exactKeys(value, ["kind", "publishedOn"], "SlateReasonOut.Published");
       return {
         kind,
-        publishedOn: asDate(value.publishedOn, "SlateReasonOut.Published.publishedOn"),
+        publishedOn: decodePublicationDate(
+          value.publishedOn,
+          "SlateReasonOut.Published.publishedOn",
+        ),
       };
     case "NewEpisode":
       exactKeys(value, ["kind", "publishedAt"], "SlateReasonOut.NewEpisode");
       return {
         kind,
-        publishedAt: asInstant(
+        publishedAt: decodePublicationDate(
           value.publishedAt,
           "SlateReasonOut.NewEpisode.publishedAt",
         ),

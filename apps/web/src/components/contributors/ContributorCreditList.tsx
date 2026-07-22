@@ -7,7 +7,7 @@ import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorCreditList.module.css";
 
 interface ContributorCreditListProps {
-  credits: ContributorCredit[] | null | undefined;
+  credits: readonly ContributorCredit[] | null | undefined;
   className?: string;
   maxVisible?: number;
   showRole?: boolean;
@@ -17,7 +17,7 @@ interface ContributorCreditListProps {
 // inline, comma-separated `dir="auto"` name run — handle-less text facts included
 // (D-9: dropping the old handle-less filter here is what keeps podcast browse/
 // discovery author lines from vanishing once previews became text facts). The whole
-// line may clamp for row density at the slot level; overflow shows `+N more`.
+// line may clamp at the slot level; overflow shows the compact `+N` grammar.
 export default function ContributorCreditList({
   credits,
   className,
@@ -42,7 +42,7 @@ export default function ContributorCreditList({
           <ContributorChip credit={credit} showRole={showRole} />
         </Fragment>
       ))}
-      {overflowCount > 0 ? <span className={styles.overflow}>, +{overflowCount} more</span> : null}
+      {overflowCount > 0 ? <span className={styles.overflow}>, +{overflowCount}</span> : null}
     </span>
   );
 }

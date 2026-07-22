@@ -10,18 +10,14 @@ import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPaginat
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import { FeedbackNotice, toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import CollectionView from "@/components/collections/CollectionView";
-import CollectionDisplayControls from "@/components/collections/CollectionDisplayControls";
 import Button from "@/components/ui/Button";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
-import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
-import { useCollectionDisplayState } from "@/lib/collections/useCollectionDisplayState";
 import type { ConversationSummary } from "@/lib/conversations/types";
 
 export default function ConversationsPaneBody() {
-  const { displayState, setDisplayState } = useCollectionDisplayState("/conversations");
   const firstPage = useResource<CursorPage<ConversationSummary>, NoResourceParams>({
     descriptor: conversationsInitialResource,
     params: {},
@@ -89,8 +85,6 @@ export default function ConversationsPaneBody() {
   return (
     <CollectionView
       rows={rows}
-      view={displayState.view}
-      density={displayState.density}
       status={status}
       ariaLabel="Conversations"
       opener={
@@ -100,16 +94,6 @@ export default function ConversationsPaneBody() {
             <Button asChild size="lg">
               <Link href="/conversations/new">New chat</Link>
             </Button>
-          }
-        />
-      }
-      toolbar={
-        <PaneToolbar
-          controls={
-            <CollectionDisplayControls
-              value={displayState}
-              onChange={setDisplayState}
-            />
           }
         />
       }

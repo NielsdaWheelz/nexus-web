@@ -10,6 +10,7 @@ import {
   type FormEvent,
 } from "react";
 import Button from "@/components/ui/Button";
+import CollectionView from "@/components/collections/CollectionView";
 import Input from "@/components/ui/Input";
 import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -32,72 +33,11 @@ import {
   patchContributorDisplayName,
 } from "@/lib/contributors/api";
 import { createMutationIntent } from "@/lib/contributors/mutationIntent";
-import type {
-  ContributorDetail,
-  ContributorRoleFact,
-} from "@/lib/contributors/types";
+import type { ContributorDetail } from "@/lib/contributors/types";
+import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
 import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import { usePaneParam, useSetPaneLabel } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
-
-// Singular role labels (content spec §0.2 / §4.3) — a work role-fact is one
-// credit, so it renders the singular form. Anything outside the closed vocabulary
-// (or a null role) reads as the generic "Contributor".
-const ROLE_SINGULAR: Record<string, string> = {
-  author: "Author",
-  editor: "Editor",
-  translator: "Translator",
-  host: "Host",
-  guest: "Guest",
-  narrator: "Narrator",
-  creator: "Creator",
-  producer: "Producer",
-  publisher: "Publisher",
-  channel: "Channel",
-  organization: "Organization",
-  unknown: "Contributor",
-};
-
-function roleFactLabel(role: string): string {
-  return ROLE_SINGULAR[role.trim()] ?? "Contributor";
-}
-
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-// Render a partial ISO date at its known precision (content spec §4.3): YYYY,
-// "Month YYYY", or "Month D, YYYY". A null/unparseable date renders nothing (no
-// "Unknown date", no "n.d.").
-function formatWorkDate(date: string | null): string | null {
-  if (!date) return null;
-  const full = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
-  if (full) {
-    const month = MONTHS[Number(full[2]) - 1];
-    if (!month) return null;
-    return `${month} ${Number(full[3])}, ${Number(full[1])}`;
-  }
-  const yearMonth = /^(\d{4})-(\d{2})$/.exec(date);
-  if (yearMonth) {
-    const month = MONTHS[Number(yearMonth[2]) - 1];
-    if (!month) return null;
-    return `${month} ${Number(yearMonth[1])}`;
-  }
-  const year = /^(\d{4})$/.exec(date);
-  if (year) return year[1];
-  return null;
-}
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
@@ -118,7 +58,7 @@ export default function AuthorPaneBody() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
 
-  const worksListRef = useRef<HTMLOListElement>(null);
+  const worksRegionRef = useRef<HTMLElement>(null);
   const pendingFocusIndexRef = useRef<number | null>(null);
 
   const loading =
@@ -150,6 +90,10 @@ export default function AuthorPaneBody() {
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
   const workCount = data?.works.length ?? 0;
+  const workRows = useMemo(
+    () => data?.works.map(presentContributorWork) ?? [],
+    [data?.works],
+  );
   // Render no folio when there are no works (content spec M3); a zero count
   // would render the banned "0 works".
   usePanePrimaryChrome({
@@ -168,10 +112,25 @@ export default function AuthorPaneBody() {
   useEffect(() => {
     const index = pendingFocusIndexRef.current;
     if (index === null) return;
-    pendingFocusIndexRef.current = null;
-    worksListRef.current
-      ?.querySelector<HTMLElement>(`[data-work-title="${index}"]`)
-      ?.focus();
+    const region = worksRegionRef.current;
+    if (!region) return;
+
+    const focusAppendedTitle = () => {
+      const title = region
+        .querySelectorAll<HTMLAnchorElement>("[data-row-focusable]")
+        .item(index);
+      if (!title) return false;
+      pendingFocusIndexRef.current = null;
+      title.focus();
+      return true;
+    };
+    if (focusAppendedTitle()) return;
+
+    const observer = new MutationObserver(() => {
+      if (focusAppendedTitle()) observer.disconnect();
+    });
+    observer.observe(region, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [workCount]);
 
   const loadMore = useCallback(async () => {
@@ -255,70 +214,38 @@ export default function AuthorPaneBody() {
             </section>
           ) : null}
 
-          <section className={styles.works} aria-label="Works">
-            {data.works.length === 0 ? (
-              <p className={styles.empty}>No works yet.</p>
-            ) : (
-              <ol className={styles.workList} ref={worksListRef}>
-                {data.works.map((work, index) => {
-                  const dateLabel = formatWorkDate(work.date);
-                  return (
-                    <li key={`${work.href}-${index}`} className={styles.workRow}>
-                      <a
-                        className={styles.workTitle}
-                        href={work.href}
-                        dir="auto"
-                        data-work-title={index}
+          <section ref={worksRegionRef} aria-label="Works">
+            <CollectionView
+              rows={workRows}
+              status="ready"
+              ariaLabel="Works"
+              surface={false}
+              empty={<p className={styles.empty}>No works yet.</p>}
+              footer={
+                data.worksNextCursor !== null ? (
+                  worksError ? (
+                    <div className={styles.worksError}>
+                      <FeedbackNotice feedback={worksError} />
+                      <Button variant="secondary" size="sm" onClick={() => void loadMore()}>
+                        Try again
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className={styles.worksFooter}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void loadMore()}
+                        disabled={loadingMore}
+                        loading={loadingMore}
                       >
-                        {work.title}
-                      </a>
-                      {dateLabel || work.contentKind ? (
-                        <p className={styles.workMeta}>
-                          {dateLabel ? <span>{dateLabel}</span> : null}
-                          {work.contentKind ? (
-                            <span className={styles.workKind}>
-                              {work.contentKind.replace(/_/g, " ")}
-                            </span>
-                          ) : null}
-                        </p>
-                      ) : null}
-                      <ul className={styles.workFacts}>
-                        {work.roleFacts.map((fact, factIndex) => (
-                          <li
-                            key={`${fact.role}-${fact.creditedName}-${factIndex}`}
-                            className={styles.fact}
-                          >
-                            <RoleFact fact={fact} displayName={data.detail.displayName} />
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-
-            {data.worksNextCursor !== null ? (
-              worksError ? (
-                <div className={styles.worksError}>
-                  <FeedbackNotice feedback={worksError} />
-                  <Button variant="secondary" size="sm" onClick={() => void loadMore()}>
-                    Try again
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className={styles.loadMore}
-                  onClick={() => void loadMore()}
-                  disabled={loadingMore}
-                  loading={loadingMore}
-                >
-                  Load more
-                </Button>
-              )
-            ) : null}
+                        Load more
+                      </Button>
+                    </div>
+                  )
+                ) : null
+              }
+            />
           </section>
 
           <div className="sr-only" role="status" aria-live="polite">
@@ -342,26 +269,6 @@ export default function AuthorPaneBody() {
         </div>
       ) : null}
     </PaneSurface>
-  );
-}
-
-function RoleFact({
-  fact,
-  displayName,
-}: {
-  fact: ContributorRoleFact;
-  displayName: string;
-}) {
-  const label = roleFactLabel(fact.role);
-  // When the credited spelling matches the canonical heading, the role stands
-  // alone; otherwise it names the exact spelling used on this work (§4.3).
-  if (fact.creditedName === displayName) {
-    return <span>{label}</span>;
-  }
-  return (
-    <span>
-      {label} · credited as “<span dir="auto">{fact.creditedName}</span>”
-    </span>
   );
 }
 

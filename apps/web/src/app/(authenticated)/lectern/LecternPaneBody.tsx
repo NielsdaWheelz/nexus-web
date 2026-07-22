@@ -23,7 +23,10 @@ import type {
   LecternItemId,
   LecternSnapshot,
 } from "@/lib/lectern/contract";
-import { assumeMediaId } from "@/lib/lectern/contract";
+import {
+  assumeMediaId,
+  lecternActivityFacts,
+} from "@/lib/lectern/contract";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
@@ -227,7 +230,11 @@ export default function LecternPaneBody() {
   });
 
   const queueRows = items.map((item) =>
-    presentLecternItem(item, (triggerEl) => handleRemove(item.itemId, triggerEl)),
+    presentLecternItem(
+      item,
+      (triggerEl) => handleRemove(item.itemId, triggerEl),
+      lecternActivityFacts(item),
+    ),
   );
   const queueControls = Object.fromEntries(
     items.flatMap((item) => {
@@ -269,17 +276,14 @@ export default function LecternPaneBody() {
       >
         <CollectionView
           rows={queueRows}
-          view="list"
-          density="comfortable"
           status={queueStatus}
           ariaLabel="On the lectern"
           error={queueError}
           empty={<p className={styles.emptyState}>Nothing on the lectern yet.</p>}
           rowControls={queueControls}
-          rowActionsVisibility="always"
           surface={false}
           sortable={{
-            className: styles.lecternList,
+            disabled: mutation.kind === "Pending",
             onReorder: (nextRows) => {
               const nextItems = nextRows
                 .map((row) => byRowId.get(row.id))
@@ -288,18 +292,6 @@ export default function LecternPaneBody() {
                 handleReorder(nextItems.map((item) => item.itemId));
               }
             },
-            renderControls: (row, { handleProps }) => (
-              <Button
-                variant="secondary"
-                size="sm"
-                className={styles.dragHandle}
-                aria-label={`Reorder ${row.headline.text}`}
-                {...handleProps.attributes}
-                {...handleProps.listeners}
-              >
-                ⋮⋮
-              </Button>
-            ),
           }}
         />
       </PaneSection>

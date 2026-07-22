@@ -46,11 +46,11 @@ describe("Resonance slate contract", () => {
         progress: { kind: "Present", value: 0.42 },
         lastEngagedAt: "2026-07-20T12:00:00Z",
       },
-      "Continue · 42%",
+      "Continue where you left off",
     ],
-    [{ kind: "AddedToNexus", addedAt: "2026-07-20T12:00:00Z" }, "Added to Nexus · 2026-07-20"],
-    [{ kind: "Published", publishedOn: "2026-07-20" }, "Published · 2026-07-20"],
-    [{ kind: "NewEpisode", publishedAt: "2026-07-20T12:00:00Z" }, "New episode · 2026-07-20"],
+    [{ kind: "AddedToNexus", addedAt: "2026-07-20T12:00:00Z" }, "Added to Nexus"],
+    [{ kind: "Published", publishedOn: "2026-07-20" }, "Published"],
+    [{ kind: "NewEpisode", publishedAt: "2026-07-20T12:00:00Z" }, "New episode"],
     [
       {
         kind: "Connected",
@@ -300,14 +300,64 @@ describe("Resonance slate contract", () => {
     expect(item.reason).toMatchObject({ lastEngagedAt });
   });
 
-  it("presents subtitle and reason separately with no nested Related lookup", () => {
+  it("presents the reason once with rich progress and no nested Related lookup", () => {
     const [item] = decodeItems(wireItem(MEDIA_A));
     const row = presentSlateItem(item);
 
     expect(row.id).toBe(`media:${MEDIA_A}`);
-    expect(row.description).toBe("A useful subtitle");
-    expect(row.signals).toEqual([{ value: "Continue · 42%" }]);
-    expect(row.relatedMediaId).toBeNull();
+    expect(row.context).toEqual({
+      kind: "Present",
+      value: {
+        kind: "Text",
+        text: "A useful subtitle · Continue where you left off",
+      },
+    });
+    expect(row.activity).toEqual({
+      kind: "Present",
+      value: {
+        kind: "InProgress",
+        modality: "Read",
+        fraction: { kind: "Present", value: { value: 0.42 } },
+        remainingMinutes: { kind: "Absent" },
+      },
+    });
+    expect(row.relatedMediaId).toEqual({ kind: "Absent" });
+  });
+
+  it.each([
+    [
+      { kind: "Published", publishedOn: "2026-07-20" },
+      { kind: "Present", value: "2026-07-20" },
+      "A useful subtitle · Published",
+    ],
+    [
+      { kind: "NewEpisode", publishedAt: "2026-07-20T12:00:00Z" },
+      { kind: "Present", value: "2026-07-20T12:00:00Z" },
+      "A useful subtitle · New episode",
+    ],
+  ])("projects publication identity for %#", (reason, publicationDate, context) => {
+    const [item] = decodeItems(wireItem(MEDIA_A, reason));
+    const row = presentSlateItem(item);
+
+    expect(row.publicationDate).toEqual(publicationDate);
+    expect(row.context).toEqual({
+      kind: "Present",
+      value: { kind: "Text", text: context },
+    });
+  });
+
+  it("keeps the reason when a target subtitle is absent", () => {
+    const raw = wireItem(MEDIA_A);
+    raw.target = {
+      ...(raw.target as object),
+      subtitle: { kind: "Absent" },
+    };
+    const row = presentSlateItem(decodeItems(raw)[0]);
+
+    expect(row.context).toEqual({
+      kind: "Present",
+      value: { kind: "Text", text: "Continue where you left off" },
+    });
   });
 });
 

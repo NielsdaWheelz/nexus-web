@@ -1,12 +1,12 @@
-/* Pill retired (§0.5): credited names are inline text, not chips. */
+/* Credited names are inline text, not chips. */
 
 .link,
 .name {
   display: inline;
   gap: var(--space-1);
-  color: var(--ink);
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
   text-decoration: none;
 }
 

@@ -265,7 +265,12 @@ describe("loadWorkspaceBootstrap", () => {
         otherNames: ["J. Doe"],
         canRename: true,
       },
-      works: [work],
+      works: [
+        {
+          ...work,
+          date: { kind: "Present", value: "2020-01-01" },
+        },
+      ],
       worksNextCursor: null,
     });
   });

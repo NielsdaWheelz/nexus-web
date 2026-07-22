@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link2 } from "lucide-react";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -153,43 +152,31 @@ export default function SettingsIdentitiesPaneBody() {
 
         {!loading && identities.length > 0 && (
           <CollectionView
-            rows={identities.map((identity) =>
-              presentSettingsRow({
+            rows={identities.map((identity) => {
+              const canUnlink = mayUnlinkIdentity(identities, identity.id);
+              const pendingUnlink = unlinkingIdentityId === identity.id;
+              return presentSettingsRow({
                 id: identity.id,
                 title: formatIdentityProvider(identity.provider),
                 description: identity.email ?? "provider did not return an email",
                 meta: linkedDate(identity, display),
-                icon: Link2,
-              }),
-            )}
-            view="list"
-            density="comfortable"
+                actions: canUnlink
+                  ? [
+                      {
+                        kind: "command",
+                        id: "unlink-identity",
+                        label: pendingUnlink ? "Unlinking..." : "Unlink",
+                        tone: "danger",
+                        disabled: pendingUnlink,
+                        onSelect: () => void handleUnlinkIdentity(identity),
+                      },
+                    ]
+                  : [],
+              });
+            })}
             status="ready"
             ariaLabel="Linked identities"
             surface={false}
-            rowControls={Object.fromEntries(
-              identities.map((identity) => {
-                const canUnlink = mayUnlinkIdentity(identities, identity.id);
-                const pendingUnlink = unlinkingIdentityId === identity.id;
-
-                return [
-                  identity.id,
-                  canUnlink ? (
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      disabled={pendingUnlink}
-                      onClick={() => void handleUnlinkIdentity(identity)}
-                    >
-                      {pendingUnlink ? "Unlinking..." : "Unlink"}
-                    </Button>
-                  ) : (
-                    <span className={styles.unlinkHint}>Keep at least two identities.</span>
-                  ),
-                ];
-              }),
-            )}
-            rowActionsVisibility="always"
           />
         )}
 

@@ -1,6 +1,10 @@
-import type { CollectionRowView } from "@/lib/collections/types";
-import type { SlateItem, SlateReason } from "@/lib/resonance/contract";
-import { mediaKindIcon, resourceIconForScheme } from "@/lib/resources/resourceKind";
+import { absent, present } from "@/lib/api/presence";
+import type {
+  CollectionActivity,
+  CollectionRowView,
+  ConsumptionModality,
+} from "@/lib/collections/types";
+import type { SlateItem, SlateReason, SlateTarget } from "@/lib/resonance/contract";
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled Slate reason: ${JSON.stringify(value)}`);
@@ -9,15 +13,13 @@ function assertNever(value: never): never {
 export function presentSlateReason(reason: SlateReason): string {
   switch (reason.kind) {
     case "Continue":
-      return reason.progress.kind === "Present"
-        ? `Continue · ${Math.round(reason.progress.value * 100)}%`
-        : "Continue where you left off";
+      return "Continue where you left off";
     case "AddedToNexus":
-      return `Added to Nexus · ${reason.addedAt.slice(0, 10)}`;
+      return "Added to Nexus";
     case "Published":
-      return `Published · ${reason.publishedOn}`;
+      return "Published";
     case "NewEpisode":
-      return `New episode · ${reason.publishedAt.slice(0, 10)}`;
+      return "New episode";
     case "Connected":
       return reason.edgeOrigin === "synapse"
         ? `Synapse · connected with ${reason.anchor.label}`
@@ -31,8 +33,35 @@ export function presentSlateReason(reason: SlateReason): string {
   }
 }
 
+function modalityFor(target: SlateTarget): ConsumptionModality {
+  if (
+    target.kind === "Podcast" ||
+    (target.kind === "Media" && target.mediaKind === "podcast_episode")
+  ) {
+    return "Listen";
+  }
+  if (target.kind === "Media" && target.mediaKind === "video") {
+    return "Watch";
+  }
+  return "Read";
+}
+
 export function presentSlateItem(item: SlateItem): CollectionRowView {
   const { target } = item;
+  const reasonText = presentSlateReason(item.reason);
+  const contextText =
+    target.subtitle.kind === "Present"
+      ? `${target.subtitle.value} · ${reasonText}`
+      : reasonText;
+  const activity =
+    item.reason.kind === "Continue" && item.reason.progress.kind === "Present"
+      ? present<CollectionActivity>({
+          kind: "InProgress",
+          modality: modalityFor(target),
+          fraction: item.reason.progress,
+          remainingMinutes: absent(),
+        })
+      : absent<CollectionActivity>();
   return {
     id: target.ref,
     kind:
@@ -42,17 +71,20 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
           ? "podcast_episode"
           : "media",
     primary: { kind: "link", href: target.href, paneLabelHint: target.title },
-    lead: {
-      icon:
-        target.kind === "Podcast"
-          ? resourceIconForScheme("podcast")
-          : mediaKindIcon(target.mediaKind),
-      remoteUrl: target.imageUrl.kind === "Present" ? target.imageUrl.value : undefined,
-    },
-    headline: { text: target.title },
-    description:
-      target.subtitle.kind === "Present" ? target.subtitle.value : undefined,
-    signals: [{ value: presentSlateReason(item.reason) }],
-    relatedMediaId: null,
+    title: { text: target.title },
+    contributors: [],
+    publicationDate:
+      item.reason.kind === "Published"
+        ? present(item.reason.publishedOn)
+        : item.reason.kind === "NewEpisode"
+          ? present(item.reason.publishedAt)
+          : absent(),
+    context: present({ kind: "Text", text: contextText }),
+    activity,
+    exceptionalStatus: absent(),
+    connections: absent(),
+    relatedMediaId: absent(),
+    actions: [],
+    selected: false,
   };
 }

@@ -6,7 +6,15 @@
  */
 
 import { type Presence } from "@/lib/api/presence";
+import type {
+  PositiveMinutes,
+  ProgressFraction,
+} from "@/lib/consumption/activityFacts";
 import type { ContributorCredit } from "@/lib/contributors/types";
+import {
+  decodeOptionalPublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import {
   decodePresentPlayerDescriptor,
   type PlayerDescriptor,
@@ -139,22 +147,22 @@ export interface TranscriptRequestForecastState {
 }
 
 export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
-  if (episode.episode_state === "unplayed") {
-    return "unplayed";
+  switch (episode.episode_state) {
+    case "unplayed":
+    case "in_progress":
+    case "played":
+      return episode.episode_state;
+    case null:
+      if (episode.listening_state?.is_completed) return "played";
+      if ((episode.listening_state?.position_ms ?? 0) > 0) {
+        return "in_progress";
+      }
+      return "unplayed";
+    default: {
+      const invalid: never = episode.episode_state;
+      throw new TypeError(`Unsupported episode_state: ${String(invalid)}`);
+    }
   }
-  if (episode.episode_state === "in_progress") {
-    return "in_progress";
-  }
-  if (episode.episode_state === "played") {
-    return "played";
-  }
-  if (episode.listening_state?.is_completed) {
-    return "played";
-  }
-  if ((episode.listening_state?.position_ms ?? 0) > 0) {
-    return "in_progress";
-  }
-  return "unplayed";
 }
 
 /**
@@ -177,19 +185,65 @@ export function episodeMatchesFilter(
   return filter === "all" || episodeState === filter;
 }
 
-export function getEpisodeProgressPercent(episode: PodcastEpisodeMedia): number {
-  const listeningState = episode.listening_state;
-  if (
-    !listeningState ||
-    listeningState.duration_ms == null ||
-    listeningState.duration_ms <= 0
-  ) {
-    return 0;
+export interface EpisodeActivityFacts {
+  totalMinutes: Presence<PositiveMinutes>;
+  fraction: Presence<ProgressFraction>;
+  remainingMinutes: Presence<PositiveMinutes>;
+}
+
+export function decodeEpisodePublicationDate(
+  raw: PodcastEpisodeMedia["published_date"],
+): Presence<PublicationDate> {
+  return decodeOptionalPublicationDate(raw, "episode published_date");
+}
+
+export function decodeEpisodeTimingFacts(
+  state: PodcastEpisodeMedia["listening_state"],
+): EpisodeActivityFacts {
+  if (state === null) {
+    return {
+      totalMinutes: { kind: "Absent" },
+      fraction: { kind: "Absent" },
+      remainingMinutes: { kind: "Absent" },
+    };
   }
-  const rawPercent = Math.floor(
-    (listeningState.position_ms / listeningState.duration_ms) * 100,
-  );
-  return Math.max(0, Math.min(100, rawPercent));
+  if (!Number.isInteger(state.position_ms) || state.position_ms < 0) {
+    throw new TypeError("episode listening position_ms must be a non-negative integer");
+  }
+  if (state.duration_ms === null) {
+    return {
+      totalMinutes: { kind: "Absent" },
+      fraction: { kind: "Absent" },
+      remainingMinutes: { kind: "Absent" },
+    };
+  }
+  if (
+    !Number.isInteger(state.duration_ms) ||
+    state.duration_ms <= 0 ||
+    state.position_ms > state.duration_ms
+  ) {
+    throw new TypeError(
+      "episode listening duration_ms must be a positive integer at least position_ms",
+    );
+  }
+  const remainingMs = state.duration_ms - state.position_ms;
+  return {
+    totalMinutes: {
+      kind: "Present",
+      value: { value: Math.ceil(state.duration_ms / 60_000) },
+    },
+    fraction: {
+      kind: "Present",
+      value: { value: state.position_ms / state.duration_ms },
+    },
+    remainingMinutes:
+      remainingMs > 0
+        ? {
+            kind: "Present",
+            value: { value: Math.ceil(remainingMs / 60_000) },
+          }
+        : { kind: "Absent" },
+  };
 }
 
 export function canRequestTranscriptForEpisode(

@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeLibraryReadingTimeEntry,
-  readingTimeSignal,
-  type ReadingTimeEstimatePresence,
 } from "./readingTime";
 
 const absent = { kind: "Absent" } as const;
@@ -14,17 +12,42 @@ function estimate(totalMinutes = 15) {
   };
 }
 
+function decodedEstimate(totalMinutes = 15, remainingMinutes?: number) {
+  return {
+    kind: "Present" as const,
+    value: {
+      totalMinutes: { value: totalMinutes },
+      remainingMinutes:
+        remainingMinutes === undefined
+          ? absent
+          : { kind: "Present" as const, value: { value: remainingMinutes } },
+    },
+  };
+}
+
 function mediaEntry(overrides: Record<string, unknown> = {}) {
   return {
-    kind: "media",
+    kind: "media" as const,
     media: {
-      kind: "web_article",
-      processing_status: "ready_for_reading",
-      read_state: "unread",
+      kind: "web_article" as const,
+      processing_status: "ready_for_reading" as const,
+      read_state: "unread" as const,
       progress_fraction: null,
+      published_date: null,
+      canonical_source_url: "https://example.test/article",
       capabilities: { can_quote: true },
     },
     readingTimeEstimate: estimate(),
+    ...overrides,
+  };
+}
+
+function podcastEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "podcast" as const,
+    podcast: { unplayed_count: 0 },
+    subscription: { status: "active", sync_status: "complete" },
+    readingTimeEstimate: absent,
     ...overrides,
   };
 }
@@ -33,7 +56,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
   it("accepts the exact total-only document contract", () => {
     expect(
       decodeLibraryReadingTimeEntry(mediaEntry()).readingTimeEstimate,
-    ).toEqual(estimate());
+    ).toEqual(decodedEstimate());
   });
 
   it("accepts total-only PDF and progressless in-progress web estimates", () => {
@@ -53,7 +76,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
       expect(
         decodeLibraryReadingTimeEntry(mediaEntry({ media }))
           .readingTimeEstimate,
-      ).toEqual(estimate());
+      ).toEqual(decodedEstimate());
     }
   });
 
@@ -61,6 +84,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
     for (const kind of ["web_article", "epub"] as const) {
       const entry = mediaEntry({
         media: {
+          ...mediaEntry().media,
           kind,
           processing_status: "ready_for_reading",
           read_state: "in_progress",
@@ -76,7 +100,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
         },
       });
       expect(decodeLibraryReadingTimeEntry(entry).readingTimeEstimate).toEqual(
-        entry.readingTimeEstimate,
+        decodedEstimate(15, 8),
       );
     }
   });
@@ -86,6 +110,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
       decodeLibraryReadingTimeEntry(
         mediaEntry({
           media: {
+            ...mediaEntry().media,
             kind: "web_article",
             processing_status: "ready_for_reading",
             read_state: "in_progress",
@@ -107,6 +132,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
         decodeLibraryReadingTimeEntry(
           mediaEntry({
             media: {
+              ...mediaEntry().media,
               kind: "epub",
               processing_status: "ready_for_reading",
               read_state,
@@ -138,6 +164,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
       decodeLibraryReadingTimeEntry(
         mediaEntry({
           media: {
+            ...mediaEntry().media,
             kind: "pdf",
             processing_status: "ready_for_reading",
             read_state: "in_progress",
@@ -151,6 +178,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
 
     for (const media of [
       {
+        ...mediaEntry().media,
         kind: "video",
         processing_status: "ready_for_reading",
         read_state: "unread",
@@ -158,6 +186,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
         capabilities: { can_quote: true },
       },
       {
+        ...mediaEntry().media,
         kind: "web_article",
         processing_status: "extracting",
         read_state: "unread",
@@ -165,6 +194,7 @@ describe("decodeLibraryReadingTimeEntry", () => {
         capabilities: { can_quote: true },
       },
       {
+        ...mediaEntry().media,
         kind: "web_article",
         processing_status: "ready_for_reading",
         read_state: "unread",
@@ -195,10 +225,91 @@ describe("decodeLibraryReadingTimeEntry", () => {
     ).toEqual(absent);
     expect(
       decodeLibraryReadingTimeEntry({
-        kind: "podcast",
-        readingTimeEstimate: absent,
+        ...podcastEntry(),
       }).readingTimeEstimate,
     ).toEqual(absent);
+  });
+
+  it("constructs rich presenter facts at the Library boundary", () => {
+    const decoded = decodeLibraryReadingTimeEntry(
+      mediaEntry({
+        media: {
+          ...mediaEntry().media,
+          read_state: "in_progress",
+          progress_fraction: 0.5,
+          published_date: "2026-07-20",
+        },
+        readingTimeEstimate: {
+          kind: "Present",
+          value: {
+            totalMinutes: 15,
+            remainingMinutes: { kind: "Present", value: 8 },
+          },
+        },
+      }),
+    );
+
+    expect(decoded.media.progressFraction).toEqual({
+      kind: "Present",
+      value: { value: 0.5 },
+    });
+    expect(decoded.media.publicationDate).toEqual({
+      kind: "Present",
+      value: "2026-07-20",
+    });
+    expect(decoded.media.sourceHost).toEqual({
+      kind: "Present",
+      value: "example.test",
+    });
+  });
+
+  it("constructs rich podcast facts at the Library boundary", () => {
+    expect(
+      decodeLibraryReadingTimeEntry(
+        podcastEntry({ podcast: { unplayed_count: 3 } }),
+      ).podcast,
+    ).toMatchObject({
+      unplayedCount: { kind: "Present", value: { value: 3 } },
+      syncStatus: { kind: "Present", value: "complete" },
+    });
+
+    for (const subscription of [
+      null,
+      { status: "unsubscribed", sync_status: "complete" },
+    ]) {
+      expect(
+        decodeLibraryReadingTimeEntry(
+          podcastEntry({ subscription }),
+        ).podcast.syncStatus,
+      ).toEqual(absent);
+    }
+  });
+
+  it("rejects malformed podcast presenter facts", () => {
+    expect(() =>
+      decodeLibraryReadingTimeEntry(
+        podcastEntry({ podcast: { unplayed_count: Number.NaN } }),
+      ),
+    ).toThrow();
+    expect(() =>
+      decodeLibraryReadingTimeEntry(
+        podcastEntry({
+          subscription: { status: "active", sync_status: "stale" },
+        }),
+      ),
+    ).toThrow(/subscription.sync_status/);
+    expect(() =>
+      decodeLibraryReadingTimeEntry(
+        podcastEntry({
+          subscription: { status: "archived", sync_status: "complete" },
+        }),
+      ),
+    ).toThrow(/subscription.status/);
+    expect(() =>
+      decodeLibraryReadingTimeEntry(
+        podcastEntry({ subscription: undefined }),
+      ),
+    ).toThrow(/subscription/);
   });
 
   it("rejects removed root consumption fields", () => {
@@ -232,6 +343,10 @@ describe("decodeLibraryReadingTimeEntry", () => {
     [
       "can-quote capability",
       { media: { ...mediaEntry().media, capabilities: {} } },
+    ],
+    [
+      "unreal publication date",
+      { media: { ...mediaEntry().media, published_date: "2026-02-30" } },
     ],
   ])("rejects an invalid required policy input: %s", (_name, overrides) => {
     expect(() => decodeLibraryReadingTimeEntry(mediaEntry(overrides))).toThrow();
@@ -328,70 +443,5 @@ describe("decodeLibraryReadingTimeEntry", () => {
         }),
       ),
     ).toThrow(/must not exceed/);
-  });
-});
-
-describe("reading-time presentation", () => {
-  it.each([
-    [1, "1 min"],
-    [59, "59 min"],
-    [60, "1 hr"],
-    [75, "1 hr 15 min"],
-    [120, "2 hr"],
-    [2_147_483_647, "35791394 hr 7 min"],
-  ])("formats %i minutes as %s", (minutes, expected) => {
-    expect(
-      readingTimeSignal(estimate(minutes), {
-        processing_status: "ready_for_reading",
-        read_state: "unread",
-        capabilities: { can_quote: true },
-      }),
-    ).toBe(`≈ ${expected} read`);
-  });
-
-  it("uses remaining only for the current in-progress state", () => {
-    const present: ReadingTimeEstimatePresence = {
-      kind: "Present",
-      value: {
-        totalMinutes: 15,
-        remainingMinutes: { kind: "Present", value: 5 },
-      },
-    };
-    const media = {
-      kind: "web_article" as const,
-      processing_status: "ready_for_reading" as const,
-      read_state: "in_progress" as const,
-      capabilities: { can_quote: true },
-    };
-    expect(readingTimeSignal(present, media)).toBe("≈ 5 min left");
-    expect(
-      readingTimeSignal(present, { ...media, read_state: "finished" }),
-    ).toBe("≈ 15 min read");
-    expect(
-      readingTimeSignal(present, { ...media, read_state: "unread" }),
-    ).toBe("≈ 15 min read");
-  });
-
-  it("suppresses absent or currently ineligible estimates", () => {
-    const present = estimate();
-    const media = {
-      kind: "web_article" as const,
-      processing_status: "ready_for_reading" as const,
-      read_state: "unread" as const,
-      capabilities: { can_quote: true },
-    };
-    expect(readingTimeSignal(absent, media)).toBeNull();
-    expect(
-      readingTimeSignal(present, {
-        ...media,
-        processing_status: "extracting",
-      }),
-    ).toBeNull();
-    expect(
-      readingTimeSignal(present, {
-        ...media,
-        capabilities: { can_quote: false },
-      }),
-    ).toBeNull();
   });
 });

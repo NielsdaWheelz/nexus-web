@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Keyboard } from "lucide-react";
 import CollectionView from "@/components/collections/CollectionView";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -19,7 +18,6 @@ import {
   getDestination,
   type DestinationId,
 } from "@/lib/navigation/destinations";
-import styles from "./page.module.css";
 
 interface BindableAction {
   id: string;
@@ -142,55 +140,53 @@ export default function KeybindingsPaneBody() {
                   ? `Already bound to ${conflictLabel}`
                   : undefined,
               meta,
-              icon: Keyboard,
+              actions: isCapturing
+                ? [
+                    {
+                      kind: "command",
+                      id: "cancel-keybinding-capture",
+                      label: "Cancel",
+                      onSelect: cancelCapture,
+                    },
+                  ]
+                : currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id]
+                  ? [
+                      {
+                        kind: "command",
+                        id: "clear-keybinding",
+                        label: "Clear shortcut",
+                        onSelect: () => clearBinding(id),
+                      },
+                    ]
+                  : [],
             });
           })}
-          view="list"
-          density="comfortable"
           status="ready"
           ariaLabel="Keyboard shortcuts"
           surface={false}
           rowControls={Object.fromEntries(
             BINDABLE_ACTIONS.map(({ id }) => {
               const isCapturing = capturing === id;
-              const currentCombo = bindings[id];
 
               return [
                 id,
                 isCapturing ? (
-                  <span className={styles.rowActions}>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={!capturedCombo}
-                      onClick={saveCapture}
-                    >
-                      {conflict ? "Reassign" : "Save"}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={cancelCapture}>
-                      Cancel
-                    </Button>
-                  </span>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!capturedCombo}
+                    onClick={saveCapture}
+                  >
+                    {conflict ? "Reassign" : "Save"}
+                  </Button>
                 ) : (
-                  <span className={styles.rowActions}>
-                    <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
-                      Edit
-                    </Button>
-                    {currentCombo && currentCombo !== DEFAULT_KEYBINDINGS[id] ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => clearBinding(id)}
-                      >
-                        Clear
-                      </Button>
-                    ) : null}
-                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => startCapture(id)}>
+                    Edit
+                  </Button>
                 ),
               ];
             }),
           )}
-          rowActionsVisibility="always"
         />
       </PaneSection>
     </PaneSurface>

@@ -1,8 +1,7 @@
 /*
  * Podcast detail byline (content spec §1). These are wrapping
- * classes, deliberately NOT the truncating `ResourceRow` `.contributors` slot
- * nor its bare `.eyebrow` wrapper: the detail byline must wrap and never
- * ellipsize a name (§0.5 / §1.2). Names are inline text, never pills.
+ * classes: the detail byline must wrap and never ellipsize a name. Names are
+ * inline text, never pills.
  */
 
 .root {
