@@ -2052,12 +2052,15 @@ class LibraryEntry(Base):
 
 
 class SynthesisArtifact(Base):
-    """Stable artifact head keyed by ``(subject_scheme, subject_id, kind)``.
+    """Stable dossier head keyed by resource-plus-audience identity.
 
-    The scope-generic press: one head per subject+kind (a library dossier, a
-    conversation distillate, …), promoting one revision. ``subject_id`` is
-    deliberately FK-less — a polymorphic subject reference (D-2); cleanup on
-    subject deletion is the engine's ``on_subject_deleted`` (D-10).
+    One head per ``(subject_scheme, subject_id, audience_scheme, audience_id)``
+    (D-2): a subject resource (or contributor) as seen by a closed
+    ``AudienceScope`` — a single user or a whole library. ``subject_id`` is
+    deliberately FK-less — a polymorphic subject reference; cleanup on subject
+    deletion is the engine's ``on_subject_deleted`` (D-10). No domain-value DB
+    checks, no polymorphic subject FK, no cascade; the head promotes at most one
+    revision through the nullable ``current_revision_id`` back-pointer.
     """
 
     __tablename__ = "artifacts"
@@ -2069,12 +2072,8 @@ class SynthesisArtifact(Base):
     )
     subject_scheme: Mapped[str] = mapped_column(Text, nullable=False)
     subject_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
+    audience_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    audience_id: Mapped[str] = mapped_column(Text, nullable=False)
     current_revision_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(
@@ -2099,24 +2098,24 @@ class SynthesisArtifact(Base):
         UniqueConstraint(
             "subject_scheme",
             "subject_id",
-            "kind",
-            name="uq_artifacts_subject_kind",
-        ),
-        CheckConstraint(
-            "kind IN ('library_dossier', 'conversation_distillate')",
-            name="ck_artifacts_kind",
-        ),
-        CheckConstraint(
-            "subject_scheme IN ('library', 'conversation')",
-            name="ck_artifacts_subject_scheme",
+            "audience_scheme",
+            "audience_id",
+            name="uq_artifacts_subject_audience",
         ),
     )
 
 
-class ArtifactRevision(Base):
-    """Immutable generated synthesis snapshot; a revision IS its generation run."""
+class ArtifactBuild(Base):
+    """One dossier generation attempt against a head (D-3).
 
-    __tablename__ = "artifact_revisions"
+    The single durable-op / replay identity and the LLM/provider ledger
+    attribution owner. Active state DERIVES from the absence of a terminal
+    child (revision | failure | cancellation) — there is deliberately NO status
+    column. Idempotency uniqueness lives here as ``(artifact_id,
+    idempotency_key)``.
+    """
+
+    __tablename__ = "artifact_builds"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -2128,14 +2127,63 @@ class ArtifactRevision(Base):
         ForeignKey("artifacts.id"),
         nullable=False,
     )
+    requester_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id",
+            "idempotency_key",
+            name="uq_artifact_builds_idempotency",
+        ),
+        Index("ix_artifact_builds_artifact", "artifact_id"),
+    )
+
+
+class ArtifactRevision(Base):
+    """Immutable successful dossier output — unique per build (D-3).
+
+    A revision exists only for a build that succeeded with >=1 materialized
+    citation. Linkage to the head is via the build; the typed ``input_manifest``
+    (freshness/coverage source) replaces the legacy ``covered_targets`` array;
+    citation edges are owned by ``resource_graph`` under
+    ``citation_owner_user_id`` (non-null — graph ownership).
+    """
+
+    __tablename__ = "artifact_revisions"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    build_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_builds.id"),
+        nullable=False,
+    )
     content_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    covered_targets: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    custom_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    input_manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    citation_owner_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    creator_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     promoted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -2144,43 +2192,95 @@ class ArtifactRevision(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("build_id", name="uq_artifact_revisions_build"),
         CheckConstraint(
-            "status IN ('building', 'ready', 'failed')",
-            name="ck_artifact_revisions_status",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(covered_targets) = 'array'",
-            name="ck_artifact_revisions_covered_targets_array",
-        ),
-        Index(
-            "ix_artifact_revisions_artifact_created",
-            "artifact_id",
-            text("created_at DESC"),
-            text("id DESC"),
-        ),
-        Index(
-            "uq_artifact_revisions_idempotency_key",
-            "artifact_id",
-            "idempotency_key",
-            unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
+            "jsonb_typeof(input_manifest) = 'object'",
+            name="ck_artifact_revisions_input_manifest_object",
         ),
     )
 
 
-class ArtifactRevisionEvent(Base):
-    """One run_kit event for a revision generation run (the artifact run stream)."""
+class ArtifactBuildFailure(Base):
+    """Terminal modeled-failure child of a build (unique build FK, D-3)."""
 
-    __tablename__ = "artifact_revision_events"
+    __tablename__ = "artifact_build_failures"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    revision_id: Mapped[UUID] = mapped_column(
+    build_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("artifact_revisions.id"),
+        ForeignKey("artifact_builds.id"),
+        nullable=False,
+    )
+    failure_code: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    support: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("build_id", name="uq_artifact_build_failures_build"),
+        CheckConstraint(
+            "support IS NULL OR jsonb_typeof(support) = 'object'",
+            name="ck_artifact_build_failures_support_object",
+        ),
+    )
+
+
+class ArtifactBuildCancellation(Base):
+    """Terminal cancellation child of a build (unique build FK, D-3)."""
+
+    __tablename__ = "artifact_build_cancellations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    build_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_builds.id"),
+        nullable=False,
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (UniqueConstraint("build_id", name="uq_artifact_build_cancellations_build"),)
+
+
+class ArtifactBuildEvent(Base):
+    """One sequenced, replayable build-event (the dossier run stream, D-3).
+
+    Build-keyed; the strict, ``extra='forbid'`` payload union lives in the
+    schema layer. ``event_type`` is the closed 6-value build union; the
+    ``(build_id, seq)`` unique + head-lock seq allocation prevent writer
+    collisions and crash-replay duplicates.
+    """
+
+    __tablename__ = "artifact_build_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    build_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifact_builds.id"),
         nullable=False,
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -2193,12 +2293,16 @@ class ArtifactRevisionEvent(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_artifact_revision_events_seq_positive"),
+        CheckConstraint("seq >= 1", name="ck_artifact_build_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ('meta', 'progress', 'delta', 'done')",
-            name="ck_artifact_revision_events_type",
+            "event_type IN ('Started', 'Progress', 'Delta', 'Succeeded', 'Failed', 'Cancelled')",
+            name="ck_artifact_build_events_type",
         ),
-        UniqueConstraint("revision_id", "seq", name="uq_artifact_revision_events_seq"),
+        CheckConstraint(
+            "jsonb_typeof(payload) = 'object'",
+            name="ck_artifact_build_events_payload_object",
+        ),
+        UniqueConstraint("build_id", "seq", name="uq_artifact_build_events_seq"),
     )
 
 
@@ -4079,7 +4183,7 @@ class LLMCall(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_revision', "
+            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
             "'media_summary', 'media_enrichment', 'synapse_scan', 'dawn_write')",
             name="ck_llm_calls_owner_kind",
         ),
