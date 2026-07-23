@@ -101,19 +101,6 @@ export default function DossierSurface({
       {vm.alert ? (
         <div className={`${styles.banner} ${styles.bannerAlert}`} role="alert">
           <span>{vm.alert.message}</span>
-          {vm.alert.retry ? (
-            <div className={styles.bannerRow}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => store.retry()}
-                disabled={busy}
-                leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
-              >
-                Retry
-              </Button>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
@@ -172,6 +159,17 @@ export default function DossierSurface({
             Cancel
           </Button>
         ) : null}
+        {vm.controls.canReconnect ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => store.refreshHead()}
+            disabled={busy}
+            leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
+          >
+            Reconnect
+          </Button>
+        ) : null}
         {vm.controls.canMakeCurrent && vm.makeCurrentTargetRef ? (
           <Button
             variant="secondary"
@@ -188,7 +186,9 @@ export default function DossierSurface({
       </div>
 
       {vm.actionError ? (
-        <p className={styles.freshness}>{vm.actionError}</p>
+        <p className={styles.freshness} role="alert">
+          {vm.actionError}
+        </p>
       ) : null}
 
       <div className={styles.content}>
@@ -208,6 +208,24 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
     case "Failed":
       // Failed is surfaced by the role="alert" block, not here.
       return null;
+    case "Connecting":
+      return (
+        <div className={styles.banner} aria-hidden="true">
+          <span>Connecting to generation…</span>
+        </div>
+      );
+    case "Reconnecting":
+      return (
+        <div className={styles.banner} aria-hidden="true">
+          <span>Reconnecting to generation…</span>
+        </div>
+      );
+    case "Disconnected":
+      return (
+        <div className={styles.banner}>
+          <span>Live updates are disconnected.</span>
+        </div>
+      );
     case "Building":
       return (
         <div className={styles.banner} aria-hidden="true">
@@ -280,7 +298,27 @@ function DossierBody({
       return body.text.length > 0 ? (
         <p className={styles.draft}>{body.text}</p>
       ) : (
-        <p className={styles.empty}>Generating the dossier…</p>
+        <p className={styles.empty}>
+          {body.liveness === "connecting"
+            ? "Connecting to dossier generation…"
+            : body.liveness === "reconnecting"
+              ? "Reconnecting to dossier generation…"
+              : body.liveness === "disconnected"
+                ? "Live output is unavailable. Reconnect to check generation."
+                : body.liveness === "suspended"
+                  ? "Generation is suspended."
+                : "Generating the dossier…"}
+        </p>
+      );
+    case "TerminalOutcome":
+      return (
+        <p className={styles.empty}>
+          {body.outcome === "succeeded"
+            ? "Dossier generated. Loading the new revision…"
+            : body.outcome === "failed"
+              ? "No dossier was created by this generation."
+              : "Generation was canceled before a dossier was created."}
+        </p>
       );
     case "Revision":
       return (

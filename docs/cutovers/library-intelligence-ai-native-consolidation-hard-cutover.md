@@ -5,6 +5,11 @@ Author: design synthesis, 2026-06-16
 Type: hard cutover - no legacy code, no fallbacks, no dual-write, no dual-read,
 no backward-compatible payload shapes, no compatibility shims
 
+> **Superseded (2026-07-23):** The Library-only identities, APIs, and inline
+> Dossier placement described here were retired by
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> This file is historical context, not current implementation guidance.
+
 ## North Star
 
 A Library Dossier is the latest Library Intelligence artifact for a library.

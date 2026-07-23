@@ -51,22 +51,51 @@ export function dossierBuildFailureMessage(
   }
 }
 
-const DOSSIER_API_ERROR_COPY: Record<string, string> = {
-  E_DOSSIER_GENERATION_IN_PROGRESS:
-    "A dossier is already generating. Wait for it to finish.",
-  E_DOSSIER_BUILD_NOT_ACTIVE: "This generation already finished.",
-  E_DOSSIER_NOT_FOUND: "This dossier is no longer available.",
-  E_DOSSIER_REVISION_NOT_FOUND: "That revision is no longer available.",
-  E_DOSSIER_INVALID_SUBJECT: "This item can't have a dossier.",
-  E_DOSSIER_INVALID_INSTRUCTION: "That instruction can't be used.",
-};
+export const DOSSIER_API_ERROR_CODES = [
+  "E_DOSSIER_GENERATION_IN_PROGRESS",
+  "E_DOSSIER_BUILD_NOT_ACTIVE",
+  "E_DOSSIER_NOT_FOUND",
+  "E_DOSSIER_REVISION_NOT_FOUND",
+  "E_DOSSIER_INVALID_SUBJECT",
+  "E_DOSSIER_INVALID_INSTRUCTION",
+] as const;
+
+export type DossierApiErrorCode = (typeof DOSSIER_API_ERROR_CODES)[number];
+
+export function isDossierApiErrorCode(
+  value: string,
+): value is DossierApiErrorCode {
+  return (DOSSIER_API_ERROR_CODES as readonly string[]).includes(value);
+}
+
+function dossierExpectedApiErrorMessage(code: DossierApiErrorCode): string {
+  switch (code) {
+    case "E_DOSSIER_GENERATION_IN_PROGRESS":
+      return "A dossier is already generating. Wait for it to finish.";
+    case "E_DOSSIER_BUILD_NOT_ACTIVE":
+      return "This generation already finished.";
+    case "E_DOSSIER_NOT_FOUND":
+      return "This dossier is no longer available.";
+    case "E_DOSSIER_REVISION_NOT_FOUND":
+      return "That revision is no longer available.";
+    case "E_DOSSIER_INVALID_SUBJECT":
+      return "This item can't have a dossier.";
+    case "E_DOSSIER_INVALID_INSTRUCTION":
+      return "That instruction can't be used.";
+    default: {
+      const exhaustive: never = code;
+      throw new Error(`Unhandled Dossier API error code: ${String(exhaustive)}`);
+    }
+  }
+}
 
 /** Copy for a synchronous A9 API error. Prefers a dedicated `E_DOSSIER_*`
  * mapping, then the backend-authored message, then a generic fallback. */
 export function dossierApiErrorMessage(error: unknown): string {
   if (isApiError(error)) {
-    const mapped = DOSSIER_API_ERROR_COPY[error.code];
-    if (mapped) return mapped;
+    if (isDossierApiErrorCode(error.code)) {
+      return dossierExpectedApiErrorMessage(error.code);
+    }
     if (error.message.trim().length > 0) return error.message;
     if (error.status === 404) return "This dossier is no longer available.";
     if (error.status === 409) return "This dossier can't be changed right now.";

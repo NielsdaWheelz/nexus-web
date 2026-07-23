@@ -422,7 +422,7 @@ def test_dossier_revision_reference_dropped_from_default_scope_resolution(
                 :id, :build_id, 'Synthesis',
                 jsonb_build_object(
                     'version', 'v1', 'kind', 'library',
-                    'library_ref', :library_ref, 'media', '[]'::jsonb
+                    'library_ref', CAST(:library_ref AS text), 'media', '[]'::jsonb
                 ),
                 :user_id, now()
             )

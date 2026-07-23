@@ -3,6 +3,11 @@
 **Status:** Spec · Rev 1 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 
+> **Superseded (2026-07-23):** The artifact kind/reducer model and Conversation
+> Distillate described here were retired by
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> This file is historical context, not current implementation guidance.
+
 ## One-line
 
 Generalize the Library-Intelligence artifact/revision engine into one

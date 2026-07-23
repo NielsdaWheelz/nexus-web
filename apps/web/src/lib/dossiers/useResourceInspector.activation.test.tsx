@@ -63,6 +63,46 @@ function InspectorOwner() {
   return null;
 }
 
+function InspectorVisibilityHarness({
+  visibility,
+  activeSurfaceId,
+}: {
+  visibility: "visible" | "collapsed";
+  activeSurfaceId: "resource-dossier" | "resource-evidence";
+}) {
+  return (
+    <PaneRuntimeProvider
+      paneId="pane-1"
+      isActive
+      href={MEDIA_HREF}
+      routeId="media"
+      routeKey={`media:${MEDIA_HREF}`}
+      secondaryPane={{
+        id: "secondary-1",
+        parentPrimaryPaneId: "pane-1",
+        groupId: "resource-inspector",
+        activeSurfaceId,
+        widthPx: 360,
+        visibility,
+      }}
+      secondaryActivation={null}
+      canGoBack={false}
+      canGoForward={false}
+      onNavigatePane={vi.fn()}
+      onReplacePane={vi.fn()}
+      onOpenInNewPane={vi.fn()}
+      onGoBackPane={vi.fn()}
+      onGoForwardPane={vi.fn()}
+      onSetPaneLayout={vi.fn<(input: PaneRuntimeLayoutPublication) => void>()}
+      onAcknowledgeSecondaryActivation={vi.fn()}
+    >
+      <PaneSecondaryContext.Provider value={vi.fn()}>
+        <InspectorOwner />
+      </PaneSecondaryContext.Provider>
+    </PaneRuntimeProvider>
+  );
+}
+
 function renderInspector(
   secondaryActivation: WorkspaceDossierActivation | null,
   options: {
@@ -336,6 +376,44 @@ describe("useResourceInspector workspace activation", () => {
       "pane-1",
       "resource-evidence",
       undefined,
+    );
+  });
+
+  it("retains revision selection across tab switches and resets it only after close/reopen", async () => {
+    const view = render(
+      <InspectorVisibilityHarness
+        visibility="visible"
+        activeSurfaceId="resource-dossier"
+      />,
+    );
+    await waitFor(() =>
+      expect(controller.resetRevisionSelection).toHaveBeenCalledOnce(),
+    );
+
+    view.rerender(
+      <InspectorVisibilityHarness
+        visibility="visible"
+        activeSurfaceId="resource-evidence"
+      />,
+    );
+    await waitFor(() =>
+      expect(controller.resetRevisionSelection).toHaveBeenCalledOnce(),
+    );
+
+    view.rerender(
+      <InspectorVisibilityHarness
+        visibility="collapsed"
+        activeSurfaceId="resource-evidence"
+      />,
+    );
+    view.rerender(
+      <InspectorVisibilityHarness
+        visibility="visible"
+        activeSurfaceId="resource-evidence"
+      />,
+    );
+    await waitFor(() =>
+      expect(controller.resetRevisionSelection).toHaveBeenCalledTimes(2),
     );
   });
 });

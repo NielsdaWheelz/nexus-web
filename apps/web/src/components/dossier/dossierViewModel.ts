@@ -14,6 +14,7 @@ import type {
   DossierPendingAction,
   DossierRevision,
   DossierRevisionSummary,
+  DossierTerminalOutcome,
   MediaAbstract,
 } from "@/lib/dossiers/dossierControllerTypes";
 
@@ -30,11 +31,27 @@ export type DossierBodyView =
     }
   | { kind: "HistoricalLoading" }
   | { kind: "HistoricalFailed"; message: string }
-  | { kind: "StreamingDraft"; text: string };
+  | {
+      kind: "StreamingDraft";
+      text: string;
+      liveness:
+        | "connecting"
+        | "reconnecting"
+        | "disconnected"
+        | "suspended"
+        | "live";
+    }
+  | {
+      kind: "TerminalOutcome";
+      outcome: "succeeded" | "failed" | "cancelled";
+    };
 
 /** The build-activity banner (independent of which revision the body shows). */
 export type DossierActivityView =
   | { kind: "Idle" }
+  | { kind: "Connecting" }
+  | { kind: "Reconnecting" }
+  | { kind: "Disconnected" }
   | {
       kind: "Building";
       phase: DossierExecutionPhase;
@@ -51,6 +68,7 @@ export interface DossierControls {
   canRegenerate: boolean;
   canCancel: boolean;
   canRetry: boolean;
+  canReconnect: boolean;
   canMakeCurrent: boolean;
   /** History arrows / list are VIEW-ONLY (A15). */
   historyAvailable: boolean;
@@ -64,8 +82,8 @@ export interface DossierViewModel {
   mediaAbstract: MediaAbstract | null;
   /** One polite status-region line (progress / suspended / cancellation). */
   statusMessage: string | null;
-  /** Terminal build failure → visible alert + Retry, WITHOUT moving focus. */
-  alert: { message: string; retry: boolean } | null;
+  /** Terminal build failure → visible alert, WITHOUT moving focus. */
+  alert: { message: string } | null;
   /** Synchronous command error attached near the invoked control. */
   actionError: string | null;
   history: readonly DossierRevisionSummary[];
@@ -84,10 +102,49 @@ const NO_CONTROLS: DossierControls = {
   canRegenerate: false,
   canCancel: false,
   canRetry: false,
+  canReconnect: false,
   canMakeCurrent: false,
   historyAvailable: false,
   busy: null,
 };
+
+function terminalBodyOutcome(
+  outcome: DossierTerminalOutcome,
+): Extract<DossierBodyView, { kind: "TerminalOutcome" }>["outcome"] {
+  switch (outcome.kind) {
+    case "Succeeded":
+      return "succeeded";
+    case "Failed":
+      return "failed";
+    case "Cancelled":
+      return "cancelled";
+    default: {
+      const exhaustive: never = outcome;
+      throw new Error(`Unhandled terminal outcome: ${JSON.stringify(exhaustive)}`);
+    }
+  }
+}
+
+function terminalActivity(
+  outcome: DossierTerminalOutcome,
+): DossierActivityView {
+  switch (outcome.kind) {
+    case "Succeeded":
+      return { kind: "Idle" };
+    case "Failed":
+      return {
+        kind: "Failed",
+        code: outcome.facts.failureCode,
+        message: dossierBuildFailureMessage(outcome.facts.failureCode),
+      };
+    case "Cancelled":
+      return { kind: "Cancelled" };
+    default: {
+      const exhaustive: never = outcome;
+      throw new Error(`Unhandled terminal outcome: ${JSON.stringify(exhaustive)}`);
+    }
+  }
+}
 
 export function deriveDossierViewModel(
   state: DossierControllerState,
@@ -128,6 +185,13 @@ export function deriveDossierViewModel(
   const ready = state.head.ready;
   const hasCurrent = ready.currentRevision.kind === "Present";
   const hasActive = ready.activeBuild.kind === "Present";
+  const terminalStream = state.stream.kind === "Terminal" ? state.stream : null;
+  const terminalOutcome =
+    terminalStream && !terminalStream.reconciled
+      ? terminalStream.outcome
+      : null;
+  const hasTerminalOutcome = terminalOutcome !== null;
+  const hasEffectiveActive = hasActive && !hasTerminalOutcome;
   const activePhase: DossierExecutionPhase | null =
     ready.activeBuild.kind === "Present" &&
     ready.activeBuild.value.execution.kind === "Present"
@@ -135,7 +199,9 @@ export function deriveDossierViewModel(
       : hasActive
         ? "Running"
         : null;
-  const suspended = activePhase === "Suspended" || state.stream === "Suspended";
+  const suspended =
+    hasEffectiveActive &&
+    (activePhase === "Suspended" || state.stream.kind === "Suspended");
   const lub = ready.latestUnsuccessfulBuild;
   const failureFacts =
     lub.kind === "Present" && lub.value.failure.kind === "Present"
@@ -173,17 +239,43 @@ export function deriveDossierViewModel(
       provenance: "current",
       freshness: ready.freshness.kind === "Present" ? ready.freshness.value : null,
     };
-  } else if (hasActive) {
-    body = { kind: "StreamingDraft", text: state.streamingDraft ?? "" };
+  } else if (terminalOutcome !== null) {
+    body = {
+      kind: "TerminalOutcome",
+      outcome: terminalBodyOutcome(terminalOutcome),
+    };
+  } else if (hasEffectiveActive) {
+    body = {
+      kind: "StreamingDraft",
+      text: state.streamingDraft ?? "",
+      liveness:
+        suspended
+          ? "suspended"
+          : state.stream.kind === "Connecting"
+            ? "connecting"
+            : state.stream.kind === "Reconnecting"
+              ? "reconnecting"
+              : state.stream.kind === "Disconnected"
+                ? "disconnected"
+                : "live",
+    };
   } else {
     body = { kind: "NeverGenerated" };
   }
 
   // --- Activity banner ----------------------------------------------------
   let activity: DossierActivityView;
-  if (suspended) {
+  if (terminalOutcome !== null) {
+    activity = terminalActivity(terminalOutcome);
+  } else if (suspended) {
     activity = { kind: "Suspended" };
-  } else if (hasActive) {
+  } else if (hasEffectiveActive && state.stream.kind === "Connecting") {
+    activity = { kind: "Connecting" };
+  } else if (hasEffectiveActive && state.stream.kind === "Reconnecting") {
+    activity = { kind: "Reconnecting" };
+  } else if (hasEffectiveActive && state.stream.kind === "Disconnected") {
+    activity = { kind: "Disconnected" };
+  } else if (hasEffectiveActive) {
     activity = {
       kind: "Building",
       phase: activePhase ?? "Running",
@@ -211,14 +303,30 @@ export function deriveDossierViewModel(
     !state.historicalRevision.revision.isCurrent
       ? state.historicalRevision.revision.revisionRef
       : null;
+  const hasRetryableOutcome =
+    terminalOutcome?.kind === "Failed" ||
+    terminalOutcome?.kind === "Cancelled" ||
+    lub.kind === "Present";
   const controls: DossierControls = {
-    // Exactly one of Generate/Retry offered when there is no current revision;
-    // Regenerate when a current revision exists. All unavailable while a build
-    // is active or suspended (only Cancel then).
-    canGenerate: !hasActive && !suspended && !hasCurrent && lub.kind === "Absent",
-    canRetry: !hasActive && !suspended && !hasCurrent && lub.kind === "Present",
-    canRegenerate: !hasActive && !suspended && hasCurrent,
-    canCancel: hasActive,
+    // Exactly one generation action is offered. An observed terminal always
+    // outranks a stale active-build head while its reconciliation read runs.
+    canGenerate:
+      !hasEffectiveActive &&
+      !suspended &&
+      !hasCurrent &&
+      !hasRetryableOutcome &&
+      terminalOutcome === null,
+    canRetry: !hasEffectiveActive && !suspended && hasRetryableOutcome,
+    canReconnect:
+      (hasEffectiveActive && state.stream.kind === "Disconnected") ||
+      terminalOutcome?.kind === "Succeeded",
+    canRegenerate:
+      !hasEffectiveActive &&
+      !suspended &&
+      hasCurrent &&
+      !hasRetryableOutcome &&
+      terminalOutcome === null,
+    canCancel: hasEffectiveActive,
     canMakeCurrent: makeCurrentTarget !== null,
     historyAvailable: ready.revisionCount > 1 || ready.history.length > 1,
     busy: state.pendingAction,
@@ -226,20 +334,26 @@ export function deriveDossierViewModel(
 
   // --- Polite status + alert ---------------------------------------------
   let statusMessage: string | null = null;
-  if (suspended) {
+  if (terminalStream?.outcome.kind === "Succeeded") {
+    statusMessage = "Dossier generated.";
+  } else if (suspended) {
     statusMessage = "Generation stopped; it needs attention.";
+  } else if (activity.kind === "Connecting") {
+    statusMessage = "Connecting to dossier generation…";
+  } else if (activity.kind === "Reconnecting") {
+    statusMessage = "Reconnecting to dossier generation…";
+  } else if (activity.kind === "Disconnected") {
+    statusMessage =
+      "Live updates disconnected; generation may still be running.";
   } else if (activity.kind === "Building") {
     statusMessage = activity.progress ?? "Generating the dossier…";
   } else if (activity.kind === "Cancelled") {
     statusMessage = "The last generation was canceled.";
-  } else if (state.stream === "Terminal" && state.progressMessage) {
+  } else if (state.stream.kind === "Terminal" && state.progressMessage) {
     statusMessage = state.progressMessage;
   }
 
-  const alert =
-    activity.kind === "Failed"
-      ? { message: activity.message, retry: true }
-      : null;
+  const alert = activity.kind === "Failed" ? { message: activity.message } : null;
 
   return {
     body,

@@ -5,6 +5,11 @@ Author: Codex
 Type: hard cutover
 Date: 2026-06-12
 
+> **Superseded (2026-07-23):** The Library Intelligence resource names described
+> here were replaced by generic `artifact` and `artifact_revision` identities in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> This file is historical context, not current implementation guidance.
+
 ## North Star
 
 Library Intelligence has two distinct product identities:

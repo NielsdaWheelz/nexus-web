@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { EdgeKind } from "@/lib/resourceGraph/connections";
 import type { ResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { formatResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -12,12 +13,29 @@ export interface ConnectionsComposerDraft {
   kind: EdgeKind;
   selected: ResourceTarget | null;
   activeKey: string | null;
+  feedback: FeedbackContent | null;
+  submitting: boolean;
+  attaching: boolean;
+  pendingAttachments: readonly ConnectionsPendingAttachment[];
+}
+
+export interface ConnectionsPendingAttachment {
+  mediaId: string;
+  sourceAttemptId: string;
+  label: string;
+  warning: FeedbackContent | null;
 }
 
 export interface ConnectionsComposerController {
   getSnapshot(): ConnectionsComposerDraft;
   subscribe(listener: () => void): () => void;
-  update(patch: Partial<ConnectionsComposerDraft>): void;
+  update(
+    patch:
+      | Partial<ConnectionsComposerDraft>
+      | ((
+          current: ConnectionsComposerDraft,
+        ) => Partial<ConnectionsComposerDraft>),
+  ): void;
 }
 
 const INITIAL_DRAFT: ConnectionsComposerDraft = {
@@ -26,6 +44,10 @@ const INITIAL_DRAFT: ConnectionsComposerDraft = {
   kind: "context",
   selected: null,
   activeKey: null,
+  feedback: null,
+  submitting: false,
+  attaching: false,
+  pendingAttachments: [],
 };
 
 function createConnectionsComposerController(): ConnectionsComposerController {
@@ -38,13 +60,18 @@ function createConnectionsComposerController(): ConnectionsComposerController {
       return () => listeners.delete(listener);
     },
     update(patch) {
-      const next = { ...snapshot, ...patch };
+      const resolved = typeof patch === "function" ? patch(snapshot) : patch;
+      const next = { ...snapshot, ...resolved };
       if (
         next.open === snapshot.open &&
         next.query === snapshot.query &&
         next.kind === snapshot.kind &&
         next.selected === snapshot.selected &&
-        next.activeKey === snapshot.activeKey
+        next.activeKey === snapshot.activeKey &&
+        next.feedback === snapshot.feedback &&
+        next.submitting === snapshot.submitting &&
+        next.attaching === snapshot.attaching &&
+        next.pendingAttachments === snapshot.pendingAttachments
       ) {
         return;
       }

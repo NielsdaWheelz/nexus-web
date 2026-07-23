@@ -24,7 +24,9 @@ import {
   readerHighlightChatIntentHref,
 } from "@/lib/conversations/readerHighlightChatIntent";
 import { assumeReaderSelectionKey } from "@/lib/conversations/readerSelectionKey";
-import EvidencePaneSurface from "@/components/reader/document-map/EvidencePaneSurface";
+import EvidencePaneSurface, {
+  type EvidencePaneProjection,
+} from "@/components/reader/document-map/EvidencePaneSurface";
 import { activateResource } from "@/lib/resources/activation";
 import ReaderDocumentMapOverviewRail from "@/components/reader/ReaderDocumentMapOverviewRail";
 import LecternNextPrompt from "@/components/LecternNextPrompt";
@@ -1448,16 +1450,75 @@ export default function MediaPaneBody() {
     readerDocumentMapResource.status === "ready"
       ? readerDocumentMapResource.data.evidence
       : null;
-  const readerDocumentMapAggregateStatus =
-    readerDocumentMapResource.status === "ready"
-      ? readerDocumentMapResource.data.status
-      : null;
   const documentMapError =
     readerDocumentMapResource.status === "error"
       ? toFeedback(readerDocumentMapResource.error, {
           fallback: "Document Map could not be loaded.",
         })
       : null;
+  const evidenceProjection = useMemo<EvidencePaneProjection>(() => {
+    if (!media) return { kind: "Processing", source: "evidence" };
+    if (!documentMapAvailable) {
+      switch (media.processing_status) {
+        case "pending":
+        case "extracting":
+          return { kind: "Processing", source: "media" };
+        case "failed":
+          return {
+            kind: "IngestFailed",
+            feedback: {
+              severity: "error",
+              title: "Media processing failed.",
+              ...(media.last_error_code
+                ? { message: `Error: ${media.last_error_code}` }
+                : {}),
+            },
+          };
+        case "ready_for_reading":
+          return { kind: "Empty" };
+        default: {
+          const exhaustive: never = media.processing_status;
+          throw new Error(
+            `Unsupported Media Evidence processing state: ${String(exhaustive)}`,
+          );
+        }
+      }
+    }
+    switch (readerDocumentMapResource.status) {
+      case "idle":
+      case "loading":
+        return { kind: "Processing", source: "evidence" };
+      case "error":
+        return {
+          kind: "IngestFailed",
+          feedback:
+            documentMapError ??
+            ({
+              severity: "error",
+              title: "Document Map could not be loaded.",
+            } satisfies FeedbackContent),
+        };
+      case "ready":
+        return readerDocumentMapResource.data.status === "empty"
+          ? { kind: "Empty" }
+          : {
+              kind: "Ready",
+              evidence: readerDocumentMapResource.data.evidence,
+              aggregateStatus: readerDocumentMapResource.data.status,
+            };
+      default: {
+        const exhaustive: never = readerDocumentMapResource;
+        throw new Error(
+          `Unsupported Media Evidence resource state: ${JSON.stringify(exhaustive)}`,
+        );
+      }
+    }
+  }, [
+    documentMapAvailable,
+    documentMapError,
+    media,
+    readerDocumentMapResource,
+  ]);
   const documentMapMarkers = useMemo(
     () =>
       readerDocumentMapResource.status === "ready"
@@ -5693,14 +5754,11 @@ export default function MediaPaneBody() {
     () => (
       <div className={styles.readerSecondaryBody}>
         <EvidencePaneSurface
-          evidence={readerEvidence}
+          projection={evidenceProjection}
           filters={evidenceFilters}
           activeItemId={activeEvidenceItemId}
           followGeneration={evidenceFollowGeneration}
           hoveredItemId={hoveredEvidenceItemId}
-          loading={readerDocumentMapResource.status === "loading"}
-          error={documentMapError}
-          aggregateStatus={readerDocumentMapAggregateStatus}
           highlightActions={{
             canQuoteToChat: media?.capabilities?.can_quote ?? false,
             focusedHighlightId: focusState.focusedId,
@@ -5730,38 +5788,36 @@ export default function MediaPaneBody() {
       </div>
     ),
     [
-    activeEvidenceItemId,
-    activateEvidencePassage,
-    cancelEditBounds,
-    documentMapError,
-    evidenceFollowGeneration,
-    evidenceFilters,
-    focusHighlight,
-    focusState.editingBounds,
-    focusState.focusedId,
-    handleActivateEvidenceObject,
-    handleActivateEvidenceSourceTarget,
-    handleLink,
-    handleColorChange,
-    handleDelete,
-    handleDismissSynapse,
-    handleRemoveReaderUserEdge,
-    handleSaveReaderLinkNote,
-    handleDeleteReaderLinkNote,
-    handleNoteDelete,
-    handleNoteSave,
-    handleHoverEvidenceItem,
-    handleOpenNoteLink,
-    hoveredEvidenceItemId,
-    isPdf,
-    media?.capabilities?.can_quote,
-    quoteHighlightToNewChat,
-    quoteHighlightToExistingChat,
-    readerEvidence,
-    readerDocumentMapResource.status,
-    readerDocumentMapAggregateStatus,
-    startEditBounds,
-  ]);
+      activeEvidenceItemId,
+      activateEvidencePassage,
+      cancelEditBounds,
+      evidenceProjection,
+      evidenceFollowGeneration,
+      evidenceFilters,
+      focusHighlight,
+      focusState.editingBounds,
+      focusState.focusedId,
+      handleActivateEvidenceObject,
+      handleActivateEvidenceSourceTarget,
+      handleLink,
+      handleColorChange,
+      handleDelete,
+      handleDismissSynapse,
+      handleRemoveReaderUserEdge,
+      handleSaveReaderLinkNote,
+      handleDeleteReaderLinkNote,
+      handleNoteDelete,
+      handleNoteSave,
+      handleHoverEvidenceItem,
+      handleOpenNoteLink,
+      hoveredEvidenceItemId,
+      isPdf,
+      media?.capabilities?.can_quote,
+      quoteHighlightToNewChat,
+      quoteHighlightToExistingChat,
+      startEditBounds,
+    ],
+  );
   const { companionAction } = useResourceInspector({
     scheme: "media",
     handle: id,

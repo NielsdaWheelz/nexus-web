@@ -26,14 +26,20 @@ import pytest
 from provider_runtime import (
     Absent,
     CallMeta,
+    Cancelled,
+    Incomplete,
     PossiblyBillable,
     Present,
     ProviderTarget,
-    Refused,
     ResponsePayload,
+    RuntimeStreamEvent,
+    StreamStart,
     StructuredContent,
     Succeeded,
+    TerminalEvent,
+    TextDelta,
     TokenUsage,
+    ToolCallStart,
 )
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -77,6 +83,7 @@ from nexus.services.library_governance import (
     transfer_library_ownership,
 )
 from nexus.services.media_intelligence import current_content_fingerprint
+from nexus.services.real_media_fixture_llm import RealMediaFixtureExecutionRuntime
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
     add_library_member,
@@ -136,11 +143,11 @@ class _RaisingRuntime:
         self.calls = 0
 
     async def generate(self, intent, plan, credential):  # noqa: ANN001
+        raise AssertionError("Dossier synthesis must use the streaming runtime")
+
+    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001
         self.calls += 1
         raise RuntimeError("simulated provider crash mid-dispatch")
-
-    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001, pragma: no cover
-        raise NotImplementedError
 
 
 class _SuccessfulRuntime:
@@ -148,54 +155,155 @@ class _SuccessfulRuntime:
         self,
         *,
         with_citation: bool = True,
-        on_generate: Callable[[], None] | None = None,
+        on_generate: Callable[[], object] | None = None,
+        on_before_terminal: Callable[[], object] | None = None,
+        chunk_size: int | None = None,
+        content_md: str | None = None,
     ) -> None:
         self.calls = 0
         self.with_citation = with_citation
         self.on_generate = on_generate
+        self.on_before_terminal = on_before_terminal
+        self.chunk_size = chunk_size
+        self.content_md = content_md or (
+            "The conversation establishes a grounded claim. [1]"
+            if with_citation
+            else "The conversation establishes a claim."
+        )
 
     async def generate(self, intent, plan, credential):  # noqa: ANN001
+        raise AssertionError("Dossier synthesis must use the streaming runtime")
+
+    async def _events(self, intent):  # noqa: ANN001
         self.calls += 1
         if self.on_generate is not None:
             self.on_generate()
         payload = (
             {
-                "content_md": "The conversation establishes a grounded claim. [1]",
+                "content_md": self.content_md,
                 "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
             }
             if self.with_citation
             else {
-                "content_md": "The conversation establishes a claim.",
+                "content_md": self.content_md,
                 "citations": [],
             }
         )
-        return Succeeded(
-            meta=CallMeta(
-                provider=intent.target.provider,
-                model=intent.target.model,
-                provider_request_id=Present("req-dossier-success"),
-                upstream_provider=Absent(),
-                usage=Present(
-                    TokenUsage(
-                        input_tokens=50,
-                        output_tokens=25,
-                        total_tokens=75,
-                        reasoning_tokens=Absent(),
-                        cache_read_input_tokens=Absent(),
-                        cache_write_input_tokens=Absent(),
-                    )
-                ),
-                attempt_trace=(),
-                billability=PossiblyBillable(),
-            ),
-            response=ResponsePayload(
-                content=StructuredContent(payload=payload, text=json.dumps(payload)),
-                continuation=Absent(),
+        raw = json.dumps(payload, separators=(",", ":"))
+        yield RuntimeStreamEvent(seq=1, event=StreamStart())
+        chunks = (
+            [raw]
+            if self.chunk_size is None
+            else [
+                raw[offset : offset + self.chunk_size]
+                for offset in range(0, len(raw), self.chunk_size)
+            ]
+        )
+        seq = 2
+        for chunk in chunks:
+            yield RuntimeStreamEvent(seq=seq, event=TextDelta(chunk))
+            seq += 1
+        if self.on_before_terminal is not None:
+            self.on_before_terminal()
+        yield RuntimeStreamEvent(
+            seq=seq,
+            event=TerminalEvent(
+                outcome=Succeeded(
+                    meta=CallMeta(
+                        provider=intent.target.provider,
+                        model=intent.target.model,
+                        provider_request_id=Present("req-dossier-success"),
+                        upstream_provider=Absent(),
+                        usage=Present(
+                            TokenUsage(
+                                input_tokens=50,
+                                output_tokens=25,
+                                total_tokens=75,
+                                reasoning_tokens=Absent(),
+                                cache_read_input_tokens=Absent(),
+                                cache_write_input_tokens=Absent(),
+                            )
+                        ),
+                        attempt_trace=(),
+                        billability=PossiblyBillable(),
+                    ),
+                    response=ResponsePayload(
+                        content=StructuredContent(payload=payload, text=raw),
+                        continuation=Absent(),
+                    ),
+                )
             ),
         )
 
-    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001, pragma: no cover
-        raise NotImplementedError
+    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001
+        return self._events(intent)
+
+
+class _CancellationAwareRuntime:
+    def __init__(self, *, on_stream_wait: Callable[[], None]) -> None:
+        self.calls = 0
+        self.observed_cancel = False
+        self.on_stream_wait = on_stream_wait
+
+    async def generate(self, intent, plan, credential):  # noqa: ANN001
+        raise AssertionError("Dossier synthesis must use the streaming runtime")
+
+    async def _events(self, intent, cancel):  # noqa: ANN001
+        self.calls += 1
+        payload = {
+            "content_md": "A result that must not be promoted. [1]",
+            "citations": [{"ordinal": 1, "candidate_index": 0, "role": "supports"}],
+        }
+        yield RuntimeStreamEvent(seq=1, event=StreamStart())
+        yield RuntimeStreamEvent(
+            seq=2,
+            event=TextDelta(json.dumps(payload, separators=(",", ":"))),
+        )
+        self.on_stream_wait()
+        await asyncio.wait_for(cancel.wait(), timeout=1)
+        self.observed_cancel = cancel.is_set()
+        yield RuntimeStreamEvent(
+            seq=3,
+            event=TerminalEvent(
+                outcome=Cancelled(
+                    meta=CallMeta(
+                        provider=intent.target.provider,
+                        model=intent.target.model,
+                        provider_request_id=Present("req-dossier-stream-cancelled"),
+                        upstream_provider=Absent(),
+                        usage=Absent(),
+                        attempt_trace=(),
+                        billability=PossiblyBillable(),
+                    )
+                )
+            ),
+        )
+
+    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001
+        return self._events(intent, cancel)
+
+
+class _UnexpectedToolRuntime:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.closed = False
+
+    async def generate(self, intent, plan, credential):  # noqa: ANN001
+        raise AssertionError("Dossier synthesis must use the streaming runtime")
+
+    async def _events(self):  # noqa: ANN202
+        self.calls += 1
+        try:
+            yield RuntimeStreamEvent(seq=1, event=StreamStart())
+            yield RuntimeStreamEvent(
+                seq=2,
+                event=ToolCallStart(call_id="forbidden", name="forbidden"),
+            )
+        finally:
+            self.closed = True
+
+    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001
+        return self._events()
 
 
 class _RefusedRuntime:
@@ -204,24 +312,36 @@ class _RefusedRuntime:
         self.on_generate = on_generate
 
     async def generate(self, intent, plan, credential):  # noqa: ANN001
+        raise AssertionError("Dossier synthesis must use the streaming runtime")
+
+    async def _events(self, intent):  # noqa: ANN001
         self.calls += 1
         if self.on_generate is not None:
             self.on_generate()
-        return Refused(
-            meta=CallMeta(
-                provider=intent.target.provider,
-                model=intent.target.model,
-                provider_request_id=Present("req-dossier-refused"),
-                upstream_provider=Absent(),
-                usage=Absent(),
-                attempt_trace=(),
-                billability=PossiblyBillable(),
+        yield RuntimeStreamEvent(seq=1, event=StreamStart())
+        yield RuntimeStreamEvent(seq=2, event=TextDelta("partial refusal"))
+        yield RuntimeStreamEvent(
+            seq=3,
+            event=TerminalEvent(
+                outcome=Incomplete(
+                    meta=CallMeta(
+                        provider=intent.target.provider,
+                        model=intent.target.model,
+                        provider_request_id=Present("req-dossier-refused"),
+                        upstream_provider=Absent(),
+                        usage=Absent(),
+                        attempt_trace=(),
+                        billability=PossiblyBillable(),
+                    ),
+                    reason="content_filter_partial",
+                    status="refused",
+                    safe_detail=Present("provider declined"),
+                )
             ),
-            safe_detail="provider declined",
         )
 
-    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001, pragma: no cover
-        raise NotImplementedError
+    def stream(self, intent, plan, credential, *, cancel):  # noqa: ANN001
+        return self._events(intent)
 
 
 def _user(db: Session) -> UUID:
@@ -491,6 +611,25 @@ def test_uncertain_dispatch_never_auto_redispatches(db_session: Session) -> None
     with pytest.raises(RuntimeError):
         asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx1, runtime=first))
     assert first.calls == 1, "coordination commits Uncertain, then dispatches exactly once"
+    ledger = db_session.execute(
+        text(
+            "SELECT id, outcome, streaming FROM llm_calls "
+            "WHERE owner_kind = 'artifact_build' AND owner_id = :build_id"
+        ),
+        {"build_id": ticket.build_id},
+    ).one()
+    assert ledger.outcome == "failed"
+    assert ledger.streaming is True
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM token_budget_reservations "
+                "WHERE reservation_id = :generation_id"
+            ),
+            {"generation_id": ledger.id},
+        ).scalar_one()
+        == 0
+    )
 
     # Replay: coordination sees Uncertain and (no provider idempotency) defects
     # WITHOUT re-dispatching the billed call.
@@ -510,6 +649,93 @@ def test_uncertain_dispatch_never_auto_redispatches(db_session: Session) -> None
         {"b": ticket.build_id},
     ).scalar_one()
     assert fails == 0 and rev == 0
+
+
+def test_prepared_replay_reuses_progress_before_uncertain_dispatch(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="prepared-progress-replay",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-prepared-progress-replay",
+    )
+    ctx = JobExecutionContext(
+        job_id=claimed.id,
+        worker_id="w-prepared-progress-replay",
+        attempt_no=claimed.attempts,
+    )
+    original_checkpoint = coordination.checkpoint_step_state
+    crashed = False
+
+    def crash_before_uncertain(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        nonlocal crashed
+        state = kwargs["state"]
+        if state.dispatch_phase is Uncertain and not crashed:
+            crashed = True
+            raise RuntimeError("crash before Uncertain commit")
+        return original_checkpoint(*args, **kwargs)
+
+    monkeypatch.setattr(
+        coordination,
+        "checkpoint_step_state",
+        crash_before_uncertain,
+    )
+    first = _SuccessfulRuntime()
+    with pytest.raises(RuntimeError, match="crash before Uncertain"):
+        asyncio.run(
+            run_build(
+                db_session,
+                build_id=ticket.build_id,
+                ctx=ctx,
+                runtime=first,
+            )
+        )
+    assert first.calls == 0
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress"]
+
+    monkeypatch.setattr(
+        coordination,
+        "checkpoint_step_state",
+        original_checkpoint,
+    )
+    replay = _SuccessfulRuntime()
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=ctx,
+            runtime=replay,
+        )
+    )
+
+    assert replay.calls == 1
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress", "Delta", "Succeeded"]
 
 
 def test_runtime_rejects_changed_replay_generation_identity(db_session: Session) -> None:
@@ -542,9 +768,9 @@ def test_runtime_rejects_changed_replay_generation_identity(db_session: Session)
     payload = dict(job.payload)
     raw_states = dict(payload["coordination"])
     state = coordination.StepReplayState.model_validate(raw_states["synthesis"])
-    raw_states["synthesis"] = state.model_copy(
-        update={"generation_id": uuid4()}
-    ).model_dump(mode="json")
+    raw_states["synthesis"] = state.model_copy(update={"generation_id": uuid4()}).model_dump(
+        mode="json"
+    )
     payload["coordination"] = raw_states
     db_session.execute(
         text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
@@ -608,13 +834,13 @@ def test_provider_target_is_part_of_replay_request_fingerprint(
     asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay))
 
     assert replay.calls == 0
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.InputsChanged
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.InputsChanged
+    )
 
 
 @pytest.mark.parametrize(
@@ -648,9 +874,7 @@ def test_operator_reconcile_rejects_corrupt_replay_evidence(
         elif corruption == "request":
             state = state.model_copy(update={"request_fingerprint": replay_absent()})
         else:
-            state = state.model_copy(
-                update={"terminal_result": replay_present("{}")}
-            )
+            state = state.model_copy(update={"terminal_result": replay_present("{}")})
         raw_states["synthesis"] = state.model_dump(mode="json")
         payload["coordination"] = raw_states
     db_session.execute(
@@ -691,27 +915,34 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
 
     asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
 
-    revision = db_session.execute(
-        text(
-            "SELECT r.id, r.input_manifest, a.current_revision_id "
-            "FROM artifact_revisions r "
-            "JOIN artifact_builds b ON b.id = r.build_id "
-            "JOIN artifacts a ON a.id = b.artifact_id "
-            "WHERE r.build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).mappings().one()
+    revision = (
+        db_session.execute(
+            text(
+                "SELECT r.id, r.input_manifest, a.current_revision_id "
+                "FROM artifact_revisions r "
+                "JOIN artifact_builds b ON b.id = r.build_id "
+                "JOIN artifacts a ON a.id = b.artifact_id "
+                "WHERE r.build_id = :build_id"
+            ),
+            {"build_id": ticket.build_id},
+        )
+        .mappings()
+        .one()
+    )
     revision_id = UUID(str(revision["id"]))
     assert UUID(str(revision["current_revision_id"])) == revision_id
     assert revision["input_manifest"]["kind"] == "conversation"
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM resource_edges "
-            "WHERE source_scheme = 'artifact_revision' AND source_id = :revision_id "
-            "AND origin = 'citation'"
-        ),
-        {"revision_id": revision_id},
-    ).scalar_one() >= 1
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM resource_edges "
+                "WHERE source_scheme = 'artifact_revision' AND source_id = :revision_id "
+                "AND origin = 'citation'"
+            ),
+            {"revision_id": revision_id},
+        ).scalar_one()
+        >= 1
+    )
     ledger = db_session.execute(
         text(
             "SELECT owner_kind, owner_id, llm_operation, total_tokens "
@@ -720,13 +951,16 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
         {"build_id": ticket.build_id},
     ).one()
     assert ledger == ("artifact_build", ticket.build_id, "dossier_conversation", 75)
-    assert [row[0] for row in db_session.execute(
-        text(
-            "SELECT event_type FROM artifact_build_events "
-            "WHERE build_id = :build_id ORDER BY seq"
-        ),
-        {"build_id": ticket.build_id},
-    )] == ["Started", "Succeeded"]
+    assert [
+        row[0]
+        for row in db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        )
+    ] == ["Started", "Progress", "Delta", "Succeeded"]
     head = read_head(db_session, locator=loc, requester_user_id=uid)
     assert head.current_revision_id == revision_id
     assert head.freshness == "current"
@@ -735,10 +969,422 @@ def test_success_is_cited_current_provenanced_and_replay_safe(db_session: Sessio
     replay_runtime = _SuccessfulRuntime()
     asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=replay_runtime))
     assert replay_runtime.calls == 0
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 1
+    )
+
+
+def test_stream_persists_only_decoded_dossier_prose_as_deltas(
+    db_session: Session,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-decoded-prose",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-decoded-prose",
+    )
+    runtime = _SuccessfulRuntime(
+        chunk_size=5,
+        content_md='Grounded "streamed" dossier.\nSecond line. [1]',
+    )
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-decoded-prose",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    events = list(
+        db_session.execute(
+            text(
+                "SELECT event_type, payload FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).mappings()
+    )
+    assert runtime.calls == 1
+    assert [event["event_type"] for event in events] == [
+        "Started",
+        "Progress",
+        "Delta",
+        "Succeeded",
+    ]
+    streamed = "".join(
+        event["payload"]["appended_text"] for event in events if event["event_type"] == "Delta"
+    )
+    assert streamed == runtime.content_md
+    assert '{"citations"' not in streamed
+    assert '\\"' not in streamed
+
+
+def test_real_media_fixture_runtime_completes_streamed_dossier_build(
+    db_session: Session,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-real-media-fixture",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-real-media-fixture",
+    )
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-real-media-fixture",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=RealMediaFixtureExecutionRuntime(),
+        )
+    )
+
+    revision = db_session.execute(
+        text("SELECT content_md FROM artifact_revisions WHERE build_id = :build_id"),
         {"build_id": ticket.build_id},
-    ).scalar_one() == 1
+    ).scalar_one()
+    assert "one grounded finding" in revision
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress", "Delta", "Succeeded"]
+
+
+def test_small_slow_stream_flushes_delta_before_provider_terminal(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-time-bounded-flush",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-time-bounded-flush",
+    )
+    ticks = iter(index * 0.25 for index in range(1000))
+    monkeypatch.setattr(artifact_engine, "monotonic", lambda: next(ticks))
+
+    def assert_delta_precedes_terminal() -> None:
+        assert (
+            db_session.execute(
+                text(
+                    "SELECT count(*) FROM artifact_build_events "
+                    "WHERE build_id = :build_id AND event_type = 'Delta'"
+                ),
+                {"build_id": ticket.build_id},
+            ).scalar_one()
+            >= 1
+        )
+        assert (
+            db_session.execute(
+                text(
+                    "SELECT count(*) FROM artifact_build_events "
+                    "WHERE build_id = :build_id AND event_type = 'Succeeded'"
+                ),
+                {"build_id": ticket.build_id},
+            ).scalar_one()
+            == 0
+        )
+
+    runtime = _SuccessfulRuntime(
+        chunk_size=5,
+        content_md='Grounded "streamed" dossier.\nSecond line. [1]',
+        on_before_terminal=assert_delta_precedes_terminal,
+    )
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-time-bounded-flush",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    assert runtime.calls == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 1
+    )
+
+
+def test_delta_fences_do_not_repeat_full_binding_witness(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-cheap-delta-fence",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-cheap-delta-fence",
+    )
+    binding = artifact_engine.BINDINGS["conversation"]
+    original_recheck = binding.recheck_witness
+    recheck_calls = 0
+
+    def counted_recheck(db, resolved, audience, witness):  # noqa: ANN001
+        nonlocal recheck_calls
+        recheck_calls += 1
+        return original_recheck(db, resolved, audience, witness)
+
+    monkeypatch.setattr(binding, "recheck_witness", counted_recheck)
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-cheap-delta-fence",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=_SuccessfulRuntime(chunk_size=1),
+        )
+    )
+
+    # One authoritative pre-dispatch check and one terminal promotion check.
+    # Progress, watcher polls, and every Delta use only the cheap visibility fence.
+    assert recheck_calls == 2
+
+
+def test_public_cancel_midstream_reaches_provider_and_wins_terminal(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(artifact_engine, "_CANCEL_POLL_INTERVAL_SECONDS", 0.001)
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-public-cancel",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-public-cancel",
+    )
+    runtime = _CancellationAwareRuntime(
+        on_stream_wait=lambda: cancel_build(
+            db_session,
+            build_id=ticket.build_id,
+            actor_user_id=uid,
+        )
+    )
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-public-cancel",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    assert runtime.observed_cancel is True
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_build_cancellations WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 1
+    )
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress", "Cancelled"]
+
+
+def test_lease_loss_midstream_cancels_provider_without_late_domain_write(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(artifact_engine, "_CANCEL_POLL_INTERVAL_SECONDS", 0.001)
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-lease-loss",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-lease-loss",
+    )
+
+    def expire_lease() -> None:
+        db_session.execute(
+            text(
+                "UPDATE background_jobs "
+                "SET lease_expires_at = now() - interval '1 minute' "
+                "WHERE id = :job_id"
+            ),
+            {"job_id": claimed.id},
+        )
+        db_session.commit()
+
+    runtime = _CancellationAwareRuntime(on_stream_wait=expire_lease)
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-stream-lease-loss",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    assert runtime.observed_cancel is True
+    assert (
+        db_session.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id) + "
+                "(SELECT count(*) FROM artifact_build_failures WHERE build_id = :build_id) + "
+                "(SELECT count(*) FROM artifact_build_cancellations WHERE build_id = :build_id)"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress"]
+
+
+def test_unexpected_stream_event_closes_generation_and_settles_ledger(
+    db_session: Session,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="stream-unexpected-tool",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-stream-unexpected-tool",
+    )
+    runtime = _UnexpectedToolRuntime()
+
+    with pytest.raises(AssertionError, match="unexpected dossier stream event"):
+        asyncio.run(
+            run_build(
+                db_session,
+                build_id=ticket.build_id,
+                ctx=JobExecutionContext(
+                    job_id=claimed.id,
+                    worker_id="w-stream-unexpected-tool",
+                    attempt_no=claimed.attempts,
+                ),
+                runtime=runtime,
+            )
+        )
+
+    assert runtime.calls == 1
+    assert runtime.closed is True
+    ledger = db_session.execute(
+        text(
+            "SELECT id, outcome, streaming FROM llm_calls "
+            "WHERE owner_kind = 'artifact_build' AND owner_id = :build_id"
+        ),
+        {"build_id": ticket.build_id},
+    ).one()
+    assert ledger.outcome == "failed"
+    assert ledger.streaming is True
+    assert (
+        db_session.execute(
+            text(
+                "SELECT count(*) FROM token_budget_reservations "
+                "WHERE reservation_id = :generation_id"
+            ),
+            {"generation_id": ledger.id},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_provider_output_without_citations_fails_citation_validation(
@@ -768,20 +1414,20 @@ def test_provider_output_without_citations_fails_citation_validation(
     asyncio.run(run_build(db_session, build_id=ticket.build_id, ctx=ctx, runtime=runtime))
 
     assert runtime.calls == 1
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.CitationValidationFailed
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_revisions "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.CitationValidationFailed
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_inputs_changed_precedes_invalid_generated_citations(
@@ -825,13 +1471,13 @@ def test_inputs_changed_precedes_invalid_generated_citations(
         )
     )
 
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.InputsChanged
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.InputsChanged
+    )
 
 
 def test_library_member_removed_during_dispatch_cannot_promote(
@@ -878,20 +1524,71 @@ def test_library_member_removed_during_dispatch_cannot_promote(
         )
     )
 
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.InputsChanged
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_revisions "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.InputsChanged
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
+
+
+def test_streamed_refusal_with_partial_non_json_maps_provider_refused(
+    db_session: Session,
+) -> None:
+    uid = _user(db_session)
+    loc = _conversation_locator(db_session, uid)
+    ticket = create_build(
+        db_session,
+        locator=loc,
+        requester_user_id=uid,
+        idempotency_key="streamed-provider-refusal",
+        instruction=None,
+    )
+    claimed = claim_dossier_build_job(
+        db_session,
+        build_id=ticket.build_id,
+        worker_id="w-streamed-provider-refusal",
+    )
+    runtime = _RefusedRuntime()
+
+    asyncio.run(
+        run_build(
+            db_session,
+            build_id=ticket.build_id,
+            ctx=JobExecutionContext(
+                job_id=claimed.id,
+                worker_id="w-streamed-provider-refusal",
+                attempt_no=claimed.attempts,
+            ),
+            runtime=runtime,
+        )
+    )
+
+    assert runtime.calls == 1
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.ProviderRefused
+    )
+    assert list(
+        db_session.execute(
+            text(
+                "SELECT event_type FROM artifact_build_events "
+                "WHERE build_id = :build_id ORDER BY seq"
+            ),
+            {"build_id": ticket.build_id},
+        ).scalars()
+    ) == ["Started", "Progress", "Failed"]
 
 
 def test_library_ownership_transfer_during_provider_refusal_is_inputs_changed(
@@ -939,20 +1636,20 @@ def test_library_ownership_transfer_during_provider_refusal_is_inputs_changed(
     )
 
     assert runtime.calls == 1
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.InputsChanged
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_revisions "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.InputsChanged
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
 
 
 @pytest.mark.parametrize("recovered_result", [False, True])
@@ -1034,10 +1731,13 @@ def test_operator_reconciles_uncertain_build_without_automatic_redispatch(
         )
     )
     assert replay.calls == (0 if recovered_result else 1)
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 1
+    )
 
 
 @pytest.mark.parametrize("recovered_result", [False, True])
@@ -1123,20 +1823,20 @@ def test_reconciled_build_rejects_inputs_changed_since_original_request(
     )
 
     assert replay.calls == 0
-    assert db_session.execute(
-        text(
-            "SELECT failure_code FROM artifact_build_failures "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == DossierBuildFailureCode.InputsChanged
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_revisions "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == DossierBuildFailureCode.InputsChanged
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_aggregate_waits_for_media_unit_then_completes_same_build(
@@ -1179,27 +1879,27 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
     )
     assert isinstance(result, RescheduleRequested)
     assert before_ready.calls == 0
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM artifact_build_failures WHERE build_id = :build_id"
-        ),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_build_failures WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 0
+    )
 
     summary_id = db_session.execute(
         text("SELECT id FROM media_summaries WHERE media_id = :media_id"),
         {"media_id": media_id},
     ).scalar_one()
     fingerprint = db_session.execute(
-        text(
-            "SELECT content_fingerprint FROM media_summaries WHERE media_id = :media_id"
-        ),
+        text("SELECT content_fingerprint FROM media_summaries WHERE media_id = :media_id"),
         {"media_id": media_id},
     ).scalar_one()
     span_id = db_session.execute(
@@ -1245,10 +1945,13 @@ def test_aggregate_waits_for_media_unit_then_completes_same_build(
         is None
     )
     assert after_ready.calls == 1
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
-        {"build_id": ticket.build_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifact_revisions WHERE build_id = :build_id"),
+            {"build_id": ticket.build_id},
+        ).scalar_one()
+        == 1
+    )
 
 
 # --- ExecutionAdvisory is unsequenced and not persisted ----------------------

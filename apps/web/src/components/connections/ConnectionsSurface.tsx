@@ -73,6 +73,7 @@ import styles from "./ConnectionsSurface.module.css";
 import type {
   ConnectionsComposerController,
   ConnectionsComposerDraft,
+  ConnectionsPendingAttachment,
 } from "./connectionsComposerController";
 
 /** The endpoint of a connection that is NOT the object being viewed. */
@@ -410,13 +411,16 @@ function ConnectionComposer({
 }) {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const listboxId = useId();
-  const { query, kind, selected, activeKey } = draft;
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [attaching, setAttaching] = useState(false);
-  const [pendingAttachments, setPendingAttachments] = useState<
-    PendingAttachment[]
-  >([]);
+  const {
+    query,
+    kind,
+    selected,
+    activeKey,
+    feedback,
+    submitting,
+    attaching,
+    pendingAttachments,
+  } = draft;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -469,7 +473,7 @@ function ConnectionComposer({
       query: targetLabel(target),
       activeKey: null,
     });
-    setFeedback(null);
+    controller.update({ feedback: null });
   }
 
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -509,29 +513,35 @@ function ConnectionComposer({
 
   async function submitConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setFeedback(null);
+    controller.update({ feedback: null });
     if (targetRef === null || selected === null) {
-      setFeedback({
-        severity: "warning",
-        title: "Choose a result from the search.",
+      controller.update({
+        feedback: {
+          severity: "warning",
+          title: "Choose a result from the search.",
+        },
       });
       return;
     }
     if (targetRef === selfRef) {
-      setFeedback({
-        severity: "warning",
-        title: "A resource cannot connect to itself.",
+      controller.update({
+        feedback: {
+          severity: "warning",
+          title: "A resource cannot connect to itself.",
+        },
       });
       return;
     }
     if (kind !== "context" && selected.kind === "passage") {
-      setFeedback({
-        severity: "warning",
-        title: "A stance needs a resource target, not a passage.",
+      controller.update({
+        feedback: {
+          severity: "warning",
+          title: "A stance needs a resource target, not a passage.",
+        },
       });
       return;
     }
-    setSubmitting(true);
+    controller.update({ submitting: true });
     try {
       if (kind === "context") {
         await createLink({
@@ -545,16 +555,16 @@ function ConnectionComposer({
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, {
+      controller.update({
+        feedback: toFeedback(err, {
           fallback:
             kind === "context"
               ? "Link could not be created."
               : "Stance could not be recorded.",
         }),
-      );
+      });
     } finally {
-      setSubmitting(false);
+      controller.update({ submitting: false });
     }
   }
 
@@ -562,18 +572,19 @@ function ConnectionComposer({
     if (files.length === 0) {
       return;
     }
-    setFeedback(null);
-    setAttaching(true);
+    controller.update({ feedback: null, attaching: true });
     let changed = false;
     try {
       for (const file of files) {
         const uploadError = getFileUploadError(file);
         if (uploadError) {
-          setFeedback({ severity: "error", title: uploadError });
+          controller.update({
+            feedback: { severity: "error", title: uploadError },
+          });
           continue;
         }
         const accepted: {
-          pending: PendingAttachment | null;
+          pending: ConnectionsPendingAttachment | null;
           edge: Promise<AttachmentEdgeOutcome> | null;
         } = { pending: null, edge: null };
         let upload;
@@ -582,16 +593,19 @@ function ConnectionComposer({
             file,
             libraryIds: [],
             onAcceptedIdentity: ({ mediaId, sourceAttemptId }) => {
-              const pending: PendingAttachment = {
+              const pending: ConnectionsPendingAttachment = {
                 mediaId,
                 sourceAttemptId,
                 label: file.name,
                 warning: null,
               };
               accepted.pending = pending;
-              setPendingAttachments((current) =>
-                upsertPending(current, pending),
-              );
+              controller.update((current) => ({
+                pendingAttachments: upsertPending(
+                  current.pendingAttachments,
+                  pending,
+                ),
+              }));
               accepted.edge = createAttachmentLink(selfRef, pending).then(
                 () => ({ kind: "Fulfilled" as const }),
                 (error: unknown) => ({ kind: "Rejected" as const, error }),
@@ -602,11 +616,11 @@ function ConnectionComposer({
           if (accepted.edge && accepted.pending) {
             const edge = await accepted.edge;
             if (edge.kind === "Fulfilled") {
-              setPendingAttachments((current) =>
-                current.filter(
+              controller.update((current) => ({
+                pendingAttachments: current.pendingAttachments.filter(
                   (item) => item.mediaId !== accepted.pending?.mediaId,
                 ),
-              );
+              }));
               changed = true;
             }
           }
@@ -615,9 +629,11 @@ function ConnectionComposer({
             return;
           }
           if (handleUnauthenticatedApiError(error)) return;
-          setFeedback(
-            toFeedback(error, { fallback: "Attachment could not be added." }),
-          );
+          controller.update({
+            feedback: toFeedback(error, {
+              fallback: "Attachment could not be added.",
+            }),
+          });
           continue;
         }
         if (!accepted.pending || !accepted.edge) {
@@ -636,7 +652,12 @@ function ConnectionComposer({
           },
         });
         const pending = { ...accepted.pending, warning };
-        setPendingAttachments((current) => upsertPending(current, pending));
+        controller.update((current) => ({
+          pendingAttachments: upsertPending(
+            current.pendingAttachments,
+            pending,
+          ),
+        }));
         const edge = await accepted.edge;
         if (edge.kind === "Rejected") {
           if (isSameSystemApiDefect(edge.error)) {
@@ -644,38 +665,41 @@ function ConnectionComposer({
             return;
           }
           if (handleUnauthenticatedApiError(edge.error)) return;
-          setFeedback(
-            toFeedback(edge.error, {
+          controller.update({
+            feedback: toFeedback(edge.error, {
               fallback:
                 "File was saved, but its connection could not be created.",
             }),
-          );
+          });
           continue;
         }
-        setPendingAttachments((current) =>
-          current.filter((item) => item.mediaId !== pending.mediaId),
-        );
+        controller.update((current) => ({
+          pendingAttachments: current.pendingAttachments.filter(
+            (item) => item.mediaId !== pending.mediaId,
+          ),
+        }));
         changed = true;
-        if (warning) setFeedback(warning);
+        if (warning) controller.update({ feedback: warning });
       }
     } finally {
       if (changed) onChanged();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
-      setAttaching(false);
+      controller.update({ attaching: false });
     }
   }
 
-  async function retryAttachment(pending: PendingAttachment) {
-    setFeedback(null);
-    setAttaching(true);
+  async function retryAttachment(pending: ConnectionsPendingAttachment) {
+    controller.update({ feedback: null, attaching: true });
     try {
       await createAttachmentLink(selfRef, pending);
-      setPendingAttachments((current) =>
-        current.filter((item) => item.mediaId !== pending.mediaId),
-      );
-      if (pending.warning) setFeedback(pending.warning);
+      controller.update((current) => ({
+        pendingAttachments: current.pendingAttachments.filter(
+          (item) => item.mediaId !== pending.mediaId,
+        ),
+        ...(pending.warning ? { feedback: pending.warning } : {}),
+      }));
       onChanged();
     } catch (error) {
       if (isSameSystemApiDefect(error)) {
@@ -683,13 +707,13 @@ function ConnectionComposer({
         return;
       }
       if (handleUnauthenticatedApiError(error)) return;
-      setFeedback(
-        toFeedback(error, {
+      controller.update({
+        feedback: toFeedback(error, {
           fallback: "File was saved, but its connection could not be created.",
         }),
-      );
+      });
     } finally {
-      setAttaching(false);
+      controller.update({ attaching: false });
     }
   }
 
@@ -744,7 +768,7 @@ function ConnectionComposer({
                     selected: null,
                     query: event.currentTarget.value,
                   });
-                  setFeedback(null);
+                  controller.update({ feedback: null });
                 }}
                 onKeyDown={onSearchKeyDown}
               />
@@ -777,7 +801,7 @@ function ConnectionComposer({
                 // Passage anchors are Links; Stances require a resource.
                 if (nextKind !== "context" && selected?.kind === "passage") {
                   controller.update({ selected: null });
-                  setFeedback(null);
+                  controller.update({ feedback: null });
                 }
               }}
             >
@@ -920,21 +944,14 @@ class ConnectionComposerDefectBoundary extends Component<
   }
 }
 
-interface PendingAttachment {
-  mediaId: string;
-  sourceAttemptId: string;
-  label: string;
-  warning: FeedbackContent | null;
-}
-
 type AttachmentEdgeOutcome =
   | { kind: "Fulfilled" }
   | { kind: "Rejected"; error: unknown };
 
 function upsertPending(
-  current: PendingAttachment[],
-  pending: PendingAttachment,
-): PendingAttachment[] {
+  current: readonly ConnectionsPendingAttachment[],
+  pending: ConnectionsPendingAttachment,
+): ConnectionsPendingAttachment[] {
   return [
     ...current.filter((item) => item.mediaId !== pending.mediaId),
     pending,
@@ -943,7 +960,7 @@ function upsertPending(
 
 function createAttachmentLink(
   sourceRef: string,
-  pending: PendingAttachment,
+  pending: ConnectionsPendingAttachment,
 ): Promise<unknown> {
   return createLink({
     source: { kind: "resource", ref: sourceRef },

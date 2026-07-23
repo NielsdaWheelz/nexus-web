@@ -23,6 +23,7 @@ from provider_runtime import (
     RuntimeStreamEvent,
     Stable,
     StrictJsonOutput,
+    StructuredContent,
     Succeeded,
     SystemMessage,
     TerminalEvent,
@@ -38,6 +39,7 @@ from provider_runtime import (
 )
 from pydantic import BaseModel
 
+from nexus.services.artifacts.bindings import BINDINGS
 from nexus.services.llm_profiles import profile as profile_lookup
 from nexus.services.media_intelligence import (
     _MEDIA_UNIT_SYSTEM_PROMPT,
@@ -322,7 +324,7 @@ async def _synthesize[T: BaseModel](system_prompt: str, *, schema: type[T]) -> T
 async def test_real_media_fixture_llm_generate_strict_json_without_marker_raises() -> None:
     runtime = RealMediaFixtureExecutionRuntime()
 
-    with pytest.raises(AssertionError, match="no _SYNTHESIS_MARKERS entry matched"):
+    with pytest.raises(AssertionError, match="no synthesis marker or schema-driven fixture"):
         await runtime.generate(
             _intent(
                 _system("You are an unregistered synthesis persona."),
@@ -333,6 +335,58 @@ async def test_real_media_fixture_llm_generate_strict_json_without_marker_raises
             _PLAN,
             _CREDENTIAL,
         )
+
+
+@pytest.mark.parametrize("subject_scheme", sorted(BINDINGS))
+async def test_real_media_fixture_streams_strict_json_for_every_dossier_schema(
+    subject_scheme: str,
+) -> None:
+    binding = BINDINGS[subject_scheme]
+    intent = _intent(
+        _system(binding.system_prompt),
+        _user("CANDIDATES:\n[0] grounded source"),
+        tools=(),
+        output=_strict_json_output(binding.schema),
+    )
+
+    events = await _stream_events(intent)
+
+    raw = _streamed_text(events)
+    terminal = events[-1].event
+    assert isinstance(terminal, TerminalEvent)
+    assert isinstance(terminal.outcome, Succeeded)
+    assert isinstance(terminal.outcome.response.content, StructuredContent)
+    assert terminal.outcome.response.content.text == raw
+    decoded = decode_structured_synthesis(
+        terminal.outcome,
+        schema=binding.schema,
+    )
+    decoded_data = decoded.model_dump()
+    assert decoded_data["content_md"]
+    citations = decoded_data["citations"]
+    assert len(citations) == 1
+    assert citations[0]["ordinal"] == 1
+
+
+async def test_real_media_fixture_strict_json_stream_preserves_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REAL_MEDIA_FIXTURE_STREAM_DELAY_MS", "1")
+    cancel = asyncio.Event()
+    cancel.set()
+    binding = BINDINGS["conversation"]
+    intent = _intent(
+        _system(binding.system_prompt),
+        _user("CANDIDATES:\n[0] grounded source"),
+        tools=(),
+        output=_strict_json_output(binding.schema),
+    )
+
+    events = await _stream_events(intent, cancel=cancel)
+
+    assert len(events) == 1
+    assert isinstance(events[0].event, TerminalEvent)
+    assert isinstance(events[0].event.outcome, Cancelled)
 
 
 async def test_real_media_fixture_llm_oracle_synthesis_passes_real_validator() -> None:

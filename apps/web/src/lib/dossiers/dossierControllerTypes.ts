@@ -10,7 +10,8 @@
 //     active_build{execution}, latest_unsuccessful_build, history }
 //   revision_selection = Current | Historical{revision_ref}
 //   historical_revision = Idle | Loading | Ready{revision} | Failed{error}
-//   stream = Disconnected | Connecting | Live | Reconnecting | Suspended | Terminal
+//   stream = Disconnected | Connecting | Live | Reconnecting | Suspended
+//     | Terminal{outcome, reconciled}
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { Presence } from "@/lib/api/presence";
 
@@ -237,13 +238,28 @@ export type DossierHistoricalRevision =
   | { kind: "Ready"; revision: DossierRevision }
   | { kind: "Failed"; error: DossierErrorInfo };
 
+/**
+ * The persisted terminal event observed by this client. It remains separate
+ * from the authoritative head so terminal UI settles immediately even when the
+ * follow-up head read is slow or unavailable.
+ */
+export type DossierTerminalOutcome =
+  | { kind: "Succeeded"; artifactRevisionRef: string }
+  | { kind: "Failed"; buildHandle: string; facts: DossierFailedFacts }
+  | { kind: "Cancelled"; buildHandle: string; facts: DossierCancelledFacts };
+
 export type DossierStream =
-  | "Disconnected"
-  | "Connecting"
-  | "Live"
-  | "Reconnecting"
-  | "Suspended"
-  | "Terminal";
+  | { kind: "Disconnected" }
+  | { kind: "Connecting" }
+  | { kind: "Live" }
+  | { kind: "Reconnecting" }
+  | { kind: "Suspended" }
+  | {
+      kind: "Terminal";
+      outcome: DossierTerminalOutcome;
+      /** The authoritative head has absorbed this event's exact result. */
+      reconciled: boolean;
+    };
 
 /** In-flight manual command (drives control busy state + near-control error). */
 export type DossierPendingAction = "generate" | "cancel" | "makeCurrent" | null;
@@ -271,7 +287,7 @@ export function initialDossierControllerState(): DossierControllerState {
     head: { kind: "Idle" },
     revisionSelection: { kind: "Current" },
     historicalRevision: { kind: "Idle" },
-    stream: "Disconnected",
+    stream: { kind: "Disconnected" },
     streamingDraft: null,
     progressMessage: null,
     pendingAction: null,

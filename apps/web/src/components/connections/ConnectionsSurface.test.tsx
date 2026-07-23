@@ -871,7 +871,7 @@ describe("ConnectionsSurface", () => {
     expect(await screen.findByText("paper.pdf")).toBeInTheDocument();
   });
 
-  it("retries only the Link after an accepted upload Link failure", async () => {
+  it("retains an accepted upload and failed retry across secondary tab unmounts", async () => {
     const user = userEvent.setup();
     let linkAttempts = 0;
     let uploadInitCalls = 0;
@@ -941,7 +941,7 @@ describe("ConnectionsSurface", () => {
         }
         if (path === "/api/resource-graph/links" && init?.method === "POST") {
           linkAttempts += 1;
-          if (linkAttempts === 1) {
+          if (linkAttempts <= 2) {
             return new Response(
               JSON.stringify({
                 error: {
@@ -976,10 +976,8 @@ describe("ConnectionsSurface", () => {
       }),
     );
 
-    render(
-      <ConnectionsSurface
-        resourceRef={{ scheme: "note_block", id: BLOCK_A }}
-      />,
+    const view = render(
+      <TabSwitchHarness showConnections resourceId={BLOCK_A} />,
     );
     expect(await screen.findByText(SCANNABLE_EMPTY_COPY)).toBeInTheDocument();
 
@@ -996,19 +994,38 @@ describe("ConnectionsSurface", () => {
       screen.getByText("paper.pdf was saved and still needs its connection."),
     ).toBeInTheDocument();
 
-    const toggle = screen.getByRole("button", { name: "＋ Link" });
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("button", { name: "Retry attachment" }),
-    ).not.toBeInTheDocument();
-    await user.click(toggle);
+    view.rerender(
+      <TabSwitchHarness showConnections={false} resourceId={BLOCK_A} />,
+    );
+    expect(screen.getByText("Dossier tab")).toBeVisible();
+    view.rerender(
+      <TabSwitchHarness showConnections resourceId={BLOCK_A} />,
+    );
     expect(
       await screen.findByRole("button", { name: "Retry attachment" }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry attachment" }));
     await waitFor(() => expect(linkAttempts).toBe(2));
+    expect(
+      await screen.findByText(
+        "File was saved, but its connection could not be created.",
+      ),
+    ).toBeInTheDocument();
+
+    view.rerender(
+      <TabSwitchHarness showConnections={false} resourceId={BLOCK_A} />,
+    );
+    view.rerender(
+      <TabSwitchHarness showConnections resourceId={BLOCK_A} />,
+    );
+    expect(
+      await screen.findByText(
+        "File was saved, but its connection could not be created.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry attachment" }));
+    await waitFor(() => expect(linkAttempts).toBe(3));
     await waitFor(() =>
       expect(
         screen.queryByRole("button", { name: "Retry attachment" }),

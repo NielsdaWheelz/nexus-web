@@ -6,6 +6,7 @@ import type {
   DossierControllerState,
   DossierHeadReady,
   DossierRevision,
+  DossierTerminalOutcome,
 } from "@/lib/dossiers/dossierControllerTypes";
 import { deriveDossierViewModel } from "@/components/dossier/dossierViewModel";
 
@@ -121,17 +122,58 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
   });
 
   it("active build over a current revision → regenerating + Cancel, no Generate", () => {
-    const vm = deriveDossierViewModel(
-      ready({
+    const vm = deriveDossierViewModel({
+      ...ready({
         currentRevision: present(revision()),
         activeBuild: present(build({ execution: present({ phase: "Running" }) })),
         revisionCount: 1,
       }),
-    );
+      stream: { kind: "Live" },
+    });
     expect(vm.activity).toMatchObject({ kind: "Building", regenerating: true });
     expect(vm.controls.canCancel).toBe(true);
     expect(vm.controls.canRegenerate).toBe(false);
     expect(vm.statusMessage).not.toBeNull();
+  });
+
+  it("active build with a reconnecting stream exposes reconnecting instead of generating", () => {
+    const vm = deriveDossierViewModel({
+      ...ready({
+        activeBuild: present(
+          build({ execution: present({ phase: "Recovering" }) }),
+        ),
+      }),
+      stream: { kind: "Reconnecting" },
+    });
+    expect(vm.activity.kind).toBe("Reconnecting");
+    expect(vm.body).toMatchObject({
+      kind: "StreamingDraft",
+      liveness: "reconnecting",
+    });
+    expect(vm.statusMessage).toBe("Reconnecting to dossier generation…");
+    expect(vm.controls.canCancel).toBe(true);
+    expect(vm.controls.canReconnect).toBe(false);
+  });
+
+  it("active build with a disconnected stream exposes manual recovery instead of generating", () => {
+    const vm = deriveDossierViewModel({
+      ...ready({
+        activeBuild: present(
+          build({ execution: present({ phase: "Recovering" }) }),
+        ),
+      }),
+      stream: { kind: "Disconnected" },
+    });
+    expect(vm.activity.kind).toBe("Disconnected");
+    expect(vm.body).toMatchObject({
+      kind: "StreamingDraft",
+      liveness: "disconnected",
+    });
+    expect(vm.statusMessage).toBe(
+      "Live updates disconnected; generation may still be running.",
+    );
+    expect(vm.controls.canCancel).toBe(true);
+    expect(vm.controls.canReconnect).toBe(true);
   });
 
   it("suspended active build → Cancel only, Generate/Retry unavailable", () => {
@@ -139,10 +181,92 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
       ready({ activeBuild: present(build({ execution: present({ phase: "Suspended" }) })) }),
     );
     expect(vm.activity.kind).toBe("Suspended");
+    expect(vm.body).toMatchObject({
+      kind: "StreamingDraft",
+      liveness: "suspended",
+    });
     expect(vm.controls.canCancel).toBe(true);
     expect(vm.controls.canGenerate).toBe(false);
     expect(vm.controls.canRetry).toBe(false);
   });
+
+  it.each([
+    {
+      label: "succeeded",
+      terminalOutcome: {
+        kind: "Succeeded",
+        artifactRevisionRef: "artifact_revision:r1",
+      } satisfies DossierTerminalOutcome,
+      expectedBody: "succeeded",
+      expectedActivity: "Idle",
+      canRetry: false,
+      canReconnect: true,
+      statusMessage: "Dossier generated.",
+    },
+    {
+      label: "failed",
+      terminalOutcome: {
+        kind: "Failed",
+        buildHandle: "h1",
+        facts: {
+          failureCode: "ProviderIncomplete",
+          detail: absent(),
+          support: absent(),
+        },
+      } satisfies DossierTerminalOutcome,
+      expectedBody: "failed",
+      expectedActivity: "Failed",
+      canRetry: true,
+      canReconnect: false,
+      statusMessage: null,
+    },
+    {
+      label: "cancelled",
+      terminalOutcome: {
+        kind: "Cancelled",
+        buildHandle: "h1",
+        facts: { actor: absent(), at: "2026-07-23T01:00:00Z" },
+      } satisfies DossierTerminalOutcome,
+      expectedBody: "cancelled",
+      expectedActivity: "Cancelled",
+      canRetry: true,
+      canReconnect: false,
+      statusMessage: "The last generation was canceled.",
+    },
+  ])(
+    "observed $label terminal outcome outranks a stale active head",
+    ({
+      terminalOutcome,
+      expectedBody,
+      expectedActivity,
+      canRetry,
+      canReconnect,
+      statusMessage,
+    }) => {
+      const vm = deriveDossierViewModel({
+        ...ready({
+          activeBuild: present(
+            build({ execution: present({ phase: "Running" }) }),
+          ),
+        }),
+        stream: {
+          kind: "Terminal",
+          outcome: terminalOutcome,
+          reconciled: false,
+        },
+      });
+
+      expect(vm.body).toEqual({
+        kind: "TerminalOutcome",
+        outcome: expectedBody,
+      });
+      expect(vm.activity.kind).toBe(expectedActivity);
+      expect(vm.controls.canCancel).toBe(false);
+      expect(vm.controls.canRetry).toBe(canRetry);
+      expect(vm.controls.canReconnect).toBe(canReconnect);
+      expect(vm.statusMessage).toBe(statusMessage);
+    },
+  );
 
   it("terminal failure (no current) → alert + Retry, no Generate", () => {
     const vm = deriveDossierViewModel(
@@ -153,7 +277,9 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
       }),
     );
     expect(vm.activity).toMatchObject({ kind: "Failed", code: "ProviderRefused" });
-    expect(vm.alert).toMatchObject({ retry: true });
+    expect(vm.alert).toEqual({
+      message: "The model declined to generate this dossier.",
+    });
     expect(vm.controls.canRetry).toBe(true);
     expect(vm.controls.canGenerate).toBe(false);
   });
@@ -189,7 +315,14 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
         currentRevision: present(revision()),
         revisionCount: 1,
       }),
-      stream: "Terminal",
+      stream: {
+        kind: "Terminal",
+        outcome: {
+          kind: "Succeeded",
+          artifactRevisionRef: "artifact_revision:r1",
+        },
+        reconciled: true,
+      },
       progressMessage: "Dossier generated.",
     });
 

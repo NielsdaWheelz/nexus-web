@@ -18,15 +18,29 @@ B1a). SOLE creator of heads/builds/terminal children.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Literal, assert_never, cast
 from uuid import UUID, uuid4
 
-from provider_runtime import Incomplete, Refused, Succeeded
+from provider_runtime import (
+    Cancelled,
+    CancelSignal,
+    ContinuationDelta,
+    Incomplete,
+    RuntimeStreamEvent,
+    StreamStart,
+    Succeeded,
+    TerminalEvent,
+    TextDelta,
+    UsageEvent,
+)
 from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -63,6 +77,7 @@ from nexus.services.artifacts.dossier_types import (
     BuildTicket,
     CancelledEventPayload,
     ContributorSubjectWire,
+    DeltaEventPayload,
     DossierBuildExecutionPhase,
     DossierBuildFailureCode,
     DossierGenerationInProgress,
@@ -70,6 +85,7 @@ from nexus.services.artifacts.dossier_types import (
     FailedEventPayload,
     InvalidInstruction,
     InvalidSubjectLocator,
+    ProgressEventPayload,
     ResourceSubjectWire,
     RevisionNotFound,
     RevisionNotOwnedByHead,
@@ -84,7 +100,11 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     SubjectPolicy,
 )
-from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
+from nexus.services.llm_execution import (
+    ExecutionRuntime,
+    GenerationRequest,
+    execute_generation_stream,
+)
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
 from nexus.services.rate_limit import get_rate_limiter
@@ -95,6 +115,7 @@ from nexus.services.resource_graph.citations import (
 )
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.structured_synthesis import (
+    StrictJsonStringFieldProjector,
     StructuredSynthesisError,
     build_synthesis_intent,
     decode_structured_synthesis,
@@ -126,6 +147,10 @@ __all__ = [
 _MAX_INSTRUCTION_CHARS = 4000
 # The one provider step per build (single synthesis over the reduced inputs, B4).
 _STEP_PATH = "synthesis"
+_VISIBLE_SYNTHESIS_FIELD = "content_md"
+_DELTA_EVENT_MAX_CHARS = 512
+_DELTA_EVENT_FLUSH_INTERVAL_SECONDS = 0.2
+_CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 
 
@@ -149,6 +174,16 @@ class _TerminalInputRecheck:
     binding: DossierBinding
     witness: object
     requester_user_id: UUID
+
+
+type _StreamStopReason = Literal["inactive", "inputs_changed"]
+type _StreamEventWriteResult = Literal["written", "inactive", "inputs_changed"]
+
+
+@dataclass(slots=True)
+class _StreamGuard:
+    cancel_signal: asyncio.Event
+    stop_reason: _StreamStopReason | None = None
 
 
 def reconcile_uncertain_build(
@@ -485,9 +520,7 @@ async def run_build(
             return
         try:
             policy.authorize_generate(db, resolved, requester_user_id)
-            witness_is_current = binding.recheck_witness(
-                db, resolved, audience, witness
-            )
+            witness_is_current = binding.recheck_witness(db, resolved, audience, witness)
         except NotFoundError:
             witness_is_current = False
         if not witness_is_current:
@@ -628,9 +661,7 @@ async def _run_synthesis_step(
         if st.generation_id != gen_id:
             raise AssertionError("dossier synthesis replay generation identity changed")
         if not isinstance(st.request_fingerprint, Present):
-            raise AssertionError(
-                f"{st.dispatch_phase} synthesis step has no request fingerprint"
-            )
+            raise AssertionError(f"{st.dispatch_phase} synthesis step has no request fingerprint")
         if st.request_fingerprint.value != request_fingerprint:
             _terminal_failure(
                 db,
@@ -642,9 +673,8 @@ async def _run_synthesis_step(
                 input_recheck=input_recheck,
             )
             return None
-        if (
-            st.dispatch_phase in (coordination.Prepared, coordination.Uncertain)
-            and isinstance(st.terminal_result, Present)
+        if st.dispatch_phase in (coordination.Prepared, coordination.Uncertain) and isinstance(
+            st.terminal_result, Present
         ):
             raise AssertionError(
                 f"{st.dispatch_phase} synthesis step already has a terminal result"
@@ -686,42 +716,145 @@ async def _run_synthesis_step(
     else:
         raise AssertionError(f"unknown synthesis dispatch phase {st.dispatch_phase!r}")
 
-    if not active():
-        db.rollback()
-        return None
-    landed = coordination.checkpoint_step_state(
-        db,
-        ctx=ctx,
-        job=job,
-        step_path=_STEP_PATH,
-        state=coordination.StepReplayState(
-            generation_id=gen_id,
-            dispatch_phase=coordination.Uncertain,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=absent(),
-        ),
+    projector = StrictJsonStringFieldProjector(field=_VISIBLE_SYNTHESIS_FIELD)
+    pending_delta = ""
+    last_delta_flush = monotonic()
+    projection_error: StructuredSynthesisError | None = None
+    terminal_outcome: object | None = None
+    guard = _StreamGuard(cancel_signal=asyncio.Event())
+    request = GenerationRequest(
+        owner=LlmCallOwner(kind="artifact_build", id=build_id, user_id=requester),
+        operation=binding.llm_operation,
+        profile=profile,
+        reasoning=binding.reasoning,
+        intent=intent,
     )
-    if not landed:
-        return None  # lease lost mid-checkpoint; a reclaim (Recovering) redoes it
-    db.commit()  # persist Uncertain BEFORE dispatch (A8: never redispatch after a crash)
-    may_dispatch = active()
-    db.commit()
-    if not may_dispatch:
+    progress_result = _append_guarded_stream_event(
+        db,
+        build_id=build_id,
+        ctx=ctx,
+        input_recheck=input_recheck,
+        event_type=ArtifactBuildEventType.Progress,
+        payload=ProgressEventPayload(
+            phase="synthesis",
+            message="Generating dossier",
+        ).model_dump(mode="json"),
+        idempotent_once=True,
+    )
+    if progress_result == "inputs_changed":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed before provider dispatch",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+        return None
+    if progress_result == "inactive":
         return None
 
+    stream = execute_generation_stream(
+        request,
+        session_factory=get_session_factory(),
+        runtime=runtime,
+        settings=get_settings(),
+        cancel=cast(CancelSignal, guard.cancel_signal),
+    )
+
+    def flush_deltas(*, force: bool) -> _StreamEventWriteResult:
+        nonlocal last_delta_flush, pending_delta
+        while len(pending_delta) >= _DELTA_EVENT_MAX_CHARS or (force and pending_delta):
+            appended_text = pending_delta[:_DELTA_EVENT_MAX_CHARS]
+            pending_delta = pending_delta[len(appended_text) :]
+            result = _append_guarded_stream_event(
+                db,
+                build_id=build_id,
+                ctx=ctx,
+                input_recheck=input_recheck,
+                event_type=ArtifactBuildEventType.Delta,
+                payload=DeltaEventPayload(appended_text=appended_text).model_dump(mode="json"),
+            )
+            if result != "written":
+                guard.stop_reason = result
+                guard.cancel_signal.set()
+                return result
+            last_delta_flush = monotonic()
+        return "written"
+
     try:
-        call = await execute_generation(
-            GenerationRequest(
-                owner=LlmCallOwner(kind="artifact_build", id=build_id, user_id=requester),
-                operation=binding.llm_operation,
-                profile=profile,
-                reasoning=binding.reasoning,
-                intent=intent,
+        if not active():
+            db.rollback()
+            return None
+        landed = coordination.checkpoint_step_state(
+            db,
+            ctx=ctx,
+            job=job,
+            step_path=_STEP_PATH,
+            state=coordination.StepReplayState(
+                generation_id=gen_id,
+                dispatch_phase=coordination.Uncertain,
+                request_fingerprint=present(request_fingerprint),
+                terminal_result=absent(),
             ),
-            session_factory=get_session_factory(),
-            runtime=runtime,
-            settings=get_settings(),
         )
+        if not landed:
+            db.rollback()
+            return None  # lease lost mid-checkpoint; a reclaim redoes Prepared
+        # A8: this is immediately before the first stream iteration/dispatch.
+        # All fallible domain setup and the replay-idempotent Progress append
+        # completed while the step was still provably Prepared.
+        db.commit()
+        cancel_watcher = asyncio.create_task(
+            _watch_stream_guard(
+                build_id=build_id,
+                ctx=ctx,
+                input_recheck=input_recheck,
+                guard=guard,
+            )
+        )
+        try:
+            async for envelope in stream:
+                event = envelope.event
+                if isinstance(event, StreamStart):
+                    continue
+                if isinstance(event, TextDelta):
+                    if projection_error is None:
+                        try:
+                            pending_delta += projector.feed(event.text)
+                        except StructuredSynthesisError as exc:
+                            projection_error = exc
+                    if (
+                        projection_error is None
+                        and guard.stop_reason is None
+                        and flush_deltas(
+                            force=(
+                                monotonic() - last_delta_flush
+                                >= _DELTA_EVENT_FLUSH_INTERVAL_SECONDS
+                            )
+                        )
+                        != "written"
+                    ):
+                        continue
+                    continue
+                if isinstance(event, (ContinuationDelta, UsageEvent)):
+                    continue
+                if isinstance(event, TerminalEvent):
+                    if terminal_outcome is not None:
+                        raise AssertionError("dossier provider stream emitted two terminals")
+                    terminal_outcome = event.outcome
+                    continue
+                # justify-defect: a strict-JSON synthesis has tools=() and
+                # tool_choice="none"; any tool event violates the finalized plan.
+                raise AssertionError(f"unexpected dossier stream event {type(event).__name__}")
+        finally:
+            cancel_watcher.cancel()
+            try:
+                with suppress(asyncio.CancelledError):
+                    await cancel_watcher
+            finally:
+                await cast(AsyncGenerator[RuntimeStreamEvent, None], stream).aclose()
     except ApiError as exc:
         if exc.code == ApiErrorCode.E_BILLING_REQUIRED:
             code = DossierBuildFailureCode.EntitlementDenied
@@ -739,21 +872,42 @@ async def _run_synthesis_step(
             input_recheck=input_recheck,
         )
         return None
-    outcome = call.outcome
-    if not isinstance(outcome, Succeeded):
-        if isinstance(outcome, Refused):
-            code = DossierBuildFailureCode.ProviderRefused
-        elif isinstance(outcome, Incomplete):
-            code = DossierBuildFailureCode.ProviderIncomplete
+
+    if guard.stop_reason == "inputs_changed":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed during provider dispatch",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+        return None
+    if guard.stop_reason == "inactive":
+        return None
+    if terminal_outcome is None:
+        # justify-defect: execute_generation_stream guarantees one terminal event
+        # before normal iterator exhaustion.
+        raise AssertionError("dossier provider stream ended without a terminal event")
+    if isinstance(terminal_outcome, Cancelled):
+        return None
+    if not isinstance(terminal_outcome, Succeeded):
+        if isinstance(terminal_outcome, Incomplete):
+            code = (
+                DossierBuildFailureCode.ProviderRefused
+                if terminal_outcome.status == "refused"
+                else DossierBuildFailureCode.ProviderIncomplete
+            )
         else:
-            failure_code, detail = outcome_failure_facts(outcome)
+            failure_code, detail = outcome_failure_facts(terminal_outcome)
             if failure_code == "context_too_large":
                 code = DossierBuildFailureCode.ContextTooLarge
             elif failure_code == "invalid_tool_arguments":
                 code = DossierBuildFailureCode.SchemaRepairExhausted
             else:
                 raise _ProviderDefect(
-                    f"non-modeled provider outcome {type(outcome).__name__}:{failure_code}"
+                    f"non-modeled provider outcome {type(terminal_outcome).__name__}:{failure_code}"
                 )
             _terminal_failure(
                 db,
@@ -765,7 +919,7 @@ async def _run_synthesis_step(
                 input_recheck=input_recheck,
             )
             return None
-        _, detail = outcome_failure_facts(outcome)
+        _, detail = outcome_failure_facts(terminal_outcome)
         logger.warning("dossier.provider_failure", build_id=str(build_id), failure_code=code.value)
         _terminal_failure(
             db,
@@ -779,7 +933,15 @@ async def _run_synthesis_step(
         return None
 
     try:
-        decoded = decode_structured_synthesis(outcome, schema=binding.schema)
+        decoded = decode_structured_synthesis(terminal_outcome, schema=binding.schema)
+        expected_visible = getattr(decoded, _VISIBLE_SYNTHESIS_FIELD, None)
+        if not isinstance(expected_visible, str):
+            raise StructuredSynthesisError(
+                f"dossier schema has no string {_VISIBLE_SYNTHESIS_FIELD!r} field"
+            )
+        if projection_error is not None:
+            raise projection_error
+        projector.finish(expected=expected_visible)
     except StructuredSynthesisError as exc:
         _terminal_failure(
             db,
@@ -790,6 +952,20 @@ async def _run_synthesis_step(
             ctx=ctx,
             input_recheck=input_recheck,
         )
+        return None
+    final_flush = flush_deltas(force=True)
+    if final_flush == "inputs_changed":
+        _terminal_failure(
+            db,
+            build_id=build_id,
+            code=DossierBuildFailureCode.InputsChanged,
+            detail="inputs changed before streamed output completed",
+            support=None,
+            ctx=ctx,
+            input_recheck=input_recheck,
+        )
+        return None
+    if final_flush == "inactive":
         return None
 
     # Commit Completed with the normalized (decoded) result AFTER a clean decode, so
@@ -970,9 +1146,7 @@ def _terminal_failure(
                 "code": effective_code.value,
                 "detail": effective_detail,
                 "support": (
-                    json.dumps(effective_support)
-                    if effective_support is not None
-                    else None
+                    json.dumps(effective_support) if effective_support is not None else None
                 ),
             },
         )
@@ -982,16 +1156,8 @@ def _terminal_failure(
             event_type=ArtifactBuildEventType.Failed,
             payload=FailedEventPayload(
                 failure_code=effective_code,
-                detail=(
-                    present(effective_detail)
-                    if effective_detail is not None
-                    else absent()
-                ),
-                support=(
-                    present(effective_support)
-                    if effective_support is not None
-                    else absent()
-                ),
+                detail=(present(effective_detail) if effective_detail is not None else absent()),
+                support=(present(effective_support) if effective_support is not None else absent()),
             ).model_dump(mode="json"),
         )
         db.commit()
@@ -1017,6 +1183,143 @@ def _terminal_inputs_are_current(
         )
     except NotFoundError:
         return False
+
+
+def _append_guarded_stream_event(
+    db: Session,
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    input_recheck: _TerminalInputRecheck,
+    event_type: ArtifactBuildEventType,
+    payload: dict,
+    idempotent_once: bool = False,
+) -> _StreamEventWriteResult:
+    """Append one live-stream event in its own short fenced transaction."""
+
+    def op() -> _StreamEventWriteResult:
+        if _lock_head_id_for_build(db, build_id) is None:
+            db.rollback()
+            return "inactive"
+        if _existing_terminal_child(db, build_id) is not None or not _running_claim_is_current(
+            db, ctx
+        ):
+            db.rollback()
+            return "inactive"
+        if not _stream_visibility_is_current(db, input_recheck):
+            db.rollback()
+            return "inputs_changed"
+        if (
+            idempotent_once
+            and db.execute(
+                text(
+                    "SELECT EXISTS("
+                    "SELECT 1 FROM artifact_build_events "
+                    "WHERE build_id = :build_id AND event_type = :event_type"
+                    ")"
+                ),
+                {
+                    "build_id": build_id,
+                    "event_type": event_type.value,
+                },
+            ).scalar_one()
+        ):
+            db.commit()
+            return "written"
+        _append_build_event(
+            db,
+            build_id=build_id,
+            event_type=event_type,
+            payload=payload,
+        )
+        db.commit()
+        return "written"
+
+    return retry_serializable(db, "_append_guarded_stream_event", op)
+
+
+def _stream_guard_status(
+    db: Session,
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    input_recheck: _TerminalInputRecheck,
+) -> _StreamStopReason | None:
+    """Read the live head/terminal/lease/input fence from a watcher session."""
+    build_is_visible = bool(
+        db.execute(
+            text(
+                "SELECT EXISTS("
+                "SELECT 1 FROM artifacts a "
+                "JOIN artifact_builds b ON b.artifact_id = a.id "
+                "WHERE b.id = :build_id"
+                ")"
+            ),
+            {"build_id": build_id},
+        ).scalar_one()
+    )
+    if (
+        not build_is_visible
+        or _existing_terminal_child(db, build_id) is not None
+        or not _running_claim_is_current(db, ctx)
+    ):
+        return "inactive"
+    if not _stream_visibility_is_current(db, input_recheck):
+        return "inputs_changed"
+    return None
+
+
+def _stream_visibility_is_current(
+    db: Session,
+    recheck: _TerminalInputRecheck,
+) -> bool:
+    """Cheap live-stream fence; full witness hashing is terminal-only."""
+    try:
+        recheck.policy.authorize_generate(
+            db,
+            recheck.resolved,
+            recheck.requester_user_id,
+        )
+    except NotFoundError:
+        return False
+    return True
+
+
+async def _watch_stream_guard(
+    *,
+    build_id: UUID,
+    ctx: JobExecutionContext,
+    input_recheck: _TerminalInputRecheck,
+    guard: _StreamGuard,
+) -> None:
+    """Cancel a provider stream when its build can no longer publish.
+
+    A fresh session is opened for every poll so a long-lived worker transaction
+    cannot hide a committed cancellation, subject/audience visibility loss, or
+    lease loss. The potentially aggregate binding witness is intentionally
+    rechecked only before dispatch and at terminal promotion/failure.
+    """
+    session_factory = get_session_factory()
+    while not guard.cancel_signal.is_set():
+        with session_factory() as watch_db:
+            reason = _stream_guard_status(
+                watch_db,
+                build_id=build_id,
+                ctx=ctx,
+                input_recheck=input_recheck,
+            )
+            watch_db.rollback()
+        if reason is not None:
+            guard.stop_reason = reason
+            guard.cancel_signal.set()
+            return
+        try:
+            await asyncio.wait_for(
+                guard.cancel_signal.wait(),
+                timeout=_CANCEL_POLL_INTERVAL_SECONDS,
+            )
+        except TimeoutError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1274,9 +1577,7 @@ def read_head(
                         if b["requester_user_id"] is not None
                         else None
                     ),
-                    instruction=(
-                        str(b["instruction"]) if b["instruction"] is not None else None
-                    ),
+                    instruction=(str(b["instruction"]) if b["instruction"] is not None else None),
                     created_at=b["created_at"],
                     execution=_execution_phase(_job_state(db, build_id)),
                 )
@@ -1297,16 +1598,12 @@ def read_head(
                 instruction=str(b["instruction"]) if b["instruction"] is not None else None,
                 created_at=b["created_at"],
                 outcome="failed" if fail else "cancelled",
-                failure_code=(
-                    DossierBuildFailureCode(str(b["failure_code"])) if fail else None
-                ),
+                failure_code=(DossierBuildFailureCode(str(b["failure_code"])) if fail else None),
                 failure_detail=(
                     str(b["failure_detail"]) if b["failure_detail"] is not None else None
                 ),
                 failure_support=(
-                    dict(b["failure_support"])
-                    if isinstance(b["failure_support"], dict)
-                    else None
+                    dict(b["failure_support"]) if isinstance(b["failure_support"], dict) else None
                 ),
                 cancellation_actor_user_id=(
                     UUID(str(b["cancellation_actor_user_id"]))
@@ -1362,8 +1659,7 @@ def lock_cleanup_heads_in_order(
     """
     subject_keys = list(
         {
-            (ref.scheme, ref.id): {"scheme": ref.scheme, "id": str(ref.id)}
-            for ref in subject_refs
+            (ref.scheme, ref.id): {"scheme": ref.scheme, "id": str(ref.id)} for ref in subject_refs
         }.values()
     )
     audience_keys = list(
@@ -1670,8 +1966,7 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
         UUID(str(row[0]))
         for row in db.execute(
             text(
-                "SELECT build_id FROM artifact_build_cancellations "
-                "WHERE actor_user_id = :user_id"
+                "SELECT build_id FROM artifact_build_cancellations WHERE actor_user_id = :user_id"
             ),
             {"user_id": user_id},
         )
@@ -1695,8 +1990,7 @@ def on_user_deleted(db: Session, *, user_id: UUID) -> None:
     )
     db.execute(
         text(
-            "UPDATE artifact_build_cancellations SET actor_user_id = NULL "
-            "WHERE actor_user_id = :u"
+            "UPDATE artifact_build_cancellations SET actor_user_id = NULL WHERE actor_user_id = :u"
         ),
         {"u": user_id},
     )

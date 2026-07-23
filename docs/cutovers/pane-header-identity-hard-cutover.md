@@ -4,6 +4,11 @@ Status: IMPLEMENTED - 2026-07-21
 Type: hard cutover
 Date: 2026-07-20
 
+> **Superseded (2026-07-23):** Document Map as the generic disclosure action was
+> replaced by the universal Companion action in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> The retained header-identity rules remain background, not current opener guidance.
+
 ## Decision
 
 Ship one atomic cutover to:

@@ -25,6 +25,8 @@ note). Structured synthesis is a pure decode/scaffold module: it never calls a
 provider, so these tests need no DB and no LLM stub.
 """
 
+import json
+
 import pytest
 from provider_runtime import (
     Absent,
@@ -61,6 +63,7 @@ from nexus.services.media_intelligence import _MEDIA_UNIT_SYSTEM_PROMPT
 from nexus.services.oracle import _ORACLE_SYSTEM_PROMPT
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
+    StrictJsonStringFieldProjector,
     StructuredSynthesisError,
     build_synthesis_intent,
     build_synthesis_prompt,
@@ -101,6 +104,48 @@ def _succeeded(payload: dict[str, object]) -> Succeeded:
             content=StructuredContent(payload=payload, text="{}"), continuation=Absent()
         ),
     )
+
+
+# ---------- strict-JSON visible-field projection ----------------------------
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 7, 64])
+def test_strict_json_string_field_projector_decodes_only_the_selected_field(
+    chunk_size: int,
+) -> None:
+    expected = 'A "quoted" line\nwith a snowman ☃ and an emoji 😀.'
+    raw = json.dumps(
+        {
+            "citations": [
+                {
+                    "label": 'misleading "content_md": "not visible"',
+                }
+            ],
+            "content_md": expected,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    projector = StrictJsonStringFieldProjector(field="content_md")
+
+    visible = "".join(
+        projector.feed(raw[offset : offset + chunk_size])
+        for offset in range(0, len(raw), chunk_size)
+    )
+
+    projector.finish(expected=expected)
+    assert visible == expected
+    assert '{"content_md"' not in visible
+    assert '\\"' not in visible
+    assert "\\u" not in visible
+
+
+def test_strict_json_string_field_projector_rejects_terminal_mismatch() -> None:
+    projector = StrictJsonStringFieldProjector(field="content_md")
+    assert projector.feed('{"content_md":"visible","citations":[]}') == "visible"
+
+    with pytest.raises(StructuredSynthesisError, match="does not match"):
+        projector.finish(expected="different")
 
 
 # ---------- golden prompt reproduction ---------------------------------------

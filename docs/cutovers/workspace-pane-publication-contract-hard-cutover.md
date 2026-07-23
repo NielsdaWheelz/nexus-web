@@ -5,6 +5,12 @@ Author: Codex
 Type: hard cutover
 Date: 2026-06-20
 
+> **Superseded in part (2026-07-23):** The stale resource-group map and old
+> reader/chat group IDs in this document were replaced by the single Resource
+> Inspector publication in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> The publication value/equality contract remains authoritative.
+
 ## North Star
 
 Pane bodies publish ephemeral workspace capabilities through one canonical value

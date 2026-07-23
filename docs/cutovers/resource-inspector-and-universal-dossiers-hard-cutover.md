@@ -1,6 +1,6 @@
 # Resource Inspector And Universal Dossiers Hard Cutover
 
-Status: IMPLEMENTED AND VERIFIED · UNSHIPPED · Rev 3
+Status: IMPLEMENTED AND VERIFIED · UNSHIPPED · Rev 4
 Type: hard cutover
 Date: 2026-07-23
 Open questions: none
@@ -209,11 +209,25 @@ head =
 
 revision_selection = Current | Historical { revision_ref }
 historical_revision = Idle | Loading | Ready { revision } | Failed { error }
-stream = Disconnected | Connecting | Live | Reconnecting | Suspended | Terminal
+stream =
+  | Disconnected
+  | Connecting
+  | Live
+  | Reconnecting
+  | Suspended
+  | Terminal {
+      outcome: Succeeded | Failed { facts } | Cancelled { facts }
+      reconciled: boolean
+    }
 ```
 
 One exhaustive view-model helper derives the valid visual states. It does not
 encode absence as booleans or flatten API `Presence` values.
+
+A persisted terminal event moves `stream` to typed `Terminal` immediately and
+outranks any stale `active_build` snapshot. `reconciled` becomes true only after
+the exact revision or build outcome appears in a successful head read; a failed
+head read therefore cannot regress terminal UI to “Generating.”
 
 Freshness describes only the current revision. Make current clears historical
 selection. Tab switches retain selection; closing and reopening the Inspector
@@ -1230,13 +1244,16 @@ No partial state ships.
 
 - Migration/schema: 27 focused migration cases pass; the real-stack journey
   also applies the complete migration chain through `0190` on a clean database.
-- Backend: 81 core Dossier owner cases, 20 authorization/read cases, 13
-  teardown/concurrency cases, and 197 hard-cut residue gates pass.
-- Frontend: TypeScript and changed-file ESLint pass; 66 focused unit and 141
+- Backend: 90 core Dossier/Media Intelligence cases, 20 authorization/read
+  cases, and 60 structured-synthesis/real-fixture cases pass; Ruff formatting,
+  Ruff lint, and focused Pyright pass.
+- Hard-cut residue: 207 Python gates and 6 frontend guards pass.
+- Frontend: TypeScript and changed-file ESLint pass; 37 focused unit and 139
   focused browser cases pass.
-- Real stack: the exact Resource Inspector Playwright journey passes in Chromium
-  with auth setup, all seven resources, streaming reconnect/cancel, history,
-  citation activation, and 390px mobile coverage.
+- Real stack: the exact two-test Resource Inspector Playwright run passes in
+  Chromium (auth setup plus the product journey) with all seven resources,
+  streaming reconnect/cancel, history, citation activation, and 390px mobile
+  coverage.
 
 ## Final State
 

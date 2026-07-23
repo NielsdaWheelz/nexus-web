@@ -760,7 +760,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
       throw new Error("Expected route-scoped publication callbacks");
     }
 
-    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_EVIDENCE_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
     setPaneHref(MEDIA_HREF_2);
     view.rerender(<WorkspaceHost />);
@@ -969,15 +969,16 @@ describe("WorkspaceHost pane route lifecycle", () => {
   });
 });
 
-const READER_TOOLS_EVIDENCE_ONLY: PaneSecondaryPublication = {
+const RESOURCE_INSPECTOR_EVIDENCE_ONLY: PaneSecondaryPublication = {
   groupId: "resource-inspector",
   defaultSurfaceId: "resource-evidence",
   surfaces: [{ id: "resource-evidence", body: <div>Evidence</div> }],
 };
 
-const READER_TOOLS_HIGHLIGHTS_ONLY = READER_TOOLS_EVIDENCE_ONLY;
+const RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY =
+  RESOURCE_INSPECTOR_EVIDENCE_ONLY;
 
-const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
+const RESOURCE_INSPECTOR_WITH_CONTENTS: PaneSecondaryPublication = {
   groupId: "resource-inspector",
   defaultSurfaceId: "resource-evidence",
   surfaces: [
@@ -1102,7 +1103,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
 
     render(<WorkspaceHost />);
 
@@ -1123,12 +1124,51 @@ describe("WorkspaceHost secondary publication validation", () => {
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
   });
 
+  it("restores desktop focus on close/Escape, with pane-chrome fallback for a detached opener", async () => {
+    hostMocks.useActualPaneShell = true;
+    setPaneWithSecondary({
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
+    });
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
+
+    render(
+      <MobileChromeProvider>
+        <WorkspaceHost />
+      </MobileChromeProvider>,
+    );
+
+    await screen.findByTestId("workspace-secondary-pane");
+    const opener = screen.getByRole("button", { name: "Open Companion" });
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("button", { name: "Close Evidence" }));
+
+    expect(hostMocks.store.closeSecondaryPane).toHaveBeenCalledWith(
+      "secondary-1",
+    );
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    hostMocks.store.closeSecondaryPane.mockClear();
+    fireEvent.click(opener);
+    const evidenceTab = screen.getByRole("tab", { name: "Evidence" });
+    evidenceTab.focus();
+    opener.remove();
+    fireEvent.keyDown(evidenceTab, { key: "Escape" });
+
+    expect(hostMocks.store.closeSecondaryPane).toHaveBeenCalledWith(
+      "secondary-1",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Options" })).toHaveFocus(),
+    );
+  });
+
   it("republishes secondary and fixed chrome when a same-resource route instance changes", async () => {
     setPaneWithSecondary({
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
     const { rerender } = render(<WorkspaceHost />);
 
@@ -1165,7 +1205,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
     const { rerender } = render(<WorkspaceHost />);
 
     await waitFor(() => {
@@ -1202,7 +1242,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
 
     const { rerender } = render(<WorkspaceHost />);
@@ -1268,7 +1308,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-contents",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_EVIDENCE_ONLY;
 
     render(<WorkspaceHost />);
 
@@ -1316,7 +1356,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   });
 
   it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
-    hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_WITH_CONTENTS;
     const activation = { kind: "Surface", surfaceId: "resource-evidence" } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
@@ -1336,7 +1376,7 @@ describe("WorkspaceHost secondary publication validation", () => {
   });
 
   it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
-    hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_EVIDENCE_ONLY;
     const activation = { kind: "Surface", surfaceId: "resource-contents" } as const;
     hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
       ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
@@ -1441,7 +1481,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
 
     render(<WorkspaceHost />);
 
@@ -1473,7 +1513,7 @@ describe("WorkspaceHost secondary publication validation", () => {
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
     });
-    hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
+    hostMocks.secondaryPublication = RESOURCE_INSPECTOR_HIGHLIGHTS_ONLY;
 
     render(<WorkspaceHost />);
 

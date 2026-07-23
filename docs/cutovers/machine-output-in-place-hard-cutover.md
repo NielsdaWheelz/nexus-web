@@ -3,6 +3,11 @@
 **Status:** Spec · Rev 1 · 2026-07-07
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior. The secondary-drawer surfaces are deleted, not toggled.
 
+> **Superseded (2026-07-23):** The inline Library Dossier and Page/Note
+> Connections placement described here was replaced by the shared Companion in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> This file is historical context, not current implementation guidance.
+
 ## One-line
 
 The library brief and a page's connections are machine-authored artifacts demoted to opt-in secondary drawers you must remember exist. Delete the two drawers — the `library-tools`/`Intelligence` and `notes-tools`/`Connections` secondary surfaces — and render their content **in place**: the dossier as a quiet typeset brief above the entry list on the library it describes, the resonance connections as a foot-of-page apparatus on the page they belong to. The reader is out of scope (sibling #8 owns it).

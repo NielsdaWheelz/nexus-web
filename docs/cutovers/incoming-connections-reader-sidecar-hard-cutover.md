@@ -5,6 +5,11 @@ Author: design synthesis, 2026-06-12
 Type: hard cutover - one-user prototype, production-grade contracts, no legacy
 lanes, no compatibility shims, no fallback readers, no duplicate graph APIs.
 
+> **Superseded (2026-07-23):** The old reader group/surface placement described
+> here was replaced by the shared Resource Inspector in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> Its graph semantics remain historical background, not current shell guidance.
+
 ## Current state and supersession
 
 The surviving capability is the internal target-centered connection projection

@@ -3,6 +3,11 @@
 **Status:** BUILT · outer-surface consolidation complete · 2026-07-20
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims.
 
+> **Superseded (2026-07-23):** The surviving `reader-tools` group and old reader
+> surface IDs described here were replaced by the shared Resource Inspector in
+> [`resource-inspector-and-universal-dossiers-hard-cutover.md`](resource-inspector-and-universal-dossiers-hard-cutover.md).
+> This file is historical context, not current shell guidance.
+
 ## Current state and supersession
 
 > **Superseded (2026-07-22):** the reader quote-to-chat mechanism described here

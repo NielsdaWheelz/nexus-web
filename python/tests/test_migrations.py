@@ -21755,9 +21755,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
     # ------------------------------------------------------------------ #
     def _table_exists(self, session: Session, table: str) -> bool:
         return (
-            session.execute(
-                text("SELECT to_regclass(:q)"), {"q": f"public.{table}"}
-            ).scalar_one()
+            session.execute(text("SELECT to_regclass(:q)"), {"q": f"public.{table}"}).scalar_one()
             is not None
         )
 
@@ -21796,10 +21794,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
         return {
             row[0]
             for row in session.execute(
-                text(
-                    "SELECT conname FROM pg_constraint"
-                    " WHERE conrelid = CAST(:t AS regclass)"
-                ),
+                text("SELECT conname FROM pg_constraint WHERE conrelid = CAST(:t AS regclass)"),
                 {"t": table},
             ).fetchall()
         }
@@ -21864,7 +21859,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 "INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)"
                 " VALUES (:id, :ss, :si, :kind, :uid)"
             ),
-            {"id": artifact_id, "ss": subject_scheme, "si": subject_id, "kind": kind, "uid": user_id},
+            {
+                "id": artifact_id,
+                "ss": subject_scheme,
+                "si": subject_id,
+                "kind": kind,
+                "uid": user_id,
+            },
         )
 
     def _insert_revision(
@@ -22018,12 +22019,16 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             {"ok": owner_kind, "oid": owner_id, "seq": call_seq, "op": llm_operation},
         )
 
-    def _library_covered(self, media_id, *, fingerprint: str = "fp-abc", coverage: str = "included"):
-        # Shape produced by reducers/library_dossier.py:296-302.
-        return [{"kind": "media", "id": str(media_id), "fingerprint": fingerprint, "coverage": coverage}]
+    def _library_covered(
+        self, media_id, *, fingerprint: str = "fp-abc", coverage: str = "included"
+    ):
+        # Historical Library coverage shape consumed by the destructive migration.
+        return [
+            {"kind": "media", "id": str(media_id), "fingerprint": fingerprint, "coverage": coverage}
+        ]
 
     def _conversation_covered(self, conversation_id, *, leaf_id, message_count: int = 3):
-        # Shape produced by reducers/conversation_distillate.py:165-174.
+        # Historical Conversation coverage shape consumed by the destructive migration.
         return [
             {
                 "kind": "conversation",
@@ -22050,8 +22055,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             row[0]
             for row in session.execute(
                 text(
-                    "SELECT event_type FROM artifact_build_events"
-                    " WHERE build_id = :b ORDER BY seq"
+                    "SELECT event_type FROM artifact_build_events WHERE build_id = :b ORDER BY seq"
                 ),
                 {"b": build_id},
             ).fetchall()
@@ -22166,9 +22170,14 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_build_failures")
                 fcols = self._column_nullability(session, "artifact_build_failures")
-                assert {"id", "build_id", "failure_code", "detail", "support", "created_at"}.issubset(
-                    fcols
-                ), f"failure columns: {sorted(fcols)}"
+                assert {
+                    "id",
+                    "build_id",
+                    "failure_code",
+                    "detail",
+                    "support",
+                    "created_at",
+                }.issubset(fcols), f"failure columns: {sorted(fcols)}"
                 assert fcols["build_id"] == "NO"
                 assert frozenset({"build_id"}) in self._unique_column_sets(
                     session, "artifact_build_failures"
@@ -22342,7 +22351,9 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                         " WHERE tgname = 'library_intelligence_revision_events_notify'"
                     )
                 ).scalar_one()
-                assert old_trigger == 0, "the inherited library-intelligence trigger must be dropped"
+                assert old_trigger == 0, (
+                    "the inherited library-intelligence trigger must be dropped"
+                )
 
                 new_fn = session.execute(
                     text(
@@ -22522,15 +22533,24 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     ordinal=2,
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    session,
+                    revision_id=revision_id,
+                    seq=1,
+                    event_type="meta",
                     payload={"revision_id": str(revision_id)},
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=2, event_type="progress",
+                    session,
+                    revision_id=revision_id,
+                    seq=2,
+                    event_type="progress",
                     payload={"message": "reducing"},
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=3, event_type="done",
+                    session,
+                    revision_id=revision_id,
+                    seq=3,
+                    event_type="done",
                     payload={"status": "ready", "revision_id": str(revision_id)},
                 )
                 session.commit()
@@ -22541,13 +22561,17 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
 
-                head = session.execute(
-                    text(
-                        "SELECT audience_scheme, audience_id, current_revision_id"
-                        " FROM artifacts WHERE id = :a"
-                    ),
-                    {"a": artifact_id},
-                ).mappings().one()
+                head = (
+                    session.execute(
+                        text(
+                            "SELECT audience_scheme, audience_id, current_revision_id"
+                            " FROM artifacts WHERE id = :a"
+                        ),
+                        {"a": artifact_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert head["audience_scheme"] == "library"
                 assert str(head["audience_id"]) == str(library_id), (
                     "library dossier audience is Library(subject_id)"
@@ -22556,14 +22580,18 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     "a preserved citation-valid success keeps the current pointer"
                 )
 
-                rev = session.execute(
-                    text(
-                        "SELECT build_id, citation_owner_user_id, creator_user_id, input_manifest,"
-                        " content_md, created_at, promoted_at"
-                        " FROM artifact_revisions WHERE id = :r"
-                    ),
-                    {"r": revision_id},
-                ).mappings().one()
+                rev = (
+                    session.execute(
+                        text(
+                            "SELECT build_id, citation_owner_user_id, creator_user_id, input_manifest,"
+                            " content_md, created_at, promoted_at"
+                            " FROM artifact_revisions WHERE id = :r"
+                        ),
+                        {"r": revision_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert rev["build_id"] is not None, "the preserved revision must gain a build FK"
                 assert str(rev["citation_owner_user_id"]) == str(requester_id), (
                     "citation_owner_user_id backfills from historical artifacts.user_id"
@@ -22599,19 +22627,25 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     ],
                 }, f"Library migration manifest must use the exact typed adapter: {manifest!r}"
 
-                build = session.execute(
-                    text(
-                        "SELECT artifact_id, requester_user_id, idempotency_key, created_at"
-                        " FROM artifact_builds WHERE id = :b"
-                    ),
-                    {"b": rev["build_id"]},
-                ).mappings().one()
+                build = (
+                    session.execute(
+                        text(
+                            "SELECT artifact_id, requester_user_id, idempotency_key, created_at"
+                            " FROM artifact_builds WHERE id = :b"
+                        ),
+                        {"b": rev["build_id"]},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert str(build["artifact_id"]) == str(artifact_id)
                 assert str(build["requester_user_id"]) == str(requester_id), (
                     "requester backfills from historical artifacts.user_id"
                 )
                 assert str(build["requester_user_id"]) != str(library_owner_id)
-                assert build["idempotency_key"] == "idem-lib-ready", "idempotency moves to the build"
+                assert build["idempotency_key"] == "idem-lib-ready", (
+                    "idempotency moves to the build"
+                )
                 assert build["created_at"] == rev["created_at"], (
                     "build created_at is the legacy revision start"
                 )
@@ -22826,16 +22860,22 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     text("SELECT current_revision_id FROM artifacts WHERE id = :a"),
                     {"a": artifact_id},
                 ).scalar_one()
-                assert current is None, "the current pointer must be cleared for a zero-citation head"
+                assert current is None, (
+                    "the current pointer must be cleared for a zero-citation head"
+                )
 
                 build_id = self._sole_build_id_for_artifact(session, artifact_id)
-                failure = session.execute(
-                    text(
-                        "SELECT failure_code, support FROM artifact_build_failures"
-                        " WHERE build_id = :b"
-                    ),
-                    {"b": build_id},
-                ).mappings().one()
+                failure = (
+                    session.execute(
+                        text(
+                            "SELECT failure_code, support FROM artifact_build_failures"
+                            " WHERE build_id = :b"
+                        ),
+                        {"b": build_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert failure["failure_code"] == "MigratedIncomplete"
                 support_blob = json.dumps(failure["support"])
                 assert "LegacyZeroCitation" in support_blob, "support.reason = LegacyZeroCitation"
@@ -22903,11 +22943,17 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     error_detail="too big",
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    session,
+                    revision_id=revision_id,
+                    seq=1,
+                    event_type="meta",
                     payload={"revision_id": str(revision_id)},
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=2, event_type="done",
+                    session,
+                    revision_id=revision_id,
+                    seq=2,
+                    event_type="done",
                     payload={"status": "failed", "error_code": "context_too_large"},
                 )
                 session.commit()
@@ -22923,7 +22969,11 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     {"b": build_id},
                 ).scalar_one()
                 assert failure_code == "MigratedFailure"
-                terminal = [e for e in self._event_types(session, build_id) if e in self._TERMINAL_EVENT_TYPES]
+                terminal = [
+                    e
+                    for e in self._event_types(session, build_id)
+                    if e in self._TERMINAL_EVENT_TYPES
+                ]
                 assert terminal == ["Failed"]
         finally:
             reset_test_schema()
@@ -22962,7 +23012,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     completed_at=None,
                 )
                 self._insert_revision_event(
-                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    session,
+                    revision_id=revision_id,
+                    seq=1,
+                    event_type="meta",
                     payload={"revision_id": str(revision_id)},
                 )
                 session.commit()
@@ -22973,17 +23026,25 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
                 build_id = self._sole_build_id_for_artifact(session, artifact_id)
-                failure = session.execute(
-                    text(
-                        "SELECT failure_code, support FROM artifact_build_failures WHERE build_id = :b"
-                    ),
-                    {"b": build_id},
-                ).mappings().one()
+                failure = (
+                    session.execute(
+                        text(
+                            "SELECT failure_code, support FROM artifact_build_failures WHERE build_id = :b"
+                        ),
+                        {"b": build_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert failure["failure_code"] == "MigratedIncomplete"
                 assert "LegacyBuilding" in json.dumps(failure["support"]), (
                     "an in-flight legacy build maps to support.reason = LegacyBuilding"
                 )
-                terminal = [e for e in self._event_types(session, build_id) if e in self._TERMINAL_EVENT_TYPES]
+                terminal = [
+                    e
+                    for e in self._event_types(session, build_id)
+                    if e in self._TERMINAL_EVENT_TYPES
+                ]
                 assert terminal == ["Failed"], "a never-finished build terminalizes Failed"
         finally:
             reset_test_schema()
@@ -23040,10 +23101,14 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
 
             with Session(engine) as session:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
-                head = session.execute(
-                    text("SELECT audience_scheme, audience_id FROM artifacts WHERE id = :a"),
-                    {"a": artifact_id},
-                ).mappings().one()
+                head = (
+                    session.execute(
+                        text("SELECT audience_scheme, audience_id FROM artifacts WHERE id = :a"),
+                        {"a": artifact_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert head["audience_scheme"] == "user", (
                     "a conversation distillate becomes owner-User audience"
                 )
@@ -23067,18 +23132,19 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                         "reason": "MigratedCoverageGap",
                     },
                 }, f"Conversation migration manifest must use the exact typed adapter: {manifest!r}"
-                revision = session.execute(
-                    text(
-                        "SELECT build_id, citation_owner_user_id, creator_user_id"
-                        " FROM artifact_revisions WHERE id = :r"
-                    ),
-                    {"r": revision_id},
-                ).mappings().one()
+                revision = (
+                    session.execute(
+                        text(
+                            "SELECT build_id, citation_owner_user_id, creator_user_id"
+                            " FROM artifact_revisions WHERE id = :r"
+                        ),
+                        {"r": revision_id},
+                    )
+                    .mappings()
+                    .one()
+                )
                 build_requester = session.execute(
-                    text(
-                        "SELECT requester_user_id FROM artifact_builds"
-                        " WHERE id = :build"
-                    ),
+                    text("SELECT requester_user_id FROM artifact_builds WHERE id = :build"),
                     {"build": revision["build_id"]},
                 ).scalar_one()
                 assert str(build_requester) == str(requester_id)
@@ -23194,7 +23260,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 self._set_current(session, lib_artifact, lib_revision)
                 self._insert_citation_edge(
-                    session, owner_user_id=lib_user, revision_id=lib_revision, target_media_id=media_id
+                    session,
+                    owner_user_id=lib_user,
+                    revision_id=lib_revision,
+                    target_media_id=media_id,
                 )
                 self._insert_llm_call(
                     session,
@@ -23226,7 +23295,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 self._set_current(session, conv_artifact, conv_revision)
                 self._insert_citation_edge(
-                    session, owner_user_id=conv_user, revision_id=conv_revision, target_media_id=conv_media
+                    session,
+                    owner_user_id=conv_user,
+                    revision_id=conv_revision,
+                    target_media_id=conv_media,
                 )
                 self._insert_llm_call(
                     session,
@@ -23244,29 +23316,39 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
                 assert (
                     session.execute(
-                        text("SELECT count(*) FROM llm_calls WHERE owner_kind = 'artifact_revision'")
+                        text(
+                            "SELECT count(*) FROM llm_calls WHERE owner_kind = 'artifact_revision'"
+                        )
                     ).scalar_one()
                     == 0
                 ), "no ledger row may retain owner_kind='artifact_revision'"
 
                 lib_build = self._build_id_for_revision(session, lib_revision)
-                lib_row = session.execute(
-                    text(
-                        "SELECT owner_kind, owner_id, llm_operation FROM llm_calls"
-                        " WHERE owner_id = :b"
-                    ),
-                    {"b": lib_build},
-                ).mappings().one()
+                lib_row = (
+                    session.execute(
+                        text(
+                            "SELECT owner_kind, owner_id, llm_operation FROM llm_calls"
+                            " WHERE owner_id = :b"
+                        ),
+                        {"b": lib_build},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert lib_row["owner_kind"] == "artifact_build"
                 assert lib_row["llm_operation"] == "dossier_library", (
                     "library_dossier operation rewrites to dossier_library"
                 )
 
                 conv_build = self._build_id_for_revision(session, conv_revision)
-                conv_row = session.execute(
-                    text("SELECT owner_kind, llm_operation FROM llm_calls WHERE owner_id = :b"),
-                    {"b": conv_build},
-                ).mappings().one()
+                conv_row = (
+                    session.execute(
+                        text("SELECT owner_kind, llm_operation FROM llm_calls WHERE owner_id = :b"),
+                        {"b": conv_build},
+                    )
+                    .mappings()
+                    .one()
+                )
                 assert conv_row["owner_kind"] == "artifact_build"
                 assert conv_row["llm_operation"] == "dossier_conversation", (
                     "conversation_distillate operation rewrites to dossier_conversation"
@@ -23310,11 +23392,17 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 self._set_current(session, artifact_id, revision_id)
                 self._insert_citation_edge(
-                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
                 )
                 for seq, etype in [(1, "meta"), (2, "progress"), (3, "delta"), (4, "done")]:
                     self._insert_revision_event(
-                        session, revision_id=revision_id, seq=seq, event_type=etype,
+                        session,
+                        revision_id=revision_id,
+                        seq=seq,
+                        event_type=etype,
                         payload={"seq": seq},
                     )
                 session.commit()
@@ -23327,13 +23415,17 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     "the legacy per-revision event table must be gone"
                 )
                 build_id = self._build_id_for_revision(session, revision_id)
-                rows = session.execute(
-                    text(
-                        "SELECT seq, event_type, payload FROM artifact_build_events"
-                        " WHERE build_id = :b ORDER BY seq"
-                    ),
-                    {"b": build_id},
-                ).mappings().all()
+                rows = (
+                    session.execute(
+                        text(
+                            "SELECT seq, event_type, payload FROM artifact_build_events"
+                            " WHERE build_id = :b ORDER BY seq"
+                        ),
+                        {"b": build_id},
+                    )
+                    .mappings()
+                    .all()
+                )
                 assert rows, "the legacy events must be re-keyed onto the mapped build"
                 seqs = [row["seq"] for row in rows]
                 assert len(seqs) == len(set(seqs)), "unique (build_id, seq)"
@@ -23353,9 +23445,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 from nexus.services.artifacts.handles import parse_artifact_build_handle
 
-                payload_by_type = {
-                    row["event_type"]: row["payload"] for row in rows
-                }
+                payload_by_type = {row["event_type"]: row["payload"] for row in rows}
                 started = StartedEventPayload.model_validate(payload_by_type["Started"])
                 parsed_handle = parse_artifact_build_handle(started.build_handle)
                 assert parsed_handle.build_id == build_id, (
@@ -23365,12 +23455,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert started.subject_locator.ref == f"library:{library_id}"
                 ProgressEventPayload.model_validate(payload_by_type["Progress"])
                 DeltaEventPayload.model_validate(payload_by_type["Delta"])
-                succeeded = SucceededEventPayload.model_validate(
-                    payload_by_type["Succeeded"]
-                )
-                assert succeeded.artifact_revision_ref == (
-                    f"artifact_revision:{revision_id}"
-                )
+                succeeded = SucceededEventPayload.model_validate(payload_by_type["Succeeded"])
+                assert succeeded.artifact_revision_ref == (f"artifact_revision:{revision_id}")
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -23407,25 +23493,48 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     user_id=user_id,
                 )
                 self._insert_revision(
-                    session, revision_id=rev_ready_cited, artifact_id=artifact_id, status="ready",
-                    covered_targets=self._library_covered(media_id), idempotency_key="idem-a",
+                    session,
+                    revision_id=rev_ready_cited,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-a",
                     promoted_at="2026-05-07T00:06:00Z",
                 )
                 self._insert_citation_edge(
-                    session, owner_user_id=user_id, revision_id=rev_ready_cited, target_media_id=media_id
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=rev_ready_cited,
+                    target_media_id=media_id,
                 )
                 self._insert_revision(
-                    session, revision_id=rev_ready_zero, artifact_id=artifact_id, status="ready",
-                    covered_targets=self._library_covered(media_id), content="zero-cite",
+                    session,
+                    revision_id=rev_ready_zero,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    content="zero-cite",
                     idempotency_key="idem-b",
                 )
                 self._insert_revision(
-                    session, revision_id=rev_failed, artifact_id=artifact_id, status="failed",
-                    covered_targets=[], content="", idempotency_key="idem-c", error_code="provider_refused",
+                    session,
+                    revision_id=rev_failed,
+                    artifact_id=artifact_id,
+                    status="failed",
+                    covered_targets=[],
+                    content="",
+                    idempotency_key="idem-c",
+                    error_code="provider_refused",
                 )
                 self._insert_revision(
-                    session, revision_id=rev_building, artifact_id=artifact_id, status="building",
-                    covered_targets=[], content="", idempotency_key="idem-d", completed_at=None,
+                    session,
+                    revision_id=rev_building,
+                    artifact_id=artifact_id,
+                    status="building",
+                    covered_targets=[],
+                    content="",
+                    idempotency_key="idem-d",
+                    completed_at=None,
                 )
                 # current points at the citation-valid success -> retained.
                 self._set_current(session, artifact_id, rev_ready_cited)
@@ -23463,9 +23572,11 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                         {"a": artifact_id},
                     ).fetchall()
                 )
-                assert failure_codes == ["MigratedFailure", "MigratedIncomplete", "MigratedIncomplete"], (
-                    f"3 non-preserved revisions -> 3 failure children; got {failure_codes}"
-                )
+                assert failure_codes == [
+                    "MigratedFailure",
+                    "MigratedIncomplete",
+                    "MigratedIncomplete",
+                ], f"3 non-preserved revisions -> 3 failure children; got {failure_codes}"
 
                 terminal_counts = dict(
                     session.execute(
@@ -23550,9 +23661,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             )
             with Session(engine) as session:
                 assert (
-                    session.execute(
-                        text("SELECT version_num FROM alembic_version")
-                    ).scalar_one()
+                    session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                     == "0189"
                 )
         finally:
@@ -23596,14 +23705,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 session.commit()
 
             result = run_alembic_command("upgrade head")
-            assert result.returncode != 0, (
-                f"0190 must reject {legacy_kind!r} on {subject_scheme!r}"
-            )
+            assert result.returncode != 0, f"0190 must reject {legacy_kind!r} on {subject_scheme!r}"
             with Session(engine) as session:
                 assert (
-                    session.execute(
-                        text("SELECT version_num FROM alembic_version")
-                    ).scalar_one()
+                    session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                     == "0189"
                 )
         finally:
@@ -23625,10 +23730,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 # Corrupt the legacy uniqueness deliberately: preflight must
                 # detect the collision before installing the new identity.
                 session.execute(
-                    text(
-                        "ALTER TABLE artifacts DROP CONSTRAINT"
-                        " uq_artifacts_subject_kind"
-                    )
+                    text("ALTER TABLE artifacts DROP CONSTRAINT uq_artifacts_subject_kind")
                 )
                 for _ in range(2):
                     self._insert_head(
@@ -23647,9 +23749,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             )
             with Session(engine) as session:
                 assert (
-                    session.execute(
-                        text("SELECT version_num FROM alembic_version")
-                    ).scalar_one()
+                    session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                     == "0189"
                 )
         finally:
@@ -23701,9 +23801,7 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             )
             with Session(engine) as session:
                 assert (
-                    session.execute(
-                        text("SELECT version_num FROM alembic_version")
-                    ).scalar_one()
+                    session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
                     == "0189"
                 )
         finally:
@@ -23747,7 +23845,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 self._set_current(session, artifact_id, revision_id)
                 self._insert_citation_edge(
-                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
                 )
                 session.commit()
 
@@ -23801,7 +23902,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 self._set_current(session, artifact_id, revision_id)
                 self._insert_citation_edge(
-                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
                 )
                 # orphan ledger row: owner_id references no artifact_revision.
                 self._insert_llm_call(
@@ -23866,7 +23970,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 self._set_current(session, artifact_id, revision_id)
                 # edge owned by a DIFFERENT user than artifacts.user_id.
                 self._insert_citation_edge(
-                    session, owner_user_id=other_id, revision_id=revision_id, target_media_id=media_id
+                    session,
+                    owner_user_id=other_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
                 )
                 session.commit()
 

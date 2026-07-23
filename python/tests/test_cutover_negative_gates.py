@@ -1,20 +1,20 @@
 """CI-assertable negative gates for finished hard cutovers.
 
-Each test greps production code (``python/nexus`` + ``apps/web/src``) and asserts
+Most tests grep production code (``python/nexus`` + ``apps/web/src``) and assert
 that a dropped symbol is ABSENT (or, for the anti-over-deletion gates, that a
-must-REMAIN symbol is PRESENT). The point of these gates is to keep hard cutovers
-from silently regressing — a reintroduced section compiler, a revived
-verifier-taxonomy column, legacy provider-runtime import path, or an over-eager
-deletion of a load-bearing store all fail here with a file:line pointer.
+must-REMAIN symbol is PRESENT). A cutover may additionally name its deployment,
+test, or governing-document roots when those are part of the deletion contract.
+The point of these gates is to keep hard cutovers from silently regressing — a
+reintroduced section compiler, a revived verifier-taxonomy column, legacy
+provider-runtime import path, or an over-eager deletion of a load-bearing store
+all fail here with a file:line pointer.
 
 These are pure repo greps (no DB, no app import), so they run in the unit lane.
-Each gate scans ONLY ``python/nexus`` + ``apps/web/src``.
 
-Exclusions (intentional): the drop migrations (repo-root ``migrations/``) and the
-Python tests (``python/tests/``) both live OUTSIDE the scanned roots, so they can
-never appear in a hit and need no exclusion. The only thing that needs excluding
-is the frontend ``*.test.{ts,tsx}`` files, which DO live under apps/web/src and
-legitimately name dropped symbols in their own absence assertions.
+Exclusions (intentional): drop migrations preserve immutable history. Most
+runtime gates omit Python tests and exclude frontend ``*.test.{ts,tsx}`` files.
+Cutovers that also govern source-reading tests scan those roots explicitly and
+exclude only their own absence assertion.
 """
 
 from __future__ import annotations
@@ -31,6 +31,8 @@ pytestmark = pytest.mark.unit
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PY_ROOT = _REPO_ROOT / "python" / "nexus"
 _WEB_ROOT = _REPO_ROOT / "apps" / "web" / "src"
+_PY_TEST_ROOT = _REPO_ROOT / "python" / "tests"
+_DEPLOY_ROOT = _REPO_ROOT / "deploy"
 # python/scripts (corpus seeds, e2e seed, migration helpers) is production-adjacent
 # code that the provenance-graph battery (§18.3) must also scrub.
 _SCRIPTS_ROOT = _REPO_ROOT / "python" / "scripts"
@@ -530,6 +532,187 @@ def test_dossier_runtime_has_one_generic_route_and_engine_owner():
     assert "if manifest.kind" not in route_source
     assert "media_intelligence" not in route_source
     assert "_media_abstract" not in route_source
+
+
+def test_dossier_hard_cut_deleted_owners_are_absent():
+    removed_paths = (
+        "apps/web/src/components/reader/document-map/documentMapAction.tsx",
+        "apps/web/src/components/reader/document-map/documentMapAction.test.tsx",
+        "apps/web/src/lib/resources/resourceCapabilities.generated.ts",
+        "apps/web/src/components/chat/ConversationDistillate.tsx",
+        "apps/web/src/components/chat/ConversationDistillate.module.css",
+        "apps/web/src/components/chat/ConversationDistillate.test.tsx",
+        "apps/web/src/components/library/LibraryBrief.tsx",
+        "apps/web/src/components/library/LibraryBrief.module.css",
+        "apps/web/src/components/library/LibraryBrief.test.tsx",
+        "apps/web/src/components/library/LibraryBriefArtifact.tsx",
+        "apps/web/src/components/library/LibraryBriefControls.tsx",
+        "apps/web/src/components/library/LibraryBriefLede.tsx",
+        "apps/web/src/components/library/LibraryBriefRevisions.tsx",
+        "apps/web/src/components/library/dossierTypes.ts",
+        "apps/web/src/components/library/useArtifactStream.ts",
+        "apps/web/src/lib/api/sse/artifactRevisionEvents.ts",
+        "apps/web/src/lib/api/sse/artifactRevisionEvents.test.ts",
+        "apps/web/src/lib/library/dossierLede.ts",
+        "apps/web/src/lib/library/dossierLede.test.ts",
+        "apps/web/src/app/api/conversations/[id]/distill/route.ts",
+        "apps/web/src/app/api/conversations/[id]/distillate/route.ts",
+        "apps/web/src/app/api/libraries/[id]/intelligence",
+        "python/nexus/api/routes/library_dossier.py",
+        "python/nexus/services/artifacts/base.py",
+        "python/nexus/services/artifacts/dossier.py",
+        "python/nexus/services/artifacts/distillate.py",
+        "python/nexus/services/artifacts/reducers",
+        "python/tests/test_conversation_distillate.py",
+        "python/tests/test_library_intelligence.py",
+        "python/tests/test_library_intelligence_read_model.py",
+        "python/tests/test_library_intelligence_unit.py",
+    )
+    survivors = []
+    for path in removed_paths:
+        candidate = _REPO_ROOT / path
+        if candidate.is_file() or (
+            candidate.is_dir() and any(child.is_file() for child in candidate.rglob("*"))
+        ):
+            survivors.append(path)
+    assert not survivors, f"deleted Dossier owner paths survived: {survivors}"
+
+
+def test_dossier_hard_cut_legacy_runtime_vocabulary_is_absent():
+    runtime_pattern = (
+        r"\blibrary_dossier\b|\bconversation_distill(?:ate)?\b|"
+        r"\blibrary_dossier_generate\b|\bJOB_KIND_FOR_KIND\b|"
+        r"\bLibraryBrief\w*\b|\bConversationDistillate\w*\b|"
+        r"\bArtifactBuildOut\b|\bMediaSummarizeOut\b|"
+        r"\bartifact_revision_events\b|\bartifact-revision-events\b|"
+        r"\bartifactRevisionEvents\b|\bdocumentMapAction\b|"
+        r"\bDISTILL_ENABLED\b|\bCONVERSATION_DISTILL_SCHEDULE_SECONDS\b|"
+        r"\bARTIFACT_DEFINITIONS\b|\bartifact_definitions\b|"
+        r"\bartifacts\.kind\b"
+    )
+    hits = _filtered(
+        runtime_pattern,
+        _PY_ROOT,
+        _WEB_ROOT,
+        _SCRIPTS_ROOT,
+        _REPO_SCRIPTS_ROOT,
+        exclude=_FRONTEND_TEST,
+    )
+    assert not hits, f"legacy Dossier runtime vocabulary survived:\n{_fmt(hits)}"
+
+
+def test_dossier_hard_cut_old_secondary_and_podcast_shell_ids_are_absent():
+    runtime_pattern = (
+        r"\breader-tools\b|\bconversation-context\b|"
+        r"\breader-contents\b|\breader-evidence\b|"
+        r"\bconversation-context-refs\b|\bconversation-forks\b|"
+        r"\bepisodesDrawer\w*\b|\bepisodesColumn\w*\b"
+    )
+    hits = _filtered(runtime_pattern, _WEB_ROOT, exclude=_FRONTEND_TEST)
+    assert not hits, f"legacy secondary/podcast shell vocabulary survived:\n{_fmt(hits)}"
+
+    test_pattern = (
+        r"\bREADER_TOOLS\w*\b|\breader-tools\b|"
+        r"\breader-contents\b|\breader-evidence\b|"
+        r"\bconversation-context-refs\b|\bconversation-forks\b|"
+        r'groupId:\s*"conversation-context"'
+    )
+    test_hits = _grep(test_pattern, _WEB_ROOT, _PY_TEST_ROOT)
+    test_hits = [
+        hit
+        for hit in test_hits
+        if not hit.path.endswith("python/tests/test_cutover_negative_gates.py")
+        and (Path(hit.path).is_relative_to(_PY_TEST_ROOT) or ".test." in hit.path)
+    ]
+    assert not test_hits, f"legacy secondary-shell vocabulary survived in tests:\n{_fmt(test_hits)}"
+
+
+def test_dossier_hard_cut_media_intelligence_storage_has_one_owner():
+    direct_table_access = (
+        r"(?i)\b(?:FROM|JOIN|UPDATE|INTO|DELETE\s+FROM)\s+"
+        r"media_(?:summaries|claims)\b"
+    )
+    hits = _excluding(
+        _grep(direct_table_access, _PY_ROOT),
+        "services/media_intelligence.py",
+    )
+    assert not hits, f"direct Media Intelligence storage access outside owner:\n{_fmt(hits)}"
+
+
+def test_dossier_hard_cut_generic_engine_has_no_subject_or_kind_branches():
+    generic_owners = (
+        _PY_ROOT / "services" / "artifacts" / "engine.py",
+        _PY_ROOT / "api" / "routes" / "dossiers.py",
+        _PY_ROOT / "tasks" / "artifacts.py",
+    )
+    branch_pattern = (
+        r"\b(?:if|elif|case)\b[^\n]*"
+        r"(?:subject_scheme|resolved\.scheme|manifest\.kind|artifact\.kind)"
+        r"[^\n]*(?:media|conversation|library|podcast|contributor|page|note_block)"
+    )
+    hits = _grep(branch_pattern, *generic_owners)
+    assert not hits, f"subject/kind branch entered generic Dossier owners:\n{_fmt(hits)}"
+
+
+def test_dossier_hard_cut_deploy_allowlists_use_only_generic_job_kinds():
+    allowlist_owners = (
+        _PY_ROOT / "config.py",
+        _DEPLOY_ROOT / "env" / "env-prod-worker.example",
+        _DEPLOY_ROOT / "hetzner" / "sync-env.sh",
+    )
+    for path in allowlist_owners:
+        source = path.read_text(encoding="utf-8")
+        assert "dossier_build" in source, f"{path} must allow dossier_build"
+        assert "media_unit_build" in source, f"{path} must allow media_unit_build"
+
+    legacy_pattern = (
+        r"\blibrary_dossier(?:_generate)?\b|\bconversation_distill(?:ate)?\b|"
+        r"\bDISTILL_ENABLED\b|\bCONVERSATION_DISTILL_SCHEDULE_SECONDS\b"
+    )
+    hits = _grep(legacy_pattern, *allowlist_owners)
+    assert not hits, f"legacy Dossier deploy/config vocabulary survived:\n{_fmt(hits)}"
+
+
+def test_dossier_source_reading_tests_do_not_name_deleted_files():
+    deleted_path_pattern = (
+        r"resourceCapabilities\.generated\.ts|"
+        r"reducers/(?:library_dossier|conversation_distillate)\.py|"
+        r"(?:components/(?:chat|library)/)"
+        r"(?:ConversationDistillate|LibraryBrief)\w*\.(?:tsx|css)|"
+        r"artifactRevisionEvents\.(?:ts|test\.ts)|"
+        r"documentMapAction\.(?:tsx|test\.tsx)"
+    )
+    hits = _grep(deleted_path_pattern, _PY_TEST_ROOT, _WEB_ROOT)
+    hits = [
+        hit
+        for hit in hits
+        if not hit.path.endswith("python/tests/test_cutover_negative_gates.py")
+        and (Path(hit.path).is_relative_to(_PY_TEST_ROOT) or ".test." in hit.path)
+    ]
+    assert not hits, f"source-reading tests name deleted Dossier files:\n{_fmt(hits)}"
+
+
+def test_dossier_superseded_cutovers_point_to_the_final_spec():
+    superseded_docs = (
+        "one-press-artifact-engine-hard-cutover.md",
+        "library-intelligence-ai-native-consolidation-hard-cutover.md",
+        "library-intelligence-revision-resource-identity-hard-cutover.md",
+        "machine-output-in-place-hard-cutover.md",
+        "incoming-connections-reader-sidecar-hard-cutover.md",
+        "reader-sidecar-consolidation-hard-cutover.md",
+        "pane-header-identity-hard-cutover.md",
+        "workspace-pane-publication-contract-hard-cutover.md",
+    )
+    docs_root = _REPO_ROOT / "docs" / "cutovers"
+    missing: list[str] = []
+    for filename in superseded_docs:
+        opening = "\n".join((docs_root / filename).read_text(encoding="utf-8").splitlines()[:30])
+        if (
+            "resource-inspector-and-universal-dossiers-hard-cutover.md" not in opening
+            or not re.search(r"\b(?:Superseded|Retired)\b", opening)
+        ):
+            missing.append(filename)
+    assert not missing, f"cutovers missing Resource Inspector supersession banner: {missing}"
 
 
 # #############################################################################
@@ -3061,7 +3244,7 @@ def test_backend_edge_origins_sanctioned_list_ends_with_link_note():
 
 def test_universal_link_authoring_contract_parity_tests_exist():
     # Deep scheme/backend-frontend capability parity (including the
-    # resourceCapabilities.generated.ts nested user-relation policy) and
+    # resourceCapabilities.ts nested user-relation policy) and
     # search result-taxonomy parity (including the `artifact` discriminant,
     # AC13) are each proven by their own dedicated test file's body; this
     # gate only ensures neither disappears out from under the contract.

@@ -34,13 +34,3 @@ def test_reader_apparatus_storage_is_not_written_by_citation_or_retrieval_servic
         assert "reader_apparatus_items" not in text
         assert "reader_apparatus_edges" not in text
         assert "reader_apparatus_states" not in text
-
-
-def test_reader_apparatus_surface_not_registered_under_conversation_context():
-    model_path = _WEB_ROOT / "lib" / "panes" / "paneSecondaryModel.ts"
-    text = model_path.read_text(encoding="utf-8")
-    bad_registration = re.compile(
-        r'id:\s*"reader-apparatus"[\s\S]{0,160}?groupId:\s*"conversation-context"'
-    )
-
-    assert not bad_registration.search(text)

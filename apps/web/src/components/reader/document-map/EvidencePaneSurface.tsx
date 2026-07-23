@@ -38,15 +38,23 @@ import {
 
 type EvidenceScope = "passages" | "document";
 
+/** One closed projection for the always-published Media Evidence surface. */
+export type EvidencePaneProjection =
+  | { kind: "Processing"; source: "media" | "evidence" }
+  | { kind: "IngestFailed"; feedback: FeedbackContent }
+  | { kind: "Empty" }
+  | {
+      kind: "Ready";
+      evidence: ReaderEvidence;
+      aggregateStatus: "ready" | "partial";
+    };
+
 export interface EvidencePaneSurfaceProps {
-  evidence: ReaderEvidence | null;
+  projection: EvidencePaneProjection;
   filters: EvidenceFilters;
   activeItemId: string | null;
   followGeneration: number;
   hoveredItemId: string | null;
-  loading: boolean;
-  error: FeedbackContent | null;
-  aggregateStatus: "ready" | "empty" | "partial" | null;
   highlightActions: EvidenceHighlightActions;
   onActivatePassage: (group: ReaderEvidencePassageGroup) => boolean;
   onActivateObject: (
@@ -76,14 +84,11 @@ export interface EvidencePaneSurfaceProps {
 }
 
 export default function EvidencePaneSurface({
-  evidence,
+  projection,
   filters,
   activeItemId,
   followGeneration,
   hoveredItemId,
-  loading,
-  error,
-  aggregateStatus,
   highlightActions,
   onActivatePassage,
   onActivateObject,
@@ -94,6 +99,9 @@ export default function EvidencePaneSurface({
   onSaveLinkNote,
   onDeleteLinkNote,
 }: EvidencePaneSurfaceProps) {
+  const evidence = projection.kind === "Ready" ? projection.evidence : null;
+  const aggregateStatus =
+    projection.kind === "Ready" ? projection.aggregateStatus : null;
   const [scope, setScope] = useState<EvidenceScope>("passages");
   const [openDisclosureIds, setOpenDisclosureIds] = useState<Set<string>>(
     () => new Set(),
@@ -288,11 +296,20 @@ export default function EvidencePaneSurface({
   );
 
   let content;
-  if (loading) {
-    content = <FeedbackNotice severity="info" title="Loading evidence..." />;
-  } else if (error) {
-    content = <FeedbackNotice feedback={error} />;
-  } else if (totalFacts === 0) {
+  if (projection.kind === "Processing") {
+    content = (
+      <FeedbackNotice
+        severity="info"
+        title={
+          projection.source === "media"
+            ? "This media is still being processed."
+            : "Loading evidence..."
+        }
+      />
+    );
+  } else if (projection.kind === "IngestFailed") {
+    content = <FeedbackNotice feedback={projection.feedback} />;
+  } else if (projection.kind === "Empty" || totalFacts === 0) {
     content = (
       <FeedbackNotice
         severity="neutral"
@@ -427,7 +444,7 @@ export default function EvidencePaneSurface({
       data-testid="evidence-pane-surface"
     >
       {header}
-      {aggregateStatus === "partial" && !loading && !error ? (
+      {aggregateStatus === "partial" ? (
         <FeedbackNotice
           severity="warning"
           title="Some document evidence is unavailable."

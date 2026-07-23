@@ -11,7 +11,9 @@ import type {
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
-import EvidencePaneSurface from "./EvidencePaneSurface";
+import EvidencePaneSurface, {
+  type EvidencePaneProjection,
+} from "./EvidencePaneSurface";
 import type { EvidenceHighlightActions } from "./EvidenceItemRow";
 
 const absent = { kind: "Absent" } as const;
@@ -179,6 +181,7 @@ function Harness({
   activeItemId = null,
   followGeneration = 0,
   aggregateStatus = "ready",
+  projection,
   activatePassage = vi.fn(() => true),
   onRemoveUserEdge = vi.fn(),
   onSaveLinkNote = vi.fn().mockResolvedValue({ note_block_id: "nb-new" }),
@@ -188,6 +191,7 @@ function Harness({
   activeItemId?: string | null;
   followGeneration?: number;
   aggregateStatus?: "ready" | "empty" | "partial";
+  projection?: EvidencePaneProjection;
   activatePassage?: (
     group: ReaderEvidence["passage_groups"][number],
   ) => boolean;
@@ -203,14 +207,20 @@ function Harness({
   return (
     <FeedbackProvider>
       <EvidencePaneSurface
-        evidence={source}
+        projection={
+          projection ??
+          (source === null || aggregateStatus === "empty"
+            ? { kind: "Empty" }
+            : {
+                kind: "Ready",
+                evidence: source,
+                aggregateStatus,
+              })
+        }
         filters={filters}
         activeItemId={activeItemId}
         followGeneration={followGeneration}
         hoveredItemId={null}
-        loading={false}
-        error={null}
-        aggregateStatus={aggregateStatus}
         highlightActions={actions()}
         onActivatePassage={activatePassage}
         onActivateObject={vi.fn()}
@@ -226,6 +236,47 @@ function Harness({
 }
 
 describe("EvidencePaneSurface", () => {
+  it.each([
+    [
+      { kind: "Processing", source: "media" } as const,
+      "This media is still being processed.",
+    ],
+    [
+      {
+        kind: "IngestFailed",
+        feedback: {
+          severity: "warning",
+          title: "Media processing failed.",
+        },
+      } as const,
+      "Media processing failed.",
+    ],
+    [
+      { kind: "Empty" } as const,
+      "No highlights, citations, links, or Synapses in this document.",
+    ],
+  ] satisfies readonly [EvidencePaneProjection, string][])(
+    "renders the typed $projection.kind projection",
+    (projection, message) => {
+      render(<Harness projection={projection} />);
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(screen.queryByText("Footnote one")).not.toBeInTheDocument();
+    },
+  );
+
+  it("renders evidence rows only from the typed Ready projection", () => {
+    render(
+      <Harness
+        projection={{
+          kind: "Ready",
+          evidence: evidence(),
+          aggregateStatus: "ready",
+        }}
+      />,
+    );
+    expect(screen.getByText("Footnote one")).toBeInTheDocument();
+  });
+
   it("uses one accessible scope tabset and keeps passage failures visible", async () => {
     render(<Harness />);
     expect(screen.getByRole("tab", { name: /Passages 5/ })).toHaveAttribute(

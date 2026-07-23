@@ -155,7 +155,23 @@ export function createDossierControllerStore(
       if (disposed || requestId !== headRequestId) return;
       const prior = state.head.kind === "Ready" ? state.head.ready : null;
       const nextReady = readyFromDecodedHead(decoded, prior);
-      set({ head: { kind: "Ready", ready: nextReady } });
+      const terminalReconciled =
+        state.stream.kind === "Terminal" &&
+        nextReady.activeBuild.kind === "Absent" &&
+        (state.stream.outcome.kind === "Succeeded"
+          ? nextReady.currentRevision.kind === "Present" &&
+            nextReady.currentRevision.value.revisionRef ===
+              state.stream.outcome.artifactRevisionRef
+          : nextReady.latestUnsuccessfulBuild.kind === "Present" &&
+            nextReady.latestUnsuccessfulBuild.value.handle ===
+              state.stream.outcome.buildHandle);
+      set({
+        head: { kind: "Ready", ready: nextReady },
+        stream:
+          terminalReconciled && state.stream.kind === "Terminal"
+            ? { ...state.stream, reconciled: true }
+            : state.stream,
+      });
       syncStream();
       if (nextReady.revisionCount > 1 && nextReady.historyStatus === "idle") {
         void loadHistory();
@@ -208,7 +224,9 @@ export function createDossierControllerStore(
       // No active build: keep a Terminal marker (a build just ended) but drop
       // the client connection.
       teardownStream();
-      if (state.stream !== "Terminal") set({ stream: "Disconnected" });
+      if (state.stream.kind !== "Terminal") {
+        set({ stream: { kind: "Disconnected" } });
+      }
       return;
     }
     if (connectingHandle === build.handle) return; // already (re)connecting
@@ -218,25 +236,31 @@ export function createDossierControllerStore(
 
   async function connectStream(handle: string): Promise<void> {
     connectingHandle = handle;
-    set({ stream: "Connecting", streamingDraft: "", progressMessage: null });
+    set({
+      stream: { kind: "Connecting" },
+      streamingDraft: "",
+      progressMessage: null,
+    });
     try {
       const stop = await openDossierBuildStream(handle, {
         decode: (type, data) => decodeDossierStreamEvent(type, data),
         isTerminal: isTerminalDossierStreamEvent,
         onEvent: (event) => {
           if (disposed || connectingHandle !== handle) return;
-          handleStreamEvent(event);
+          handleStreamEvent(handle, event);
         },
         onError: () => {
           if (disposed || connectingHandle !== handle) return;
           // A fatal stream error must not kill the controller: fall back to the
           // head snapshot and let a refetch recover.
-          set({ stream: "Disconnected" });
+          set({ stream: { kind: "Disconnected" } });
           teardownStream();
           void loadHead(true);
         },
         onReconnect: async () => {
-          if (!disposed && connectingHandle === handle) set({ stream: "Reconnecting" });
+          if (!disposed && connectingHandle === handle) {
+            set({ stream: { kind: "Reconnecting" } });
+          }
           return "continue";
         },
       });
@@ -247,34 +271,41 @@ export function createDossierControllerStore(
       stopStream = stop;
     } catch {
       if (disposed || connectingHandle !== handle) return;
-      set({ stream: "Disconnected" });
+      set({ stream: { kind: "Disconnected" } });
       connectingHandle = null;
     }
   }
 
   function handleStreamEvent(
+    buildHandle: string,
     event: ReturnType<typeof decodeDossierStreamEvent>,
   ): void {
     switch (event.kind) {
       case "Started":
-        if (state.stream === "Connecting" || state.stream === "Reconnecting") {
-          set({ stream: "Live" });
+        if (
+          state.stream.kind === "Connecting" ||
+          state.stream.kind === "Reconnecting"
+        ) {
+          set({ stream: { kind: "Live" } });
         }
         return;
       case "Progress":
-        set({ stream: "Live", progressMessage: event.message });
+        set({ stream: { kind: "Live" }, progressMessage: event.message });
         return;
       case "Delta":
         set({
-          stream: "Live",
+          stream: { kind: "Live" },
           streamingDraft: (state.streamingDraft ?? "") + event.appendedText,
         });
         return;
       case "Advisory":
         if (event.phase === "Suspended") {
-          set({ stream: "Suspended" });
-        } else if (state.stream === "Connecting" || state.stream === "Reconnecting") {
-          set({ stream: "Live" });
+          set({ stream: { kind: "Suspended" } });
+        } else if (
+          state.stream.kind === "Connecting" ||
+          state.stream.kind === "Reconnecting"
+        ) {
+          set({ stream: { kind: "Live" } });
         }
         setReady((ready) =>
           ready.activeBuild.kind === "Present"
@@ -292,11 +323,18 @@ export function createDossierControllerStore(
         );
         return;
       case "Succeeded":
-        // Keep the completion copy until the next build starts so the one
-        // polite live region can announce success after the authoritative head
-        // refresh replaces the active build with its new revision.
+        // Project the persisted terminal immediately. The authoritative head
+        // refresh may be slow or fail; terminal UI must never fall back to the
+        // stale active-build snapshot in the meantime.
         set({
-          stream: "Terminal",
+          stream: {
+            kind: "Terminal",
+            outcome: {
+              kind: "Succeeded",
+              artifactRevisionRef: event.artifactRevisionRef,
+            },
+            reconciled: false,
+          },
           streamingDraft: null,
           progressMessage: "Dossier generated.",
         });
@@ -304,11 +342,36 @@ export function createDossierControllerStore(
         void loadHead(true);
         return;
       case "Failed":
+        set({
+          stream: {
+            kind: "Terminal",
+            outcome: {
+              kind: "Failed",
+              buildHandle,
+              facts: event.facts,
+            },
+            reconciled: false,
+          },
+          streamingDraft: null,
+          progressMessage: null,
+        });
+        teardownStream();
+        void loadHead(true);
+        return;
       case "Cancelled":
-        // Terminal: the durable build is done. Refetch the head for the
-        // authoritative outcome (new current revision, or preserved current +
-        // latest_unsuccessful_build).
-        set({ stream: "Terminal", streamingDraft: null, progressMessage: null });
+        set({
+          stream: {
+            kind: "Terminal",
+            outcome: {
+              kind: "Cancelled",
+              buildHandle,
+              facts: event.facts,
+            },
+            reconciled: false,
+          },
+          streamingDraft: null,
+          progressMessage: null,
+        });
         teardownStream();
         void loadHead(true);
         return;
@@ -444,8 +507,11 @@ export function createDossierControllerStore(
       // Completion is announced once in the mounted Dossier surface. Closing
       // the tab is the consumption boundary; do not reannounce stale success
       // when this workspace-local controller is mounted again.
-      if (state.stream === "Terminal") {
-        set({ stream: "Disconnected", progressMessage: null });
+      if (state.stream.kind === "Terminal") {
+        set({
+          stream: { kind: "Disconnected" },
+          progressMessage: null,
+        });
       }
     },
     refreshHead,

@@ -7,8 +7,9 @@ Implements the structural ``ExecutionRuntime`` seam
 is set. Unlike the production runtime, which ignores ``intent`` and dispatches
 the finalized ``plan``, this fixture scripts its outcome from the *typed*
 ``GenerateIntent`` — content-conditional canned responses keyed on system
-prompt markers and app-search tool-call state, restoring the pre-cutover
-``RealMediaFixtureModelRuntime`` ergonomics against the new type surface.
+prompt markers, the canonical strict-JSON schema, and app-search tool-call
+state, restoring the pre-cutover ``RealMediaFixtureModelRuntime`` ergonomics
+against the new type surface.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from provider_runtime import (
     ToolCallStart,
     ToolResultMessage,
     UserMessage,
+    to_json_schema,
 )
 from provider_runtime import Cancelled as CancelledOutcome
 from provider_runtime import TokenUsage as _TokenUsage
@@ -74,11 +76,11 @@ class RealMediaFixtureExecutionRuntime:
             # no canned payload for it; that is a coverage gap in
             # `_SYNTHESIS_MARKERS`, not a runtime the caller should silently
             # fall back from.
-            canned_json = _synthesis_response(intent)
+            canned_json = _strict_json_response(intent)
             if canned_json is None:
                 raise AssertionError(
-                    "real-media fixture: no _SYNTHESIS_MARKERS entry matched a "
-                    "StrictJsonOutput intent's system prompt"
+                    "real-media fixture: no synthesis marker or schema-driven fixture "
+                    "matched a StrictJsonOutput intent"
                 )
             return Succeeded(
                 meta=_meta(intent, canned_json),
@@ -119,11 +121,11 @@ REAL_MEDIA_FIXTURE_RESPONSE_WITH_CITATION = REAL_MEDIA_FIXTURE_RESPONSE + " [1]"
 # persona opening of each synthesis system prompt. Indices are the lowest that
 # every call site guarantees: oracle fails the reading before synthesis when
 # fewer than 3 candidates exist (its validator demands 3 distinct in-range
-# indices), and LI reduce / media-unit build fail before synthesis on an empty
-# candidate list, so index 0 always grounds. metadata_enrichment has no
-# candidate-count gate at all (see below); synapse_scan grounds nothing
-# (its canned response is the empty-connections list its own domain rules
-# call "a good answer").
+# indices), and media-unit build fails before synthesis on an empty candidate
+# list, so index 0 always grounds. Metadata enrichment has no candidate-count
+# gate at all (see below); synapse_scan grounds nothing (its canned response is
+# the empty-connections list its own domain rules call "a good answer"). The
+# seven Dossier bindings use the schema-driven response below, not markers.
 ORACLE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
     {
         "argument": (
@@ -155,17 +157,6 @@ ORACLE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
             "answered in its appointed order."
         ),
         "omens": ["a lamp in the archive", "an index that holds", "a door opening on order"],
-    }
-)
-LIBRARY_REDUCE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
-    {
-        "content_md": (
-            "This library centers on one documented finding: SOFIA confirmed water "
-            "on the sunlit Moon by detecting a water signature in Clavius Crater [1]. "
-            "Start with that source; the fixture corpus raises no cross-source "
-            "tensions or open questions."
-        ),
-        "citations": [{"ordinal": 1, "claim_index": 0, "role": "supports"}],
     }
 )
 MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
@@ -211,10 +202,6 @@ METADATA_ENRICHMENT_SYNTHESIS_FIXTURE_RESPONSE = json.dumps(
 SYNAPSE_SYNTHESIS_FIXTURE_RESPONSE = json.dumps({"connections": []})
 _SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
     ("You are the Black Forest Oracle", ORACLE_SYNTHESIS_FIXTURE_RESPONSE),
-    (
-        "whole-library synthesis from per-document claims",
-        LIBRARY_REDUCE_SYNTHESIS_FIXTURE_RESPONSE,
-    ),
     ("building a reusable unit for one document", MEDIA_UNIT_SYNTHESIS_FIXTURE_RESPONSE),
     (
         "Extract bibliographic and descriptive metadata for this media item",
@@ -230,6 +217,36 @@ _SYNTHESIS_MARKERS: tuple[tuple[str, str], ...] = (
 async def _stream(
     intent: GenerateIntent, cancel: CancelSignal | None
 ) -> AsyncIterator[RuntimeStreamEvent]:
+    if isinstance(intent.output, StrictJsonOutput):
+        canned_json = _strict_json_response(intent)
+        if canned_json is None:
+            raise AssertionError(
+                "real-media fixture: no synthesis marker or schema-driven fixture "
+                "matched a StrictJsonOutput intent"
+            )
+        seq = 1
+        for offset in range(0, len(canned_json), 64):
+            if cancel is not None and cancel.is_set():
+                yield RuntimeStreamEvent(
+                    seq=seq,
+                    event=TerminalEvent(outcome=_cancelled(intent)),
+                )
+                return
+            part = canned_json[offset : offset + 64]
+            yield RuntimeStreamEvent(seq=seq, event=TextDelta(text=part))
+            seq += 1
+            if await _cancelled_during_fixture_delay(cancel):
+                yield RuntimeStreamEvent(
+                    seq=seq,
+                    event=TerminalEvent(outcome=_cancelled(intent)),
+                )
+                return
+        yield RuntimeStreamEvent(
+            seq=seq,
+            event=TerminalEvent(outcome=_structured_succeeded(intent, canned_json)),
+        )
+        return
+
     if _should_request_app_search(intent):
         query = _latest_user_query(intent)
         tool_call = ToolCall(
@@ -344,6 +361,16 @@ def _succeeded(
     )
 
 
+def _structured_succeeded(intent: GenerateIntent, raw_json: str) -> Succeeded:
+    return Succeeded(
+        meta=_meta(intent, raw_json),
+        response=ResponsePayload(
+            content=StructuredContent(payload=json.loads(raw_json), text=raw_json),
+            continuation=Absent(),
+        ),
+    )
+
+
 def _cancelled(intent: GenerateIntent) -> CancelledOutcome:
     return CancelledOutcome(meta=_meta(intent, ""))
 
@@ -376,6 +403,67 @@ def _synthesis_response(intent: GenerateIntent) -> str | None:
         if marker in system_text:
             return response
     return None
+
+
+def _strict_json_response(intent: GenerateIntent) -> str | None:
+    marked = _synthesis_response(intent)
+    if marked is not None:
+        return marked
+    if not isinstance(intent.output, StrictJsonOutput):
+        return None
+    return _schema_driven_dossier_response(intent.output)
+
+
+def _schema_driven_dossier_response(output: StrictJsonOutput) -> str | None:
+    """Build the one shared seven-subject Dossier fixture from its schema.
+
+    Both Dossier shapes have ``content_md`` plus ``citations``. Their sole
+    distinction is the grounded citation index field (``candidate_index`` for
+    six bindings, ``claim_index`` for Media), discovered from the canonical
+    schema rather than a subject or operation branch.
+    """
+    schema = to_json_schema(
+        output.schema,
+        inline_defs=True,
+        include_annotations=False,
+    )
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or set(properties) != {"content_md", "citations"}:
+        return None
+    content_schema = properties.get("content_md")
+    citations_schema = properties.get("citations")
+    if (
+        not isinstance(content_schema, dict)
+        or content_schema.get("type") != "string"
+        or not isinstance(citations_schema, dict)
+        or citations_schema.get("type") != "array"
+    ):
+        return None
+    item_schema = citations_schema.get("items")
+    if not isinstance(item_schema, dict):
+        return None
+    item_properties = item_schema.get("properties")
+    if not isinstance(item_properties, dict):
+        return None
+    index_fields = {"candidate_index", "claim_index"} & set(item_properties)
+    if len(index_fields) != 1 or not {"ordinal", "role"}.issubset(item_properties):
+        return None
+    index_field = index_fields.pop()
+    return json.dumps(
+        {
+            "content_md": (
+                "The fixture dossier records one grounded finding from the available source [1]."
+            ),
+            "citations": [
+                {
+                    "ordinal": 1,
+                    index_field: 0,
+                    "role": "supports",
+                }
+            ],
+        },
+        separators=(",", ":"),
+    )
 
 
 def _should_request_app_search(intent: GenerateIntent) -> bool:

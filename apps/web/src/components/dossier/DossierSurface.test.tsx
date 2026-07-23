@@ -123,12 +123,157 @@ describe("DossierSurface", () => {
     );
   });
 
+  it("sends the workspace-retained optional instruction when generating", () => {
+    const state = readyMediaState();
+    if (state.head.kind !== "Ready") throw new Error("expected ready head");
+    state.head.ready.currentRevision = absent();
+    state.head.ready.freshness = absent();
+    state.instructionDraft = "Lead with the strongest claims.";
+    const store = storeFor(state);
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate dossier" }));
+
+    expect(store.generate).toHaveBeenCalledWith(
+      "Lead with the strongest claims.",
+    );
+  });
+
+  it("invokes Retry for a terminal failed build", () => {
+    const state = readyMediaState();
+    if (state.head.kind !== "Ready") throw new Error("expected ready head");
+    state.head.ready.currentRevision = absent();
+    state.head.ready.freshness = absent();
+    state.head.ready.latestUnsuccessfulBuild = present({
+      handle: "build-failed",
+      requesterUserId: absent(),
+      instruction: present("Try again."),
+      createdAt: "2026-07-23T12:00:00Z",
+      execution: absent(),
+      failure: present({
+        failureCode: "ProviderIncomplete",
+        detail: absent(),
+        support: absent(),
+      }),
+      cancellation: absent(),
+    });
+    const store = storeFor(state);
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(store.retry).toHaveBeenCalledOnce();
+  });
+
+  it("announces an asynchronous command failure", () => {
+    const state = readyMediaState();
+    state.actionError = {
+      code: "E_INTERNAL",
+      message: "Generation service unavailable.",
+    };
+    const store = storeFor(state);
+
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Generation service unavailable.",
+    );
+  });
+
+  it("invokes Cancel for an active build", () => {
+    const state = readyMediaState();
+    if (state.head.kind !== "Ready") throw new Error("expected ready head");
+    state.head.ready.activeBuild = present({
+      handle: "build-active",
+      requesterUserId: absent(),
+      instruction: absent(),
+      createdAt: "2026-07-23T12:00:00Z",
+      execution: present({ phase: "Running" }),
+      failure: absent(),
+      cancellation: absent(),
+    });
+    state.stream = { kind: "Live" };
+    const store = storeFor(state);
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(store.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("invokes Make current for the viewed historical revision", () => {
+    const state = readyMediaState();
+    if (
+      state.head.kind !== "Ready" ||
+      state.head.ready.currentRevision.kind !== "Present"
+    ) {
+      throw new Error("expected current revision");
+    }
+    const historical = {
+      ...state.head.ready.currentRevision.value,
+      revisionId: "revision-old",
+      revisionRef: "artifact_revision:revision-old",
+      isCurrent: false,
+    };
+    state.revisionSelection = {
+      kind: "Historical",
+      revisionRef: historical.revisionRef,
+    };
+    state.historicalRevision = { kind: "Ready", revision: historical };
+    const store = storeFor(state);
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Make current" }));
+
+    expect(store.makeCurrent).toHaveBeenCalledWith(historical.revisionRef);
+  });
+
+  it("offers an explicit reconnect action for a disconnected active build", () => {
+    const state = readyMediaState();
+    if (state.head.kind !== "Ready") throw new Error("expected ready head");
+    state.head.ready.currentRevision = absent();
+    state.head.ready.freshness = absent();
+    state.head.ready.activeBuild = present({
+      handle: "build-disconnected",
+      requesterUserId: absent(),
+      instruction: absent(),
+      createdAt: "2026-07-23T12:00:00Z",
+      execution: present({ phase: "Recovering" }),
+      failure: absent(),
+      cancellation: absent(),
+    });
+    state.stream = { kind: "Disconnected" };
+    const store = storeFor(state);
+    render(<DossierSurface store={store} onViewMediaEvidence={vi.fn()} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Live updates disconnected",
+    );
+    expect(
+      screen.getByText(
+        "Live output is unavailable. Reconnect to check generation.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Generating the dossier…")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+
+    expect(store.refreshHead).toHaveBeenCalledOnce();
+  });
+
   it("uses one polite live region while revision history is loading", () => {
     const state = readyMediaState();
     if (state.head.kind !== "Ready") throw new Error("expected ready head");
     state.head.ready.revisionCount = 2;
     state.head.ready.historyStatus = "loading";
-    state.stream = "Terminal";
+    state.stream = {
+      kind: "Terminal",
+      outcome: {
+        kind: "Succeeded",
+        artifactRevisionRef: "artifact_revision:revision-1",
+      },
+      reconciled: true,
+    };
     state.progressMessage = "Dossier generated.";
     const store = storeFor(state);
 
