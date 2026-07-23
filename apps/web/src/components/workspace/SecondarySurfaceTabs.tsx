@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { ComponentType } from "react";
-import { GitBranch, Link2, ListTree } from "lucide-react";
+import { FileText, GitBranch, Link2, ListTree, Network } from "lucide-react";
 import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -15,9 +15,11 @@ const SECONDARY_ICONS: Record<
   PaneSecondaryIconId,
   ComponentType<{ size?: number; "aria-hidden"?: "true" }>
 > = {
+  "file-text": FileText,
   "git-branch": GitBranch,
   "link-2": Link2,
   "list-tree": ListTree,
+  network: Network,
 };
 
 export function secondarySurfaceTabId(
@@ -83,8 +85,6 @@ export default function SecondarySurfaceTabs({
             role="tab"
             aria-controls={secondarySurfacePanelId(baseId, surface.id)}
             aria-selected={active}
-            aria-label={definition.title}
-            title={definition.title}
             tabIndex={active ? 0 : -1}
             className={styles.tab}
             data-active={active ? "true" : "false"}
@@ -114,7 +114,8 @@ export default function SecondarySurfaceTabs({
               }
             }}
           >
-            <Icon size={18} aria-hidden="true" />
+            <Icon size={16} aria-hidden="true" />
+            <span className={styles.tabLabel}>{definition.title}</span>
           </button>
         );
       })}

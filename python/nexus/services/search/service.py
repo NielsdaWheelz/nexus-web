@@ -93,10 +93,10 @@ def _enrich_results_with_media_summaries(db: Session, results: list[SearchResult
     if not sources_by_media:
         return
 
-    summaries = media_intelligence.get_ready_summaries(db, media_ids=list(sources_by_media.keys()))
-    for media_id, summary_md in summaries.items():
+    projections = media_intelligence.read_batch(db, media_ids=list(sources_by_media.keys()))
+    for media_id, projection in projections.items():
         for source in sources_by_media.get(media_id, []):
-            source.summary_md = summary_md
+            source.summary_md = projection.summary_md
 
 
 def search(db: Session, viewer_id: UUID, query: SearchQuery) -> SearchResponse:

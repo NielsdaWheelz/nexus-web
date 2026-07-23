@@ -27,7 +27,7 @@ from nexus.schemas.citation import (
 )
 from nexus.schemas.citation import CitationSnapshot as CitationSnapshotOut
 from nexus.schemas.retrieval import RetrievalLocator
-from nexus.services.media_intelligence import get_ready_summaries
+from nexus.services.media_intelligence import MediaProjection, read_batch
 from nexus.services.resource_graph.edges import create_edge, replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.resolve import reader_target_for_citation_target, resolve_ref
@@ -146,9 +146,9 @@ def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) ->
 
     Media-target chips also carry the LLM ``summary_md`` abstract (snapshot is
     display-only and stores no abstract, N6): it is reconstructed on read via
-    ``media_intelligence.get_ready_summaries`` — batched once over all media
-    targets of this source (no per-edge N+1) — applying the same freshness gate
-    as the result-card enrichment. Non-media targets keep ``summary_md = None``.
+    ``media_intelligence.read_batch`` — batched once over all media targets of this
+    source (no per-edge N+1) — applying the same freshness gate as the result-card
+    enrichment. Non-media targets keep ``summary_md = None``.
     """
     return build_citation_outs_for_sources(
         db,
@@ -201,7 +201,7 @@ def build_citation_outs_for_sources(
         )
     )
     media_ids = sorted({row.target_id for row in rows if row.target_scheme == "media"})
-    summaries = get_ready_summaries(db, media_ids=media_ids) if media_ids else {}
+    summaries = read_batch(db, media_ids=media_ids) if media_ids else {}
     for row in rows:
         source_uri = f"{row.source_scheme}:{row.source_id}"
         out.setdefault(source_uri, []).append(
@@ -370,14 +370,15 @@ def _citation_out(
     *,
     viewer_id: UUID,
     row: ResourceEdge,
-    summaries: Mapping[UUID, str],
+    summaries: Mapping[UUID, MediaProjection],
 ) -> CitationOut:
     projection = citation_reader_target_for_edge(db, viewer_id=viewer_id, edge=row)
     target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
     # Only media-scheme targets carry the summary abstract; a content_chunk/span
     # whose parent happens to be media is a finer grain and does not (mirrors the
     # harness's "media targets only" rule, keyed by the media target id).
-    summary_md = summaries.get(row.target_id) if row.target_scheme == "media" else None
+    media_projection = summaries.get(row.target_id) if row.target_scheme == "media" else None
+    summary_md = media_projection.summary_md if media_projection is not None else None
     return CitationOut(
         ordinal=projection.ordinal,
         role=cast("CitationRole", projection.role),

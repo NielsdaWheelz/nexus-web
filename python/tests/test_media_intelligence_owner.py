@@ -1,16 +1,17 @@
-"""CP1 RED contract tests — MediaIntelligence sole-owner surface (T7).
+"""CP1 contract tests — MediaIntelligence sole-owner surface (T7).
 
-Test-first for the hard cutover. Imports the CANONICAL A19 identifier
-``MediaIntelligence`` (the pinned dotted owner, e.g.
-``MediaIntelligence.ensure_current_many``) which does NOT exist yet ->
-COLLECTION-time ImportError == the intended RED. Goes green, without edits, once
-CP3 lands the owner per CONTRACTS.md A11 (§530-544, §580-607).
+Exercises the CANONICAL A19 owner interface per CONTRACTS.md A11 (§530-544,
+§580-607). CP3-MI resolved the pinned owner to MODULE-LEVEL functions on
+``nexus.services.media_intelligence`` (``current_content_fingerprint``,
+``get_current``, ``read_single``, ``ensure_current``, ``ensure_current_many``,
+``read_batch``) — the CP1 draft's ``MediaIntelligence.method(...)`` class calls
+were rewritten to ``media_intelligence.method(...)`` and ``requester=`` to the
+pinned ``requester_user_id=`` (no assertions weakened).
 
-INTEGRATOR ASSUMPTION (flagged): these call the pinned methods as
-``MediaIntelligence.method(db, ...)`` — i.e. a class/namespace owner exposing
-static/class methods (matching the spec's dotted ``MediaIntelligence.x`` and B6's
-grep target). If CP3 makes them instance methods this is the single reconcile
-point.
+Still RED at COLLECTION time until the artifacts engine/types slices land: the
+``nexus.services.artifacts.dossier_types`` / ``.engine`` imports below
+(``create_build`` / ``run_build`` / ``SubjectResource`` / ``DossierBuildFailureCode``)
+do not exist yet. Goes green at integration.
 """
 
 from __future__ import annotations
@@ -26,15 +27,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
 from nexus.jobs.queue import JobExecutionContext, claim_next_job
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.content_indexing import rebuild_fragment_content_index
-from nexus.services.resource_graph.refs import ResourceRef
-from tests.factories import (
-    create_searchable_media,
-    create_searchable_media_in_library,
-    create_test_library,
-    create_test_media,
-)
+from nexus.services import media_intelligence  # noqa: E402
 
 # --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
 from nexus.services.artifacts.dossier_types import (  # noqa: E402
@@ -42,8 +35,16 @@ from nexus.services.artifacts.dossier_types import (  # noqa: E402
     SubjectResource,
 )
 from nexus.services.artifacts.engine import create_build, run_build  # noqa: E402
-from nexus.services.media_intelligence import MediaIntelligence  # noqa: E402
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.media_intelligence import MediaUnit  # noqa: E402  (existing value type)
+from nexus.services.resource_graph.refs import ResourceRef
+from tests.factories import (
+    create_searchable_media,
+    create_searchable_media_in_library,
+    create_test_library,
+    create_test_media,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -94,7 +95,7 @@ def _user(db: Session) -> UUID:
 
 
 def _coerce_projection(db: Session, media_id: UUID, *, status: str, with_claim: bool) -> None:
-    fp = MediaIntelligence.current_content_fingerprint(db, media_id=media_id)
+    fp = media_intelligence.current_content_fingerprint(db, media_id=media_id)
     db.execute(
         text(
             "UPDATE media_summaries SET status = :s, content_fingerprint = :fp, "
@@ -144,8 +145,8 @@ def _library_dossier_failure(db: Session, uid: UUID, lib: UUID) -> DossierBuildF
 def test_current_content_fingerprint_is_deterministic_and_no_llm(db_session: Session) -> None:
     uid = _user(db_session)
     media_id = create_searchable_media(db_session, uid, title="Doc")
-    fp1 = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
-    fp2 = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    fp1 = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
+    fp2 = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     assert isinstance(fp1, str) and fp1
     assert fp1 == fp2  # no-LLM, pure function of content
 
@@ -153,14 +154,14 @@ def test_current_content_fingerprint_is_deterministic_and_no_llm(db_session: Ses
 def test_current_content_fingerprint_works_for_not_ready_media(db_session: Session) -> None:
     """A11: no-LLM fingerprint including for not-ready Media (empty content index)."""
     media_id = create_test_media(db_session, title="Bare", status="pending")
-    fp = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    fp = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     assert isinstance(fp, str) and fp
 
 
 def test_fingerprint_changes_on_reingestion(db_session: Session) -> None:
     uid = _user(db_session)
     media_id = create_searchable_media(db_session, uid, title="Doc")
-    fp1 = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    fp1 = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     fragment = db_session.query(Fragment).filter(Fragment.media_id == media_id).first()
     assert fragment is not None
     fragment.canonical_text = "Completely different content body for the re-ingest path here."
@@ -173,7 +174,7 @@ def test_fingerprint_changes_on_reingestion(db_session: Session) -> None:
         reason="test_reingest",
     )
     db_session.commit()
-    fp2 = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    fp2 = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     assert fp2 != fp1
 
 
@@ -183,7 +184,7 @@ def test_fingerprint_changes_on_reingestion(db_session: Session) -> None:
 def test_publish_fence_rejects_stale_fingerprint_after_reingestion(db_session: Session) -> None:
     uid = _user(db_session)
     media_id = create_searchable_media(db_session, uid, title="Doc")
-    captured = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    captured = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     # First publish lands at the captured fingerprint.
     db_session.execute(
         text(
@@ -206,8 +207,8 @@ def test_publish_fence_rejects_stale_fingerprint_after_reingestion(db_session: S
         reason="test_reingest",
     )
     db_session.commit()
-    MediaIntelligence.ensure_current(db_session, media_id=media_id, requester=uid)
-    new_fp = MediaIntelligence.current_content_fingerprint(db_session, media_id=media_id)
+    media_intelligence.ensure_current(db_session, media_id=media_id, requester_user_id=uid)
+    new_fp = media_intelligence.current_content_fingerprint(db_session, media_id=media_id)
     assert new_fp != captured
 
     # A stale worker that captured the OLD fingerprint cannot publish (§601-603).
@@ -229,8 +230,8 @@ def test_ensure_current_is_idempotent_one_interpretation_per_fingerprint(
 ) -> None:
     uid = _user(db_session)
     media_id = create_searchable_media(db_session, uid, title="Doc")
-    MediaIntelligence.ensure_current(db_session, media_id=media_id, requester=uid)
-    MediaIntelligence.ensure_current(db_session, media_id=media_id, requester=uid)
+    media_intelligence.ensure_current(db_session, media_id=media_id, requester_user_id=uid)
+    media_intelligence.ensure_current(db_session, media_id=media_id, requester_user_id=uid)
     rows = db_session.execute(
         text("SELECT count(*) FROM media_summaries WHERE media_id = :m"), {"m": media_id}
     ).scalar_one()
@@ -247,7 +248,9 @@ def test_ensure_current_many_dedups_and_is_bounded(db_session: Session) -> None:
     m2 = create_searchable_media_in_library(db_session, uid, lib, title="Two")
     # A duplicated, already-audience-filtered set: dedup by media id; never a
     # sequential N-call blow-up. Tolerates duplicates without error.
-    MediaIntelligence.ensure_current_many(db_session, media_ids=[m1, m2, m1], requester=uid)
+    media_intelligence.ensure_current_many(
+        db_session, media_ids=[m1, m2, m1], requester_user_id=uid
+    )
     for mid in (m1, m2):
         rows = db_session.execute(
             text("SELECT count(*) FROM media_summaries WHERE media_id = :m"), {"m": mid}
@@ -260,7 +263,7 @@ def test_ready_with_claim_projection_is_usable(db_session: Session) -> None:
     lib = create_test_library(db_session, uid)
     media_id = create_searchable_media_in_library(db_session, uid, lib, title="Usable")
     _coerce_projection(db_session, media_id, status="ready", with_claim=True)
-    unit = MediaIntelligence.get_current(db_session, media_id=media_id)
+    unit = media_intelligence.get_current(db_session, media_id=media_id)
     assert isinstance(unit, MediaUnit)
     assert len(unit.claims) >= 1  # ready + current + >=1 candidate == usable
 
@@ -272,7 +275,9 @@ def test_ready_but_claimless_media_is_not_usable_for_aggregate(db_session: Sessi
     lib = create_test_library(db_session, uid)
     media_id = create_searchable_media_in_library(db_session, uid, lib, title="Claimless")
     _coerce_projection(db_session, media_id, status="ready", with_claim=False)
-    assert _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+    assert (
+        _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+    )
 
 
 def test_no_usable_projection_when_media_is_contentless(db_session: Session) -> None:
@@ -294,7 +299,9 @@ def test_no_usable_projection_when_media_is_contentless(db_session: Session) -> 
     db_session.flush()
     add_media_to_library(db_session, lib, media.id)
     db_session.commit()
-    assert _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+    assert (
+        _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+    )
 
 
 # --- residue: no direct media-table reads outside the owner ------------------

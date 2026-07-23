@@ -14,8 +14,15 @@ returned claim's ``candidate_index`` maps back to that candidate's
 NOT NULL ``evidence_span_id``, so an ungrounded claim is physically
 unpersistable.
 
-This service is permission-free; the on-demand route enforces ``can_read_media``
-before calling ``ensure_media_unit``.
+The lower-level unit machinery (``ensure_media_unit``, ``get_media_unit``,
+``run_media_unit_build`` and the fingerprint/candidate/persist helpers) is
+permission-free: it is driven by ingest, teardown and the worker, which enforce
+visibility upstream. The **owner facade** — ``read_single``, ``ensure_current``
+and ``ensure_current_many`` — is audience-gated: it masks unreadable media with a
+404 *before* resolving any ids and never selects or keys a different summary.
+Routes, agents, search, Synapse, citation enrichment and Dossier bindings consume
+the facade (single / batch / bounded-many) and STOP reading ``media_summaries`` /
+``media_claims`` directly.
 """
 
 from __future__ import annotations
@@ -43,7 +50,7 @@ from nexus.errors import (
 )
 from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
-from nexus.schemas.media import MediaSummarizeOut, MediaUnitStatus
+from nexus.schemas.media import MediaUnitStatus
 from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
@@ -68,6 +75,12 @@ MEDIA_UNIT_MAX_OUTPUT_TOKENS = 2000
 # Approximated in characters (~4 chars/token); chunks past the budget are dropped
 # with a warning rather than silently capped.
 MEDIA_UNIT_INPUT_CHAR_BUDGET = 60_000
+
+# Default bound for ``ensure_current_many``: the binding-owned ceiling on how many
+# per-media build durable ops an aggregate collect may fan out in one pass. The
+# fan-out is always non-blocking (deduped find-or-create + enqueue, never an
+# awaited N-call), so this only guards against an unbounded/degenerate request.
+ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY = 8
 
 
 # ---------- public contract -------------------------------------------------
@@ -111,6 +124,49 @@ class NotReady(Enum):
     Building = "building"
     Failed = "failed"
     Stale = "stale"
+
+
+# The Media Abstract status (spec §252): the compact, current-only projection the
+# owner facade returns. ``not_available`` == no unit head yet (never built).
+MediaAbstractStatus = Literal["building", "ready", "stale", "failed", "not_available"]
+
+
+@dataclass(frozen=True)
+class MediaProjection:
+    """The authorized, compact, current-only per-media projection (Media Abstract).
+
+    Returned by the owner facade (``read_single`` / ``ensure_current`` /
+    ``read_batch`` / usable ``ensure_current_many`` items). ``summary_md`` /
+    ``model_name`` are populated only when ``status == "ready"``. Grounded claims
+    are NOT carried here (the abstract is compact); callers that need the claim
+    set read the internal :func:`get_current` (``MediaUnit``).
+    """
+
+    media_id: UUID
+    status: MediaAbstractStatus
+    content_fingerprint: str
+    summary_md: str | None
+    model_name: str | None
+
+
+class MediaOmissionReason(Enum):
+    """Why an ``ensure_current_many`` subject yielded no usable projection."""
+
+    NotAudienceVisible = "not_audience_visible"
+    NoReadyUnit = "no_ready_unit"
+    ProjectionFailed = "projection_failed"
+
+
+@dataclass(frozen=True)
+class MediaOmission:
+    """A per-item omission from ``ensure_current_many`` (feeds binding coverage)."""
+
+    media_id: UUID
+    reason: MediaOmissionReason
+
+
+# One ``ensure_current_many`` result item: a usable projection or a typed omission.
+MediaProjectionOrOmission = MediaProjection | MediaOmission
 
 
 def ensure_media_unit(db: Session, *, media_id: UUID) -> MediaUnitRef:
@@ -194,7 +250,7 @@ def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | 
 
 
 def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
-    fingerprint = _compute_content_fingerprint(db, media_id=media_id)
+    fingerprint = current_content_fingerprint(db, media_id=media_id)
     summary = (
         db.execute(
             text("SELECT * FROM media_summaries WHERE media_id = :media_id"),
@@ -308,7 +364,7 @@ def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
     if status != "ready":
         # The ck_media_summaries_status CHECK constrains status to these three.
         assert_never(status)
-    current_fingerprint = _compute_content_fingerprint(db, media_id=media_id)
+    current_fingerprint = current_content_fingerprint(db, media_id=media_id)
     if summary["content_fingerprint"] != current_fingerprint:
         return NotReady.Stale
 
@@ -343,13 +399,28 @@ def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
     )
 
 
-def get_ready_summaries(db: Session, *, media_ids: list[UUID]) -> dict[UUID, str]:
-    """Batch read of fresh ready unit summaries, keyed by media id.
+def get_current(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
+    """Internal, permission-free single read: the current unit or a NotReady reason.
 
-    The set-based read model for result-card enrichment: returns ``summary_md``
-    only for media whose ``status='ready'`` head still matches the freshly
-    recomputed content fingerprint, applying the same staleness gate as
-    :func:`get_media_unit` so a re-ingested-but-not-yet-rebuilt unit is withheld.
+    The canonical owner-facing name for the internal media-unit read; the retained
+    :func:`get_media_unit` is its untouched implementation (referenced by the
+    media-unit-build worker/test seam). Consumers that hold their own visibility
+    (e.g. Synapse) read the current unit through here.
+    """
+    return get_media_unit(db, media_id=media_id)
+
+
+def read_batch(db: Session, *, media_ids: list[UUID]) -> dict[UUID, MediaProjection]:
+    """Batch projection read for search / retrieval, keyed by media id.
+
+    The set-based read model behind result-card and citation-chip enrichment:
+    yields a ready :class:`MediaProjection` (``status='ready'``) only for media
+    whose ``ready`` head still matches the freshly recomputed content fingerprint,
+    applying the same staleness gate as :func:`get_current` so a
+    re-ingested-but-not-yet-rebuilt unit is withheld. Keeps populating
+    ``summary_md`` so the FE consumers that read it off search / citation DTOs do
+    not silently null out. Audience filtering is the caller's (the ids are already
+    visibility-scoped); this never selects a different summary.
     """
     if not media_ids:
         return {}
@@ -357,7 +428,7 @@ def get_ready_summaries(db: Session, *, media_ids: list[UUID]) -> dict[UUID, str
         db.execute(
             text(
                 """
-                SELECT media_id, summary_md, content_fingerprint
+                SELECT media_id, summary_md, model_name, content_fingerprint
                 FROM media_summaries
                 WHERE media_id = ANY(:media_ids) AND status = 'ready'
                 """
@@ -367,29 +438,131 @@ def get_ready_summaries(db: Session, *, media_ids: list[UUID]) -> dict[UUID, str
         .mappings()
         .all()
     )
-    summaries: dict[UUID, str] = {}
+    projections: dict[UUID, MediaProjection] = {}
     for row in rows:
         media_id = UUID(str(row["media_id"]))
-        if row["content_fingerprint"] == _compute_content_fingerprint(db, media_id=media_id):
-            summaries[media_id] = str(row["summary_md"])
-    return summaries
+        fingerprint = str(row["content_fingerprint"])
+        if fingerprint == current_content_fingerprint(db, media_id=media_id):
+            projections[media_id] = MediaProjection(
+                media_id=media_id,
+                status="ready",
+                content_fingerprint=fingerprint,
+                summary_md=str(row["summary_md"]),
+                model_name=str(row["model_name"]),
+            )
+    return projections
 
 
-def ensure_media_unit_for_viewer(
+def _project(db: Session, *, media_id: UUID) -> MediaProjection:
+    """Build the compact current-only :class:`MediaProjection` from unit state."""
+    unit = get_current(db, media_id=media_id)
+    if isinstance(unit, MediaUnit):
+        return MediaProjection(
+            media_id=media_id,
+            status="ready",
+            content_fingerprint=unit.content_fingerprint,
+            summary_md=unit.summary_md,
+            model_name=unit.model_name,
+        )
+    if unit is NotReady.Building:
+        status: MediaAbstractStatus = "building"
+    elif unit is NotReady.Failed:
+        status = "failed"
+    elif unit is NotReady.Stale:
+        status = "stale"
+    elif unit is NotReady.Missing:
+        status = "not_available"
+    else:
+        assert_never(unit)
+    return MediaProjection(
+        media_id=media_id,
+        status=status,
+        content_fingerprint=current_content_fingerprint(db, media_id=media_id),
+        summary_md=None,
+        model_name=None,
+    )
+
+
+def read_single(db: Session, *, media_id: UUID, requester_user_id: UUID) -> MediaProjection:
+    """Authorized single read for UI / agents: the Media Abstract for one media.
+
+    404-masks unreadable media (raising :class:`NotFoundError`) *before* resolving
+    any ids, then projects the current unit state into a :class:`MediaProjection`
+    whose ``status`` carries every not-ready reason (``building`` / ``stale`` /
+    ``failed`` / ``not_available``). Audience gates readability only; it never
+    selects or keys a different summary.
+    """
+    if not can_read_media(db, requester_user_id, media_id):
+        raise NotFoundError(message="Media not found")
+    return _project(db, media_id=media_id)
+
+
+def ensure_current(db: Session, *, media_id: UUID, requester_user_id: UUID) -> MediaProjection:
+    """Authorized, idempotent-by-fingerprint ensure of the current unit.
+
+    404-masks unreadable media, then find-or-creates the current head and enqueues
+    a build when the content fingerprint moved (idempotent otherwise), returning
+    the resulting compact projection (typically ``status='building'`` on first
+    ensure).
+    """
+    if not can_read_media(db, requester_user_id, media_id):
+        raise NotFoundError(message="Media not found")
+    ensure_media_unit(db, media_id=media_id)
+    return _project(db, media_id=media_id)
+
+
+def ensure_current_many(
     db: Session,
     *,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> MediaSummarizeOut:
-    """Route wrapper: 404-mask via ``can_read_media`` then ``ensure_media_unit``."""
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(message="Media not found")
-    ref = ensure_media_unit(db, media_id=media_id)
-    return MediaSummarizeOut(
-        media_id=ref.media_id,
-        summary_id=ref.summary_id,
-        status=ref.status,
-    )
+    media_ids: list[UUID],
+    requester_user_id: UUID,
+    max_concurrency: int = ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY,
+) -> list[MediaProjectionOrOmission]:
+    """Bounded ensure + usability projection over an audience-filtered media set.
+
+    For aggregate Dossier bindings (Library / Podcast / Contributor). Accepts an
+    already-audience-filtered set that may contain duplicates; dedups by media id
+    (one MI durable op per ``(media_id, current_content_fingerprint)`` — the
+    enqueue is deduped on that key by :func:`ensure_media_unit`) and iterates in a
+    deterministic subject order. Every step is NON-BLOCKING (find-or-create +
+    enqueue, never an awaited N-call), so the single worker is never blocked;
+    ``max_concurrency`` is the binding-owned ceiling on that fan-out.
+
+    Returns one item per distinct media: a usable :class:`MediaProjection` — a
+    unit that is audience-readable, ready, current for its content fingerprint and
+    carries >=1 grounded (citation-candidate) claim — or a typed
+    :class:`MediaOmission`. A ready-but-claimless unit is NOT usable (spec §543).
+    The caller records omissions in binding coverage and, when nothing is usable,
+    fails ``NoSourceMaterial`` before any Dossier dispatch.
+    """
+    if max_concurrency < 1:
+        raise ValueError("ensure_current_many requires max_concurrency >= 1")
+    results: list[MediaProjectionOrOmission] = []
+    for media_id in sorted(set(media_ids), key=str):
+        if not can_read_media(db, requester_user_id, media_id):
+            results.append(
+                MediaOmission(media_id=media_id, reason=MediaOmissionReason.NotAudienceVisible)
+            )
+            continue
+        ensure_media_unit(db, media_id=media_id)
+        unit = get_current(db, media_id=media_id)
+        if isinstance(unit, MediaUnit) and unit.claims:
+            results.append(
+                MediaProjection(
+                    media_id=media_id,
+                    status="ready",
+                    content_fingerprint=unit.content_fingerprint,
+                    summary_md=unit.summary_md,
+                    model_name=unit.model_name,
+                )
+            )
+        elif unit is NotReady.Failed:
+            results.append(
+                MediaOmission(media_id=media_id, reason=MediaOmissionReason.ProjectionFailed)
+            )
+        else:
+            results.append(MediaOmission(media_id=media_id, reason=MediaOmissionReason.NoReadyUnit))
+    return results
 
 
 # ---------- worker build ----------------------------------------------------
@@ -426,7 +599,7 @@ async def run_media_unit_build(
         return "ok"
     summary_id = summary.id
 
-    current_fingerprint = _compute_content_fingerprint(db, media_id=media_id)
+    current_fingerprint = current_content_fingerprint(db, media_id=media_id)
     if current_fingerprint != summary.content_fingerprint:
         # The content changed after this build was enqueued; the dedupe_key for
         # the new fingerprint enqueues a distinct job that will rebuild. No-op.
@@ -564,12 +737,16 @@ def _map_claims_to_spans(
 # ---------- internal: fingerprint / candidates / persistence ----------------
 
 
-def _compute_content_fingerprint(db: Session, *, media_id: UUID) -> str:
-    """SHA-256 of the active embedding model plus the ordered chunk-text hashes.
+def current_content_fingerprint(db: Session, *, media_id: UUID) -> str:
+    """Public, no-LLM content fingerprint: the current staleness signal for a media.
 
+    SHA-256 of the active embedding model plus the ordered chunk-text hashes.
     Changes whenever the media is re-extracted (chunk set or active index run
-    changes), which is the staleness signal for both units and the artifact.
-    Sole reader/definer of this fingerprint.
+    changes), which is the staleness signal for units and every Dossier that
+    depends on the media. Works for not-ready media (an empty content index hashes
+    to a stable value). Sole reader/definer of this fingerprint; callers (freshness
+    checks, publish fencing, aggregate dedup) MUST route through here rather than
+    reading the stored ``media_summaries.content_fingerprint`` column.
     """
     index_state = (
         db.execute(
@@ -672,11 +849,14 @@ def _persist_unit(
     grounded: list[tuple[str, UUID, int]],
 ) -> None:
     def op() -> None:
-        # Gate the promote on the build's generation. A concurrent re-ingest
-        # commits a new fingerprint (and replaces evidence_spans) during the
-        # LLM window; under READ COMMITTED this UPDATE then matches 0 rows, so
-        # the superseded build bails before the FK-violating claim INSERTs and
-        # never clobbers the live 'building' head.
+        # Publish fence, keyed on the media-canonical head (spec §601-603):
+        # ``WHERE media_id = :media_id AND content_fingerprint = :captured``. A
+        # concurrent re-ingest commits a new fingerprint (and replaces
+        # evidence_spans) or a deletion drops the head during the LLM window;
+        # under READ COMMITTED this UPDATE then matches 0 rows (reingestion or
+        # deletion won), so the superseded build bails before the FK-violating
+        # claim INSERTs and never clobbers the live 'building' head. UNIQUE(media_id)
+        # makes the media_id key target exactly the one live head.
         result = cast(
             "Any",
             db.execute(
@@ -688,14 +868,14 @@ def _persist_unit(
                         error_code = NULL,
                         error_detail = NULL,
                         updated_at = now()
-                    WHERE id = :summary_id
+                    WHERE media_id = :media_id
                       AND status = 'building'
                       AND content_fingerprint = :expected_fingerprint
                     """
                 ),
                 {
                     "summary_md": summary_md,
-                    "summary_id": summary_id,
+                    "media_id": media_id,
                     "expected_fingerprint": expected_fingerprint,
                 },
             ),

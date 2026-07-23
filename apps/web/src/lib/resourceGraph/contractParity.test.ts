@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   RESOURCE_CAPABILITIES,
   SYNAPSE_SOURCE_SCHEMES,
-} from "@/lib/resources/resourceCapabilities.generated";
+} from "@/lib/resources/resourceCapabilities";
 import { EDGE_KINDS, EDGE_ORIGINS } from "./connections";
 import { RESOURCE_SCHEMES } from "./resourceRef";
 
@@ -27,9 +27,19 @@ def camel(name):
     head, *tail = name.split("_")
     return head + "".join(part.title() for part in tail)
 
-# Recursively unwraps a keyword value: a nested dataclass call (e.g.
-# ResourceUserRelationPolicy(...)) becomes a nested camelCase dict instead of
-# failing ast.literal_eval, so the nested user-relation policy round-trips.
+# Recursively unwraps a keyword value so nested dataclass calls, enum member
+# references, and sequences of either all round-trip instead of failing
+# ast.literal_eval:
+#  - a nested dataclass call (e.g. ResourceUserRelationPolicy(...), or the
+#    Resource arm of ResourceInspectorPolicy) becomes a nested camelCase dict;
+#  - an enum member reference (e.g. ResourceInspectorSurfaceRole.Contents)
+#    becomes its bare member name, which is also its string value under this
+#    codebase's PascalCase-StrEnum convention (docs/rules/naming.md);
+#  - a tuple/list (e.g. default_surface_order=(Role.Contents, Role.Dossier))
+#    becomes a JSON array via elementwise recursion, since ast.literal_eval
+#    rejects a tuple containing a non-literal element such as an Attribute.
+# Plain literals (str/int/bool/None/...) — including the bare None arm of
+# the ResourceInspectorPolicy union — fall through to ast.literal_eval unchanged.
 def eval_value(node):
     if isinstance(node, ast.Call):
         return {
@@ -37,6 +47,10 @@ def eval_value(node):
             for keyword in node.keywords
             if keyword.arg is not None
         }
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [eval_value(element) for element in node.elts]
     return ast.literal_eval(node)
 
 tree = ast.parse(Path("python/nexus/services/resource_items/capabilities.py").read_text())

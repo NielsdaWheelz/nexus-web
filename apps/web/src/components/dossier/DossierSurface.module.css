@@ -1,0 +1,104 @@
+.surface {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 1rem);
+  padding: var(--space-4, 1rem);
+  min-height: 0;
+}
+
+.statusRegion {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-3, 0.75rem);
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.25));
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.bannerAlert {
+  border-color: var(--border-danger, rgba(220, 80, 80, 0.5));
+  background: var(--surface-danger-subtle, rgba(220, 80, 80, 0.08));
+}
+
+.bannerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  flex-wrap: wrap;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.content {
+  min-height: 0;
+}
+
+.draft {
+  white-space: pre-wrap;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--text-secondary, #666);
+}
+
+.freshness {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--text-secondary, #666);
+}
+
+.abstract {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+  padding: var(--space-3, 0.75rem);
+  border-radius: var(--radius-md, 0.5rem);
+  background: var(--surface-subtle, rgba(128, 128, 128, 0.06));
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.abstractLabel {
+  font-size: var(--font-size-xs, 0.75rem);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #666);
+}
+
+.abstractStale {
+  color: var(--text-secondary, #666);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 0.75rem);
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.historyNav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--text-secondary, #666);
+}

@@ -51,7 +51,7 @@ from nexus.schemas.search import (
 from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
-from nexus.services.media_intelligence import NotReady, get_media_unit
+from nexus.services.media_intelligence import NotReady, get_current
 from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
@@ -443,7 +443,7 @@ def _build_dossier(db: Session, *, user_id: UUID, ref: ResourceRef) -> _Dossier 
 
 
 def _media_dossier(db: Session, *, media_id: UUID) -> _Dossier | None:
-    unit = get_media_unit(db, media_id=media_id)
+    unit = get_current(db, media_id=media_id)
     if isinstance(unit, NotReady):
         return None
     title = db.execute(select(Media.title).where(Media.id == media_id)).scalar_one_or_none()

@@ -2,7 +2,7 @@
 # Safe production default for small VPS Postgres: explicit user/domain jobs only.
 # Merged after env-prod-backend, so values here can override API defaults.
 
-WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,library_dossier_generate,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,oracle_reading_generate,synapse_scan,dawn_write_job,conversation_distill,conversation_distill_sweep,atlas_project_job,media_teardown,storage_object_cleanup,storage_orphan_sweep
+WORKER_ALLOWED_JOB_KINDS=ingest_media_source,enrich_metadata,chat_run,dossier_build,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,oracle_reading_generate,synapse_scan,dawn_write_job,atlas_project_job,media_teardown,storage_object_cleanup,storage_orphan_sweep
 WORKER_POLL_INTERVAL_SECONDS=5
 WORKER_IDLE_BACKOFF_MAX_SECONDS=300
 WORKER_SCHEDULER_INTERVAL_SECONDS=300
@@ -17,10 +17,6 @@ WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=900
 # Dawn write morning brief (dawn_write_job no-op when false).
 # DAWN_WRITE_ENABLED=true
 DAWN_WRITE_SCHEDULE_SECONDS=3600
-
-# Conversation distillate sweep (conversation_distill + sweep no-op when false).
-# DISTILL_ENABLED=true
-CONVERSATION_DISTILL_SCHEDULE_SECONDS=3600
 
 # Grand atlas nightly re-projection (0 disables the periodic sweep).
 ATLAS_PROJECT_SCHEDULE_SECONDS=86400

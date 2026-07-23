@@ -57,7 +57,7 @@ import {
   hrefForResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
-import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities.generated";
+import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";

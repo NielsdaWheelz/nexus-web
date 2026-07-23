@@ -18,7 +18,7 @@ from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
-from nexus.schemas.media import MediaLibrariesRequest
+from nexus.schemas.media import MediaIntelligenceOut, MediaLibrariesRequest
 from nexus.schemas.resource_graph import ConnectionEndpointOut, RelatedMediaOut
 from nexus.services import (
     contributors as contributors_service,
@@ -225,14 +225,26 @@ def refresh_media_source(
     return success_response(result)
 
 
-@router.post("/media/{media_id}/summarize", status_code=202)
-def summarize_media(
-    media_id: UUID,
+@router.get("/media/{media_handle}/intelligence")
+def get_media_intelligence(
+    media_handle: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Build (or reuse) the per-media intelligence unit on demand."""
-    result = media_intelligence.ensure_media_unit_for_viewer(
-        db, viewer_id=viewer.user_id, media_id=media_id
+    """Return the authorized Media Abstract: the current-only intelligence projection.
+
+    404-masks unreadable media (masking existence). Read-only — the projection
+    carries no Generate control and no history (spec §252/§826).
+    """
+    projection = media_intelligence.read_single(
+        db, media_id=media_handle, requester_user_id=viewer.user_id
     )
-    return ok(result)
+    return ok(
+        MediaIntelligenceOut(
+            media_id=projection.media_id,
+            status=projection.status,
+            content_fingerprint=projection.content_fingerprint,
+            summary_md=projection.summary_md,
+            model_name=projection.model_name,
+        )
+    )

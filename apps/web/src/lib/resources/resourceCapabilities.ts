@@ -34,12 +34,51 @@ export interface ResourceUserRelationPolicy {
   userLinkTarget: UserLinkTargetMode;
 }
 
+// Mirrors backend `ResourceInspectorSurfaceRole`/`ResourceInspectorPolicy`
+// (python/nexus/services/resource_items/capabilities.py). Closed-code union
+// values are PascalCase per docs/rules/naming.md ("Enums are PascalCase
+// strings"), matching every other new vocabulary item in
+// docs/cutovers/resource-inspector-and-universal-dossiers-hard-cutover.md
+// (Capability Contract).
+export type ResourceInspectorSurfaceRole =
+  | "Contents"
+  | "LinkedItems"
+  | "Forks"
+  | "Dossier";
+
+// Which concrete LinkedItems surface a subject's Inspector resolves to:
+// Media -> Evidence, Conversation -> Context, everything else -> Connections.
+export type ResourceInspectorLinkedItemsSurface =
+  | "MediaEvidence"
+  | "ConversationContext"
+  | "ResourceConnections";
+
+// Only Conversation ever carries a Forks surface.
+export type ResourceInspectorForksSurface = "ConversationForks";
+
+export interface ResourceInspectorResourcePolicy {
+  linkedItems: ResourceInspectorLinkedItemsSurface;
+  forks: ResourceInspectorForksSurface | null;
+  /** Fallback preference order, NOT tab display order. Always ends in the
+   * always-published Dossier role. `useResourceInspector` selects the first
+   * concrete surface currently published. */
+  defaultSurfaceOrder: readonly ResourceInspectorSurfaceRole[];
+}
+
+// `None | Resource{...}`: only the 7 Dossier-eligible subjects (media,
+// conversation, library, podcast, contributor, page, note_block) carry a
+// non-null policy. `Resource` implies Dossier eligibility. Contents
+// eligibility is NOT re-modeled here — it derives from the already-owned
+// `inspectable` capability below (no `contents_provider` field).
+export type ResourceInspectorPolicy = ResourceInspectorResourcePolicy | null;
+
 export interface ResourceCapabilityProjection {
   userRelation: ResourceUserRelationPolicy;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
   inspectable: ResourceInspectMode;
+  inspectorPolicy: ResourceInspectorPolicy;
   citableResultType: string | null;
   appSearchScope: boolean;
   conversationSearchScope: boolean;
@@ -66,6 +105,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "media",
     inspectable: "media_document_map",
+    inspectorPolicy: {
+      linkedItems: "MediaEvidence",
+      forks: null,
+      defaultSurfaceOrder: ["Contents", "LinkedItems", "Dossier"],
+    },
     citableResultType: "media",
     appSearchScope: true,
     conversationSearchScope: false,
@@ -81,6 +125,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "scope",
     readable: "scope",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ResourceConnections",
+      forks: null,
+      defaultSurfaceOrder: ["Dossier"],
+    },
     citableResultType: null,
     appSearchScope: true,
     conversationSearchScope: false,
@@ -96,6 +145,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "evidence_span",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -111,6 +161,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "content_chunk",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -126,6 +177,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "quote",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "highlight",
     appSearchScope: false,
     conversationSearchScope: true,
@@ -141,6 +193,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ResourceConnections",
+      forks: null,
+      defaultSurfaceOrder: ["Dossier"],
+    },
     citableResultType: "page",
     appSearchScope: false,
     conversationSearchScope: true,
@@ -156,6 +213,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ResourceConnections",
+      forks: null,
+      defaultSurfaceOrder: ["Dossier"],
+    },
     citableResultType: "note_block",
     appSearchScope: false,
     conversationSearchScope: true,
@@ -171,6 +233,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "fragment",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -186,6 +249,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "label",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ConversationContext",
+      forks: "ConversationForks",
+      defaultSurfaceOrder: ["LinkedItems", "Forks", "Dossier"],
+    },
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -201,6 +269,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "message",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -216,6 +285,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "generated_output",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -231,6 +301,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "none",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -246,6 +317,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "generated_output",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -261,6 +333,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "generated_output",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -276,6 +349,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "none",
     readable: "none",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "web_result",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -291,6 +365,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "label",
     readable: "none",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ResourceConnections",
+      forks: null,
+      defaultSurfaceOrder: ["Dossier"],
+    },
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -306,6 +385,11 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "label",
     readable: "none",
     inspectable: "none",
+    inspectorPolicy: {
+      linkedItems: "ResourceConnections",
+      forks: null,
+      defaultSurfaceOrder: ["Dossier"],
+    },
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,
@@ -321,6 +405,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "readable",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: "reader_apparatus_item",
     appSearchScope: false,
     conversationSearchScope: false,
@@ -336,6 +421,7 @@ export const RESOURCE_CAPABILITIES = {
     chatSubject: "quote",
     readable: "body",
     inspectable: "none",
+    inspectorPolicy: null,
     citableResultType: null,
     appSearchScope: false,
     conversationSearchScope: false,

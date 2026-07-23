@@ -6,14 +6,13 @@ export interface WorkspaceSecondaryWidthPolicy {
   maxWidthPx: number;
 }
 
+// One workspace-local secondary group: the Resource Inspector (Companion). Every
+// eligible subject pane composes its published surfaces into this single group, so
+// there is one width policy and one region-id scheme across the workspace.
 const PANE_SECONDARY_GROUP_BASE = {
-  "reader-tools": {
-    title: "Document Map",
+  "resource-inspector": {
+    title: "Companion",
     width: { defaultWidthPx: 360, minWidthPx: 280, maxWidthPx: 720 },
-  },
-  "conversation-context": {
-    title: "Conversation context",
-    width: { defaultWidthPx: 320, minWidthPx: 260, maxWidthPx: 640 },
   },
 } as const satisfies Record<
   string,
@@ -37,30 +36,46 @@ export function isPaneSecondaryRegionId(
     .some((groupId) => paneSecondaryRegionId(primaryPaneId, groupId) === candidateId);
 }
 
+// The six Inspector surfaces. `title` is the VISIBLE tab label (not just an aria
+// name); `iconId` selects the tab glyph. Which of these a given pane publishes is
+// decided by the subject's capability + `useResourceInspector`; this registry only
+// owns their identity, label, icon, and group membership.
 export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
   {
-    id: "reader-contents",
-    groupId: "reader-tools",
+    id: "resource-contents",
+    groupId: "resource-inspector",
     title: "Contents",
     iconId: "list-tree",
   },
   {
-    id: "reader-evidence",
-    groupId: "reader-tools",
+    id: "resource-evidence",
+    groupId: "resource-inspector",
     title: "Evidence",
     iconId: "link-2",
   },
   {
-    id: "conversation-context-refs",
-    groupId: "conversation-context",
+    id: "resource-context",
+    groupId: "resource-inspector",
     title: "Context",
     iconId: "link-2",
   },
   {
-    id: "conversation-forks",
-    groupId: "conversation-context",
+    id: "resource-connections",
+    groupId: "resource-inspector",
+    title: "Connections",
+    iconId: "network",
+  },
+  {
+    id: "resource-forks",
+    groupId: "resource-inspector",
     title: "Forks",
     iconId: "git-branch",
+  },
+  {
+    id: "resource-dossier",
+    groupId: "resource-inspector",
+    title: "Dossier",
+    iconId: "file-text",
   },
 ] as const satisfies readonly {
   id: string;

@@ -31,12 +31,22 @@ MediaUnitStatus = Literal["building", "ready", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
 
 
-class MediaSummarizeOut(BaseModel):
-    """Response contract for POST /media/{id}/summarize (on-demand unit build)."""
+MediaIntelligenceStatus = Literal["building", "ready", "stale", "failed", "not_available"]
+
+
+class MediaIntelligenceOut(BaseModel):
+    """Response for GET /media/{media_handle}/intelligence: the Media Abstract.
+
+    The authorized, compact, current-only per-media intelligence projection
+    (spec §252/§826): a read-only view with no Generate control and no history.
+    ``summary_md`` / ``model_name`` are populated only when ``status == "ready"``.
+    """
 
     media_id: UUID
-    summary_id: UUID
-    status: MediaUnitStatus
+    status: MediaIntelligenceStatus
+    content_fingerprint: str
+    summary_md: str | None = None
+    model_name: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

@@ -42,7 +42,6 @@ from nexus.services.media_intelligence import (
 from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 from nexus.services.search.query import SearchQuery
 from nexus.tasks.media_unit_build import _fail_unit_after_worker_exception
-from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import task_session_factory
 
 _PROFILE = operation_profile(MEDIA_UNIT_OPERATION)
@@ -590,40 +589,8 @@ class TestFailAfterWorkerException:
 
 
 # =============================================================================
-# Route + app_search enrichment
+# app_search summary enrichment
 # =============================================================================
-
-
-@pytest.mark.integration
-class TestSummarizeRoute:
-    def test_summarize_returns_202_when_readable(self, auth_client, direct_db) -> None:
-        from tests.factories import create_searchable_media
-
-        user_id = create_test_user_id()
-        with direct_db.session() as session:
-            ensure_user_and_default_library(session, user_id)
-            media_id = create_searchable_media(session, user_id, title="Readable")
-        direct_db.register_cleanup("media", "id", media_id)
-
-        response = auth_client.post(f"/media/{media_id}/summarize", headers=auth_headers(user_id))
-        assert response.status_code == 202, response.text
-        data = response.json()["data"]
-        assert data["media_id"] == str(media_id)
-        assert data["status"] in ("building", "ready")
-
-    def test_summarize_returns_404_when_unreadable(self, auth_client, direct_db) -> None:
-        from tests.factories import create_searchable_media
-
-        owner_id = create_test_user_id()
-        other_id = create_test_user_id()
-        with direct_db.session() as session:
-            ensure_user_and_default_library(session, owner_id)
-            ensure_user_and_default_library(session, other_id)
-            media_id = create_searchable_media(session, owner_id, title="Private")
-        direct_db.register_cleanup("media", "id", media_id)
-
-        response = auth_client.post(f"/media/{media_id}/summarize", headers=auth_headers(other_id))
-        assert response.status_code == 404
 
 
 @pytest.mark.integration

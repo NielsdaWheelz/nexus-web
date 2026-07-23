@@ -47,14 +47,13 @@ USER_FACING_JOB_KINDS = (
     "ingest_media_source",
     "enrich_metadata",
     "chat_run",
-    "library_dossier_generate",
+    "dossier_build",
     "media_unit_build",
     "note_reindex_job",
     "podcast_sync_subscription_job",
     "podcast_reindex_semantic_job",
     "oracle_reading_generate",
     "synapse_scan",
-    "conversation_distill",
     "atlas_project_job",
 )
 
@@ -126,31 +125,22 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             lease_seconds=900,
             dead_letter_handler=_dead_letter_chat_run,
         ),
-        "library_dossier_generate": JobDefinition(
-            kind="library_dossier_generate",
-            handler=_run_library_dossier_generate,
-            max_attempts=1,
-            retry_delays_seconds=(0,),
+        # Universal dossier generation (resource-inspector-and-universal-dossiers
+        # hard cutover). One job kind for all seven subject bindings, dispatched
+        # through the DossierBindingRegistry by the durable job body itself
+        # (CONTRACTS.md A19/B1a). Paid + non-idempotent (unlike media_unit_build):
+        # a moderate retry budget covers a worker crash/restart before the
+        # per-step Uncertain checkpoint commits; once a step is Uncertain on
+        # replay, run_build raises (never auto-redispatches a billed call) and
+        # the job dead-letters into the Suspended advisory instead of retrying.
+        "dossier_build": JobDefinition(
+            kind="dossier_build",
+            handler=_run_dossier_build,
+            max_attempts=3,
+            retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-        ),
-        "conversation_distill": JobDefinition(
-            kind="conversation_distill",
-            handler=_run_conversation_distill,
-            max_attempts=1,
-            retry_delays_seconds=(0,),
-            lease_seconds=900,
-        ),
-        "conversation_distill_sweep": JobDefinition(
-            kind="conversation_distill_sweep",
-            handler=_run_conversation_distill_sweep,
-            max_attempts=1,
-            retry_delays_seconds=(0,),
-            lease_seconds=300,
-            periodic_interval_seconds=(
-                int(settings.conversation_distill_schedule_seconds)
-                if settings.conversation_distill_schedule_seconds > 0
-                else None
-            ),
+            dead_letter_handler=_dead_letter_dossier_build,
+            never_prune_dead=True,
         ),
         "podcast_sync_subscription_job": JobDefinition(
             kind="podcast_sync_subscription_job",
@@ -352,28 +342,18 @@ def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
     finalize_dead_lettered_chat_run(db, job)
 
 
-def _run_library_dossier_generate(
+def _run_dossier_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> Mapping[str, Any] | None:
-    from nexus.tasks.artifacts import library_dossier_generate
+    from nexus.tasks.artifacts import dossier_build
 
-    return library_dossier_generate(revision_id=str(payload["revision_id"]))
-
-
-def _run_conversation_distill(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
-    from nexus.tasks.artifacts import conversation_distill
-
-    return conversation_distill(revision_id=str(payload["revision_id"]))
+    return dossier_build(payload=payload, context=context)
 
 
-def _run_conversation_distill_sweep(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
-    from nexus.tasks.artifacts import conversation_distill_sweep
+def _dead_letter_dossier_build(db: Session, job: JobRow) -> None:
+    from nexus.tasks.artifacts import dead_letter_dossier_build
 
-    return conversation_distill_sweep()
+    dead_letter_dossier_build(db, job)
 
 
 def _run_podcast_sync_subscription(

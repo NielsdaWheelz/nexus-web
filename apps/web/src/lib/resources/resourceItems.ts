@@ -6,7 +6,7 @@ import type {
   ResourcePromptRenderMode,
   ResourceReadMode,
   UserLinkTargetMode,
-} from "@/lib/resources/resourceCapabilities.generated";
+} from "@/lib/resources/resourceCapabilities";
 import {
   normalizeResourceActivation,
   type ResourceActivation,

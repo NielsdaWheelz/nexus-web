@@ -55,6 +55,7 @@ import {
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import {
   paneResourceLocatorKey,
   resolvePaneRouteIdentity,
@@ -1097,12 +1098,31 @@ function WorkspaceHost() {
       const pane = panesRef.current.find(
         (item) => item.secondaryPane?.id === secondaryPaneId,
       );
+      // Desktop opener-refocus (§159/§3h): capture the opener BEFORE clearing the
+      // map, collapse, then refocus. A disconnected opener falls back to the
+      // pane's chrome focus target (computed while the map entry still exists, so
+      // the fallback is never starved). Mobile return-focus is owned by the
+      // MobileSheet, so this only drives desktop.
+      const opener = pane
+        ? secondaryReturnFocusByPaneIdRef.current.get(pane.paneId) ?? null
+        : null;
+      const focusTarget =
+        !isMobile && pane
+          ? opener?.isConnected
+            ? opener
+            : findPaneChromeFocusTarget(pane.paneId)
+          : null;
       closeSecondaryPane(secondaryPaneId);
       if (pane) {
         secondaryReturnFocusByPaneIdRef.current.delete(pane.paneId);
       }
+      if (focusTarget) {
+        window.requestAnimationFrame(() => {
+          focusTarget.focus({ preventScroll: true });
+        });
+      }
     },
-    [closeSecondaryPane],
+    [closeSecondaryPane, isMobile],
   );
 
   const handleSetSecondarySurface = useCallback(

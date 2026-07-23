@@ -77,6 +77,17 @@ export default function SecondaryPaneShell({
       }}
       aria-label={activeSurfaceDefinition.title}
       data-testid="workspace-secondary-pane"
+      onKeyDown={(event) => {
+        // Escape closes the Inspector only while focus is inside it: a keydown
+        // reaches this <aside> only by bubbling from a focused descendant.
+        // Defer to inner controls that already consumed the key (preventDefault).
+        if (event.key !== "Escape" || event.defaultPrevented) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        onClose(secondaryPaneId);
+      }}
     >
       <header className={styles.header}>
         <SecondarySurfaceTabs

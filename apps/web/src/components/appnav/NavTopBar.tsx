@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import { ChevronLeft, ChevronRight, Command, Plus } from "lucide-react";
 import AsterismMark from "@/components/AsterismMark";
+import ActionBar from "@/components/ui/ActionBar";
 import ActionMenu from "@/components/ui/ActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
@@ -22,6 +23,7 @@ export default function NavTopBar({
 }) {
   const { hidden, paneChrome, acquireVisibleLock } = useMobileChrome();
   const navigation = paneChrome?.navigation;
+  const actions = paneChrome?.actions ?? [];
   const options = paneChrome?.options ?? [];
   const releaseLockRef = useRef<(() => void) | null>(null);
 
@@ -109,6 +111,9 @@ export default function NavTopBar({
         >
           <Plus size={20} aria-hidden="true" />
         </button>
+        {actions.length > 0 && (
+          <ActionBar options={actions} label="Pane actions" />
+        )}
         {options.length > 0 && (
           <ActionMenu
             options={options}

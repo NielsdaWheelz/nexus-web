@@ -252,25 +252,18 @@ export default function PaneShell({
     ];
     return ordinaryOptions;
   }, [copyPaneLink, effectiveOptions]);
-  const mobilePaneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
-    if (reconciledActions.length === 0) return paneMenuOptions;
-    const [firstOption, ...remainingOptions] = paneMenuOptions;
-    if (!firstOption) return reconciledActions;
-    return [
-      ...reconciledActions,
-      { ...firstOption, separatorBefore: true },
-      ...remainingOptions,
-    ];
-  }, [paneMenuOptions, reconciledActions]);
-
   useEffect(() => {
     if (!isMobile) return;
+    // Direct header actions (e.g. the Companion toggle) travel on their own
+    // channel so the mobile top bar renders them beside — never folded into —
+    // the Options menu.
     setPaneChrome({
       paneId,
       identityId,
       header,
       navigation,
-      options: mobilePaneMenuOptions,
+      actions: reconciledActions,
+      options: paneMenuOptions,
     });
     return () => setPaneChrome(null);
   }, [
@@ -279,7 +272,8 @@ export default function PaneShell({
     isMobile,
     navigation,
     paneId,
-    mobilePaneMenuOptions,
+    reconciledActions,
+    paneMenuOptions,
     setPaneChrome,
   ]);
 

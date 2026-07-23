@@ -41,7 +41,6 @@ from nexus.services.contributor_taxonomy import (
     try_parse_contributor_handle,
 )
 from nexus.services.contributors import get_contributor_detail
-from nexus.services.media_intelligence import MediaUnit
 from nexus.services.resource_graph.context import (
     conversation_has_note_search_scope_refs,
     search_scope_refs_for_conversation,
@@ -724,7 +723,7 @@ def _render_single_retrieved_context(
     if context_type in {"media", "episode", "video"}:
         if not can_read_media(db, viewer_id, context_id):
             return None
-        return _render_media_block(db, context_id)
+        return _render_media_block(db, viewer_id, context_id)
 
     if context_type == "page":
         return _render_page_block(db, viewer_id, context_id)
@@ -766,7 +765,7 @@ def _render_single_retrieved_context(
     return None
 
 
-def _render_media_block(db: Session, media_id: UUID) -> str | None:
+def _render_media_block(db: Session, viewer_id: UUID, media_id: UUID) -> str | None:
     row = db.execute(
         text("SELECT title, canonical_source_url FROM media WHERE id = :media_id"),
         {"media_id": media_id},
@@ -776,9 +775,9 @@ def _render_media_block(db: Session, media_id: UUID) -> str | None:
     lines = ['<app_search_result type="media">', f"<source>{xml_escape(row[0] or '')}</source>"]
     if row[1]:
         lines.append(f"<url>{xml_escape(row[1])}</url>")
-    unit = media_intelligence.get_media_unit(db, media_id=media_id)
-    if isinstance(unit, MediaUnit) and unit.summary_md:
-        lines.append(f"<summary>{xml_escape(unit.summary_md)}</summary>")
+    projection = media_intelligence.read_single(db, media_id=media_id, requester_user_id=viewer_id)
+    if projection.summary_md:
+        lines.append(f"<summary>{xml_escape(projection.summary_md)}</summary>")
     lines.append("</app_search_result>")
     return "\n".join(lines)
 

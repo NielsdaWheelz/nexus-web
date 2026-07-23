@@ -29,11 +29,11 @@ from pydantic_settings import BaseSettings
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
 DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
     "ingest_media_source,enrich_metadata,chat_run,"
-    "library_dossier_generate,media_unit_build,note_reindex_job,"
+    "dossier_build,media_unit_build,note_reindex_job,"
     "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
     "oracle_reading_generate,synapse_scan,"
     "dawn_write_job,"
-    "conversation_distill,conversation_distill_sweep,atlas_project_job,"
+    "atlas_project_job,"
     # Media teardown + its durable storage sweeps (spec §3.1). The default worker
     # must claim these so a user delete actually physically deletes, the Armed
     # write-reservation deadlines fire, and the recurring orphan sweep is scheduled.
@@ -434,15 +434,6 @@ class Settings(BaseSettings):
     # Dawn write: DAWN_WRITE_ENABLED=false makes the sweep job a no-op.
     dawn_write_enabled: bool = Field(default=True, alias="DAWN_WRITE_ENABLED")
     dawn_write_schedule_seconds: int = Field(default=3600, alias="DAWN_WRITE_SCHEDULE_SECONDS")
-
-    # Conversation distillate sweep: DISTILL_ENABLED=false makes the sweep + the
-    # on-demand distill enqueue no-ops (one deploy safety valve, D-14). The sweep
-    # is an opt-in periodic job: 0 (default) leaves conversation_distill_sweep
-    # unregistered as periodic; the deploy env sets a positive cadence (prod: 3600).
-    distill_enabled: bool = Field(default=True, alias="DISTILL_ENABLED")
-    conversation_distill_schedule_seconds: int = Field(
-        default=0, alias="CONVERSATION_DISTILL_SCHEDULE_SECONDS"
-    )
 
     # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a

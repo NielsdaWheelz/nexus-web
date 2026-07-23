@@ -17,12 +17,17 @@ from provider_runtime import CATALOG, DirectCertification, ProviderTarget, Reaso
 
 type BackgroundLlmOperation = Literal[
     "oracle",
-    "conversation_distillate",
     "media_summary",
     "metadata_enrichment",
     "synapse",
-    "library_dossier",
     "dawn_write",
+    "dossier_media",
+    "dossier_conversation",
+    "dossier_library",
+    "dossier_podcast",
+    "dossier_contributor",
+    "dossier_page",
+    "dossier_note",
 ]
 type LlmOperation = BackgroundLlmOperation | Literal["chat"]
 
@@ -160,12 +165,22 @@ _PROFILES_BY_ID: dict[str, LlmProfile] = {profile.id: profile for profile in PRO
 
 OPERATION_PROFILES: dict[BackgroundLlmOperation, str] = {
     "oracle": "fast",
-    "conversation_distillate": "fast",
     "media_summary": "fast",
     "metadata_enrichment": "fast",
     "synapse": "fast",
-    "library_dossier": "balanced",
     "dawn_write": "balanced",
+    # Universal dossier generation (CONTRACTS.md A4): one operation per subject
+    # binding. This maps each operation to its LLM *profile* only -- the
+    # reasoning override (Library/Podcast/Contributor run balanced at "high",
+    # not balanced's own "medium" default) is a `DossierBinding.reasoning`
+    # field applied in the dossier_build job, not a second profile here.
+    "dossier_media": "balanced",
+    "dossier_conversation": "balanced",
+    "dossier_library": "balanced",
+    "dossier_podcast": "balanced",
+    "dossier_contributor": "balanced",
+    "dossier_page": "fast",
+    "dossier_note": "fast",
 }
 
 

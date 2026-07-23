@@ -30,14 +30,14 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
-    ArtifactRevision,
-    ArtifactRevisionEvent,
+    ArtifactBuild,
+    ArtifactBuildEvent,
     ChatRun,
     ChatRunEvent,
     OracleReading,
     OracleReadingEvent,
 )
-from nexus.schemas.artifact import ArtifactRevisionEventOut
+from nexus.schemas.artifact import ArtifactBuildEventOut
 from nexus.schemas.conversation import ChatRunEventOut
 from nexus.schemas.oracle import OracleReadingEventOut
 
@@ -45,10 +45,9 @@ RunEventPayload = dict[str, JsonValue]
 
 _CHAT_TERMINAL_STATUSES = frozenset({"complete", "error", "cancelled"})
 _ORACLE_TERMINAL_STATUSES = frozenset({"complete", "failed"})
-_ARTIFACT_REVISION_TERMINAL_STATUSES = frozenset({"ready", "failed"})
 _CHAT_CHANNEL = "chat_run_events"
 _ORACLE_CHANNEL = "oracle_reading_events"
-_ARTIFACT_REVISION_CHANNEL = "artifact_revision_events"
+_ARTIFACT_BUILD_CHANNEL = "artifact_build_events"
 
 
 class RunStreamKind(Enum):
@@ -56,14 +55,14 @@ class RunStreamKind(Enum):
 
     ChatRun = "ChatRun"
     OracleReading = "OracleReading"
-    ArtifactRevision = "ArtifactRevision"
+    ArtifactBuild = "ArtifactBuild"
 
 
 @dataclass(frozen=True)
 class RunStream:
     """A durable-run event stream bound to one parent run row."""
 
-    parent: ChatRun | OracleReading | ArtifactRevision
+    parent: ChatRun | OracleReading | ArtifactBuild
 
 
 def chat_run_stream(run: ChatRun) -> RunStream:
@@ -74,8 +73,8 @@ def oracle_reading_stream(reading: OracleReading) -> RunStream:
     return RunStream(parent=reading)
 
 
-def artifact_revision_stream(revision: ArtifactRevision) -> RunStream:
-    return RunStream(parent=revision)
+def artifact_build_stream(build: ArtifactBuild) -> RunStream:
+    return RunStream(parent=build)
 
 
 def notify_channel(kind: RunStreamKind) -> str:
@@ -84,19 +83,28 @@ def notify_channel(kind: RunStreamKind) -> str:
         return _CHAT_CHANNEL
     if kind is RunStreamKind.OracleReading:
         return _ORACLE_CHANNEL
-    if kind is RunStreamKind.ArtifactRevision:
-        return _ARTIFACT_REVISION_CHANNEL
+    if kind is RunStreamKind.ArtifactBuild:
+        return _ARTIFACT_BUILD_CHANNEL
     assert_never(kind)
 
 
 def terminal_statuses(kind: RunStreamKind) -> frozenset[str]:
-    """The terminal status set for a run kind (the one owner of each set)."""
+    """The terminal status set for a run kind (the one owner of each set).
+
+    Chat/oracle runs carry a status column; an artifact build does NOT — its
+    terminal state derives from the existence of a terminal child row (revision |
+    failure | cancellation), so asking for a build's status set is a defect.
+    """
     if kind is RunStreamKind.ChatRun:
         return _CHAT_TERMINAL_STATUSES
     if kind is RunStreamKind.OracleReading:
         return _ORACLE_TERMINAL_STATUSES
-    if kind is RunStreamKind.ArtifactRevision:
-        return _ARTIFACT_REVISION_TERMINAL_STATUSES
+    if kind is RunStreamKind.ArtifactBuild:
+        # justify-defect: build terminal state is child-existence, not a status set;
+        # no caller resolves this for a build (is_run_terminal derives it directly).
+        raise AssertionError(
+            "artifact builds have no status set; terminal state is child existence"
+        )
     assert_never(kind)
 
 
@@ -126,12 +134,10 @@ def append_event(
                 reading_id=parent.id, seq=seq, event_type=event_type, payload=payload
             )
         )
-    elif isinstance(parent, ArtifactRevision):
-        seq = _next_seq(db, table="artifact_revision_events", fk="revision_id", parent_id=parent.id)
+    elif isinstance(parent, ArtifactBuild):
+        seq = _next_seq(db, table="artifact_build_events", fk="build_id", parent_id=parent.id)
         db.add(
-            ArtifactRevisionEvent(
-                revision_id=parent.id, seq=seq, event_type=event_type, payload=payload
-            )
+            ArtifactBuildEvent(build_id=parent.id, seq=seq, event_type=event_type, payload=payload)
         )
     else:
         assert_never(parent)
@@ -162,8 +168,11 @@ def mark_terminal(
         terminal = _CHAT_TERMINAL_STATUSES
     elif isinstance(parent, OracleReading):
         terminal = _ORACLE_TERMINAL_STATUSES
-    elif isinstance(parent, ArtifactRevision):
-        terminal = _ARTIFACT_REVISION_TERMINAL_STATUSES
+    elif isinstance(parent, ArtifactBuild):
+        # justify-defect: an artifact build has no status column and is finalized by
+        # the engine inserting a terminal child + appending the strict terminal event
+        # under the head lock — mark_terminal is never used for builds (A5 §687).
+        raise AssertionError("artifact builds finalize via engine terminal-child insert")
     else:
         assert_never(parent)
     if parent.status in terminal:
@@ -181,7 +190,7 @@ def mark_terminal(
 
 def get_run_events(
     db: Session, kind: RunStreamKind, parent_id: UUID, after: int
-) -> tuple[list[ChatRunEventOut | OracleReadingEventOut | ArtifactRevisionEventOut], bool]:
+) -> tuple[list[ChatRunEventOut | OracleReadingEventOut | ArtifactBuildEventOut], bool]:
     """Return the kind's replay events with ``seq > after`` plus the terminal flag.
 
     The single owner of the run-tail query (chat/oracle/LI) that the SSE cursor
@@ -189,7 +198,7 @@ def get_run_events(
     as the old per-surface functions did. Viewer scoping is **not** here: the
     route's ``assert_viewer`` owns ownership (it runs upfront, once).
     """
-    events: list[ChatRunEventOut | OracleReadingEventOut | ArtifactRevisionEventOut]
+    events: list[ChatRunEventOut | OracleReadingEventOut | ArtifactBuildEventOut]
     if kind is RunStreamKind.ChatRun:
         chat_rows = (
             db.execute(
@@ -228,26 +237,30 @@ def get_run_events(
             )
             for row in oracle_rows
         ]
-    elif kind is RunStreamKind.ArtifactRevision:
-        artifact_rows = (
+    elif kind is RunStreamKind.ArtifactBuild:
+        build_rows = (
             db.execute(
-                select(ArtifactRevisionEvent)
+                select(ArtifactBuildEvent)
                 .where(
-                    ArtifactRevisionEvent.revision_id == parent_id,
-                    ArtifactRevisionEvent.seq > after,
+                    ArtifactBuildEvent.build_id == parent_id,
+                    ArtifactBuildEvent.seq > after,
                 )
-                .order_by(ArtifactRevisionEvent.seq)
+                .order_by(ArtifactBuildEvent.seq)
             )
             .scalars()
             .all()
         )
         events = [
-            ArtifactRevisionEventOut(
-                seq=row.seq,
-                event_type=row.event_type,
-                payload=dict(row.payload) if isinstance(row.payload, dict) else {},
+            # The strict build-event schema coerces the raw ``(event_type, payload)``
+            # column pair into the typed payload model via its before-validator.
+            ArtifactBuildEventOut.model_validate(
+                {
+                    "seq": row.seq,
+                    "event_type": row.event_type,
+                    "payload": dict(row.payload) if isinstance(row.payload, dict) else {},
+                }
             )
-            for row in artifact_rows
+            for row in build_rows
         ]
     else:
         assert_never(kind)
@@ -258,23 +271,38 @@ def is_run_terminal(db: Session, kind: RunStreamKind, parent_id: UUID) -> bool:
     """Whether the run is terminal — a missing row counts as terminal.
 
     A row deleted mid-stream ends the SSE tail cleanly (it would otherwise stream
-    forever). Adopts the scalar-status query for all three kinds. No viewer scoping.
+    forever). Chat/oracle read a scalar status column; an artifact build has none —
+    its terminal state DERIVES from the existence of a terminal child row (a
+    revision, failure, or cancellation), not a status (A5 §687). No viewer scoping.
     """
     if kind is RunStreamKind.ChatRun:
         status = db.execute(
             select(ChatRun.status).where(ChatRun.id == parent_id)
         ).scalar_one_or_none()
-    elif kind is RunStreamKind.OracleReading:
+        return status is None or status in terminal_statuses(kind)
+    if kind is RunStreamKind.OracleReading:
         status = db.execute(
             select(OracleReading.status).where(OracleReading.id == parent_id)
         ).scalar_one_or_none()
-    elif kind is RunStreamKind.ArtifactRevision:
-        status = db.execute(
-            select(ArtifactRevision.status).where(ArtifactRevision.id == parent_id)
-        ).scalar_one_or_none()
-    else:
-        assert_never(kind)
-    return status is None or status in terminal_statuses(kind)
+        return status is None or status in terminal_statuses(kind)
+    if kind is RunStreamKind.ArtifactBuild:
+        row = (
+            db.execute(
+                text(
+                    "SELECT "
+                    "EXISTS(SELECT 1 FROM artifact_builds WHERE id = :id) AS present, "
+                    "(EXISTS(SELECT 1 FROM artifact_revisions WHERE build_id = :id) "
+                    " OR EXISTS(SELECT 1 FROM artifact_build_failures WHERE build_id = :id) "
+                    " OR EXISTS(SELECT 1 FROM artifact_build_cancellations WHERE build_id = :id))"
+                    " AS terminal"
+                ),
+                {"id": parent_id},
+            )
+            .mappings()
+            .one()
+        )
+        return (not row["present"]) or bool(row["terminal"])
+    assert_never(kind)
 
 
 def fail_run_after_worker_exception[P](

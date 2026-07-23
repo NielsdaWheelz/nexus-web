@@ -11,7 +11,10 @@ import {
   type ReactNode,
 } from "react";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type {
+  ActionDescriptor,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderModel } from "@/lib/panes/paneHeaderModel";
 import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 
@@ -39,6 +42,11 @@ export interface MobilePaneChrome {
   identityId: string;
   header: PaneHeaderModel;
   navigation: SurfaceHeaderNavigation;
+  /**
+   * Direct header actions (e.g. the Companion toggle) rendered by the mobile top
+   * bar immediately before the Options menu — they are NOT folded into Options.
+   */
+  actions: readonly PaneHeaderAction[];
   options: readonly ActionDescriptor[];
 }
 

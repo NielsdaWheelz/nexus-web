@@ -108,6 +108,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Library",
     labelMode: "dynamic",
     bodyMode: "standard",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -118,7 +119,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Media",
     labelMode: "dynamic",
     bodyMode: "document",
-    secondaryGroups: ["reader-tools"],
+    secondaryGroups: ["resource-inspector"],
     ...MEDIA_READER_WIDTH_CONTRACT,
   }),
   route({
@@ -145,7 +146,8 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "New chat",
     labelMode: "static",
     bodyMode: "contained",
-    secondaryGroups: ["conversation-context"],
+    // No Inspector until a conversation exists (A13); the resource-inspector group
+    // is published only by the resolved `conversation` route below.
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -159,7 +161,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Chat",
     labelMode: "dynamic",
     bodyMode: "contained",
-    secondaryGroups: ["conversation-context"],
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -186,6 +188,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Podcast",
     labelMode: "dynamic",
     bodyMode: "document",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -212,6 +215,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Author",
     labelMode: "dynamic",
     bodyMode: "standard",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -238,6 +242,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Page",
     labelMode: "dynamic",
     bodyMode: "document",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -251,6 +256,7 @@ export const PANE_ROUTE_MODELS = [
     defaultLabel: "Note",
     labelMode: "dynamic",
     bodyMode: "document",
+    secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({

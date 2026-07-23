@@ -10,7 +10,7 @@ import {
   type SearchKind,
 } from "./kinds";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resourceSchemeIsAppSearchScope } from "@/lib/resources/resourceCapabilities.generated";
+import { resourceSchemeIsAppSearchScope } from "@/lib/resources/resourceCapabilities";
 
 export type SearchChip =
   | { dim: "kind"; value: SearchKind }
