@@ -55,7 +55,7 @@ from provider_runtime import (
 from provider_runtime.types import Dynamic, PromptBlock, SystemMessage, UserMessage
 from pydantic import BaseModel, ConfigDict
 
-from nexus.services.artifacts.reducers.library_dossier import _LI_SYSTEM_PROMPT
+from nexus.services.artifacts.bindings.library import LibraryBinding
 from nexus.services.llm_profiles import profile as profile_lookup
 from nexus.services.media_intelligence import _MEDIA_UNIT_SYSTEM_PROMPT
 from nexus.services.oracle import _ORACLE_SYSTEM_PROMPT
@@ -260,44 +260,35 @@ _ORACLE_JSON_SHAPE = (
     "[string, string, string]}"
 )
 
-# Copied verbatim from library_dossier.py `_LI_SYSTEM_PROMPT`.
-_LI_EXPECTED_PROMPT = (
-    "You are a careful research assistant writing a whole-library synthesis from "
-    "per-document claims. Each claim is offered by integer index.\n\n"
+# Copied verbatim from the shared universal Dossier prompt builder.
+_DOSSIER_EXPECTED_PROMPT = (
+    "You are a careful research assistant writing a grounded dossier about "
+    "a shared research library. Every source is offered by integer index.\n\n"
     "RULES.\n"
-    "1. Write content_md: faithful markdown synthesis prose covering an overview, "
-    "key topics, key sources, a reading path, cross-source tensions, and open "
-    "questions. Use prose, not rigid sections. Base every statement only on the "
-    "provided claims.\n"
-    "2. Place inline citation markers [N] in the prose where a claim supports the "
-    "statement, where N is the ordinal you assign in citations.\n"
-    "3. Write citations: for each [N], one entry {ordinal:N, claim_index:int, "
-    "role:'supports'|'contradicts'|'context'} where claim_index is the integer "
-    "index of the single provided claim it cites. Never cite an index you were not "
-    "given.\n"
+    "1. Write content_md as concise, useful markdown synthesis. Base every "
+    "claim only on the supplied sources; do not invent facts or quotations.\n"
+    "2. Place plain inline markers [N] where sources support the prose.\n"
+    "3. For every marker return one citations entry with the same ordinal, "
+    "one supplied candidate_index, and role supports, contradicts, or context.\n"
     '4. Output strict JSON of the form: {"content_md": string, "citations": '
-    '[{"ordinal": int, "claim_index": int, "role": string}]}. No markdown '
+    '[{"ordinal": int, "candidate_index": int, "role": string}]}. No markdown '
     "fences, no extra keys, no commentary outside the JSON."
 )
 
-_LI_PERSONA = (
-    "You are a careful research assistant writing a whole-library synthesis from "
-    "per-document claims. Each claim is offered by integer index."
+_DOSSIER_PERSONA = (
+    "You are a careful research assistant writing a grounded dossier about "
+    "a shared research library. Every source is offered by integer index."
 )
-_LI_DOMAIN_RULES = [
-    "Write content_md: faithful markdown synthesis prose covering an overview, "
-    "key topics, key sources, a reading path, cross-source tensions, and open "
-    "questions. Use prose, not rigid sections. Base every statement only on the "
-    "provided claims.",
-    "Place inline citation markers [N] in the prose where a claim supports the "
-    "statement, where N is the ordinal you assign in citations.",
-    "Write citations: for each [N], one entry {ordinal:N, claim_index:int, "
-    "role:'supports'|'contradicts'|'context'} where claim_index is the integer "
-    "index of the single provided claim it cites. Never cite an index you were not "
-    "given.",
+_DOSSIER_DOMAIN_RULES = [
+    "Write content_md as concise, useful markdown synthesis. Base every "
+    "claim only on the supplied sources; do not invent facts or quotations.",
+    "Place plain inline markers [N] where sources support the prose.",
+    "For every marker return one citations entry with the same ordinal, "
+    "one supplied candidate_index, and role supports, contradicts, or context.",
 ]
-_LI_JSON_SHAPE = (
-    '{"content_md": string, "citations": [{"ordinal": int, "claim_index": int, "role": string}]}'
+_DOSSIER_JSON_SHAPE = (
+    '{"content_md": string, "citations": '
+    '[{"ordinal": int, "candidate_index": int, "role": string}]}'
 )
 
 # Copied verbatim from media_intelligence.py `_MEDIA_UNIT_SYSTEM_PROMPT`.
@@ -346,15 +337,15 @@ def test_prompt_golden_reproduction_oracle():
     assert _ORACLE_SYSTEM_PROMPT == _ORACLE_EXPECTED_PROMPT
 
 
-def test_prompt_golden_reproduction_li_reduce():
+def test_prompt_golden_reproduction_universal_dossier():
     prompt = build_synthesis_prompt(
-        persona=_LI_PERSONA,
+        persona=_DOSSIER_PERSONA,
         preamble=None,
-        domain_rules=_LI_DOMAIN_RULES,
-        json_shape=_LI_JSON_SHAPE,
+        domain_rules=_DOSSIER_DOMAIN_RULES,
+        json_shape=_DOSSIER_JSON_SHAPE,
     )
-    assert prompt == _LI_EXPECTED_PROMPT
-    assert _LI_SYSTEM_PROMPT == _LI_EXPECTED_PROMPT
+    assert prompt == _DOSSIER_EXPECTED_PROMPT
+    assert LibraryBinding.system_prompt == _DOSSIER_EXPECTED_PROMPT
 
 
 def test_prompt_golden_reproduction_media_unit():
@@ -407,7 +398,7 @@ def test_user_content_reproduction_oracle():
     )
 
 
-def test_user_content_reproduction_li_reduce():
+def test_user_content_reproduction_universal_dossier():
     candidates = [
         (0, "media-1", "A summary.", "A claim."),
         (1, "media-2", "Another summary.", "Another claim."),
@@ -418,13 +409,14 @@ def test_user_content_reproduction_li_reduce():
     )
 
     content = build_synthesis_user_content(
-        candidates_header="UNIT CLAIMS",
+        candidates_header="GROUNDED CLAIMS FROM LIBRARY MEDIA",
         rendered_candidates=rendered,
         extra_user_block=None,
     )
 
     assert content == (
-        f"UNIT CLAIMS:\n{rendered}\n\nRespond with the strict JSON object as instructed."
+        f"GROUNDED CLAIMS FROM LIBRARY MEDIA:\n{rendered}\n\n"
+        "Respond with the strict JSON object as instructed."
     )
 
 

@@ -62,14 +62,73 @@ export interface DossierErrorInfo {
   message: string;
 }
 
-/** The typed, binding-owned input manifest (A21). Kept intentionally loose on
- * the frontend — only the discriminant + version are load-bearing here; full
- * per-binding coverage rendering is deferred to the domain surfaces. */
-export interface DossierInputManifest {
-  version: string;
-  kind: string;
-  [field: string]: unknown;
+export type DossierMediaDisposition =
+  | "Included"
+  | "OmittedNoReadyUnit"
+  | "OmittedBudget"
+  | "OmittedNotAudienceVisible"
+  | "OmittedProjectionFailed";
+
+export interface DossierMediaManifestEntry {
+  mediaRef: string;
+  contentFingerprint: string;
+  disposition: DossierMediaDisposition;
 }
+
+export type DossierInputManifest =
+  | {
+      version: "v1";
+      kind: "media";
+      mediaRef: string;
+      contentFingerprint: string;
+      offeredClaimCount: number;
+      omittedEvidenceRefs: readonly string[];
+    }
+  | {
+      version: "v1";
+      kind: "conversation";
+      conversationRef: string;
+      messageRefs: readonly string[];
+      contextRefs: readonly string[];
+      topologyFingerprint: Presence<string>;
+      completeness:
+        | { kind: "Complete" }
+        | { kind: "Incomplete"; reason: "MigratedCoverageGap" };
+    }
+  | {
+      version: "v1";
+      kind: "library";
+      libraryRef: string;
+      media: readonly DossierMediaManifestEntry[];
+    }
+  | {
+      version: "v1";
+      kind: "podcast";
+      podcastRef: string;
+      episodes: readonly DossierMediaManifestEntry[];
+    }
+  | {
+      version: "v1";
+      kind: "contributor";
+      contributorHandle: string;
+      works: readonly DossierMediaManifestEntry[];
+    }
+  | {
+      version: "v1";
+      kind: "page";
+      pageRef: string;
+      inputFingerprint: string;
+      blockRefs: readonly string[];
+      connectionRefs: readonly string[];
+    }
+  | {
+      version: "v1";
+      kind: "note";
+      noteRef: string;
+      inputFingerprint: string;
+      bodyFingerprint: Presence<string>;
+      connectionRefs: readonly string[];
+    };
 
 /** One immutable, citation-bearing revision (DossierRevisionOut). */
 export interface DossierRevision {
@@ -82,6 +141,10 @@ export interface DossierRevision {
   citations: readonly CitationOut[];
   inputManifest: DossierInputManifest;
   instruction: Presence<string>;
+  creatorUserId: Presence<string>;
+  modelProvider: Presence<string>;
+  modelName: Presence<string>;
+  totalTokens: Presence<number>;
   createdAt: string;
   promotedAt: Presence<string>;
 }
@@ -94,7 +157,12 @@ export interface DossierRevisionSummary {
   revisionRef: string;
   isCurrent: boolean;
   citationCount: number;
+  inputManifest: DossierInputManifest;
   instruction: Presence<string>;
+  creatorUserId: Presence<string>;
+  modelProvider: Presence<string>;
+  modelName: Presence<string>;
+  totalTokens: Presence<number>;
   createdAt: string;
   promotedAt: Presence<string>;
 }
@@ -195,6 +263,7 @@ export interface DossierControllerState {
   progressMessage: string | null;
   pendingAction: DossierPendingAction;
   actionError: DossierErrorInfo | null;
+  instructionDraft: string;
 }
 
 export function initialDossierControllerState(): DossierControllerState {
@@ -207,5 +276,6 @@ export function initialDossierControllerState(): DossierControllerState {
     progressMessage: null,
     pendingAction: null,
     actionError: null,
+    instructionDraft: "",
   };
 }

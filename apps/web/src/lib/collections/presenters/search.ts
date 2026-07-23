@@ -33,6 +33,7 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
       href,
       paneLabelHint: vm.paneLabelHint,
       viewTransition: href.startsWith("/media/") ? "media-reader" : undefined,
+      resourceActivation: vm.activation,
     },
     title: { text: vm.primaryText },
     contributors: vm.contributorCredits,

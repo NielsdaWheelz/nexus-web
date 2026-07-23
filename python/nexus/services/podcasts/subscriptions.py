@@ -477,6 +477,13 @@ def unsubscribe_from_podcast(
                 "updated_at": now,
             },
         )
+        from nexus.services.artifacts.dossier_types import AudienceUser
+        from nexus.services.artifacts.engine import on_audience_visibility_changed
+
+        on_audience_visibility_changed(
+            db,
+            audience=AudienceUser(user_id=viewer_id),
+        )
 
     return PodcastUnsubscribeOut(
         podcast_id=podcast_id,

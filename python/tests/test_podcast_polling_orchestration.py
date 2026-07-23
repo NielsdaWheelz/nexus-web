@@ -27,7 +27,6 @@ def test_registry_disables_periodic_jobs_by_default(monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("INGEST_RECONCILE_SCHEDULE_SECONDS", raising=False)
     monkeypatch.delenv("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", raising=False)
     monkeypatch.delenv("BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS", raising=False)
-    monkeypatch.delenv("CONVERSATION_DISTILL_SCHEDULE_SECONDS", raising=False)
     monkeypatch.delenv("ATLAS_PROJECT_SCHEDULE_SECONDS", raising=False)
     _clear_registry_cache()
 
@@ -62,7 +61,6 @@ def test_registry_enables_periodic_jobs_from_positive_schedule_env(
     monkeypatch.setenv("INGEST_RECONCILE_SCHEDULE_SECONDS", "7200")
     monkeypatch.setenv("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", "86400")
     monkeypatch.setenv("BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS", "86400")
-    monkeypatch.setenv("CONVERSATION_DISTILL_SCHEDULE_SECONDS", "3600")
     monkeypatch.setenv("ATLAS_PROJECT_SCHEDULE_SECONDS", "86400")
     _clear_registry_cache()
 
@@ -81,7 +79,6 @@ def test_registry_enables_periodic_jobs_from_positive_schedule_env(
         "prune_background_jobs_job",
         "purge_expired_auth_handoff_codes",
         "dawn_write_job",
-        "conversation_distill_sweep",
         "atlas_project_job",
         "storage_orphan_sweep",
     }, f"Unexpected periodic job set: {sorted(periodic_jobs.keys())}"
@@ -90,7 +87,6 @@ def test_registry_enables_periodic_jobs_from_positive_schedule_env(
     assert periodic_jobs["sync_gutenberg_catalog_job"] == 86400
     assert periodic_jobs["prune_background_jobs_job"] == 86400
     assert periodic_jobs["dawn_write_job"] == 3600
-    assert periodic_jobs["conversation_distill_sweep"] == 3600
     assert periodic_jobs["atlas_project_job"] == 86400
 
 

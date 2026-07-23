@@ -193,7 +193,7 @@ def get_run_events(
 ) -> tuple[list[ChatRunEventOut | OracleReadingEventOut | ArtifactBuildEventOut], bool]:
     """Return the kind's replay events with ``seq > after`` plus the terminal flag.
 
-    The single owner of the run-tail query (chat/oracle/LI) that the SSE cursor
+    The single owner of the run-tail query (Chat/Oracle/Dossier build) that the SSE cursor
     stream re-reads on each notify. Per-kind payload coercion is preserved exactly
     as the old per-surface functions did. Viewer scoping is **not** here: the
     route's ``assert_viewer`` owns ownership (it runs upfront, once).
@@ -312,7 +312,7 @@ def fail_run_after_worker_exception[P](
     is_terminal: Callable[[P], bool],
     write_failure: Callable[[Session, P], None],
 ) -> tuple[P | None, bool]:
-    """Shared worker-boundary failure write for oracle/LI/media-unit tasks.
+    """Shared worker-boundary failure write for Oracle and Media Intelligence tasks.
 
     Rolls back the broken transaction, reloads the run parent on the clean
     session, no-ops when it is missing or already terminal, otherwise applies

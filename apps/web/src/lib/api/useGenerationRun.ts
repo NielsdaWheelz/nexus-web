@@ -12,7 +12,6 @@ import { fetchStreamToken } from "./streamToken";
 export type GenerationRunKind =
   | "chat-runs"
   | "oracle-readings"
-  | "artifact-revisions"
   | "media";
 
 export type GenerationRunPhase =
@@ -24,13 +23,13 @@ export type GenerationRunPhase =
 
 /**
  * Stream path prefix per run kind, joined as `${prefix}/${id}/events` under
- * the stream base URL. All four browser-callable SSE endpoints live under
- * `/stream/` (one prefix predicate guards the bearer-auth boundary).
+ * the stream base URL. All three browser-callable generation-run SSE
+ * endpoints live under `/stream/` (one prefix predicate guards the
+ * bearer-auth boundary).
  */
 export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
   "chat-runs": "/stream/chat-runs",
   "oracle-readings": "/stream/oracle-readings",
-  "artifact-revisions": "/stream/artifact-revisions",
   media: "/stream/media",
 };
 
@@ -39,8 +38,9 @@ export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
  * build the per-kind stream URL, and hand both to `sseClientDirect`. The single
  * non-hook transport opener — `useGenerationRun` (the single-id hook) and chat's
  * imperative multi-run tailer both delegate their token-mint + URL + connect
- * wiring here, so no surface re-implements it. The caller owns every
- * `sseClientDirect` arg except `url`/`initialToken` (this owns the token mint).
+ * wiring here, so no surface re-implements it. The caller owns the stream
+ * lifecycle callbacks/options; this helper owns the lazy initial URL/token
+ * acquisition that runs inside `sseClientDirect`'s bounded reconnect loop.
  *
  * Honors `sseArgs.signal`: if the caller aborted during the mint, returns a
  * no-op without connecting (mirroring the hook's post-mint abort check).
@@ -48,15 +48,19 @@ export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
 export async function openGenerationRunStream<TEvent>(
   kind: GenerationRunKind,
   id: string,
-  sseArgs: Omit<Parameters<typeof sseClientDirect<TEvent>>[0], "url" | "initialToken">,
+  sseArgs: Omit<
+    Parameters<typeof sseClientDirect<TEvent>>[0],
+    "url" | "initialConnection" | "initialToken"
+  >,
 ): Promise<() => void> {
-  const connection = await fetchStreamToken();
-  if (sseArgs.signal?.aborted) return () => {};
   return sseClientDirect<TEvent>({
-    url: `${connection.stream_base_url}${GENERATION_RUN_STREAM_PATHS[kind]}/${id}/events`,
-    // The first connect reuses the token minted above (it also carries the
-    // stream base URL); sseClientDirect mints fresh ones for every reconnect.
-    initialToken: connection.token,
+    initialConnection: async () => {
+      const connection = await fetchStreamToken();
+      return {
+        url: `${connection.stream_base_url}${GENERATION_RUN_STREAM_PATHS[kind]}/${id}/events`,
+        token: connection.token,
+      };
+    },
     ...sseArgs,
   });
 }

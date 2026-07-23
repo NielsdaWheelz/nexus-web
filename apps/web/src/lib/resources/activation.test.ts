@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activateResource, type ResourceActivation } from "./activation";
+import {
+  activateResource,
+  secondaryActivationForResource,
+  type ResourceActivation,
+} from "./activation";
 
 const route: ResourceActivation = {
   resourceRef: "media:11111111-1111-4111-8111-111111111111",
@@ -57,5 +61,55 @@ describe("activateResource", () => {
 
     expect(assign).toHaveBeenCalledWith("https://example.test/source");
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("routes artifact revisions through the typed Dossier workspace command", () => {
+    const openInNewPane = vi.fn();
+    const revisionRef =
+      "artifact_revision:44444444-4444-4444-8444-444444444444";
+    const activation = {
+      ...route,
+      resourceRef: revisionRef,
+      href: "/conversations/33333333-3333-4333-8333-333333333333",
+    };
+
+    expect(activateResource(activation, { openInNewPane })).toBe(true);
+    expect(openInNewPane).toHaveBeenCalledWith(
+      activation.href,
+      undefined,
+      {
+        kind: "DossierRevision",
+        surfaceId: "resource-dossier",
+        revisionRef,
+      },
+    );
+  });
+});
+
+describe("secondaryActivationForResource", () => {
+  it("opens an artifact head on the current Dossier", () => {
+    expect(
+      secondaryActivationForResource({
+        ...route,
+        resourceRef: "artifact:22222222-2222-4222-8222-222222222222",
+        href: "/conversations/33333333-3333-4333-8333-333333333333",
+      }),
+    ).toEqual({ kind: "DossierCurrent", surfaceId: "resource-dossier" });
+  });
+
+  it("opens an artifact revision on that exact historical Dossier", () => {
+    const revisionRef =
+      "artifact_revision:44444444-4444-4444-8444-444444444444";
+    expect(
+      secondaryActivationForResource({
+        ...route,
+        resourceRef: revisionRef,
+        href: "/conversations/33333333-3333-4333-8333-333333333333",
+      }),
+    ).toEqual({
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef,
+    });
   });
 });

@@ -29,7 +29,6 @@ export default function ConversationsPaneBody() {
         `/api/conversations?${new URLSearchParams({ limit: "50", cursor })}`,
     });
   const removed = useStringIdSet();
-  const distilling = useStringIdSet();
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
 
   const handleDelete = useCallback(
@@ -46,28 +45,10 @@ export default function ConversationsPaneBody() {
     [removed],
   );
 
-  const handleDistill = useCallback(
-    async (id: string) => {
-      if (distilling.has(id)) return;
-      distilling.add(id);
-      try {
-        await apiFetch(`/api/conversations/${id}/distill`, { method: "POST" });
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        setFeedback(toFeedback(err, { fallback: "Failed to distill conversation" }));
-      } finally {
-        distilling.remove(id);
-      }
-    },
-    [distilling],
-  );
-
   const rows = items
     .filter((conversation) => !removed.has(conversation.id))
     .map((conversation) =>
       presentConversation(conversation, {
-        distilling: distilling.ids.has(conversation.id),
-        onDistill: () => void handleDistill(conversation.id),
         onDelete: () => void handleDelete(conversation.id),
       }),
     );

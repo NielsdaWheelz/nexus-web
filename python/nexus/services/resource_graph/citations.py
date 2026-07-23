@@ -104,6 +104,27 @@ def replace_citations_for_output(
     )
 
 
+def rehome_citations_for_output(
+    db: Session,
+    *,
+    source: ResourceRef,
+    new_owner_user_id: UUID,
+) -> None:
+    """Transfer the graph ownership of one surviving output's citation set."""
+    db.execute(
+        text(
+            "UPDATE resource_edges SET user_id = :new_owner_user_id "
+            "WHERE source_scheme = :source_scheme AND source_id = :source_id "
+            "AND origin = 'citation'"
+        ),
+        {
+            "new_owner_user_id": new_owner_user_id,
+            "source_scheme": source.scheme,
+            "source_id": source.id,
+        },
+    )
+
+
 def validate_generated_markdown_citations(
     content_md: str,
     citations: Sequence[CitationInput],
@@ -142,7 +163,7 @@ def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) ->
     The edge stores no locator (position lives in the target grain, D11); the
     in-reader jump ``(media_id, locator)`` is reconstructed here from the target's
     own anchoring (``reader_target_for_citation_target``), uniformly for chat,
-    Oracle, and Library Intelligence (G6).
+    Oracle, and Universal Dossiers (G6).
 
     Media-target chips also carry the LLM ``summary_md`` abstract (snapshot is
     display-only and stores no abstract, N6): it is reconstructed on read via

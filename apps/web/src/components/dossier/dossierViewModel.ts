@@ -10,6 +10,7 @@ import type {
   DossierControllerState,
   DossierExecutionPhase,
   DossierFreshness,
+  DossierHistoryStatus,
   DossierPendingAction,
   DossierRevision,
   DossierRevisionSummary,
@@ -68,6 +69,7 @@ export interface DossierViewModel {
   /** Synchronous command error attached near the invoked control. */
   actionError: string | null;
   history: readonly DossierRevisionSummary[];
+  historyStatus: DossierHistoryStatus;
   revisionCount: number;
   viewingHistorical: boolean;
   /** The revision the Make-current control acts on, when viewing a historical. */
@@ -96,6 +98,7 @@ export function deriveDossierViewModel(
     alert: null,
     actionError: state.actionError ? state.actionError.message : null,
     history: [] as readonly DossierRevisionSummary[],
+    historyStatus: "idle" as const,
     revisionCount: 0,
     viewingHistorical: state.revisionSelection.kind === "Historical",
     makeCurrentTargetRef: null,
@@ -229,6 +232,8 @@ export function deriveDossierViewModel(
     statusMessage = activity.progress ?? "Generating the dossier…";
   } else if (activity.kind === "Cancelled") {
     statusMessage = "The last generation was canceled.";
+  } else if (state.stream === "Terminal" && state.progressMessage) {
+    statusMessage = state.progressMessage;
   }
 
   const alert =
@@ -246,6 +251,7 @@ export function deriveDossierViewModel(
     alert,
     actionError: base.actionError,
     history: ready.history,
+    historyStatus: ready.historyStatus,
     revisionCount: ready.revisionCount,
     viewingHistorical,
     makeCurrentTargetRef: makeCurrentTarget,

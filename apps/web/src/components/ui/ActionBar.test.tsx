@@ -146,15 +146,15 @@ describe("ActionBar", () => {
         options={[
           {
             kind: "command",
-            id: "document-map",
-            label: "Document Map",
+            id: "resource-inspector-companion",
+            label: "Companion",
             icon: <span aria-hidden>m</span>,
             state: {
               kind: "disclosure",
               expanded: false,
               menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
+                collapsed: "Show Companion",
+                expanded: "Hide Companion",
               },
             },
             onSelect: vi.fn(),
@@ -162,7 +162,7 @@ describe("ActionBar", () => {
         ]}
       />,
     );
-    const collapsed = screen.getByRole("button", { name: "Document Map" });
+    const collapsed = screen.getByRole("button", { name: "Companion" });
     expect(collapsed).toHaveAttribute("aria-expanded", "false");
     expect(collapsed).not.toHaveAttribute("aria-controls");
 
@@ -171,16 +171,16 @@ describe("ActionBar", () => {
         options={[
           {
             kind: "command",
-            id: "document-map",
-            label: "Document Map",
+            id: "resource-inspector-companion",
+            label: "Companion",
             icon: <span aria-hidden>m</span>,
             state: {
               kind: "disclosure",
               expanded: true,
-              controls: "reader-tools-pane-1",
+              controls: "resource-inspector-pane-1",
               menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
+                collapsed: "Show Companion",
+                expanded: "Hide Companion",
               },
             },
             onSelect: vi.fn(),
@@ -188,9 +188,9 @@ describe("ActionBar", () => {
         ]}
       />,
     );
-    const expanded = screen.getByRole("button", { name: "Document Map" });
+    const expanded = screen.getByRole("button", { name: "Companion" });
     expect(expanded).toHaveAttribute("aria-expanded", "true");
-    expect(expanded).toHaveAttribute("aria-controls", "reader-tools-pane-1");
+    expect(expanded).toHaveAttribute("aria-controls", "resource-inspector-pane-1");
   });
 
   it("renders nothing when there are no options", () => {

@@ -23,6 +23,7 @@ function PublishChrome() {
         onBack: () => {},
         onForward: () => {},
       },
+      actions: [],
       options: [],
     });
     return () => setPaneChrome(null);
@@ -52,7 +53,23 @@ function PublishResourceChrome() {
         onBack: () => {},
         onForward: () => {},
       },
-      options: [],
+      actions: [
+        {
+          kind: "command",
+          id: "resource-inspector-companion",
+          label: "Companion",
+          icon: <span aria-hidden="true">panel</span>,
+          onSelect: () => {},
+        },
+      ],
+      options: [
+        {
+          kind: "command",
+          id: "credits",
+          label: "Credits",
+          onSelect: () => {},
+        },
+      ],
     });
     return () => setPaneChrome(null);
   }, [setPaneChrome]);
@@ -171,5 +188,31 @@ describe("NavTopBar", () => {
       expect(controls).toHaveAttribute("aria-hidden", "true");
       expect(controls).toHaveAttribute("inert");
     }
+  });
+
+  it("keeps Companion immediately before Options at 390px", () => {
+    vi.stubGlobal("innerWidth", 390);
+
+    render(
+      withRenderEnvironment(
+        <MobileChromeProvider>
+          <PublishResourceChrome />
+          <NavTopBar
+            onOpenSheet={() => {}}
+            onOpenCommand={() => {}}
+            onOpenAdd={() => {}}
+            paneCount={1}
+          />
+        </MobileChromeProvider>,
+        { initialViewport: "mobile" },
+      ),
+    );
+
+    const companion = screen.getByRole("button", { name: "Companion" });
+    const options = screen.getByRole("button", { name: "Pane options" });
+    expect(
+      companion.compareDocumentPosition(options) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

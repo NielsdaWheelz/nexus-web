@@ -535,6 +535,12 @@ def prune_contributors_if_orphaned(db: Session, *, contributor_ids: Iterable[UUI
         db.execute(
             delete(ContributorAlias).where(ContributorAlias.contributor_id == contributor.id)
         )
+        from nexus.services.artifacts import engine as artifact_engine
+
+        artifact_engine.on_subject_deleted(
+            db,
+            ResourceRef(scheme="contributor", id=contributor.id),
+        )
         db.delete(contributor)
         # Flush the row delete now (sessions are autoflush=False): a later
         # same-transaction resolution of the same name must see the freed base

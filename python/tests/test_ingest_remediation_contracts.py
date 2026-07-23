@@ -13,7 +13,7 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "ingest_media_source",
         "enrich_metadata",
         "chat_run",
-        "library_dossier_generate",
+        "dossier_build",
         "media_unit_build",
         "podcast_sync_subscription_job",
         "podcast_reindex_semantic_job",
@@ -26,8 +26,6 @@ def test_registry_job_kinds_match_task_catalog_contract():
         "oracle_reading_generate",
         "synapse_scan",
         "dawn_write_job",
-        "conversation_distill",
-        "conversation_distill_sweep",
         "atlas_project_job",
         # Media teardown + its durable storage sweeps (lectern-player-lifecycle
         # spec §3.1), pre-existing at head — not part of this cutover's diff.

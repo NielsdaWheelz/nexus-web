@@ -253,43 +253,35 @@ def _add_fragment(db: Session, media_id: UUID, *, idx: int, text: str) -> UUID:
     return fragment.id
 
 
-def _make_li_artifact(
+def _make_library_artifact(
     db: Session,
     library_id: UUID,
     user_id: UUID,
     *,
     content_md: str | None = "Synthesis overview.\nMore prose [1].",
 ) -> UUID:
-    """Create an LI artifact head; when ``content_md`` is set, a promoted current revision.
-
-    Resolver only reads the head id, the joined library name, and (LEFT JOIN) the
-    current revision's content_md, so this raw insert is sufficient. ``content_md=None``
-    leaves ``current_revision_id`` NULL (a head with no promoted revision).
-    """
+    """Create a Library-audience Dossier head and optional current revision."""
     from sqlalchemy import text as sql_text
 
     artifact_id = db.execute(
         sql_text(
             """
-            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-            VALUES ('library', :library_id, 'library_dossier', :user_id)
+            INSERT INTO artifacts (
+                subject_scheme, subject_id, audience_scheme, audience_id
+            )
+            VALUES ('library', :library_id, 'library', :audience_id)
             RETURNING id
             """
         ),
-        {"library_id": library_id, "user_id": user_id},
+        {"library_id": library_id, "audience_id": str(library_id)},
     ).scalar_one()
     if content_md is not None:
-        revision_id = db.execute(
-            sql_text(
-                """
-                INSERT INTO artifact_revisions (
-                    artifact_id, content_md, covered_targets, status, promoted_at
-                )
-                VALUES (:artifact_id, :content_md, '[]'::jsonb, 'ready', now())
-                RETURNING id
-                """
-            ),
-            {"artifact_id": artifact_id, "content_md": content_md},
+        revision_id = _add_library_revision(
+            db,
+            artifact_id=UUID(str(artifact_id)),
+            library_id=library_id,
+            user_id=user_id,
+            content_md=content_md,
         ).scalar_one()
         db.execute(
             sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -299,7 +291,138 @@ def _make_li_artifact(
     return UUID(str(artifact_id))
 
 
-def _current_li_revision_id(db: Session, artifact_id: UUID) -> UUID:
+def _make_conversation_artifact(
+    db: Session,
+    conversation_id: UUID,
+    user_id: UUID,
+    *,
+    content_md: str = "Conversation synthesis.",
+) -> tuple[UUID, UUID]:
+    """Create one User-audience Conversation Dossier and current revision."""
+    artifact_id = db.execute(
+        text(
+            """
+            INSERT INTO artifacts (
+                subject_scheme, subject_id, audience_scheme, audience_id
+            )
+            VALUES ('conversation', :conversation_id, 'user', :audience_id)
+            RETURNING id
+            """
+        ),
+        {
+            "conversation_id": conversation_id,
+            "audience_id": str(user_id),
+        },
+    ).scalar_one()
+    build_id = db.execute(
+        text(
+            """
+            INSERT INTO artifact_builds (
+                artifact_id, requester_user_id, idempotency_key
+            )
+            VALUES (:artifact_id, :user_id, :idempotency_key)
+            RETURNING id
+            """
+        ),
+        {
+            "artifact_id": artifact_id,
+            "user_id": user_id,
+            "idempotency_key": f"resolve-conversation-{uuid4()}",
+        },
+    ).scalar_one()
+    revision_id = db.execute(
+        text(
+            """
+            INSERT INTO artifact_revisions (
+                build_id, content_md, input_manifest,
+                citation_owner_user_id, promoted_at
+            )
+            VALUES (
+                :build_id, :content_md,
+                jsonb_build_object(
+                    'version', 'v1',
+                    'kind', 'conversation',
+                    'conversation_ref', CAST(:conversation_ref AS text),
+                    'message_refs', '[]'::jsonb,
+                    'context_refs', '[]'::jsonb,
+                    'topology_fingerprint',
+                        jsonb_build_object('kind', 'Present', 'value', 'test-topology'),
+                    'completeness', jsonb_build_object('kind', 'Complete')
+                ),
+                :user_id, now()
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "build_id": build_id,
+            "content_md": content_md,
+            "conversation_ref": f"conversation:{conversation_id}",
+            "user_id": user_id,
+        },
+    ).scalar_one()
+    db.execute(
+        text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
+        {"revision_id": revision_id, "artifact_id": artifact_id},
+    )
+    db.commit()
+    return UUID(str(artifact_id)), UUID(str(revision_id))
+
+
+def _add_library_revision(
+    db: Session,
+    *,
+    artifact_id: UUID,
+    library_id: UUID,
+    user_id: UUID,
+    content_md: str,
+):
+    from sqlalchemy import text as sql_text
+
+    build_id = db.execute(
+        sql_text(
+            """
+            INSERT INTO artifact_builds (
+                artifact_id, requester_user_id, idempotency_key
+            )
+            VALUES (:artifact_id, :user_id, :idempotency_key)
+            RETURNING id
+            """
+        ),
+        {
+            "artifact_id": artifact_id,
+            "user_id": user_id,
+            "idempotency_key": f"resolve-{uuid4()}",
+        },
+    ).scalar_one()
+    return db.execute(
+        sql_text(
+            """
+            INSERT INTO artifact_revisions (
+                build_id, content_md, input_manifest,
+                citation_owner_user_id, promoted_at
+            )
+            VALUES (
+                :build_id, :content_md,
+                jsonb_build_object(
+                    'version', 'v1', 'kind', 'library',
+                    'library_ref', CAST(:library_ref AS text), 'media', '[]'::jsonb
+                ),
+                :user_id, now()
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "build_id": build_id,
+            "content_md": content_md,
+            "library_ref": f"library:{library_id}",
+            "user_id": user_id,
+        },
+    )
+
+
+def _current_dossier_revision_id(db: Session, artifact_id: UUID) -> UUID:
     from sqlalchemy import text as sql_text
 
     revision_id = db.execute(
@@ -652,11 +775,11 @@ def test_resolve_default_library_excludes_system_only_media(
     )
 
 
-def test_resolve_li_artifact_promoted_inlines_current_revision(
+def test_resolve_dossier_artifact_inlines_current_revision(
     db_session: Session, bootstrapped_user: UUID
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Synthesis Library")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session,
         library_id,
         bootstrapped_user,
@@ -666,7 +789,7 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert not resolved.missing, f"Member should resolve a promoted artifact; got {resolved}"
-    assert resolved.label == "Library dossier — Synthesis Library", (
+    assert resolved.label == "Dossier — Synthesis Library", (
         f"Artifact label should name the library; got {resolved.label!r}"
     )
     assert resolved.summary == "Overview line.", (
@@ -680,34 +803,29 @@ def test_resolve_li_artifact_promoted_inlines_current_revision(
     )
     assert "read_resource" in resolved.fetch_hint
     assert resolved.resolved_revision_ref == (
-        f"artifact_revision:{_current_li_revision_id(db_session, artifact_id)}"
+        f"artifact_revision:{_current_dossier_revision_id(db_session, artifact_id)}"
     )
 
 
-def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
+def test_resolve_dossier_revision_inlines_exact_revision_after_head_moves(
     db_session: Session, bootstrapped_user: UUID
 ):
     from sqlalchemy import text as sql_text
 
     library_id = create_test_library(db_session, bootstrapped_user, "Pinned Synthesis")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session,
         library_id,
         bootstrapped_user,
         content_md="Pinned revision prose.",
     )
-    pinned_revision_id = _current_li_revision_id(db_session, artifact_id)
-    new_revision_id = db_session.execute(
-        sql_text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'New head prose.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
+    pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
+    new_revision_id = _add_library_revision(
+        db_session,
+        artifact_id=artifact_id,
+        library_id=library_id,
+        user_id=bootstrapped_user,
+        content_md="New head prose.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -722,15 +840,17 @@ def test_resolve_li_revision_inlines_exact_revision_after_head_moves(
     )
 
     assert not resolved.missing
-    assert resolved.label == "Library dossier revision — Pinned Synthesis (ready)"
+    assert resolved.label == "Dossier revision — Pinned Synthesis (historical)"
     assert resolved.inline_body == "Pinned revision prose."
     assert resolved.resolved_revision_ref == f"artifact_revision:{pinned_revision_id}"
 
 
-def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstrapped_user: UUID):
+def test_resolve_dossier_artifact_long_body_not_inlined(
+    db_session: Session, bootstrapped_user: UUID
+):
     library_id = create_test_library(db_session, bootstrapped_user, "Big Synthesis")
     long_content = "First line.\n" + ("x" * (INLINE_THRESHOLD_CHARS + 100))
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md=long_content
     )
 
@@ -744,11 +864,11 @@ def test_resolve_li_artifact_long_body_not_inlined(db_session: Session, bootstra
     assert resolved.summary == "First line."
 
 
-def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
+def test_resolve_dossier_artifact_no_current_revision_is_present_no_inline(
     db_session: Session, bootstrapped_user: UUID
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Ungenerated Library")
-    artifact_id = _make_li_artifact(db_session, library_id, bootstrapped_user, content_md=None)
+    artifact_id = _make_library_artifact(db_session, library_id, bootstrapped_user, content_md=None)
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
@@ -756,30 +876,61 @@ def test_resolve_li_artifact_no_current_revision_is_present_no_inline(
         f"A head with current_revision_id NULL must resolve non-missing; got {resolved}"
     )
     assert resolved.inline_body is None, "No current revision -> no inline body"
-    assert resolved.label == "Library dossier — Ungenerated Library"
+    assert resolved.label == "Dossier — Ungenerated Library"
 
 
-def test_resolve_li_artifact_non_member_returns_missing(
+def test_resolve_dossier_artifact_non_member_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
-    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
+    artifact_id = _make_library_artifact(db_session, other_library_id, other_user_id)
 
     resolved = _resolve(db_session, f"artifact:{artifact_id}", viewer_id=bootstrapped_user)
 
     assert resolved.missing, "Non-member must see the artifact as missing"
 
 
-def test_resolve_li_artifact_unknown_id_returns_missing(
+def test_resolve_dossier_artifact_unknown_id_returns_missing(
     db_session: Session, bootstrapped_user: UUID
 ):
     resolved = _resolve(db_session, f"artifact:{uuid4()}", viewer_id=bootstrapped_user)
     assert resolved.missing, "Unknown artifact URI must resolve as missing"
 
 
-def test_li_artifact_resources_block_reflects_current_revision(
+def test_user_audience_dossier_resources_fail_closed_when_subject_is_missing(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    artifact_id, revision_id = _make_conversation_artifact(
+        db_session,
+        conversation_id,
+        bootstrapped_user,
+    )
+    db_session.execute(
+        text("DELETE FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": conversation_id},
+    )
+    db_session.commit()
+    refs = [
+        ResourceRef(scheme="artifact", id=artifact_id),
+        ResourceRef(scheme="artifact_revision", id=revision_id),
+    ]
+
+    resolved = resolve_refs(db_session, viewer_id=bootstrapped_user, refs=refs)
+
+    assert all(item.missing for item in resolved), (
+        "audience ownership cannot expose a Dossier whose canonical subject is gone"
+    )
+    assert all(
+        route_for_ref(db_session, viewer_id=bootstrapped_user, ref=ref) is None
+        for ref in refs
+    ), "a hidden Dossier head or revision has no canonical activation route"
+
+
+def test_dossier_artifact_resources_block_reflects_current_revision(
     db_session: Session, bootstrapped_user: UUID
 ):
     """§6.6: the resource resolves to whatever revision is current at assembly time.
@@ -793,14 +944,14 @@ def test_li_artifact_resources_block_reflects_current_revision(
     from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Fresh-Resolve Library")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md="First revision prose."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
     db_session.commit()
 
-    first_revision_id = _current_li_revision_id(db_session, artifact_id)
+    first_revision_id = _current_dossier_revision_id(db_session, artifact_id)
     block, _meta, _citations, revision_refs = context_assembler._build_resources_block(
         db_session, conversation_id=conversation_id, viewer_id=bootstrapped_user
     )
@@ -812,17 +963,12 @@ def test_li_artifact_resources_block_reflects_current_revision(
     assert revision_refs[0]["revision_uri"] == f"artifact_revision:{first_revision_id}"
 
     # Promote a new revision; the head URI is unchanged.
-    new_revision_id = db_session.execute(
-        sql_text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'Second revision prose.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
+    new_revision_id = _add_library_revision(
+        db_session,
+        artifact_id=artifact_id,
+        library_id=library_id,
+        user_id=bootstrapped_user,
+        content_md="Second revision prose.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -842,17 +988,19 @@ def test_li_artifact_resources_block_reflects_current_revision(
     assert revision_refs2[0]["revision_uri"] == f"artifact_revision:{new_revision_id}"
 
 
-def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootstrapped_user: UUID):
+def test_dossier_artifact_not_a_citable_attached_resource(
+    db_session: Session, bootstrapped_user: UUID
+):
     """The artifact carries inline content but is NON-citable: no [N] / no citation.
 
-    Its inline [N] reference the revision's own citations rendered by the LI pane,
+    Its inline [N] markers reference the revision's own Dossier citations,
     not a get_search_result chip, so the attached-citation materializer skips it.
     """
     from nexus.services import context_assembler
     from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Noncitable Library")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md="Inline synthesis [1]."
     )
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
@@ -867,18 +1015,18 @@ def test_li_artifact_not_a_citable_attached_resource(db_session: Session, bootst
     assert ' n="' not in block.text, "A non-citable resource must not be numbered"
 
 
-def test_li_artifact_in_context_stamps_resolved_revision(
+def test_dossier_artifact_in_context_stamps_resolved_revision(
     db_session: Session, bootstrapped_user: UUID
 ):
-    """The prompt ledger records which concrete LI revision the head resolved to."""
+    """The prompt ledger records which concrete Dossier revision the head resolved to."""
     from nexus.services import context_assembler
     from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Stamp-Slot Library")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md="Synthesis prose [1]."
     )
-    revision_id = _current_li_revision_id(db_session, artifact_id)
+    revision_id = _current_dossier_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     add_context_edge(db_session, conversation_id, f"artifact:{artifact_id}")
     db_session.commit()
@@ -892,7 +1040,7 @@ def test_li_artifact_in_context_stamps_resolved_revision(
     assert revision_refs[0]["revision_uri"] == f"artifact_revision:{revision_id}"
 
 
-def test_li_revision_context_stays_pinned_after_head_moves(
+def test_dossier_revision_context_stays_pinned_after_head_moves(
     db_session: Session, bootstrapped_user: UUID
 ):
     from sqlalchemy import text as sql_text
@@ -901,10 +1049,10 @@ def test_li_revision_context_stays_pinned_after_head_moves(
     from tests.factories import add_context_edge
 
     library_id = create_test_library(db_session, bootstrapped_user, "Pinned-Context Library")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md="Pinned context prose."
     )
-    pinned_revision_id = _current_li_revision_id(db_session, artifact_id)
+    pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     add_context_edge(
         db_session,
@@ -912,17 +1060,12 @@ def test_li_revision_context_stays_pinned_after_head_moves(
         f"artifact_revision:{pinned_revision_id}",
     )
 
-    new_revision_id = db_session.execute(
-        sql_text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'New context head.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
+    new_revision_id = _add_library_revision(
+        db_session,
+        artifact_id=artifact_id,
+        library_id=library_id,
+        user_id=bootstrapped_user,
+        content_md="New context head.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),

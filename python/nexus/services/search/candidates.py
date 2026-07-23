@@ -14,7 +14,7 @@ Three retrieval profiles:
   variants; ``service.py`` paginates and projects to ``SearchResultOut``.
 - ``link_candidates`` — the ``purpose=link`` hybrid target profile: the central
   hybrid ranking over durable + passage result types (unscoped), plus the
-  target-only resource-metadata retrievers (libraries, generated outputs,
+  target-only resource-metadata retrievers (libraries, Library Dossiers,
   passage anchors).
 - ``reference_candidates`` — the ``purpose=reference`` lexical target profile:
   one-character-capable exact/prefix/substring ILIKE + FTS over direct targets
@@ -90,8 +90,8 @@ from nexus.services.search.retrievers.resource_metadata import (
     _lexical_match_sql,
     _lexical_params,
     _tier_score_sql,
+    retrieve_library_artifact_candidates,
     retrieve_library_candidates,
-    retrieve_library_dossier_candidates,
     retrieve_oracle_reading_candidates,
     retrieve_passage_anchor_candidates,
 )
@@ -107,9 +107,9 @@ REFERENCE_CANDIDATES_PER_SOURCE = 50
 _SEMANTIC_RESULT_TYPES = ("content_chunk", "page", "note_block")
 
 # The purpose=link hybrid pool: every durable/passage result type of ordinary
-# search. web_result (no durable resource) and artifact (conversation-distillate
-# rows whose artifact_revision refs the resource graph masks) are excluded; the
-# artifact scheme is served by the library-dossier metadata retriever instead.
+# search. web_result (no durable resource) and artifact (Conversation Dossier
+# claims) are excluded; the artifact scheme is served by the Library Dossier
+# metadata retriever instead.
 _LINK_HYBRID_RESULT_TYPES = (
     "media",
     "episode",
@@ -342,7 +342,7 @@ def _metadata_candidates(
     if include("oracle_reading"):
         out.extend(retrieve_oracle_reading_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
     if include("artifact"):
-        out.extend(retrieve_library_dossier_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
+        out.extend(retrieve_library_artifact_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
     if include("passage_anchor"):
         out.extend(retrieve_passage_anchor_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
     return out

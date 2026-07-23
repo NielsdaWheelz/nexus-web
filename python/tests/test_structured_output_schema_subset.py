@@ -18,8 +18,8 @@ import pytest
 from provider_runtime import StrictJsonOutput, parse_canonical_schema
 from pydantic import BaseModel
 
-from nexus.services.artifacts.reducers.conversation_distillate import _DistillateSynthesis
-from nexus.services.artifacts.reducers.library_dossier import _LiSynthesis
+from nexus.services.artifacts.bindings._shared import StandardSynthesis
+from nexus.services.artifacts.bindings.media import _MediaSynthesis
 from nexus.services.media_intelligence import MediaUnitSynthesis
 from nexus.services.metadata_enrichment import (
     MetadataEnrichmentOutput,
@@ -35,8 +35,8 @@ LLM_FACING_MODELS: list[type[BaseModel]] = [
     _OracleSynthesisOutput,  # structured_synthesis (oracle)
     SynapseSynthesis,  # structured_synthesis (synapse)
     MediaUnitSynthesis,  # structured_synthesis (media_intelligence)
-    _LiSynthesis,  # structured_synthesis (library_dossier reducer)
-    _DistillateSynthesis,  # structured_synthesis (conversation_distillate reducer)
+    StandardSynthesis,  # universal Dossier bindings
+    _MediaSynthesis,  # Media Dossier binding
 ]
 
 

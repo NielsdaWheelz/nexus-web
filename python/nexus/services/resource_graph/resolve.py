@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never
+from typing import assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import text
@@ -32,6 +32,7 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
+from nexus.services.artifacts.subject_policy import visible_persisted_subject
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -84,10 +85,11 @@ class LoadedResource:
     message_role: str | None = None  # message "{role}: …"
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
-    related_library_id: UUID | None = None  # LI output -> the library: scope for app_search
-    related_artifact_id: UUID | None = None  # LI revision -> artifact head
-    related_revision_id: UUID | None = None  # LI artifact head -> current revision
-    related_revision_status: str | None = None
+    related_subject_scheme: ResourceScheme | None = None  # Dossier -> canonical subject
+    related_subject_id: UUID | None = None
+    related_library_id: UUID | None = None  # Library Dossier -> app-search scope
+    related_artifact_id: UUID | None = None  # Dossier revision -> artifact head
+    related_revision_id: UUID | None = None  # Dossier head -> current revision
     related_revision_is_current: bool | None = None
     locator_label: str | None = None  # oracle corpus passage locator
     apparatus_kind: str | None = None
@@ -458,7 +460,7 @@ def reader_target_for_citation_target(
     up for chat, Oracle, and the library dossier, all of which cite the finest-grained
     object (``evidence_span``/``content_chunk``/``media``). Position lives in the target,
     not the edge (D11), so it is recomputed here from the target's own anchoring using
-    the single locator owner (``locator_resolver``), exactly as search and LI synthesis do.
+    the single locator owner (``locator_resolver``), exactly as search and Dossier synthesis do.
 
     Note-owned evidence returns ``(None, note_block_offsets)``. The frontend citation
     adapter treats that locator as a note activation target, not a media jump.
@@ -745,24 +747,32 @@ def _load_library(
 def _load_artifact(
     db: Session, items: list[ResourceRef], *, viewer_id: UUID
 ) -> list[LoadedResource]:
-    """Resolve each library-dossier artifact head to its CURRENT revision content_md.
-
-    Joins head -> libraries (name) -> LEFT JOIN current revision (content_md). The
-    head resolves to whatever is current at this call (fresh per assembly). A head
-    with ``current_revision_id IS NULL`` is non-missing with ``body=None``. Gated by
-    library membership; a non-member or unknown id is masked as missing.
-    """
+    """Resolve each audience-visible Dossier head to its current revision."""
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
             """
-            SELECT a.id, a.subject_id AS library_id, l.name, r.id AS revision_id, r.content_md,
-                   r.status, a.current_revision_id = r.id AS revision_is_current
+            SELECT a.id, a.subject_scheme, a.subject_id,
+                   COALESCE(
+                       m.title, c.title, l.name, p.title, co.display_name,
+                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
+                   ) AS subject_title,
+                   r.id AS revision_id, r.content_md,
+                   a.current_revision_id = r.id AS revision_is_current,
+                   a.audience_scheme, a.audience_id
             FROM artifacts a
-            JOIN libraries l ON l.id = a.subject_id
-            LEFT JOIN artifact_revisions r
-                ON r.id = a.current_revision_id
-            WHERE a.id = ANY(:ids) AND a.subject_scheme = 'library'
+            LEFT JOIN artifact_revisions r ON r.id = a.current_revision_id
+            LEFT JOIN media m ON a.subject_scheme = 'media' AND m.id = a.subject_id
+            LEFT JOIN conversations c
+              ON a.subject_scheme = 'conversation' AND c.id = a.subject_id
+            LEFT JOIN libraries l ON a.subject_scheme = 'library' AND l.id = a.subject_id
+            LEFT JOIN podcasts p ON a.subject_scheme = 'podcast' AND p.id = a.subject_id
+            LEFT JOIN contributors co
+              ON a.subject_scheme = 'contributor' AND co.id = a.subject_id
+            LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
+            LEFT JOIN note_blocks nb
+              ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
+            WHERE a.id = ANY(:ids)
             """
         ),
         {"ids": ids},
@@ -771,19 +781,35 @@ def _load_artifact(
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
-        if row is None or not is_library_member(db, viewer_id, row[1]):
+        if row is None:
+            out.append(_missing(ref.uri, "artifact"))
+            continue
+        subject_scheme = cast(ResourceScheme, str(row[1]))
+        subject_id = UUID(str(row[2]))
+        if (
+            visible_persisted_subject(
+                db,
+                subject_scheme=subject_scheme,
+                subject_id=subject_id,
+                audience_scheme=str(row[7]),
+                audience_id=str(row[8]),
+                viewer_id=viewer_id,
+            )
+            is None
+        ):
             out.append(_missing(ref.uri, "artifact"))
             continue
         out.append(
             LoadedResource(
                 uri=ref.uri,
                 scheme="artifact",
-                title=str(row[2]),
-                body=str(row[4]) if row[4] is not None else None,
+                title=str(row[3] or "Dossier"),
+                body=str(row[5]) if row[5] is not None else None,
                 related_artifact_id=UUID(str(row[0])),
-                related_library_id=UUID(str(row[1])),
-                related_revision_id=UUID(str(row[3])) if row[3] is not None else None,
-                related_revision_status=str(row[5]) if row[5] is not None else None,
+                related_subject_scheme=subject_scheme,
+                related_subject_id=subject_id,
+                related_library_id=subject_id if subject_scheme == "library" else None,
+                related_revision_id=UUID(str(row[4])) if row[4] is not None else None,
                 related_revision_is_current=bool(row[6]) if row[6] is not None else None,
             )
         )
@@ -797,12 +823,27 @@ def _load_artifact_revision(
     rows = db.execute(
         text(
             """
-            SELECT r.id, r.artifact_id, a.subject_id AS library_id, l.name, r.content_md, r.status,
-                   a.current_revision_id = r.id AS is_current
+            SELECT r.id, a.id AS artifact_id, a.subject_scheme, a.subject_id,
+                   COALESCE(
+                       m.title, c.title, l.name, p.title, co.display_name,
+                       pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END
+                   ) AS subject_title,
+                   r.content_md, a.current_revision_id = r.id AS is_current,
+                   a.audience_scheme, a.audience_id
             FROM artifact_revisions r
-            JOIN artifacts a ON a.id = r.artifact_id
-            JOIN libraries l ON l.id = a.subject_id
-            WHERE r.id = ANY(:ids) AND a.subject_scheme = 'library'
+            JOIN artifact_builds b ON b.id = r.build_id
+            JOIN artifacts a ON a.id = b.artifact_id
+            LEFT JOIN media m ON a.subject_scheme = 'media' AND m.id = a.subject_id
+            LEFT JOIN conversations c
+              ON a.subject_scheme = 'conversation' AND c.id = a.subject_id
+            LEFT JOIN libraries l ON a.subject_scheme = 'library' AND l.id = a.subject_id
+            LEFT JOIN podcasts p ON a.subject_scheme = 'podcast' AND p.id = a.subject_id
+            LEFT JOIN contributors co
+              ON a.subject_scheme = 'contributor' AND co.id = a.subject_id
+            LEFT JOIN pages pg ON a.subject_scheme = 'page' AND pg.id = a.subject_id
+            LEFT JOIN note_blocks nb
+              ON a.subject_scheme = 'note_block' AND nb.id = a.subject_id
+            WHERE r.id = ANY(:ids)
             """
         ),
         {"ids": ids},
@@ -811,20 +852,36 @@ def _load_artifact_revision(
     out: list[LoadedResource] = []
     for ref in items:
         row = by_id.get(ref.id)
-        if row is None or not is_library_member(db, viewer_id, row[2]):
+        if row is None:
             out.append(_missing(ref.uri, "artifact_revision"))
             continue
-        suffix = "current" if row[6] else str(row[5])
+        subject_scheme = cast(ResourceScheme, str(row[2]))
+        subject_id = UUID(str(row[3]))
+        if (
+            visible_persisted_subject(
+                db,
+                subject_scheme=subject_scheme,
+                subject_id=subject_id,
+                audience_scheme=str(row[7]),
+                audience_id=str(row[8]),
+                viewer_id=viewer_id,
+            )
+            is None
+        ):
+            out.append(_missing(ref.uri, "artifact_revision"))
+            continue
+        suffix = "current" if row[6] else "historical"
         out.append(
             LoadedResource(
                 uri=ref.uri,
                 scheme="artifact_revision",
-                title=f"{row[3]} ({suffix})",
-                body=str(row[4] or ""),
+                title=f"{row[4] or 'Dossier'} ({suffix})",
+                body=str(row[5] or ""),
                 related_artifact_id=UUID(str(row[1])),
-                related_library_id=UUID(str(row[2])),
+                related_subject_scheme=subject_scheme,
+                related_subject_id=subject_id,
+                related_library_id=subject_id if subject_scheme == "library" else None,
                 related_revision_id=UUID(str(row[0])),
-                related_revision_status=str(row[5]),
                 related_revision_is_current=bool(row[6]),
             )
         )
@@ -1499,15 +1556,11 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             if loaded.related_revision_id is not None
             else None
         )
-        label = (
-            f"Library dossier — {name}"
-            if scheme == "artifact"
-            else f"Library dossier revision — {name}"
-        )
+        label = f"Dossier — {name}" if scheme == "artifact" else f"Dossier revision — {name}"
         return ResolvedResource(
             uri=loaded.uri,
             label=label,
-            summary=_first_line(content_md) or f"Library dossier for {name}",
+            summary=_first_line(content_md) or f"Dossier for {name}",
             inline_body=(
                 content_md if content_md and len(content_md) < INLINE_THRESHOLD_CHARS else None
             ),

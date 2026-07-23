@@ -48,7 +48,7 @@ function OpenInNewPaneOnMount() {
     runtime.openInNewPane(
       MEDIA_HREF_1,
       "Library Row Label",
-      "reader-evidence",
+      { kind: "Surface", surfaceId: "resource-evidence" },
     );
   }, [runtime]);
   return null;
@@ -74,10 +74,10 @@ function SecondaryCommandsOnMount() {
     if (!runtime) {
       throw new Error("Pane runtime missing");
     }
-    runtime.requestSecondarySurface("reader-evidence", {
+    runtime.requestSecondarySurface("resource-evidence", {
       returnFocusTo: triggerRef.current,
     });
-    runtime.setSecondarySurface("reader-evidence");
+    runtime.setSecondarySurface("resource-evidence");
     runtime.closeSecondaryPane();
   }, [runtime]);
   return <button ref={triggerRef}>Options</button>;
@@ -299,7 +299,7 @@ describe("PaneRuntimeProvider", () => {
       expect(onOpenInNewPane).toHaveBeenCalledWith(
         MEDIA_HREF_1,
         "Library Row Label",
-        "reader-evidence",
+        { kind: "Surface", surfaceId: "resource-evidence" },
       );
     });
   });
@@ -535,8 +535,8 @@ describe("PaneRuntimeProvider", () => {
         secondaryPane={{
           id: "secondary-1",
           parentPrimaryPaneId: "pane-1",
-          groupId: "reader-tools",
-          activeSurfaceId: "reader-evidence",
+          groupId: "resource-inspector",
+          activeSurfaceId: "resource-evidence",
           widthPx: 360,
           visibility: "visible",
         }}
@@ -551,12 +551,12 @@ describe("PaneRuntimeProvider", () => {
     await waitFor(() => {
       expect(onRequestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-evidence",
+        "resource-evidence",
         screen.getByRole("button", { name: "Options" }),
       );
       expect(onSetSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
-        "reader-evidence",
+        "resource-evidence",
       );
       expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
     });

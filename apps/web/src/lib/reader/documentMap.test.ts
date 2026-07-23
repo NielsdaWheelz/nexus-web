@@ -49,10 +49,10 @@ function emptyMap() {
 
 describe("readerSurfaceForMarkerKind", () => {
   it("maps marker facts to their owning secondary surface", () => {
-    expect(readerSurfaceForMarkerKind("Contents")).toBe("reader-contents");
-    expect(readerSurfaceForMarkerKind("Highlight")).toBe("reader-evidence");
+    expect(readerSurfaceForMarkerKind("Contents")).toBe("resource-contents");
+    expect(readerSurfaceForMarkerKind("Highlight")).toBe("resource-evidence");
     expect(readerSurfaceForMarkerKind("SourceReference")).toBe(
-      "reader-evidence",
+      "resource-evidence",
     );
     expect(readerSurfaceForMarkerKind("Embed")).toBeNull();
   });

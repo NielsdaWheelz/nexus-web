@@ -15,6 +15,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    ArtifactBuild,
+    ArtifactRevision,
     Conversation,
     ConversationShare,
     EpubNavLocation,
@@ -36,6 +38,7 @@ from nexus.db.models import (
     PdfPageTextSpan,
     ProcessingStatus,
     ResourceEdge,
+    SynthesisArtifact,
 )
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
@@ -591,6 +594,50 @@ def create_test_library(session: Session, user_id: UUID, name: str = "Test Libra
     )
     session.commit()
     return library.id
+
+
+def create_test_library_artifact(
+    session: Session,
+    *,
+    library_id: UUID,
+    requester_user_id: UUID,
+    content_md: str = "Grounded library dossier.",
+) -> tuple[UUID, UUID]:
+    """Create one current Library-audience Dossier revision under the universal schema."""
+    artifact = SynthesisArtifact(
+        id=uuid4(),
+        subject_scheme="library",
+        subject_id=library_id,
+        audience_scheme="library",
+        audience_id=str(library_id),
+    )
+    session.add(artifact)
+    session.flush()
+    build = ArtifactBuild(
+        id=uuid4(),
+        artifact_id=artifact.id,
+        requester_user_id=requester_user_id,
+        idempotency_key=f"fixture-{uuid4()}",
+    )
+    session.add(build)
+    session.flush()
+    revision = ArtifactRevision(
+        id=uuid4(),
+        build_id=build.id,
+        content_md=content_md,
+        input_manifest={
+            "version": "v1",
+            "kind": "library",
+            "library_ref": f"library:{library_id}",
+            "media": [],
+        },
+        citation_owner_user_id=requester_user_id,
+    )
+    session.add(revision)
+    session.flush()
+    artifact.current_revision_id = revision.id
+    session.flush()
+    return artifact.id, revision.id
 
 
 # =============================================================================

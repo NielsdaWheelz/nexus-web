@@ -3,7 +3,6 @@
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
@@ -24,6 +23,7 @@ from tests.factories import (
     create_test_fragment,
     create_test_highlight,
     create_test_library,
+    create_test_library_artifact,
     create_test_media_in_library,
     get_user_default_library,
 )
@@ -61,35 +61,16 @@ def _attach_link_note(db: Session, user_id: UUID, note: ResourceRef, *endpoints:
         )
 
 
-def _li_artifact_with_revision(db: Session, user_id: UUID) -> tuple[ResourceRef, ResourceRef]:
+def _dossier_artifact_with_revision(
+    db: Session, user_id: UUID
+) -> tuple[ResourceRef, ResourceRef]:
     library_id = create_test_library(db, user_id, "Connection Intelligence")
-    artifact_id = db.execute(
-        text(
-            """
-            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-            VALUES ('library', :library_id, 'library_dossier', :user_id)
-            RETURNING id
-            """
-        ),
-        {"library_id": library_id, "user_id": user_id},
-    ).scalar_one()
-    revision_id = db.execute(
-        text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'Revision body.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
-    ).scalar_one()
-    db.execute(
-        text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
-        {"revision_id": revision_id, "artifact_id": artifact_id},
+    artifact_id, revision_id = create_test_library_artifact(
+        db,
+        library_id=library_id,
+        requester_user_id=user_id,
+        content_md="Revision body.",
     )
-    db.flush()
     return (
         ResourceRef(scheme="artifact", id=artifact_id),
         ResourceRef(scheme="artifact_revision", id=revision_id),
@@ -300,7 +281,7 @@ def test_structural_link_note_rows_are_suppressed_from_note_reads(
 def test_exact_li_revision_query_returns_revision_citation_edges(
     db_session: Session, bootstrapped_user: UUID
 ):
-    artifact, revision = _li_artifact_with_revision(db_session, bootstrapped_user)
+    artifact, revision = _dossier_artifact_with_revision(db_session, bootstrapped_user)
     target = _media(db_session, bootstrapped_user, "Cited source")
     replace_citations_for_output(
         db_session,
@@ -352,7 +333,7 @@ def test_exact_li_revision_query_returns_revision_citation_edges(
 def test_li_artifact_owner_rollup_includes_revision_citation_edges(
     db_session: Session, bootstrapped_user: UUID
 ):
-    artifact, revision = _li_artifact_with_revision(db_session, bootstrapped_user)
+    artifact, revision = _dossier_artifact_with_revision(db_session, bootstrapped_user)
     target = _media(db_session, bootstrapped_user, "Rolled-up source")
     replace_citations_for_output(
         db_session,

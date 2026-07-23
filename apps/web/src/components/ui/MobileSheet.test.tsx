@@ -122,9 +122,9 @@ describe("MobileSheet", () => {
   });
 
   it("renders a modal dialog with the aria label and grabber while active", () => {
-    render(sheet({ panelId: "pane-1-reader-tools" }));
+    render(sheet({ panelId: "pane-1-resource-inspector" }));
     expect(dialog()).toHaveAttribute("aria-modal", "true");
-    expect(dialog()).toHaveAttribute("id", "pane-1-reader-tools");
+    expect(dialog()).toHaveAttribute("id", "pane-1-resource-inspector");
     expect(grabber()).not.toBeNull();
     expect(first()).toBeVisible();
   });

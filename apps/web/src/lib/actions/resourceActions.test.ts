@@ -422,31 +422,4 @@ describe("conversationResourceOptions", () => {
       }),
     ]);
   });
-
-  it("adds the distill action when onDistill is provided", () => {
-    const options = conversationResourceOptions({
-      onDistill: () => {},
-      distilling: false,
-      onDelete: () => {},
-    });
-    expect(options[0]).toMatchObject({
-      id: "distill-conversation",
-      label: "Distill",
-      disabled: false,
-    });
-    expect(options[1]).toMatchObject({ id: "delete-conversation" });
-  });
-
-  it("shows the distilling label and disables the action while distilling", () => {
-    const [distill] = conversationResourceOptions({
-      onDistill: () => {},
-      distilling: true,
-      onDelete: () => {},
-    });
-    expect(distill).toMatchObject({
-      id: "distill-conversation",
-      label: "Distilling...",
-      disabled: true,
-    });
-  });
 });

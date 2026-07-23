@@ -6,13 +6,16 @@
 // `Building | Ready | Stale | Failed | NotAvailable` union exhaustively; it is
 // never the Dossier's build machinery, only a subordinate projection.
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
+import MachineText from "@/components/ui/MachineText";
 import type { MediaAbstract as MediaAbstractValue } from "@/lib/dossiers/dossierControllerTypes";
 import styles from "./DossierSurface.module.css";
 
 export default function MediaAbstract({
   abstract,
+  onViewEvidence,
 }: {
   abstract: MediaAbstractValue;
+  onViewEvidence: () => void;
 }) {
   switch (abstract.kind) {
     case "Building":
@@ -26,14 +29,32 @@ export default function MediaAbstract({
       return (
         <section className={styles.abstract} aria-label="Media abstract">
           <span className={styles.abstractLabel}>Abstract</span>
-          <MarkdownMessage content={abstract.summaryMd} />
+          <MachineText origin={{ label: "Media abstract" }}>
+            <MarkdownMessage content={abstract.summaryMd} />
+          </MachineText>
+          <button
+            type="button"
+            className={styles.abstractAction}
+            onClick={onViewEvidence}
+          >
+            View evidence
+          </button>
         </section>
       );
     case "Stale":
       return (
         <section className={styles.abstract} aria-label="Media abstract">
           <span className={styles.abstractLabel}>Abstract · outdated</span>
-          <MarkdownMessage content={abstract.summaryMd} />
+          <MachineText origin={{ label: "Media abstract" }}>
+            <MarkdownMessage content={abstract.summaryMd} />
+          </MachineText>
+          <button
+            type="button"
+            className={styles.abstractAction}
+            onClick={onViewEvidence}
+          >
+            View evidence
+          </button>
         </section>
       );
     case "Failed":

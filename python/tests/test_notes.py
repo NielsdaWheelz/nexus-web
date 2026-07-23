@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceVersion
 from nexus.schemas.notes import CreatePageRequest, QuickCaptureRequest
 from nexus.services import notes
+from nexus.services.artifacts.dossier_types import SubjectResource
+from nexus.services.artifacts.engine import create_build
 from nexus.services.resource_graph.adjacency import OrderedTarget, replace_ordered_targets
 from nexus.services.resource_graph.refs import ResourceRef
 from tests.factories import (
@@ -134,6 +136,28 @@ def test_delete_page_leaves_linked_note_alive(
             ResourceEdge.source_id == page.id,
         )
     ).all()
+
+
+@pytest.mark.integration
+def test_delete_page_deletes_its_dossier_head(
+    db_session: Session,
+    bootstrapped_user: UUID,
+) -> None:
+    page = notes.create_page(db_session, bootstrapped_user, CreatePageRequest(title="Page"))
+    ticket = create_build(
+        db_session,
+        locator=SubjectResource(ref=ResourceRef(scheme="page", id=page.id)),
+        requester_user_id=bootstrapped_user,
+        idempotency_key="delete-page-dossier",
+        instruction=None,
+    )
+
+    notes.delete_page(db_session, bootstrapped_user, page.id)
+
+    assert db_session.execute(
+        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+        {"artifact_id": ticket.artifact_id},
+    ).scalar_one() == 0
 
 
 @pytest.mark.integration

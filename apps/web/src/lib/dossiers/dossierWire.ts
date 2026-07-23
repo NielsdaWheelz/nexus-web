@@ -16,6 +16,8 @@ import {
   type DossierFailedFacts,
   type DossierFreshness,
   type DossierInputManifest,
+  type DossierMediaDisposition,
+  type DossierMediaManifestEntry,
   type DossierRevision,
   type DossierRevisionSummary,
   type MediaAbstract,
@@ -77,12 +79,160 @@ function decodeCitations(value: unknown): readonly CitationOut[] {
   });
 }
 
+function decodeStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) fail(`${field} must be an array`);
+  return value.map((entry) => decodeString(entry, field));
+}
+
+function decodeMediaDisposition(
+  value: unknown,
+): DossierMediaDisposition {
+  if (
+    value === "Included" ||
+    value === "OmittedNoReadyUnit" ||
+    value === "OmittedBudget" ||
+    value === "OmittedNotAudienceVisible" ||
+    value === "OmittedProjectionFailed"
+  ) {
+    return value;
+  }
+  return fail(`unknown media disposition ${JSON.stringify(value)}`);
+}
+
+function decodeMediaManifestEntries(
+  value: unknown,
+  field: string,
+): DossierMediaManifestEntry[] {
+  if (!Array.isArray(value)) fail(`${field} must be an array`);
+  return value.map((entry) => {
+    if (!isRecord(entry)) fail(`${field} entry must be an object`);
+    return {
+      mediaRef: decodeString(entry.media_ref, `${field}.media_ref`),
+      contentFingerprint: decodeString(
+        entry.content_fingerprint,
+        `${field}.content_fingerprint`,
+      ),
+      disposition: decodeMediaDisposition(entry.disposition),
+    };
+  });
+}
+
 function decodeInputManifest(value: unknown): DossierInputManifest {
   if (!isRecord(value)) fail("input_manifest must be an object");
-  if (typeof value.version !== "string" || typeof value.kind !== "string") {
-    fail("input_manifest requires string version + kind");
+  if (value.version !== "v1") {
+    fail(`unknown input_manifest version ${JSON.stringify(value.version)}`);
   }
-  return value as DossierInputManifest;
+  switch (value.kind) {
+    case "media": {
+      if (!Array.isArray(value.omitted_evidence)) {
+        fail("omitted_evidence must be an array");
+      }
+      return {
+        version: "v1",
+        kind: "media",
+        mediaRef: decodeString(value.media_ref, "media_ref"),
+        contentFingerprint: decodeString(
+          value.content_fingerprint,
+          "content_fingerprint",
+        ),
+        offeredClaimCount: decodeInteger(
+          value.offered_claim_count,
+          "offered_claim_count",
+        ),
+        omittedEvidenceRefs: value.omitted_evidence.map((entry) => {
+          if (!isRecord(entry)) fail("omitted_evidence entry must be an object");
+          return decodeString(entry.evidence_ref, "evidence_ref");
+        }),
+      };
+    }
+    case "conversation": {
+      if (!isRecord(value.completeness)) {
+        fail("conversation completeness must be an object");
+      }
+      const completeness =
+        value.completeness.kind === "Complete"
+          ? ({ kind: "Complete" } as const)
+          : value.completeness.kind === "Incomplete" &&
+              value.completeness.reason === "MigratedCoverageGap"
+            ? ({
+                kind: "Incomplete",
+                reason: "MigratedCoverageGap",
+              } as const)
+            : fail("unknown conversation completeness");
+      return {
+        version: "v1",
+        kind: "conversation",
+        conversationRef: decodeString(
+          value.conversation_ref,
+          "conversation_ref",
+        ),
+        messageRefs: decodeStringArray(value.message_refs, "message_refs"),
+        contextRefs: decodeStringArray(value.context_refs, "context_refs"),
+        topologyFingerprint: decodePresence(value.topology_fingerprint, (entry) =>
+          decodeString(entry, "topology_fingerprint"),
+        ),
+        completeness,
+      };
+    }
+    case "library":
+      return {
+        version: "v1",
+        kind: "library",
+        libraryRef: decodeString(value.library_ref, "library_ref"),
+        media: decodeMediaManifestEntries(value.media, "media"),
+      };
+    case "podcast":
+      return {
+        version: "v1",
+        kind: "podcast",
+        podcastRef: decodeString(value.podcast_ref, "podcast_ref"),
+        episodes: decodeMediaManifestEntries(value.episodes, "episodes"),
+      };
+    case "contributor":
+      return {
+        version: "v1",
+        kind: "contributor",
+        contributorHandle: decodeString(
+          value.contributor_handle,
+          "contributor_handle",
+        ),
+        works: decodeMediaManifestEntries(value.works, "works"),
+      };
+    case "page":
+      return {
+        version: "v1",
+        kind: "page",
+        pageRef: decodeString(value.page_ref, "page_ref"),
+        inputFingerprint: decodeString(
+          value.input_fingerprint,
+          "input_fingerprint",
+        ),
+        blockRefs: decodeStringArray(value.block_refs, "block_refs"),
+        connectionRefs: decodeStringArray(
+          value.connection_refs,
+          "connection_refs",
+        ),
+      };
+    case "note":
+      return {
+        version: "v1",
+        kind: "note",
+        noteRef: decodeString(value.note_ref, "note_ref"),
+        inputFingerprint: decodeString(
+          value.input_fingerprint,
+          "input_fingerprint",
+        ),
+        bodyFingerprint: decodePresence(value.body_fingerprint, (entry) =>
+          decodeString(entry, "body_fingerprint"),
+        ),
+        connectionRefs: decodeStringArray(
+          value.connection_refs,
+          "connection_refs",
+        ),
+      };
+    default:
+      return fail(`unknown input_manifest kind ${JSON.stringify(value.kind)}`);
+  }
 }
 
 function decodeSupport(value: unknown): Record<string, unknown> {
@@ -104,6 +254,18 @@ export function decodeDossierRevision(raw: unknown): DossierRevision {
     instruction: decodePresence(raw.instruction, (v) =>
       decodeString(v, "instruction"),
     ),
+    creatorUserId: decodePresence(raw.creator_user_id, (v) =>
+      decodeString(v, "creator_user_id"),
+    ),
+    modelProvider: decodePresence(raw.model_provider, (v) =>
+      decodeString(v, "model_provider"),
+    ),
+    modelName: decodePresence(raw.model_name, (v) =>
+      decodeString(v, "model_name"),
+    ),
+    totalTokens: decodePresence(raw.total_tokens, (v) =>
+      decodeInteger(v, "total_tokens"),
+    ),
     createdAt: decodeString(raw.created_at, "created_at"),
     promotedAt: decodePresence(raw.promoted_at, (v) =>
       decodeString(v, "promoted_at"),
@@ -120,8 +282,21 @@ export function decodeDossierRevisionSummary(
     revisionRef: decodeString(raw.revision_ref, "revision_ref"),
     isCurrent: decodeBoolean(raw.is_current, "is_current"),
     citationCount: decodeInteger(raw.citation_count, "citation_count"),
+    inputManifest: decodeInputManifest(raw.input_manifest),
     instruction: decodePresence(raw.instruction, (v) =>
       decodeString(v, "instruction"),
+    ),
+    creatorUserId: decodePresence(raw.creator_user_id, (v) =>
+      decodeString(v, "creator_user_id"),
+    ),
+    modelProvider: decodePresence(raw.model_provider, (v) =>
+      decodeString(v, "model_provider"),
+    ),
+    modelName: decodePresence(raw.model_name, (v) =>
+      decodeString(v, "model_name"),
+    ),
+    totalTokens: decodePresence(raw.total_tokens, (v) =>
+      decodeInteger(v, "total_tokens"),
     ),
     createdAt: decodeString(raw.created_at, "created_at"),
     promotedAt: decodePresence(raw.promoted_at, (v) =>

@@ -8,10 +8,9 @@ platform credentials (`llm_credentials.py`), the sole execution/ledger
 boundary (`llm_execution.py` + `llm_ledger.py`), the worker task envelope
 (`tasks/llm_task.py`), the structured-synthesis scaffold, and the chat
 failure/rerun projection. The generation surfaces — chat, oracle, synapse,
-dawn write, artifact revisions (conversation distillate, library dossier),
-media summary, metadata enrichment — own their own prompts, schemas, semantic
-validation, and finalization writes; this module owns only what is identical
-across them.
+dawn write, the seven Universal Dossier bindings, Media Intelligence, and
+metadata enrichment — own their own prompts, schemas, semantic validation, and
+finalization writes; this module owns only what is identical across them.
 
 There is no BYOK, no per-user key, no model catalog UI, and no key-mode. Every
 generation call runs on a platform key against one of seven code-defined
@@ -107,8 +106,10 @@ any Nexus credential/execution path today.
 
 | Operation | Profile |
 |---|---|
-| `oracle`, `conversation_distillate`, `media_summary`, `metadata_enrichment`, `synapse` | `fast` |
-| `library_dossier`, `dawn_write` | `balanced` |
+| `oracle`, `media_summary`, `metadata_enrichment`, `synapse` | `fast` |
+| `dossier_page`, `dossier_note` | `fast` |
+| `dossier_media`, `dossier_conversation`, `dossier_library`, `dossier_podcast`, `dossier_contributor` | `balanced` |
+| `dawn_write` | `balanced` |
 | `chat` (`LlmOperation` adds this one) | user-selected `profile_id` |
 
 No generation owner contains a raw provider/model/route/reasoning literal.
@@ -147,9 +148,9 @@ it belongs only to the separate paid certification command run against the
 ## The generation boundary (`llm_execution.py`)
 
 `execute_generation` / `execute_generation_stream` are the only Nexus callers
-of the `ExecutionRuntime` seam and of `llm_ledger`. Every owner (chat, oracle,
-synapse, dawn write, artifact revisions, media summary/enrichment) builds one
-`GenerationRequest` per provider call and calls one of these two functions;
+of the `ExecutionRuntime` seam and of `llm_ledger`. Every owner (chat, Oracle,
+Synapse, Dawn Write, Dossier builds, Media Intelligence, and enrichment) builds
+one `GenerationRequest` per provider call and calls one of these two functions;
 neither ever appears twice for one call.
 
 ```text
@@ -229,7 +230,7 @@ each opening its own dedicated, immediately committed session:
 `LlmCallOwner{kind, id, user_id}` attributes a call to its run parent.
 `kind` is a closed set of **seven** literals matching the `llm_calls`
 `ck_llm_calls_owner_kind` check: `chat_run`, `oracle_reading`,
-`artifact_revision`, `media_summary`, `media_enrichment`, `synapse_scan`,
+`artifact_build`, `media_summary`, `media_enrichment`, `synapse_scan`,
 `dawn_write`. `user_id` is the billing-scoped account `llm_execution` checks
 entitlements/reserves budget against — distinct from `id`, the owning row's
 own id.
@@ -263,14 +264,13 @@ the only constructor of event loops, `httpx.AsyncClient`s, and
   payload semantics, the `execute_generation`/`execute_generation_stream`
   call, and finalization.
 - **`LlmTaskSpec(label, http_timeout_s=60.0, http_limits=(10,5))`** is the
-  per-kind policy. Chat uses `(100, 20)` pool limits; library intelligence
-  (the artifact-revision reducer) uses a 120s timeout; the rest take the
-  defaults. The handler receives the shared client so chat can build its
-  web-search provider without a second client.
+  per-kind policy. Chat uses `(100, 20)` pool limits; `dossier_build` uses a
+  120s timeout; the rest take the defaults. The handler receives the shared
+  client so chat can build its web-search provider without a second client.
 - Seven task modules call it: `chat_run`, `oracle_reading`, `synapse_scan`,
-  `dawn_write`, `artifacts` (the generic revision engine — covers both
-  `conversation_distillate` and `library_dossier`), `media_unit_build`, and
-  `enrich_metadata`. Each is thin: parse payload → `run_llm_task(SPEC,
+  `dawn_write`, `artifacts` (the generic Universal Dossier build engine),
+  `media_unit_build`, and `enrich_metadata`. Each is thin: parse payload →
+  `run_llm_task(SPEC,
   handler, on_worker_exception=...)`. The fixture router serving all kinds
   means fixture-mode runs never touch real providers.
 - The process-global rate limiter is installed once at worker startup
@@ -281,8 +281,8 @@ the only constructor of event loops, `httpx.AsyncClient`s, and
 
 A *structured synthesis* is an `execute_generation` call whose response is
 strict JSON validated into a caller-supplied schema. The generic mechanics
-live here once; Oracle, Synapse, media intelligence, and the artifact-revision
-reducers each keep their own prompt text, candidate rendering, schema, and
+live here once; Oracle, Synapse, Media Intelligence, and the Dossier bindings
+each keep their own prompt text, candidate rendering, schema, and
 semantic judgement, and each still owns its own `GenerationRequest`/
 `execute_generation` call — this module never calls `execute_generation`
 itself.

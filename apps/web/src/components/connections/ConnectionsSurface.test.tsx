@@ -1,11 +1,26 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import type {
   ConnectionEndpointOut,
   ConnectionOut,
 } from "@/lib/resourceGraph/connections";
-import ConnectionsSurface from "./ConnectionsSurface";
+import type { ResourceTarget } from "@/lib/resources/resourceTargets";
+import ConnectionsSurfaceImpl from "./ConnectionsSurface";
+import { useConnectionsComposerController } from "./connectionsComposerController";
+
+function ConnectionsSurface(
+  props: Omit<ComponentProps<typeof ConnectionsSurfaceImpl>, "composerController">,
+) {
+  const composerController = useConnectionsComposerController(props.resourceRef);
+  return (
+    <ConnectionsSurfaceImpl
+      {...props}
+      composerController={composerController}
+    />
+  );
+}
 
 const BLOCK_A = "11111111-1111-4111-8111-111111111111";
 const BLOCK_B = "22222222-2222-4222-8222-222222222222";
@@ -175,6 +190,43 @@ const scanPosts = (requests: PendingRequest[]) =>
 const connectionResponse = (items: ConnectionOut[]) =>
   Response.json({ data: { items, next_cursor: null } });
 const idleStatusResponse = () => Response.json({ data: { status: "idle" } });
+
+function TabSwitchHarness({
+  showConnections,
+  resourceId = BLOCK_A,
+}: {
+  showConnections: boolean;
+  resourceId?: string;
+}) {
+  const resourceRef = { scheme: "note_block", id: resourceId } as const;
+  const composerController = useConnectionsComposerController(resourceRef);
+  const target = rawResourceTarget() as unknown as ResourceTarget;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          composerController.update({
+            open: true,
+            query: "Linked media",
+            kind: "supports",
+            selected: target,
+          })
+        }
+      >
+        Seed connection draft
+      </button>
+      {showConnections ? (
+        <ConnectionsSurfaceImpl
+          resourceRef={resourceRef}
+          composerController={composerController}
+        />
+      ) : (
+        <div>Dossier tab</div>
+      )}
+    </>
+  );
+}
 
 describe("ConnectionsSurface", () => {
   afterEach(() => {
@@ -361,6 +413,58 @@ describe("ConnectionsSurface", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens a connected artifact revision on its exact local Dossier revision", async () => {
+    const user = userEvent.setup();
+    const onOpenRoute = vi.fn();
+    const revisionRef =
+      "artifact_revision:77777777-7777-4777-8777-777777777777";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).startsWith("/api/synapse/scans")
+          ? idleStatusResponse()
+          : connectionResponse([
+              connection({
+                edge_id: "edge-artifact-revision",
+                target: endpoint(
+                  revisionRef,
+                  "Historical Dossier",
+                  false,
+                  `/conversations/${CONVERSATION_ID}`,
+                ),
+                other: endpoint(
+                  revisionRef,
+                  "Historical Dossier",
+                  false,
+                  `/conversations/${CONVERSATION_ID}`,
+                ),
+              }),
+            ]),
+      ),
+    );
+
+    render(
+      <ConnectionsSurface
+        resourceRef={{ scheme: "note_block", id: BLOCK_A }}
+        onOpenRoute={onOpenRoute}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /Historical Dossier/ }),
+    );
+
+    expect(onOpenRoute).toHaveBeenCalledWith(
+      `/conversations/${CONVERSATION_ID}`,
+      true,
+      {
+        kind: "DossierRevision",
+        surfaceId: "resource-dossier",
+        revisionRef,
+      },
+    );
+  });
+
   it("keeps the connect composer collapsed until the disclosure reveals it", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -392,6 +496,54 @@ describe("ConnectionsSurface", () => {
       name: "Connection target",
     });
     await waitFor(() => expect(field).toHaveFocus());
+  });
+
+  it("preserves a subject's connection draft across secondary tab unmounts", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).startsWith("/api/resource-items/targets/search")
+          ? Response.json({ data: { targets: [], nextCursor: null } })
+          : String(input).startsWith("/api/synapse/scans")
+            ? idleStatusResponse()
+            : connectionResponse([]),
+      ),
+    );
+
+    const { rerender } = render(
+      <TabSwitchHarness showConnections />,
+    );
+    await screen.findByText(SCANNABLE_EMPTY_COPY);
+    await user.click(
+      screen.getByRole("button", { name: "Seed connection draft" }),
+    );
+
+    rerender(<TabSwitchHarness showConnections={false} />);
+    expect(screen.getByText("Dossier tab")).toBeVisible();
+    rerender(<TabSwitchHarness showConnections />);
+
+    expect(screen.getByRole("button", { name: "＋ Link" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Connection target" }),
+    ).toHaveValue("Linked media");
+    expect(screen.getByRole("combobox", { name: "Connection kind" })).toHaveValue(
+      "supports",
+    );
+
+    rerender(
+      <TabSwitchHarness showConnections resourceId={BLOCK_B} />,
+    );
+    expect(screen.getByRole("button", { name: "＋ Link" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Connection target" }),
+    ).not.toBeInTheDocument();
   });
 
   it("creates a Link from a resource target search result and reloads", async () => {

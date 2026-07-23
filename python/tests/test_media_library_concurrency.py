@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import event, text
+from sqlalchemy.exc import OperationalError
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import library_entries, library_governance, media_deletion
-from tests.factories import create_test_library, create_test_media
+from tests.factories import add_library_member, create_test_library, create_test_media
 from tests.helpers import auth_headers, create_test_user_id
 from tests.utils.db import DirectSessionManager
 
@@ -77,6 +78,209 @@ def _register_media_and_library_cleanup(
     for library_id in library_ids:
         direct_db.register_cleanup("memberships", "library_id", library_id)
         direct_db.register_cleanup("libraries", "id", library_id)
+
+
+def test_library_teardown_prelocks_full_dossier_head_union_before_nested_cleanup(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    """Library teardown cannot hold H1 then deadlock on a later User sweep's H2.
+
+    H2 is deliberately lower than H1. The deleting transaction pauses after its
+    nested Media-subject cleanup has (re-)locked H1. A concurrent removal from an
+    unrelated Library probes H2 with NOWAIT: canonical full-union prelocking means
+    H2 is already owned by the deleting transaction. Without that prelock, the
+    remover can hold H2 and wait on H1 while the delete's later audience sweep
+    waits on H2 — the exact former deadlock cycle.
+    """
+    deleting_owner_id = create_test_user_id()
+    other_owner_id = create_test_user_id()
+    affected_user_id = create_test_user_id()
+    for user_id in (deleting_owner_id, other_owner_id, affected_user_id):
+        _bootstrap_user(auth_client, user_id)
+
+    with direct_db.session() as session:
+        deleting_library_id = create_test_library(
+            session,
+            deleting_owner_id,
+            "Dossier union deleting library",
+        )
+        other_library_id = create_test_library(
+            session,
+            other_owner_id,
+            "Dossier union other library",
+        )
+        add_library_member(session, deleting_library_id, affected_user_id)
+        add_library_member(session, other_library_id, affected_user_id)
+        deleting_media_id = create_test_media(
+            session,
+            title="Dossier union deleting media",
+        )
+        other_media_id = create_test_media(
+            session,
+            title="Dossier union other media",
+        )
+        library_entries.ensure_entry(
+            session,
+            deleting_library_id,
+            library_entries.media_target(deleting_media_id),
+        )
+        library_entries.ensure_entry(
+            session,
+            other_library_id,
+            library_entries.media_target(other_media_id),
+        )
+        lower_head_id, higher_head_id = sorted((uuid4(), uuid4()))
+        session.execute(
+            text(
+                """
+                INSERT INTO artifacts
+                    (id, subject_scheme, subject_id, audience_scheme, audience_id)
+                VALUES
+                    (:higher_id, 'media', :deleting_media_id, 'user', :audience_id),
+                    (:lower_id, 'media', :other_media_id, 'user', :audience_id)
+                """
+            ),
+            {
+                "higher_id": higher_head_id,
+                "lower_id": lower_head_id,
+                "deleting_media_id": deleting_media_id,
+                "other_media_id": other_media_id,
+                "audience_id": str(affected_user_id),
+            },
+        )
+        session.commit()
+
+    _register_media_and_library_cleanup(
+        direct_db,
+        deleting_media_id,
+        deleting_library_id,
+    )
+    _register_media_and_library_cleanup(
+        direct_db,
+        other_media_id,
+        other_library_id,
+    )
+    direct_db.register_cleanup("artifacts", "id", higher_head_id)
+    direct_db.register_cleanup("artifacts", "id", lower_head_id)
+
+    deleting_media_head_reached = threading.Event()
+    allow_delete_to_continue = threading.Event()
+    delete_finished = threading.Event()
+    full_union_observed = threading.Event()
+    errors: list[BaseException] = []
+    results: list[str] = []
+    result_lock = threading.Lock()
+
+    def delete_library() -> None:
+        try:
+            with direct_db.session() as session:
+                connection = session.connection()
+                paused = False
+
+                def pause_after_deleting_media_head_lock(
+                    _connection,
+                    _cursor,
+                    statement: str,
+                    parameters,
+                    _context,
+                    _executemany,
+                ) -> None:
+                    nonlocal paused
+                    if paused or not isinstance(parameters, dict):
+                        return
+                    normalized = " ".join(statement.lower().split())
+                    if (
+                        "select id from artifacts where subject_scheme =" not in normalized
+                        or "subject_id =" not in normalized
+                        or "for update" not in normalized
+                        or parameters.get("s") != "media"
+                        or parameters.get("sid") != deleting_media_id
+                    ):
+                        return
+                    paused = True
+                    deleting_media_head_reached.set()
+                    if not allow_delete_to_continue.wait(timeout=10):
+                        raise AssertionError("timed out waiting to resume Library teardown")
+
+                event.listen(
+                    connection,
+                    "after_cursor_execute",
+                    pause_after_deleting_media_head_lock,
+                )
+                library_governance.delete_library(
+                    session,
+                    deleting_owner_id,
+                    deleting_library_id,
+                )
+            with result_lock:
+                results.append("delete-ok")
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            with result_lock:
+                errors.append(exc)
+        finally:
+            delete_finished.set()
+
+    def remove_unrelated_membership() -> None:
+        try:
+            with direct_db.session() as session:
+                try:
+                    session.execute(
+                        text(
+                            "SELECT id FROM artifacts WHERE id = :head_id "
+                            "FOR UPDATE NOWAIT"
+                        ),
+                        {"head_id": lower_head_id},
+                    ).one()
+                except OperationalError as exc:
+                    session.rollback()
+                    sqlstate = getattr(exc.orig, "sqlstate", None)
+                    if sqlstate != "55P03":
+                        raise
+                    full_union_observed.set()
+                    if not delete_finished.wait(timeout=10):
+                        raise AssertionError(
+                            "timed out waiting for Library teardown to commit"
+                        ) from exc
+                library_governance.remove_library_member(
+                    session,
+                    other_owner_id,
+                    other_library_id,
+                    affected_user_id,
+                )
+            with result_lock:
+                results.append("remove-ok")
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            with result_lock:
+                errors.append(exc)
+
+    deleting_thread = threading.Thread(target=delete_library, daemon=True)
+    deleting_thread.start()
+    assert deleting_media_head_reached.wait(timeout=10), (
+        "Library teardown did not reach nested Media Dossier cleanup"
+    )
+
+    removing_thread = threading.Thread(target=remove_unrelated_membership, daemon=True)
+    removing_thread.start()
+    try:
+        assert full_union_observed.wait(timeout=10), (
+            "Library teardown had not prelocked the lower User-audience head"
+        )
+    finally:
+        allow_delete_to_continue.set()
+
+    deleting_thread.join(timeout=20)
+    removing_thread.join(timeout=20)
+    assert not deleting_thread.is_alive(), "Library teardown worker did not finish"
+    assert not removing_thread.is_alive(), "membership-removal worker did not finish"
+    assert errors == [], errors
+    assert sorted(results) == ["delete-ok", "remove-ok"]
+
+    with direct_db.session() as session:
+        assert session.execute(
+            text("SELECT count(*) FROM artifacts WHERE id = ANY(:head_ids)"),
+            {"head_ids": [lower_head_id, higher_head_id]},
+        ).scalar_one() == 0
 
 
 def test_same_library_delete_vs_media_removal_has_a_serial_outcome(

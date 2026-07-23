@@ -33,10 +33,12 @@ from nexus.db.models import DawnWrite
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
 from nexus.logging import get_logger
-from nexus.services.artifacts.engine import is_artifact_stale
+from nexus.services.artifacts.dossier_types import SubjectResource
+from nexus.services.artifacts.engine import read_head
 from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
 from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.llm_profiles import operation_profile
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import outcome_failure_facts
 
 logger = get_logger(__name__)
@@ -165,33 +167,32 @@ def collect_signals(
     ]
 
     # Signal C — stale library dossiers.
-    stale_rows = db.execute(
+    library_rows = db.execute(
         text(
-            "SELECT lib.name, art.id AS artifact_id, art.subject_id AS library_id,"
-            " rev.id AS revision_id"
+            "SELECT DISTINCT lib.id AS library_id, lib.name"
             " FROM artifacts art"
             " JOIN libraries lib ON lib.id = art.subject_id"
-            " JOIN artifact_revisions rev"
-            "   ON rev.id = art.current_revision_id"
-            " WHERE art.user_id = :uid"
-            "   AND art.subject_scheme = 'library'"
-            "   AND art.kind = 'library_dossier'"
-            "   AND rev.status = 'ready'"
-            "   AND rev.promoted_at IS NOT NULL"
+            " JOIN memberships mem"
+            "   ON mem.library_id = lib.id AND mem.user_id = :uid"
+            " WHERE art.subject_scheme = 'library'"
+            "   AND art.audience_scheme = 'library'"
+            "   AND art.audience_id = art.subject_id::text"
+            "   AND art.current_revision_id IS NOT NULL"
         ),
         {"uid": str(user_id)},
     ).fetchall()
 
     stale_libraries = [
         _StaleLibrarySignal(name=row.name)
-        for row in stale_rows
-        if is_artifact_stale(
+        for row in library_rows
+        if read_head(
             db,
-            subject_scheme="library",
-            subject_id=row.library_id,
-            kind="library_dossier",
-            current_revision_id=row.revision_id,
-        )
+            locator=SubjectResource(
+                ref=ResourceRef(scheme="library", id=UUID(str(row.library_id)))
+            ),
+            requester_user_id=user_id,
+        ).freshness
+        == "stale"
     ]
 
     signals = DawnWriteSignals(

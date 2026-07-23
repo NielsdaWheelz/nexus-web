@@ -545,6 +545,60 @@ def update_running_job_payload(
     return updated is not None
 
 
+def running_job_claim_is_current(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    attempt_no: int,
+) -> bool:
+    """Whether this exact running attempt still owns an unexpired lease."""
+    return bool(
+        db.execute(
+            text(
+                """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM background_jobs
+                    WHERE id = :job_id
+                      AND status = 'running'
+                      AND claimed_by = :worker_id
+                      AND attempts = :attempt_no
+                      AND lease_expires_at > now()
+                )
+                """
+            ),
+            {
+                "job_id": job_id,
+                "worker_id": worker_id,
+                "attempt_no": attempt_no,
+            },
+        ).scalar_one()
+    )
+
+
+def revoke_jobs_by_dedupe_keys(
+    db: Session,
+    *,
+    kind: str,
+    dedupe_keys: Collection[str],
+) -> None:
+    """Delete owned queue rows and their payload-carried replay state.
+
+    The caller must first invalidate the domain owner under its serialization
+    lock. A running worker then loses both its queue lease and domain target.
+    """
+    if not dedupe_keys:
+        return
+    db.execute(
+        text(
+            "DELETE FROM background_jobs "
+            "WHERE kind = :kind AND dedupe_key = ANY(:dedupe_keys)"
+        ),
+        {"kind": kind, "dedupe_keys": list(dedupe_keys)},
+    )
+
+
 def reschedule_running_job(
     db: Session,
     *,

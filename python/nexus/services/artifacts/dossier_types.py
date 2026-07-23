@@ -250,39 +250,39 @@ class DossierGenerationInProgress(ConflictError):
     """A different idempotency key arrived while a build is active (A6 rule 2)."""
 
     def __init__(self, message: str = "A dossier build is already in progress") -> None:
-        super().__init__(ApiErrorCode.E_INVITE_NOT_PENDING, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_GENERATION_IN_PROGRESS, message)
 
 
 class BuildNotActive(ConflictError):
     """Public cancel of an already-succeeded/failed/cancelled build (A9)."""
 
     def __init__(self, message: str = "This dossier build is no longer active") -> None:
-        super().__init__(ApiErrorCode.E_INVITE_NOT_PENDING, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_BUILD_NOT_ACTIVE, message)
 
 
 class RevisionNotFound(NotFoundError):
     """make-current / read targeted a revision that does not exist (masked)."""
 
     def __init__(self, message: str = "Dossier revision not found") -> None:
-        super().__init__(ApiErrorCode.E_NOT_FOUND, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND, message)
 
 
 class RevisionNotOwnedByHead(NotFoundError):
     """The revision exists but is not under the caller's head — masked as 404."""
 
     def __init__(self, message: str = "Dossier revision not found") -> None:
-        super().__init__(ApiErrorCode.E_NOT_FOUND, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND, message)
 
 
 class InvalidSubjectLocator(InvalidRequestError):
     """The route subject scheme/handle is not one of the seven eligible subjects."""
 
     def __init__(self, message: str = "Invalid dossier subject") -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_INVALID_SUBJECT, message)
 
 
 class InvalidInstruction(InvalidRequestError):
     """The supplied build instruction is not acceptable."""
 
     def __init__(self, message: str = "Invalid dossier instruction") -> None:
-        super().__init__(ApiErrorCode.E_INVALID_REQUEST, message)
+        super().__init__(ApiErrorCode.E_DOSSIER_INVALID_INSTRUCTION, message)

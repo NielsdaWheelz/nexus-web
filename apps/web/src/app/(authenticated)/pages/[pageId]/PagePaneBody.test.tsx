@@ -180,20 +180,12 @@ describe("PagePaneBody note activation", () => {
     fetchSpy.mockRestore();
   });
 
-  it("mounts the connections apparatus inline in the page footer", async () => {
+  it("keeps Connections out of the primary page body", async () => {
     renderPagePane(PAGE_ID, activationPage(PAGE_ID, BLOCK_ID));
     await screen.findByRole("listitem");
 
-    // The connections apparatus renders in place (no secondary drawer); its
-    // composer is quiet by default, collapsed behind the "＋ Link" disclosure.
-    expect(
-      await screen.findByRole("region", { name: "Connections" }),
-    ).toBeInTheDocument();
-    const disclosure = screen.getByRole("button", { name: /Link/ });
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("textbox", { name: "Connection target" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Connections" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Link/ })).toBeNull();
   });
 
   it("scrolls to and pulses a cited note already visible on the page", async () => {

@@ -355,6 +355,13 @@ The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
 `object_search` substrate.
 
+**Media Intelligence** — `media_summaries` is one current summary head per
+Media content fingerprint; `media_claims` holds ordered grounded claims whose
+targets are exact `evidence_span` rows. `services/media_intelligence.py` is the
+sole storage owner and publishes audience-gated single/batch projections.
+Media Intelligence is current-only reusable interpretation, not Dossier
+revision history.
+
 **Highlights & passage anchors** — `highlights` (base row + the
 exact/prefix/suffix triple), `highlight_fragment_anchors` (codepoint ranges;
 `fragment_id` is a disposable locator cache, not an FK — a missing fragment is
@@ -369,13 +376,10 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
-**Libraries / sharing** — `libraries`, `memberships`, `library_entries`,
-`library_invitations`, and the current **library-intelligence** head/revision
-subgraph (`library_intelligence_artifacts`,
-`library_intelligence_artifact_revisions`,
-`library_intelligence_revision_events`). There is no separate provenance,
-closure, or backfill-job table: the default library's read surface is a live
-query over `library_entries` + `memberships`, computed at read time (§8.5).
+**Libraries / sharing** — `libraries`, `memberships`, `library_entries`, and
+`library_invitations`. There is no separate provenance, closure, or backfill-job
+table: the default library's read surface is a live query over
+`library_entries` + `memberships`, computed at read time (§8.5).
 
 **Contributors** — `contributors` (canonical identity; every row is active,
 there is no self-FK, no merge/split/tombstone, and no status column),
@@ -408,6 +412,16 @@ all three may coexist on the same endpoints. An optional **Link note** is one
 ordinary note attached through two structural `link_note` edges (one per
 endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
 field — the attachment edges themselves never render as separate rows.
+
+**Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
+derived audience; `artifact_builds` records each manual generation attempt;
+`artifact_revisions`, `artifact_build_failures`, and
+`artifact_build_cancellations` are mutually exclusive terminal children; and
+`artifact_build_events` is the strict replayable build stream. A successful
+revision has a typed input manifest and at least one citation edge. Seven
+subject policies/bindings cover Media, Conversation, Library, Podcast,
+Contributor, Page, and Note; one generic engine, API, history contract, and
+`dossier_build` job own the lifecycle.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
@@ -508,9 +522,9 @@ discipline (this is the single most important backend invariant):
 
 ### 7.2 LISTEN/NOTIFY → SSE streaming
 
-Push-based streaming without polling. Postgres `AFTER` triggers
-(`migrations/.../0122_notify_triggers.py`) call `pg_notify` on insert/update of
-append-only event tables; a shared listener (`db/listen.py`) holds a raw
+Push-based streaming without polling. Migration-owned Postgres `AFTER` triggers
+call `pg_notify` on insert/update of append-only event tables; a shared listener
+(`db/listen.py`) holds a raw
 autocommit `psycopg.AsyncConnection` per stream (capped at 64, exempt from pool
 timeouts) and wakes the SSE tail. The committed row — not the notification — is
 the source of truth; a missed/coalesced NOTIFY only delays an update by the idle
@@ -520,6 +534,7 @@ keepalive, never drops it.
 | ----------------------- | --------------------------------- | ---------------- |
 | `chat_run_events`       | insert on `chat_run_events`       | chat SSE tail    |
 | `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
+| `artifact_build_events` | insert on `artifact_build_events` | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
@@ -553,12 +568,14 @@ startup in CI and a user-facing kind can never be stranded unallowlisted (the
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
-`oracle_reading_generate`, `library_intelligence_artifact_generate`,
+`oracle_reading_generate`, `dossier_build`,
 `media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
-(periodic), `purge_expired_auth_handoff_codes` (periodic).
+(periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
+`dawn_write_job` (periodic), `atlas_project_job` (periodic), `media_teardown`,
+`storage_object_cleanup`, and `storage_orphan_sweep` (periodic).
 
 Author identity is resolved inline, synchronously, inside each ingest/enrichment
 lane — there is no separate contributor-dedupe job, proposal table, or merge
@@ -576,9 +593,8 @@ rather than proposed and reconciled after the fact.
 
 **Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
 `oracle_reading_generate`, `synapse_scan`, `dawn_write`,
-`library_intelligence_artifact_generate` and the conversation-distillate
-reducer under the generic `artifacts` engine, `media_unit_build`,
-`enrich_metadata`) run their bodies inside one shared worker envelope,
+`dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
+one shared worker envelope,
 `tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
 client, and `ExecutionRuntime` construction (production or the real-media
 fixture, keyed only on `settings.real_media_provider_fixtures`, plus the
@@ -728,10 +744,42 @@ edge**: `[N]` is the `ordinal` on an `origin='citation'` `resource_edge` whose
 source is the assistant message and whose target is the cited resource. The
 backend builds the `CitationOut` read-model from those edges via
 `resource_graph.citations.build_citation_outs` (uniformly for chat, Oracle, and
-Library Intelligence), reconstructing the in-reader jump from the target's own
+Universal Dossiers), reconstructing the in-reader jump from the target's own
 anchoring. `message_retrievals` stays chat-owned **telemetry**, pointing back at
 the edge through `cited_edge_id`; the frontend maps `[N]` → a `CitationOut` →
 resource activation plus an optional reader-internal focus target.
+
+### 7.8 Resource Inspector, Universal Dossiers & Media Intelligence
+
+`RESOURCE_ITEM_CAPABILITIES` is the backend authority for Inspector eligibility,
+linked-items policy, Forks, and default surface order; the committed TypeScript
+projection is parity-tested. Every eligible resource implies Dossier.
+`useResourceInspector` composes one stable publication and Companion action per
+pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
+the shared Dossier body.
+
+The backend separates three owners:
+
+- subject policy derives the subject, audience, authorization, deletion, and
+  canonical activation;
+- one of seven bindings collects inputs and owns prompt, operation/profile,
+  manifest, coverage, and freshness;
+- the generic engine owns idempotent build creation, durable execution,
+  terminal children, revision history, Make current, cancellation, and events.
+
+The generic API is
+`GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
+`POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`,
+`GET /artifacts/{artifact_ref}/revisions`,
+`GET /artifact-revisions/{artifact_revision_ref}`,
+`POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
+`POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
+`GET /stream/artifact-builds/{sealed_handle}/events`; persisted
+`Started | Progress | Delta | Succeeded | Failed | Cancelled` events are
+build-keyed and replayable. Media Intelligence is separately read through
+`GET /media/{media_handle}/intelligence`; the Media Dossier renders that
+current projection as a compact Abstract and consumes the same fingerprinted
+projection as generation input.
 
 ---
 
@@ -875,16 +923,18 @@ Fixture counts and 20-source support status live in
 `dangerouslySetInnerHTML` site. It renders already-sanitized HTML, permits
 annotation transforms, and applies the bounded media `h1`-to-`h2` projection
 beneath the resource heading. Inline
-highlight rendering remains separate for text selection, while the reader
-**Document Map** is the single side instrument with exactly `Contents | Evidence`.
+highlight rendering remains separate for text selection. Media publishes one
+shared **Resource Inspector** companion whose tabs are `Contents` when
+available, `Evidence`, and `Dossier`. Contents and Evidence retain their
+internal **Document Map** semantics:
 Evidence is a target-centered aggregate of highlights, source references,
 generated citations, links, and Synapses, separated into passage and
 whole-document scopes with typed one-hop associations. `MarginRail` is the
 wide-reader spatial presenter for the same filtered passage facts. The desktop
 overview rail is positioned from aggregate owner locators and metadata, never
-DOM geometry, and has no generic opener. One semantic `documentMapAction`
-projects into the desktop header `ActionBar` and mobile Options; mobile presents
-the same secondary publication in the workspace sheet.
+DOM geometry, and has no generic opener. The shared Companion action opens the
+same `resource-inspector` publication on desktop and in the workspace mobile
+sheet.
 The contract is
 [`reader-evidence-scope-associations-hard-cutover.md`](cutovers/reader-evidence-scope-associations-hard-cutover.md).
 
@@ -1036,11 +1086,12 @@ predicates in `auth/permissions.py`; the search/object readers read
   returns at most ten deterministic, destination-addable suggestions outside
   complete membership. A successful Add preserves visible Slate survivors and
   appends at most one novel result from a canonical refetch.
-- **Library Intelligence** (`services/library_intelligence.py`) is one stable
-  synthesis artifact head per library plus immutable generated revisions.
-  Citations belong to `library_intelligence_revision:<id>`; the artifact head
-  resolves to the current revision and turns stale when source membership or
-  fingerprints drift.
+- **Library Dossier** is the Library binding of Universal Dossiers, not a
+  Library-owned subsystem. The Library pane publishes Entries in primary
+  content and `Connections | Dossier` in the shared Resource Inspector. Its
+  audience is the Library membership scope; direct entries and expanded
+  Podcast episodes are intersected with audience-visible Media, and freshness
+  follows the binding's typed manifest.
 
 ### 8.6 Contributors
 
@@ -1196,8 +1247,13 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   `useSetPaneLabel`, `usePaneSecondary`) and route-keyed
   `usePanePrimaryChrome`; `usePaneRuntime().isActive` exposes the
   host's pane-activity capability, which reader progress uses for adoption-versus-
-  handoff arbitration). Secondary panes (Document Map,
-  conversation context, library tools) are runtime-published sidebars.
+  handoff arbitration). Every eligible resource pane publishes one
+  `resource-inspector` secondary group through `useResourceInspector`: Media
+  (`Contents | Evidence | Dossier`), Conversation
+  (`Context | Forks | Dossier`), and Library/Podcast/Author/Page/Note
+  (`Connections | Dossier`). One visible Companion action opens the same group
+  on desktop and mobile; open state, active tab, width, and viewed Dossier
+  revision are workspace-local.
   Every supported route declares a typed section/resource header contract.
   `PaneShell` combines that contract with one primary-chrome publication and
   projects it into a 44px desktop section header, 60px desktop resource header,
@@ -1458,6 +1514,7 @@ The things most likely to bite you, distilled:
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
 | Search / retrieval / indexing / Link target search                | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/targets.py`               |
 | Resource graph (edges, refs, citations, connections, Link/stance) | `python/nexus/services/resource_graph/` (`refs`, `resolve`, `edges`, `connections`, `context`, `citations`, `cleanup`, `user_relations`, `policy`)                                                     |
+| Universal Dossiers / Media Intelligence                           | `python/nexus/services/artifacts/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |

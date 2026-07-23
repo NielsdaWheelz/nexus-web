@@ -8,9 +8,10 @@ building revision that WAS the run is split into a generic build lifecycle:
 1. Read-only preflight census (legacy revisions by status + citation count,
    enumerating every ``ready`` zero-citation revision) and defect detection.
    The migration aborts atomically (writing nothing that survives the
-   transaction) on an underivable subject/audience, an ambiguous head collision
-   under the new resource-plus-audience identity, a citation-owner mismatch, or
-   an unmappable ledger row.
+   transaction) on an illegal legacy kind/subject pairing, an underivable live
+   subject/audience, an ambiguous head collision under the new
+   resource-plus-audience identity, a citation-owner mismatch, or an unmappable
+   ledger row/operation.
 2. Create ``artifact_builds`` (one attempt; unique ``(artifact_id,
    idempotency_key)``; NO status column), the terminal children
    ``artifact_build_failures`` / ``artifact_build_cancellations`` (each a unique
@@ -57,8 +58,9 @@ INFERRED, not literal spec text (flagged for the integrator):
   delta -> Delta; the legacy ``done`` is dropped and the terminal event is
   re-derived from the NEW mapping, so a zero-citation ``ready`` terminalizes
   ``Failed``). Legacy payload bodies do not map onto the strict new payloads and
-  are re-synthesized minimally (Started carries the artifact/subject refs and an
-  empty build handle; Progress/Delta carry empty text).
+  are re-synthesized minimally (Started carries the artifact/subject refs and a
+  valid ``ab1`` build handle minted with the deployment's stream-signing key;
+  Progress/Delta carry empty text).
 
 Downgrade is blocked: this collapses the revision-is-the-run model into the
 build lifecycle, drops ``artifacts.kind`` / ``user_id`` and the
@@ -72,11 +74,16 @@ Create Date: 2026-07-23
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import json
+import os
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import NoReturn
+from uuid import UUID
 
 from alembic import op
 from sqlalchemy import text
@@ -87,6 +94,12 @@ down_revision: str | Sequence[str] | None = "0189"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_ARTIFACT_BUILD_SEAL_VERSION = "ab1"
+_ARTIFACT_BUILD_SEAL_MAC_BYTES = 16
+_LOCAL_TEST_STREAM_TOKEN_SIGNING_KEY = (
+    "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="
+)
+
 
 def _fail(phase: str, message: str) -> NoReturn:
     raise RuntimeError(f"0190 {phase}: {message}")
@@ -96,36 +109,89 @@ def _report(message: str) -> None:
     print(f"0190: {message}")
 
 
+def _artifact_build_seal_key() -> bytes:
+    """Load the same key material as the runtime handle owner without importing
+    runtime settings into immutable migration history.
+
+    Production migrations run in the API container, whose required backend env
+    includes ``STREAM_TOKEN_SIGNING_KEY``. Local/test migrations intentionally
+    use the repository's deterministic local/test key. Missing production key
+    material defects instead of minting handles the deployed runtime cannot
+    unseal.
+    """
+
+    encoded = os.environ.get("STREAM_TOKEN_SIGNING_KEY")
+    environment = os.environ.get("NEXUS_ENV", "local")
+    if not encoded:
+        if environment in {"local", "test"}:
+            encoded = _LOCAL_TEST_STREAM_TOKEN_SIGNING_KEY
+        else:
+            _fail(
+                "configuration",
+                "STREAM_TOKEN_SIGNING_KEY is required to migrate persisted build handles",
+            )
+    try:
+        key = base64.b64decode(encoded, validate=True)
+    except binascii.Error as exc:
+        raise RuntimeError(
+            "0190 configuration: STREAM_TOKEN_SIGNING_KEY is not valid base64"
+        ) from exc
+    if len(key) < 32:
+        _fail(
+            "configuration",
+            "STREAM_TOKEN_SIGNING_KEY must decode to at least 32 bytes",
+        )
+    return key
+
+
+def _artifact_build_handle(build_id: UUID, *, seal_key: bytes) -> str:
+    """Migration-local copy of the immutable ``ab1`` handle wire algorithm."""
+
+    id_part = base64.urlsafe_b64encode(build_id.bytes).rstrip(b"=").decode("ascii")
+    tag = hmac.new(seal_key, build_id.bytes, hashlib.sha256).digest()[
+        :_ARTIFACT_BUILD_SEAL_MAC_BYTES
+    ]
+    tag_part = base64.urlsafe_b64encode(tag).rstrip(b"=").decode("ascii")
+    return f"{_ARTIFACT_BUILD_SEAL_VERSION}.{id_part}.{tag_part}"
+
+
 # ---------------------------------------------------------------------------
 # Read-only preflight: defect detection + census (spec §Migration).
 # ---------------------------------------------------------------------------
 def _preflight_and_census(session: Session) -> dict[str, int]:
-    # Defect: an artifact head with no derivable subject/audience (unknown
-    # subject scheme, or a conversation distillate whose subject conversation no
-    # longer exists so the owner-User audience is underivable).
+    # Defect: every legacy kind has exactly one legal subject scheme and a live
+    # subject row from which its audience can be derived.
     missing = (
         session.execute(
             text(
                 """
-            SELECT a.id
+            SELECT a.id, a.kind, a.subject_scheme, a.subject_id
             FROM artifacts a
+            LEFT JOIN libraries l
+              ON l.id = a.subject_id AND a.subject_scheme = 'library'
             LEFT JOIN conversations c
               ON c.id = a.subject_id AND a.subject_scheme = 'conversation'
-            WHERE a.subject_scheme NOT IN ('library', 'conversation')
-               OR (a.subject_scheme = 'conversation' AND c.id IS NULL)
+            WHERE a.kind NOT IN ('library_dossier', 'conversation_distillate')
+               OR (
+                    a.kind = 'library_dossier'
+                    AND (a.subject_scheme <> 'library' OR l.id IS NULL)
+               )
+               OR (
+                    a.kind = 'conversation_distillate'
+                    AND (a.subject_scheme <> 'conversation' OR c.id IS NULL)
+               )
             ORDER BY a.id
             """
             )
         )
-        .scalars()
         .all()
     )
     if missing:
         _fail(
             "preflight",
-            f"{len(missing)} artifact head(s) have no derivable subject/audience"
-            f" (unknown subject scheme, or a distillate whose subject conversation is"
-            f" gone): {[str(x) for x in missing]}",
+            f"{len(missing)} artifact head(s) have an illegal legacy kind/subject"
+            f" pairing or no live subject/audience: "
+            f"{[(str(row.id), row.kind, row.subject_scheme, str(row.subject_id)) for row in missing]}",
         )
 
     # Defect: two heads that would collide under the new resource-plus-audience
@@ -138,17 +204,17 @@ def _preflight_and_census(session: Session) -> dict[str, int]:
                     a.id,
                     a.subject_scheme,
                     a.subject_id,
-                    CASE a.subject_scheme
-                        WHEN 'library' THEN 'library'
-                        WHEN 'conversation' THEN 'user'
+                    CASE a.kind
+                        WHEN 'library_dossier' THEN 'library'
+                        WHEN 'conversation_distillate' THEN 'user'
                     END AS audience_scheme,
-                    CASE a.subject_scheme
-                        WHEN 'library' THEN a.subject_id::text
-                        WHEN 'conversation' THEN c.owner_user_id::text
+                    CASE a.kind
+                        WHEN 'library_dossier' THEN a.subject_id::text
+                        WHEN 'conversation_distillate' THEN c.owner_user_id::text
                     END AS audience_id
                 FROM artifacts a
                 LEFT JOIN conversations c
-                  ON c.id = a.subject_id AND a.subject_scheme = 'conversation'
+                  ON c.id = a.subject_id AND a.kind = 'conversation_distillate'
             )
             SELECT subject_scheme, subject_id, audience_scheme, audience_id
             FROM derived
@@ -215,6 +281,35 @@ def _preflight_and_census(session: Session) -> dict[str, int]:
             "preflight",
             f"{len(orphans)} llm_calls ledger row(s) reference a nonexistent"
             f" artifact_revision and cannot be re-homed: {[str(x) for x in orphans]}",
+        )
+
+    # Defect: an artifact-revision ledger row must use the one legacy operation
+    # owned by its head kind. There is no generic fallback operation in the
+    # closed post-cutover ledger vocabulary.
+    unmappable_ledger = session.execute(
+        text(
+            """
+            SELECT lc.owner_id, lc.llm_operation, a.kind
+            FROM llm_calls lc
+            JOIN artifact_revisions r ON r.id = lc.owner_id
+            JOIN artifacts a ON a.id = r.artifact_id
+            WHERE lc.owner_kind = 'artifact_revision'
+              AND (
+                    (a.kind = 'library_dossier'
+                     AND lc.llm_operation <> 'library_dossier')
+                 OR (a.kind = 'conversation_distillate'
+                     AND lc.llm_operation <> 'conversation_distillate')
+              )
+            ORDER BY lc.owner_id, lc.call_seq
+            """
+        )
+    ).fetchall()
+    if unmappable_ledger:
+        _fail(
+            "preflight",
+            f"{len(unmappable_ledger)} artifact_revision ledger row(s) have no"
+            f" legal Dossier operation mapping: "
+            f"{[(str(row.owner_id), row.llm_operation, row.kind) for row in unmappable_ledger]}",
         )
 
     census = (
@@ -289,6 +384,7 @@ def _preflight_and_census(session: Session) -> dict[str, int]:
 # and Conversation shapes are NEVER interchangeable.
 # ---------------------------------------------------------------------------
 def _build_input_manifest(subject_scheme: str, subject_id, covered_targets) -> dict:
+    from nexus.schemas.presence import absent
     from nexus.services.artifacts.manifests import (
         ConversationCompletenessReason,
         ConversationIncomplete,
@@ -297,7 +393,6 @@ def _build_input_manifest(subject_scheme: str, subject_id, covered_targets) -> d
         MediaDisposition,
         MediaManifestEntry,
     )
-    from nexus.schemas.presence import absent
 
     if subject_scheme == "library":
         disposition_of = {
@@ -365,7 +460,7 @@ def _insert_build_event(
 # Per-row transform: builds already exist (id == source revision id); attach
 # manifests + terminal children + re-keyed/translated build events.
 # ---------------------------------------------------------------------------
-def _transform_rows(session: Session) -> None:
+def _transform_rows(session: Session, *, seal_key: bytes) -> None:
     from nexus.schemas.presence import absent, present
     from nexus.services.artifacts.dossier_types import (
         DeltaEventPayload,
@@ -439,7 +534,7 @@ def _transform_rows(session: Session) -> None:
             seq += 1
             if translated == "Started":
                 payload = StartedEventPayload(
-                    build_handle="",
+                    build_handle=_artifact_build_handle(build_id, seal_key=seal_key),
                     artifact_ref=f"artifact:{row['artifact_id']}",
                     subject_locator=ResourceSubjectWire(
                         ref=f"{row['subject_scheme']}:{row['subject_id']}"
@@ -557,6 +652,190 @@ def _transform_rows(session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Graph cleanup for revisions discarded by the destructive mapping. This is a
+# migration-local SQL rendering of resource_graph.cleanup's ownership rules:
+# bare edges die with either endpoint; ordinal citations die with their source
+# but survive target deletion through their immutable snapshots.
+# ---------------------------------------------------------------------------
+def _delete_discarded_revision_graph(session: Session) -> None:
+    session.execute(
+        text(
+            """
+            CREATE TEMP TABLE _0190_discarded_revision_ids
+            ON COMMIT DROP AS
+            SELECT r.id
+            FROM artifact_revisions r
+            WHERE NOT (
+                r.status = 'ready'
+                AND EXISTS (
+                    SELECT 1
+                    FROM resource_edges re
+                    WHERE re.source_scheme = 'artifact_revision'
+                      AND re.source_id = r.id
+                      AND re.origin = 'citation'
+                )
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            "CREATE UNIQUE INDEX _0190_discarded_revision_ids_pk"
+            " ON _0190_discarded_revision_ids (id)"
+        )
+    )
+    session.execute(
+        text(
+            """
+            CREATE TEMP TABLE _0190_discarded_edge_ids
+            ON COMMIT DROP AS
+            WITH direct_edges AS (
+                SELECT edge.id
+                FROM resource_edges edge
+                WHERE (
+                    edge.ordinal IS NULL
+                    AND (
+                        (
+                            edge.source_scheme = 'artifact_revision'
+                            AND edge.source_id IN (
+                                SELECT id FROM _0190_discarded_revision_ids
+                            )
+                        )
+                        OR (
+                            edge.target_scheme = 'artifact_revision'
+                            AND edge.target_id IN (
+                                SELECT id FROM _0190_discarded_revision_ids
+                            )
+                        )
+                    )
+                )
+                OR (
+                    edge.ordinal IS NOT NULL
+                    AND edge.source_scheme = 'artifact_revision'
+                    AND edge.source_id IN (
+                        SELECT id FROM _0190_discarded_revision_ids
+                    )
+                )
+            ),
+            touched_link_notes AS (
+                SELECT DISTINCT edge.source_scheme, edge.source_id
+                FROM resource_edges edge
+                WHERE edge.origin = 'link_note'
+                  AND edge.target_scheme = 'artifact_revision'
+                  AND edge.target_id IN (
+                      SELECT id FROM _0190_discarded_revision_ids
+                  )
+            )
+            SELECT id FROM direct_edges
+            UNION
+            SELECT edge.id
+            FROM resource_edges edge
+            JOIN touched_link_notes note
+              ON note.source_scheme = edge.source_scheme
+             AND note.source_id = edge.source_id
+            WHERE edge.origin = 'link_note'
+            """
+        )
+    )
+    session.execute(
+        text(
+            "CREATE UNIQUE INDEX _0190_discarded_edge_ids_pk"
+            " ON _0190_discarded_edge_ids (id)"
+        )
+    )
+    session.execute(
+        text(
+            """
+            CREATE TEMP TABLE _0190_maybe_orphaned_external_snapshots
+            ON COMMIT DROP AS
+            SELECT DISTINCT edge.target_id AS id
+            FROM resource_edges edge
+            WHERE edge.id IN (SELECT id FROM _0190_discarded_edge_ids)
+              AND edge.target_scheme = 'external_snapshot'
+            """
+        )
+    )
+
+    # resource_view_states has a default non-cascading FK to resource_edges.
+    # Clear it before deleting the graph-owned edges.
+    session.execute(
+        text(
+            "DELETE FROM resource_view_states"
+            " WHERE edge_id IN (SELECT id FROM _0190_discarded_edge_ids)"
+        )
+    )
+    session.execute(
+        text(
+            "DELETE FROM resource_edges"
+            " WHERE id IN (SELECT id FROM _0190_discarded_edge_ids)"
+        )
+    )
+
+    # Match the graph owner's citation-source cleanup: remove an external
+    # snapshot only when neither an edge nor retrieval telemetry still owns it.
+    session.execute(
+        text(
+            """
+            DELETE FROM resource_external_snapshots snapshot
+            WHERE snapshot.id IN (
+                SELECT id FROM _0190_maybe_orphaned_external_snapshots
+            )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM resource_edges edge
+                  WHERE edge.target_scheme = 'external_snapshot'
+                    AND edge.target_id = snapshot.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM message_retrievals retrieval
+                  WHERE retrieval.result_type = 'web_result'
+                    AND retrieval.source_id = snapshot.id::text
+              )
+            """
+        )
+    )
+
+    dangling = session.execute(
+        text(
+            """
+            SELECT count(*)
+            FROM resource_edges edge
+            WHERE (
+                edge.ordinal IS NULL
+                AND (
+                    (
+                        edge.source_scheme = 'artifact_revision'
+                        AND edge.source_id IN (
+                            SELECT id FROM _0190_discarded_revision_ids
+                        )
+                    )
+                    OR (
+                        edge.target_scheme = 'artifact_revision'
+                        AND edge.target_id IN (
+                            SELECT id FROM _0190_discarded_revision_ids
+                        )
+                    )
+                )
+            )
+            OR (
+                edge.ordinal IS NOT NULL
+                AND edge.source_scheme = 'artifact_revision'
+                AND edge.source_id IN (
+                    SELECT id FROM _0190_discarded_revision_ids
+                )
+            )
+            """
+        )
+    ).scalar_one()
+    if dangling:
+        _fail(
+            "transform",
+            f"{dangling} graph edge(s) still owned by a discarded artifact revision",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Post-transform assertions: census == report + the internal invariants the
 # spec DEFECTS on (implemented even where CP1 cannot seed-test them).
 # ---------------------------------------------------------------------------
@@ -586,7 +865,10 @@ def _assert_report(session: Session, census: dict[str, int]) -> None:
     )
     dangling_current = scalar(
         "SELECT count(*) FROM artifacts a WHERE a.current_revision_id IS NOT NULL"
-        " AND NOT EXISTS (SELECT 1 FROM artifact_revisions r WHERE r.id = a.current_revision_id)"
+        " AND NOT EXISTS ("
+        " SELECT 1 FROM artifact_revisions r"
+        " JOIN artifact_builds b ON b.id = r.build_id"
+        " WHERE r.id = a.current_revision_id AND b.artifact_id = a.id)"
     )
     preserved_without_citation = scalar(
         "SELECT count(*) FROM artifact_revisions r WHERE NOT EXISTS ("
@@ -636,7 +918,7 @@ def _assert_report(session: Session, census: dict[str, int]) -> None:
         )
     if dangling_current != 0:
         problems.append(
-            f"{dangling_current} current pointer(s) reference a non-preserved/non-existent revision"
+            f"{dangling_current} current pointer(s) reference a non-preserved/non-owned revision"
         )
     if preserved_without_citation != 0:
         problems.append(
@@ -657,6 +939,7 @@ def upgrade() -> None:
 
     # --- 1. Read-only preflight census + defect detection -------------------
     census = _preflight_and_census(session)
+    seal_key = _artifact_build_seal_key()
 
     # --- 2. DDL: new tables + nullable backfill columns ---------------------
     op.execute(
@@ -664,7 +947,7 @@ def upgrade() -> None:
         CREATE TABLE artifact_builds (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             artifact_id uuid NOT NULL REFERENCES artifacts (id),
-            requester_user_id uuid REFERENCES users (id) ON DELETE SET NULL,
+            requester_user_id uuid REFERENCES users (id),
             instruction text,
             idempotency_key text NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now(),
@@ -695,7 +978,7 @@ def upgrade() -> None:
         CREATE TABLE artifact_build_cancellations (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             build_id uuid NOT NULL REFERENCES artifact_builds (id),
-            actor_user_id uuid REFERENCES users (id) ON DELETE SET NULL,
+            actor_user_id uuid REFERENCES users (id),
             created_at timestamptz NOT NULL DEFAULT now(),
             CONSTRAINT uq_artifact_build_cancellations_build UNIQUE (build_id)
         )
@@ -727,7 +1010,7 @@ def upgrade() -> None:
         ALTER TABLE artifact_revisions
             ADD COLUMN build_id uuid REFERENCES artifact_builds (id),
             ADD COLUMN citation_owner_user_id uuid REFERENCES users (id),
-            ADD COLUMN creator_user_id uuid REFERENCES users (id) ON DELETE SET NULL,
+            ADD COLUMN creator_user_id uuid REFERENCES users (id),
             ADD COLUMN input_manifest jsonb
         """
     )
@@ -737,17 +1020,17 @@ def upgrade() -> None:
         text(
             """
             UPDATE artifacts a
-            SET audience_scheme = CASE a.subject_scheme
-                    WHEN 'library' THEN 'library'
-                    WHEN 'conversation' THEN 'user'
+            SET audience_scheme = CASE a.kind
+                    WHEN 'library_dossier' THEN 'library'
+                    WHEN 'conversation_distillate' THEN 'user'
                 END,
-                audience_id = CASE a.subject_scheme
-                    WHEN 'library' THEN a.subject_id::text
-                    WHEN 'conversation' THEN c.owner_user_id::text
+                audience_id = CASE a.kind
+                    WHEN 'library_dossier' THEN a.subject_id::text
+                    WHEN 'conversation_distillate' THEN c.owner_user_id::text
                 END
             FROM artifacts a2
             LEFT JOIN conversations c
-              ON c.id = a2.subject_id AND a2.subject_scheme = 'conversation'
+              ON c.id = a2.subject_id AND a2.kind = 'conversation_distillate'
             WHERE a.id = a2.id
             """
         )
@@ -798,24 +1081,26 @@ def upgrade() -> None:
     )
 
     # --- 6. Manifests, terminal children, translated build events -----------
-    _transform_rows(session)
+    _transform_rows(session, seal_key=seal_key)
 
-    # --- 7. Clear pointers to non-preserved successes, then delete them -----
+    # --- 7. Graph cleanup, pointer clearing, then destructive row deletion ---
+    _delete_discarded_revision_graph(session)
     session.execute(
         text(
             """
-            UPDATE artifacts SET current_revision_id = NULL
-            WHERE current_revision_id IN (
-                SELECT r.id FROM artifact_revisions r
-                WHERE NOT (
-                    r.status = 'ready'
+            UPDATE artifacts a SET current_revision_id = NULL
+            WHERE a.current_revision_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM artifact_revisions r
+                  WHERE r.id = a.current_revision_id
+                    AND r.artifact_id = a.id
+                    AND r.status = 'ready'
                     AND EXISTS (
                         SELECT 1 FROM resource_edges re
                         WHERE re.source_scheme = 'artifact_revision'
                           AND re.source_id = r.id
                           AND re.origin = 'citation'
                     )
-                )
             )
             """
         )

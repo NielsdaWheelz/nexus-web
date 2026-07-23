@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import {
   FeedbackNotice,
@@ -8,9 +8,11 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor from "@/components/notes/ProseMirrorOutlineEditor";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { saveNoteBody } from "@/lib/notes/api";
@@ -27,10 +29,12 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { noteBlockResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
 import {
   useNotePulseHighlight,
@@ -160,8 +164,14 @@ export default function NotePaneBody() {
   );
 
   const openRoute = useCallback(
-    (href: string, openInNewPane: boolean) => {
-      if (openInNewPane) openInNewPaneRoute?.(href);
+    (
+      href: string,
+      openInNewPane: boolean,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => {
+      if (openInNewPane) {
+        openInNewPaneRoute?.(href, undefined, secondaryActivation);
+      }
       else router.push(href);
     },
     [openInNewPaneRoute, router],
@@ -199,6 +209,29 @@ export default function NotePaneBody() {
     pulseNoteBlock(pending);
   }, [blockId, initialDoc, pulseNoteBlock]);
 
+  const connectionsComposerController = useConnectionsComposerController({
+    scheme: "note_block",
+    id: blockId,
+  });
+  const connectionsBody = useMemo(
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "note_block", id: blockId }}
+        composerController={connectionsComposerController}
+        onOpenRoute={openRoute}
+      />
+    ),
+    [blockId, connectionsComposerController, openRoute],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "note_block",
+    handle: blockId,
+    bodies: { linkedItems: connectionsBody },
+  });
+  usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
+  });
+
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
   if (!block || !initialDoc) return <PaneLoadingState />;
 
@@ -230,10 +263,6 @@ export default function NotePaneBody() {
             toFeedback(error, { fallback: "Note could not be edited." }),
           )
         }
-      />
-      <ConnectionsSurface
-        resourceRef={{ scheme: "note_block", id: blockId }}
-        onOpenRoute={openRoute}
       />
     </div>
   );

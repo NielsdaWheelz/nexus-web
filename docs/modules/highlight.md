@@ -17,8 +17,9 @@ Frontend owners are `apps/web/src/lib/highlights/*` and
 `apps/web/src/components/highlights/*`. Reader-specific highlight presentation
 lives in the reader module, and chat run assembly lives in the chat module.
 
-The highlight module does not own Document Map chrome, reader projection state,
-chat citations, source-authored apparatus, or the resource graph table.
+The highlight module does not own Resource Inspector/Companion chrome, Document
+Map aggregation, reader projection state, chat citations, source-authored
+apparatus, or the resource graph table.
 
 ## Durable Model And Resource Identity
 
@@ -124,7 +125,7 @@ Reindex and source refresh (web, EPUB, transcript-current, podcast
 transcription) never delete Highlights or their anchors; only the refreshed
 web/EPUB/transcript-current lifecycles used to call explicit highlight-root
 deletion on refresh, and that call is removed. An unresolved Highlight after
-content changes stays visible in Document Map/Connections rather than
+content changes stays visible in Evidence/Connections rather than
 disappearing or silently repointing to the wrong location.
 
 The quick-note composer is a frontend presentation owner. It may create a
@@ -136,11 +137,12 @@ through the canonical highlight and note paths.
 Inline highlight rendering remains separate from the Document Map. Inline
 rendering follows the current reader location and active fragment/page data.
 
-Evidence is the cross-document reader surface for highlights. It renders the
-stored `exact` quote when available, shows an explicit placeholder for
-geometry-only PDF highlights, exposes note/color/delete actions according to
-caller capability, and shows linked note/chat summaries from the aggregate read
-model.
+Evidence is the Media Resource Inspector's cross-document reader surface for
+highlights. It remains a Document Map body: it renders the stored `exact` quote
+when available, shows an explicit placeholder for geometry-only PDF highlights,
+exposes note/color/delete actions according to caller capability, and shows
+linked note/chat summaries from the aggregate read model. Highlight does not
+publish the Inspector group or its Companion action.
 
 The wide reader may also project highlight-linked marginalia through
 `MarginRail`. Neither Evidence nor the margin owns highlight persistence or

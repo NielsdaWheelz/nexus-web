@@ -10,33 +10,33 @@ import {
 } from "@/lib/workspace/mobileChrome";
 
 const publication = {
-  groupId: "conversation-context" as const,
-  defaultSurfaceId: "conversation-context-refs" as const,
+  groupId: "resource-inspector" as const,
+  defaultSurfaceId: "resource-context" as const,
   surfaces: [
     {
-      id: "conversation-context-refs" as const,
+      id: "resource-context" as const,
       body: <button type="button">Context ref action</button>,
     },
-    { id: "conversation-forks" as const, body: <div>Forks body</div> },
+    { id: "resource-forks" as const, body: <div>Forks body</div> },
   ],
 };
 
 const secondary = {
-  groupId: "conversation-context" as const,
-  activeSurfaceId: "conversation-context-refs" as const,
+  groupId: "resource-inspector" as const,
+  activeSurfaceId: "resource-context" as const,
   widthPx: 320,
   visibility: "visible" as const,
 };
 
 const readerPublication = {
-  groupId: "reader-tools" as const,
-  defaultSurfaceId: "reader-contents" as const,
-  surfaces: [{ id: "reader-contents" as const, body: <div>Contents body</div> }],
+  groupId: "resource-inspector" as const,
+  defaultSurfaceId: "resource-contents" as const,
+  surfaces: [{ id: "resource-contents" as const, body: <div>Contents body</div> }],
 };
 
 const readerSecondary = {
-  groupId: "reader-tools" as const,
-  activeSurfaceId: "reader-contents" as const,
+  groupId: "resource-inspector" as const,
+  activeSurfaceId: "resource-contents" as const,
   widthPx: 360,
   visibility: "visible" as const,
 };
@@ -65,6 +65,7 @@ function MobileChromePublisher({
         onBack: () => {},
         onForward: () => {},
       },
+      actions: [],
       options,
     }),
     [options, paneId],
@@ -205,7 +206,7 @@ describe("MobileSecondaryPaneHost", () => {
     fireEvent.keyDown(contextRefsTab, { key: "ArrowRight" });
     expect(onActiveSurfaceChange).toHaveBeenCalledWith(
       "secondary-1",
-      "conversation-forks",
+      "resource-forks",
     );
   });
 
@@ -226,64 +227,8 @@ describe("MobileSecondaryPaneHost", () => {
     expect(screen.getByRole("tab", { name: "Contents" })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Contents" })).toHaveAttribute(
       "id",
-      "pane-pane-1-secondary-reader-tools",
+      "pane-pane-1-secondary-resource-inspector",
     );
-  });
-
-  it("keeps the expanded pane action reachable inside the modal subtree", async () => {
-    const onClose = vi.fn();
-    const onSelect = vi.fn(() => onClose("secondary-1"));
-    render(
-      <MobileSecondaryPaneHost
-        primaryPaneId="pane-1"
-        secondaryPaneId="secondary-1"
-        secondary={readerSecondary}
-        publication={readerPublication}
-        onClose={onClose}
-        onActiveSurfaceChange={vi.fn()}
-        returnFocusTo={() => null}
-        options={[
-          {
-            kind: "command",
-            id: "document-map",
-            label: "Document Map",
-            state: {
-              kind: "disclosure",
-              expanded: true,
-              controls: "pane-pane-1-secondary-reader-tools",
-              menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
-              },
-            },
-            onSelect,
-          },
-        ]}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
-    const hideItem = await screen.findByRole("menuitem", {
-      name: "Hide Document Map",
-    });
-    const dialog = screen.getByRole("dialog", { name: "Contents" });
-    expect(dialog).toContainElement(hideItem);
-    expect(hideItem).not.toHaveAttribute("aria-expanded");
-    expect(hideItem).not.toHaveAttribute("aria-controls");
-
-    fireEvent.keyDown(hideItem, { key: "Escape" });
-    expect(
-      screen.queryByRole("menuitem", { name: "Hide Document Map" }),
-    ).not.toBeInTheDocument();
-    expect(onClose).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Pane options" }));
-
-    fireEvent.click(
-      await screen.findByRole("menuitem", { name: "Hide Document Map" }),
-    );
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onClose).toHaveBeenCalledWith("secondary-1");
   });
 
   it("returns to the explicit Options trigger, then falls back to pane chrome", async () => {

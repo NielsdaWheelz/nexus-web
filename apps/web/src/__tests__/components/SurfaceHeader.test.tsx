@@ -188,16 +188,16 @@ describe("SurfaceHeader", () => {
         actions={[
           {
             kind: "command",
-            id: "document-map",
-            label: "Document Map",
+            id: "resource-inspector-companion",
+            label: "Companion",
             icon: <span aria-hidden="true">m</span>,
             onSelect: onToggle,
             state: {
               kind: "disclosure",
               expanded: false,
               menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
+                collapsed: "Show Companion",
+                expanded: "Hide Companion",
               },
             },
           },
@@ -213,7 +213,7 @@ describe("SurfaceHeader", () => {
       "data-header-kind",
       "resource",
     );
-    await user.click(screen.getByRole("button", { name: "Document Map" }));
+    await user.click(screen.getByRole("button", { name: "Companion" }));
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });

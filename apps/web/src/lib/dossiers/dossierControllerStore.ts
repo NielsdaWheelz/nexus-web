@@ -59,6 +59,7 @@ export interface DossierControllerStore {
   makeCurrent(revisionRef: string): void;
   selectHistorical(revisionRef: string): void;
   selectCurrent(): void;
+  setInstructionDraft(value: string): void;
   /** Reset revision selection to Current (owned by the Inspector hidden→visible
    * observer in `useResourceInspector`; NOT a body mount effect). */
   resetRevisionSelection(): void;
@@ -75,9 +76,12 @@ function isTransientTransport(error: unknown): boolean {
 function isGenerationInProgress(error: unknown): boolean {
   return (
     isApiError(error) &&
-    (error.code === "E_DOSSIER_GENERATION_IN_PROGRESS" ||
-      (error.status === 409 && error.code === "E_INVITE_NOT_PENDING"))
+    error.code === "E_DOSSIER_GENERATION_IN_PROGRESS"
   );
+}
+
+function isBuildNotActive(error: unknown): boolean {
+  return isApiError(error) && error.code === "E_DOSSIER_BUILD_NOT_ACTIVE";
 }
 
 function readyFromDecodedHead(
@@ -288,6 +292,17 @@ export function createDossierControllerStore(
         );
         return;
       case "Succeeded":
+        // Keep the completion copy until the next build starts so the one
+        // polite live region can announce success after the authoritative head
+        // refresh replaces the active build with its new revision.
+        set({
+          stream: "Terminal",
+          streamingDraft: null,
+          progressMessage: "Dossier generated.",
+        });
+        teardownStream();
+        void loadHead(true);
+        return;
       case "Failed":
       case "Cancelled":
         // Terminal: the durable build is done. Refetch the head for the
@@ -314,7 +329,7 @@ export function createDossierControllerStore(
       try {
         await createDossierBuild({ subject, instruction, idempotencyKey: key });
         if (disposed) return;
-        set({ pendingAction: null });
+        set({ pendingAction: null, instructionDraft: "" });
         await loadHead(true);
         syncStream();
         return;
@@ -344,7 +359,7 @@ export function createDossierControllerStore(
     } catch (error) {
       // BuildNotActive (already terminal) is benign — the refetch reconciles.
       if (disposed) return;
-      if (!isApiError(error)) {
+      if (!isBuildNotActive(error)) {
         set({ pendingAction: null, actionError: toDossierErrorInfo(error) });
         return;
       }
@@ -426,6 +441,12 @@ export function createDossierControllerStore(
     detach() {
       attached = false;
       teardownStream();
+      // Completion is announced once in the mounted Dossier surface. Closing
+      // the tab is the consumption boundary; do not reannounce stale success
+      // when this workspace-local controller is mounted again.
+      if (state.stream === "Terminal") {
+        set({ stream: "Disconnected", progressMessage: null });
+      }
     },
     refreshHead,
     loadHistory() {
@@ -451,6 +472,9 @@ export function createDossierControllerStore(
     },
     selectCurrent() {
       set({ revisionSelection: { kind: "Current" }, historicalRevision: { kind: "Idle" } });
+    },
+    setInstructionDraft(value) {
+      set({ instructionDraft: value });
     },
     resetRevisionSelection() {
       if (state.revisionSelection.kind === "Current") return;

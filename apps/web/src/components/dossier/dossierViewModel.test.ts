@@ -18,8 +18,19 @@ function revision(overrides: Partial<DossierRevision> = {}): DossierRevision {
     isCurrent: true,
     contentMd: "# Dossier",
     citations: [],
-    inputManifest: { version: "v1", kind: "media" },
+    inputManifest: {
+      version: "v1",
+      kind: "media",
+      mediaRef: "media:m1",
+      contentFingerprint: "f1",
+      offeredClaimCount: 1,
+      omittedEvidenceRefs: [],
+    },
     instruction: absent(),
+    creatorUserId: absent(),
+    modelProvider: absent(),
+    modelName: absent(),
+    totalTokens: absent(),
     createdAt: "2026-07-22T00:00:00Z",
     promotedAt: absent(),
     ...overrides,
@@ -86,6 +97,20 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
     expect(vm.controls.canRegenerate).toBe(true);
     expect(vm.controls.canGenerate).toBe(false);
     expect(vm.alert).toBeNull();
+    expect(vm.historyStatus).toBe("idle");
+  });
+
+  it("preserves revision-history loading and failure states", () => {
+    expect(
+      deriveDossierViewModel(
+        ready({ revisionCount: 2, historyStatus: "loading" }),
+      ).historyStatus,
+    ).toBe("loading");
+    expect(
+      deriveDossierViewModel(
+        ready({ revisionCount: 2, historyStatus: "failed" }),
+      ).historyStatus,
+    ).toBe("failed");
   });
 
   it("stale current revision surfaces freshness=Stale", () => {
@@ -156,6 +181,20 @@ describe("deriveDossierViewModel — exhaustive A15 states", () => {
       }),
     );
     expect(vm.activity.kind).toBe("Cancelled");
+  });
+
+  it("keeps the terminal success announcement after the refreshed revision lands", () => {
+    const vm = deriveDossierViewModel({
+      ...ready({
+        currentRevision: present(revision()),
+        revisionCount: 1,
+      }),
+      stream: "Terminal",
+      progressMessage: "Dossier generated.",
+    });
+
+    expect(vm.activity.kind).toBe("Idle");
+    expect(vm.statusMessage).toBe("Dossier generated.");
   });
 
   it("historical selection with Ready revision → Make current, view-only", () => {

@@ -156,10 +156,11 @@ def _search_conversation_artifacts(
     scope_id: UUID | None,
     limit: int,
 ) -> list[InternalSearchResult]:
-    """Lexical FTS over promoted conversation distillates (S4).
+    """Lexical FTS over current owner-audience Conversation Dossiers.
 
-    A distillate is retrievable only when it is the head's CURRENT revision and its
-    conversation is visible; library dossiers are excluded by the kind filter.
+    Conversation Dossiers are private to the owning user after the universal
+    Dossier cutover. A shared reader may search the conversation itself, but
+    cannot retrieve its generated claims.
     """
     scope_clause = scope_filter_sql(scope_type, scope_id, "conversation")
     if isinstance(scope_clause, ScopeUnsupported):
@@ -171,7 +172,6 @@ def _search_conversation_artifacts(
     rows = db.execute(
         text(
             f"""
-            WITH visible_conversations AS ({visible_conversation_ids_cte_sql()})
             SELECT
                 a.subject_id AS conversation_id,
                 r.id AS revision_id,
@@ -187,9 +187,11 @@ def _search_conversation_artifacts(
                 ) AS snippet
             FROM artifacts a
             JOIN artifact_revisions r ON r.id = a.current_revision_id
-            JOIN visible_conversations vc ON vc.conversation_id = a.subject_id
+            JOIN conversations c ON c.id = a.subject_id
             WHERE a.subject_scheme = 'conversation'
-              AND a.kind = 'conversation_distillate'
+              AND a.audience_scheme = 'user'
+              AND a.audience_id = c.owner_user_id::text
+              AND c.owner_user_id = :viewer_id
               AND to_tsvector('english', COALESCE(r.content_md, ''))
                   @@ websearch_to_tsquery('english', :query)
               {_artifact_scope_filter(scope_filter)}

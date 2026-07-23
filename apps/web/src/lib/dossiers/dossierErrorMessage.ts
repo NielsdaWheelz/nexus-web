@@ -8,11 +8,8 @@
 //     generation-in-progress, invalid instruction, revision-not-found /
 //     not-owned, build-not-active).
 //
-// The A9 errors are keyed by `ApiError.code`. The backend currently issues
-// PLACEHOLDER codes (`dossier_types.py` reuses `E_INVITE_NOT_PENDING`/
-// `E_NOT_FOUND`/`E_INVALID_REQUEST`) that CP2-API will replace with dedicated
-// `E_DOSSIER_*` codes; this map recognises BOTH, and otherwise falls back to the
-// backend-authored `ApiError.message`, so copy stays correct across the rename.
+// The A9 errors are keyed by their dedicated `ApiError.code`; no legacy error
+// aliases are accepted at this hard-cut boundary.
 import { isApiError } from "@/lib/api/client";
 import type {
   DossierBuildFailureCode,
@@ -55,13 +52,13 @@ export function dossierBuildFailureMessage(
 }
 
 const DOSSIER_API_ERROR_COPY: Record<string, string> = {
-  // Dedicated codes (added by CP2-API).
   E_DOSSIER_GENERATION_IN_PROGRESS:
     "A dossier is already generating. Wait for it to finish.",
-  E_BUILD_NOT_ACTIVE: "This generation already finished.",
+  E_DOSSIER_BUILD_NOT_ACTIVE: "This generation already finished.",
+  E_DOSSIER_NOT_FOUND: "This dossier is no longer available.",
   E_DOSSIER_REVISION_NOT_FOUND: "That revision is no longer available.",
-  E_INVALID_DOSSIER_SUBJECT: "This item can't have a dossier.",
-  E_INVALID_DOSSIER_INSTRUCTION: "That instruction can't be used.",
+  E_DOSSIER_INVALID_SUBJECT: "This item can't have a dossier.",
+  E_DOSSIER_INVALID_INSTRUCTION: "That instruction can't be used.",
 };
 
 /** Copy for a synchronous A9 API error. Prefers a dedicated `E_DOSSIER_*`

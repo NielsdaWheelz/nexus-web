@@ -366,11 +366,11 @@ def test_execute_app_search_treats_empty_filter_arrays_as_omitted(
     assert captured["query"].roles == ()
 
 
-def test_li_revision_reference_dropped_from_default_scope_resolution(
+def test_dossier_revision_reference_dropped_from_default_scope_resolution(
     db_session: Session,
     bootstrapped_user,
 ) -> None:
-    """The LI revision reference is NOT a search scope; the library: ref carries retrieval.
+    """A Dossier revision is not a search scope; the Library ref carries retrieval.
 
     With both a ``artifact_revision:`` and a ``library:`` reference and
     no explicit scopes, default scope resolution keeps only the library URI.
@@ -382,26 +382,58 @@ def test_li_revision_reference_dropped_from_default_scope_resolution(
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Scope Library")
     artifact_id = _uuid4()
+    build_id = _uuid4()
     revision_id = _uuid4()
     db_session.execute(
         text(
             """
-            INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)
-            VALUES (:id, 'library', :library_id, 'library_dossier', :user_id)
+            INSERT INTO artifacts (
+                id, subject_scheme, subject_id, audience_scheme, audience_id
+            )
+            VALUES (:id, 'library', :library_id, 'library', :audience_id)
             """
         ),
-        {"id": artifact_id, "library_id": library_id, "user_id": bootstrapped_user},
+        {"id": artifact_id, "library_id": library_id, "audience_id": str(library_id)},
+    )
+    db_session.execute(
+        text(
+            """
+            INSERT INTO artifact_builds (
+                id, artifact_id, requester_user_id, idempotency_key
+            )
+            VALUES (:id, :artifact_id, :user_id, :idempotency_key)
+            """
+        ),
+        {
+            "id": build_id,
+            "artifact_id": artifact_id,
+            "user_id": bootstrapped_user,
+            "idempotency_key": f"scope-{build_id}",
+        },
     )
     db_session.execute(
         text(
             """
             INSERT INTO artifact_revisions (
-                id, artifact_id, content_md, covered_targets, status, promoted_at
+                id, build_id, content_md, input_manifest,
+                citation_owner_user_id, promoted_at
             )
-            VALUES (:id, :artifact_id, 'Synthesis', '[]'::jsonb, 'ready', now())
+            VALUES (
+                :id, :build_id, 'Synthesis',
+                jsonb_build_object(
+                    'version', 'v1', 'kind', 'library',
+                    'library_ref', :library_ref, 'media', '[]'::jsonb
+                ),
+                :user_id, now()
+            )
             """
         ),
-        {"id": revision_id, "artifact_id": artifact_id},
+        {
+            "id": revision_id,
+            "build_id": build_id,
+            "library_ref": f"library:{library_id}",
+            "user_id": bootstrapped_user,
+        },
     )
     db_session.execute(
         text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),

@@ -74,6 +74,23 @@ class StepReplayState(BaseModel):
     terminal_result: Presence[str]
 
 
+class ProveNotDispatched(BaseModel):
+    """Operator evidence that the uncertain request never reached the provider."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class AttachReconciledResult(BaseModel):
+    """A provider result recovered out of band and normalized by the binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    terminal_result: str
+
+
+UncertainStepResolution = ProveNotDispatched | AttachReconciledResult
+
+
 # Stable namespace for deterministic per-step generation ids.
 _GENERATION_NAMESPACE: Final = UUID("6f1d3f2e-6a3b-5c7d-8e9f-0a1b2c3d4e5f")
 

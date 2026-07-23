@@ -50,17 +50,22 @@ checks. It changes only when a policy changes (e.g. the oracle lease bump).
 Leases are sized to the worst-case wall-clock of one attempt. Notably
 `oracle_reading_generate` carries a **300s** lease — wide enough for retrieval
 plus the structured synthesis call plus the one bounded repair round
-([llms.md](llms.md)); chat and the LI generate sit at 900s; the rest default to
+([llms.md](llms.md)); chat and `dossier_build` sit at 900s; the rest default to
 300s.
 
 ### Dead-lettering
 
-Exhausted retries dead-letter the row. Two kinds register a finalizer:
+Exhausted retries dead-letter the row. Four kinds register a finalizer:
 
 - `chat_run` (`_dead_letter_chat_run`) writes an errored assistant message so the
   user sees a terminal failure.
 - `note_reindex_job` (`_dead_letter_note_reindex`) marks the note's content index
   `failed` so a stranded reindex is observable instead of stuck `pending`.
+- `dossier_build` (`_dead_letter_dossier_build`) preserves the active build and
+  projects it as suspended; it does not invent a modeled Dossier failure or
+  unlock another Generate.
+- `media_teardown` (`_dead_letter_media_teardown`) voids only the exact
+  still-current teardown intent so a newer lifecycle cannot be overwritten.
 
 Other kinds have no finalizer; their failure is recorded on their own domain row.
 
@@ -106,14 +111,13 @@ any other `OperationalError` immediately. `op` must reload its working rows and
 commit on each call. There is no explicit row locking on top of SERIALIZABLE
 (per [concurrency.md](../rules/concurrency.md)). It is adopted at every
 SERIALIZABLE site, including the worker's scheduler loop, bootstrap, identity
-writes, notes, and the LI generate/promote transactions.
+writes, notes, and Dossier head/build/revision mutations.
 
 ## The LLM generation harness inside the worker
 
 Seven LLM generation kinds — `chat_run`, `oracle_reading_generate`,
-`library_intelligence_artifact_generate` (and the conversation-distillate
-reducer, both under the generic `artifacts` revision engine), `media_unit_build`,
-`enrich_metadata`, `synapse_scan`, and `dawn_write` — run their bodies inside
+`dossier_build`, `media_unit_build`, `enrich_metadata`, `synapse_scan`, and
+`dawn_write` — run their bodies inside
 the shared `run_llm_task` envelope ([llms.md](llms.md)), not a hand-rolled
 per-task event loop. `run_llm_task` owns only the worker mechanics: one DB
 session, one fresh event loop, one shared `httpx.AsyncClient`, and one
@@ -131,5 +135,14 @@ a ledger row (or, for a denial before any row exists, a typed `ApiError`) plus
 `error_code`/`error_origin` on the run parent, so the operator can always
 answer "what failed". See [llms.md](llms.md) for the full execution order and
 the profile each kind resolves against (`fast` for Oracle/Synapse/media
-summary/metadata enrichment/conversation distillate; `balanced` for library
-dossier and Dawn Write; chat alone is user-selected).
+summary/metadata enrichment; binding-owned policy selects `fast` or `balanced`
+for the seven Dossier operations; `balanced` for Dawn Write; chat alone is
+user-selected).
+
+`dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
+Contributor, Page, and Note. Its binding registry selects collection, prompt,
+operation/profile, coverage, and freshness policy. The artifact head is the
+database serialization point; the build is the replay identity. Build success,
+modeled failure, and cancellation are terminal children, while exhausted or
+unreconciled execution remains a visible, operator-repairable suspended build.
+Dead `dossier_build` rows are never pruned.

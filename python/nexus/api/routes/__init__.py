@@ -18,13 +18,13 @@ from nexus.api.routes.conversation_branches import router as conversation_branch
 from nexus.api.routes.conversation_context import router as conversation_context_router
 from nexus.api.routes.conversation_shares import router as conversation_shares_router
 from nexus.api.routes.conversations import router as conversations_router
+from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.health import router as health_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
-from nexus.api.routes.library_dossier import router as library_dossier_router
 from nexus.api.routes.listening_state import router as listening_state_router
 from nexus.api.routes.llm_profiles import router as llm_profiles_router
 from nexus.api.routes.me import router as me_router
@@ -64,7 +64,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(extension_sessions_router)
     api_router.include_router(auth_handoff_codes_router)
     api_router.include_router(libraries_router)
-    api_router.include_router(library_dossier_router)
+    api_router.include_router(dossiers_router)
     # Media family. Every router owning a static `/media/<literal>` path
     # (media_assets, media_ingest, listening_state, podcast_transcripts) must be
     # registered before the `media` router that owns `/media/{media_id}` —

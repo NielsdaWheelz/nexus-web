@@ -63,7 +63,7 @@ describe("ReaderDocumentMapOverviewRail", () => {
       await screen.findByTestId("reader-document-map-marker-highlight:h1"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Open Document Map" }),
+      screen.queryByRole("button", { name: "Companion" }),
     ).not.toBeInTheDocument();
   });
 

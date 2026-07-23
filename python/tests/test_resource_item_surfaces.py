@@ -13,6 +13,7 @@ from tests.factories import (
     create_test_conversation_with_message,
     create_test_fragment,
     create_test_highlight,
+    create_test_library_artifact,
     create_test_media_in_library,
     get_user_default_library,
 )
@@ -104,7 +105,12 @@ def test_generated_and_identity_resources_project_existing_routes(
 ):
     library_id = get_user_default_library(db_session, bootstrapped_user)
     assert library_id is not None
-    artifact_id, revision_id = _make_library_intelligence(db_session, bootstrapped_user, library_id)
+    artifact_id, revision_id = create_test_library_artifact(
+        db_session,
+        library_id=library_id,
+        requester_user_id=bootstrapped_user,
+        content_md="Route synthesis",
+    )
     reading_id = _make_oracle_reading(db_session, bootstrapped_user)
     contributor = Contributor(
         id=uuid4(),
@@ -116,11 +122,11 @@ def test_generated_and_identity_resources_project_existing_routes(
 
     assert (
         _route(db_session, bootstrapped_user, "artifact", artifact_id)
-        == f"/libraries/{library_id}?tab=intelligence"
+        == f"/libraries/{library_id}"
     )
     assert (
         _route(db_session, bootstrapped_user, "artifact_revision", revision_id)
-        == f"/libraries/{library_id}?tab=intelligence&revision={revision_id}"
+        == f"/libraries/{library_id}"
     )
     assert _route(db_session, bootstrapped_user, "oracle_reading", reading_id) == (
         f"/oracle/{reading_id}"
@@ -151,43 +157,6 @@ def _item(db: Session, viewer_id: UUID, scheme: ResourceScheme, resource_id: UUI
         viewer_id=viewer_id,
         ref=ResourceRef(scheme=scheme, id=resource_id),
     )
-
-
-def _make_library_intelligence(db: Session, user_id: UUID, library_id: UUID) -> tuple[UUID, UUID]:
-    artifact_id = db.execute(
-        text(
-            """
-            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-            VALUES ('library', :library_id, 'library_dossier', :user_id)
-            RETURNING id
-            """
-        ),
-        {"library_id": library_id, "user_id": user_id},
-    ).scalar_one()
-    revision_id = db.execute(
-        text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'Route synthesis', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
-    ).scalar_one()
-    db.execute(
-        text(
-            """
-            UPDATE artifacts
-            SET current_revision_id = :revision_id
-            WHERE id = :artifact_id
-            """
-        ),
-        {"artifact_id": artifact_id, "revision_id": revision_id},
-    )
-    db.flush()
-    return UUID(str(artifact_id)), UUID(str(revision_id))
 
 
 def _make_oracle_reading(db: Session, user_id: UUID) -> UUID:

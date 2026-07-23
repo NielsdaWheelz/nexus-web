@@ -17,11 +17,14 @@ this module is the shape they conform to.
 from __future__ import annotations
 
 from typing import Any, Protocol
+from uuid import UUID
 
 from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from nexus.schemas.artifact import MediaAbstractOut
+from nexus.schemas.presence import Presence, absent
 from nexus.services.artifacts.dossier_types import AudienceScope, DossierBuildFailureCode
 from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.artifacts.subject_policy import ResolvedSubject
@@ -35,6 +38,24 @@ from nexus.services.resource_graph.schemas import CitationInput
 CollectedInputs = Any
 ValidationWitness = Any
 Coverage = Any
+
+
+class DossierBindingBase:
+    """The one shared default for the Media-only head projection."""
+
+    def media_abstract(
+        self,
+        db: Session,
+        *,
+        subject_id: UUID,
+        requester_user_id: UUID,
+    ) -> Presence[MediaAbstractOut]:
+        del db, subject_id, requester_user_id
+        return absent()
+
+
+class DossierInputTooLarge(Exception):
+    """The binding's declared deterministic input budget was exceeded."""
 
 
 class DossierBinding(Protocol):
@@ -52,6 +73,16 @@ class DossierBinding(Protocol):
     max_output_tokens: int
     system_prompt: str
     schema: type[BaseModel]
+
+    def media_abstract(
+        self,
+        db: Session,
+        *,
+        subject_id: UUID,
+        requester_user_id: UUID,
+    ) -> Presence[MediaAbstractOut]:
+        """Return the compact current Media Intelligence projection for Media."""
+        ...
 
     # --- input collection + bounded reduction (A3/A11) ---------------------
     async def collect(
@@ -109,7 +140,8 @@ class DossierBinding(Protocol):
     ) -> tuple[str, list[CitationInput]]:
         """Produce ``(content_md, citations)``. Citations come ONLY from the
         witness's offered candidates; narrowness is candidate construction, not a
-        validator. Zero citations → the engine fails ``NoSourceMaterial``."""
+        validator. Zero citations after dispatch → the engine fails
+        ``CitationValidationFailed``."""
         ...
 
     # --- typed manifest + freshness + coverage (A18/A21) -------------------

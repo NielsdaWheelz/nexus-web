@@ -61,14 +61,21 @@ export function planInspectorSurfaces(input: {
   const surfaces: PaneSecondarySurfacePublication[] = [];
   const linkedId = linkedItemsSurfaceId(policy.linkedItems);
 
+  if (bodies.linkedItems == null) {
+    throw new Error(
+      `Resource Inspector policy requires a linked-items body for ${policy.linkedItems}`,
+    );
+  }
+  if (policy.forks === "ConversationForks" && bodies.forks == null) {
+    throw new Error("Resource Inspector policy requires a Forks body");
+  }
+
   // Fixed tab order (A13): Contents · LinkedItems · Forks · Dossier.
   if (bodies.contents != null) {
     surfaces.push({ id: "resource-contents", body: bodies.contents });
   }
-  if (bodies.linkedItems != null) {
-    surfaces.push({ id: linkedId, body: bodies.linkedItems });
-  }
-  if (policy.forks === "ConversationForks" && bodies.forks != null) {
+  surfaces.push({ id: linkedId, body: bodies.linkedItems });
+  if (policy.forks === "ConversationForks") {
     surfaces.push({ id: "resource-forks", body: bodies.forks });
   }
   surfaces.push({ id: "resource-dossier", body: dossierBody });

@@ -1,12 +1,20 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import {
+  PaneRuntimeProvider,
+  type PaneResourceStatus,
+} from "@/lib/panes/paneRuntime";
+import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
+import type { ResourceItem } from "@/lib/resources/resourceItems";
 import AuthorPaneBody from "./AuthorPaneBody";
 
 const HANDLE = "ursula-le-guin";
 const CANONICAL = "Ursula K. Le Guin";
+const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("AuthorPaneBody", () => {
   afterEach(() => {
@@ -72,6 +80,62 @@ describe("AuthorPaneBody", () => {
     expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
     expect(screen.getByText("No works yet.")).toBeVisible();
     expect(screen.queryByText(/0 works/)).not.toBeInTheDocument();
+  });
+
+  it("uses the workspace-resolved contributor UUID for Connections", async () => {
+    const connectionRefs: string[][] = [];
+    stubFetchRouter((url, init) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) return detail({});
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        return worksPage([]);
+      }
+      if (url.pathname === "/api/resource-graph/connections/query") {
+        connectionRefs.push(
+          (JSON.parse(String(init?.body)) as { refs: string[] }).refs,
+        );
+        return jsonResponse({ data: { items: [], next_cursor: null } });
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+
+    render(
+      <AuthorSecondaryHarness>
+        {authorPane({
+          resourceItem: paneResourceItem(`contributor:${CONTRIBUTOR_ID}`),
+        })}
+      </AuthorSecondaryHarness>,
+    );
+
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(await screen.findByText("No connected objects yet.")).toBeVisible();
+    expect(connectionRefs).toEqual([
+      [`contributor:${CONTRIBUTOR_ID}`],
+    ]);
+    expect(connectionRefs).not.toContainEqual([`contributor:${HANDLE}`]);
+  });
+
+  it("publishes a non-querying Connections placeholder until the contributor ref resolves", async () => {
+    stubRoutes({ detail: detail({}), works: worksPage([]) });
+    const view = render(
+      <AuthorSecondaryHarness>
+        {authorPane({ resourceStatus: "pending" })}
+      </AuthorSecondaryHarness>,
+    );
+
+    expect(await screen.findByRole("heading", { name: CANONICAL })).toBeVisible();
+    expect(await screen.findByText("Loading connections…")).toBeVisible();
+
+    view.rerender(
+      <AuthorSecondaryHarness>
+        {authorPane({
+          resourceItem: paneResourceItem("contributor:not-a-uuid"),
+        })}
+      </AuthorSecondaryHarness>,
+    );
+    expect(await screen.findByText("Connections unavailable")).toBeVisible();
+    expect(
+      screen.getByText("This author’s resource identity could not be resolved."),
+    ).toBeVisible();
   });
 
   it("shows initial-load feedback without rendering stale author content", async () => {
@@ -307,7 +371,13 @@ describe("AuthorPaneBody", () => {
 
 // --- helpers -------------------------------------------------------------
 
-function authorPane() {
+function authorPane({
+  resourceItem = null,
+  resourceStatus = "none",
+}: {
+  resourceItem?: ResourceItem | null;
+  resourceStatus?: PaneResourceStatus;
+} = {}) {
   const href = `/authors/${HANDLE}`;
   return (
     <FeedbackProvider>
@@ -317,6 +387,8 @@ function authorPane() {
         href={href}
         routeId="author"
         routeKey={resolvePaneRouteIdentity(href).routeKey}
+        resourceItem={resourceItem}
+        resourceStatus={resourceStatus}
         canGoBack={false}
         canGoForward={false}
         onGoBackPane={vi.fn()}
@@ -330,6 +402,60 @@ function authorPane() {
       </PaneRuntimeProvider>
     </FeedbackProvider>
   );
+}
+
+function AuthorSecondaryHarness({ children }: { children: ReactNode }) {
+  const [publication, setPublication] =
+    useState<PaneSecondaryPublication | null>(null);
+  const connections = publication?.surfaces.find(
+    (surface) => surface.id === "resource-connections",
+  );
+  return (
+    <PaneSecondaryContext.Provider value={setPublication}>
+      {children}
+      {connections?.body}
+    </PaneSecondaryContext.Provider>
+  );
+}
+
+function paneResourceItem(ref: string): ResourceItem {
+  const [scheme = "", id = ""] = ref.split(":", 2);
+  return {
+    ref,
+    scheme,
+    id,
+    label: CANONICAL,
+    summary: "",
+    route: `/authors/${HANDLE}`,
+    activation: {
+      resourceRef: ref,
+      kind: "route",
+      href: `/authors/${HANDLE}`,
+      unresolvedReason: null,
+    },
+    missing: false,
+    capabilities: {
+      userRelation: {
+        userLinkSource: true,
+        userLinkTarget: "direct",
+        noteReferenceTarget: false,
+      },
+      attachable: true,
+      chatSubject: "label",
+      readable: "none",
+      inspectable: "none",
+      citableResultType: null,
+      citationOutputSource: false,
+      appSearchScope: false,
+      conversationSearchScope: false,
+      promptRender: "label",
+      expansionPolicy: "none",
+      expandable: false,
+      adjacencySource: false,
+      adjacencyTarget: true,
+    },
+    versionByLane: {},
+  };
 }
 
 function detail(over: Record<string, unknown>): Response {

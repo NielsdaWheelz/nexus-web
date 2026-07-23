@@ -26,7 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment
-from nexus.jobs.queue import JobExecutionContext, claim_next_job
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services import media_intelligence  # noqa: E402
 
 # --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
@@ -45,6 +45,7 @@ from tests.factories import (
     create_test_library,
     create_test_media,
 )
+from tests.utils.dossier_jobs import claim_dossier_build_job
 
 pytestmark = pytest.mark.integration
 
@@ -123,13 +124,12 @@ def _coerce_projection(db: Session, media_id: UUID, *, status: str, with_claim: 
     db.commit()
 
 
-def _library_dossier_failure(db: Session, uid: UUID, lib: UUID) -> DossierBuildFailureCode:
+def _library_build_failure(db: Session, uid: UUID, lib: UUID) -> DossierBuildFailureCode:
     loc = SubjectResource(ref=ResourceRef(scheme="library", id=lib))
     ticket = create_build(
         db, locator=loc, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
-    job = claim_next_job(db, worker_id="w", lease_seconds=600, allowed_kinds=["dossier_build"])
-    assert job is not None
+    job = claim_dossier_build_job(db, build_id=ticket.build_id, worker_id="w")
     ctx = JobExecutionContext(job_id=job.id, worker_id="w", attempt_no=job.attempts)
     asyncio.run(run_build(db, build_id=ticket.build_id, ctx=ctx, runtime=_NoDispatchRuntime()))
     code = db.execute(
@@ -258,6 +258,38 @@ def test_ensure_current_many_dedups_and_is_bounded(db_session: Session) -> None:
         assert rows == 1
 
 
+def test_ensure_current_many_records_items_beyond_fanout_budget(
+    db_session: Session,
+) -> None:
+    uid = _user(db_session)
+    lib = create_test_library(db_session, uid)
+    first = create_searchable_media_in_library(db_session, uid, lib, title="First")
+    second = create_searchable_media_in_library(db_session, uid, lib, title="Second")
+    db_session.execute(
+        text(
+            "UPDATE media_summaries SET status = 'failed', error_code = 'test' "
+            "WHERE media_id = :media_id"
+        ),
+        {"media_id": second},
+    )
+    db_session.commit()
+
+    results = media_intelligence.ensure_current_many(
+        db_session,
+        media_ids=[first, second],
+        requester_user_id=uid,
+        max_concurrency=1,
+    )
+
+    assert [item.media_id for item in results] == [first, second]
+    assert isinstance(results[1], media_intelligence.MediaOmission)
+    assert results[1].reason is media_intelligence.MediaOmissionReason.Budget
+    assert db_session.execute(
+        text("SELECT status FROM media_summaries WHERE media_id = :media_id"),
+        {"media_id": second},
+    ).scalar_one() == "failed"
+
+
 def test_ready_with_claim_projection_is_usable(db_session: Session) -> None:
     uid = _user(db_session)
     lib = create_test_library(db_session, uid)
@@ -276,7 +308,7 @@ def test_ready_but_claimless_media_is_not_usable_for_aggregate(db_session: Sessi
     media_id = create_searchable_media_in_library(db_session, uid, lib, title="Claimless")
     _coerce_projection(db_session, media_id, status="ready", with_claim=False)
     assert (
-        _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+        _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
     )
 
 
@@ -300,7 +332,7 @@ def test_no_usable_projection_when_media_is_contentless(db_session: Session) -> 
     add_media_to_library(db_session, lib, media.id)
     db_session.commit()
     assert (
-        _library_dossier_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
+        _library_build_failure(db_session, uid, lib) == DossierBuildFailureCode.NoSourceMaterial
     )
 
 

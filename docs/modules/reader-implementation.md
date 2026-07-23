@@ -24,22 +24,23 @@ contract.
 - focus mode: four states (`off`, `distraction_free`, `paragraph`,
   `sentence`) driven by `reader_profile.focus_mode`; toggle at
   Cmd/Ctrl+Shift+F; auto-suspends during active selection
-- mobile-safe reader layout and controls; mobile document panes render the
-  shared Document Map secondary surfaces as a mobile sheet instead of the
-  desktop attached secondary pane
-- one semantic Document Map action: a desktop resource-header icon and a mobile
-  `Show Document Map` / `Hide Document Map` Options item
-- on mobile, the Document Map sheet is the single reader detail path; the
-  overview rail remains desktop-only
+- mobile-safe reader layout and controls; mobile Media panes render the shared
+  Resource Inspector as a mobile sheet instead of the desktop attached pane
+- one shared, directly visible Companion action in the same resource-header
+  position on desktop and mobile
+- on mobile, the Resource Inspector sheet is the single secondary detail path;
+  the Document Map overview rail remains desktop-only
 - resume that survives reflow where possible
 
 ## architecture
 
-### Document Map surfaces
+### Resource Inspector and Document Map surfaces
 
-The reader has one side instrument: **Document Map**. It publishes exactly two
-surfaces under the internal `reader-tools` secondary group: **Contents** and
-**Evidence**.
+The Media pane publishes one `resource-inspector` secondary group:
+**Contents** when available, **Evidence**, and **Dossier**. The shared Companion
+action opens that group. The reader's internal **Document Map** remains the
+owner of Contents, Evidence, and the desktop overview rail; it is not the
+generic secondary-pane disclosure contract.
 
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
   markers from `GET /media/{id}/document-map`, shows whole-document positions
@@ -49,15 +50,25 @@ surfaces under the internal `reader-tools` secondary group: **Contents** and
 - Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
   source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
-- Mobile has no rail. The same Document Map secondary publication renders in
-  the workspace mobile secondary sheet.
-- `documentMapAction` is the only visible generic control. It projects to desktop
-  `ActionBar` and mobile Options from one stateful descriptor; no toolbar,
-  transcript, or overview-rail opener exists.
+- Mobile has no rail. The same Contents/Evidence bodies render in the Resource
+  Inspector's workspace mobile sheet.
+- `useResourceInspector` supplies the only visible generic control through the
+  shared Companion action; no reader-specific toolbar, Options, transcript, or
+  overview-rail opener exists.
 - The open region id is scoped by primary pane and secondary group. Mobile
-  carries the selected Options trigger as ephemeral return-focus state, focuses
-  the active surface tab, and returns to that trigger when the sheet closes.
+  carries the Companion opener as ephemeral return-focus state, focuses the
+  active surface tab, and returns to that opener when the sheet closes.
 - Chat opens in the conversation pane; it is not a Document Map surface.
+
+### Media Dossier and Abstract
+
+The Dossier tab uses the universal Dossier surface. Above its revisioned content
+it renders one compact, read-only **Abstract** from the current Media
+Intelligence projection. Building, Ready, Stale, Failed, and Not Available are
+typed states; the Abstract has no Generate control or history. The Media
+Dossier binding consumes that same projection and fingerprints it in the input
+manifest, so the screen and generation engine never perform independent
+interpretations of the same Media content version.
 
 ### media identity and credits
 
@@ -119,17 +130,17 @@ bare keys.
 
 ### contents surface
 
-The document table of contents (epub + web article) is the Document Map
-"Contents" tab (`ReaderContentsNav`).
+The document table of contents (epub + web article) is the Resource Inspector
+**Contents** tab (`ReaderContentsNav`) and remains a Document Map feature.
 
-- it is on-demand through the single semantic Document Map header action. When
-  contents exist, generic Document Map open defaults here.
+- it is on-demand through the shared Companion action. When contents exist,
+  Media's capability default order selects it first.
 - it is available independent of highlights: it shows whenever the document
   has TOC nodes, including focus mode where highlights are hidden.
 - selecting an entry runs the existing section/anchor navigation, which
   replaces the pane's active href and adds no Back/Forward entry (see pane
   history).
-- mobile reaches Contents through the same Document Map secondary sheet.
+- mobile reaches Contents through the same Resource Inspector sheet.
 - it has no internal scroll container: the secondary body is the single scroll
   owner. the reader prose keeps a single scroll owner (`.documentViewport`);
   the TOC is not rendered inline.
@@ -148,15 +159,14 @@ width; the workspace raises the PDF pane floor to that width.
 
 The Document Map overview rail is fixed primary-adjacent chrome: it changes
 rendered pane width without changing stored primary pane width and contains no
-generic open control. Contents and Evidence are Document Map secondary surfaces
-under the workspace secondary
-pane contract ([workspace.md](workspace.md)); their width is independent from
-the primary reader width. `MarginRail` is wide-reader primary-adjacent evidence
-presentation, not another secondary surface. Mobile panes ignore desktop
-runtime pane sizing and render at viewport width. Mobile workspace mode also
-suppresses fixed primary chrome, desktop-attached secondary columns, and pane
-resize handles; the Document Map reaches mobile through the workspace
-secondary sheet.
+generic open control. Contents and Evidence are Document Map bodies inside the
+shared Resource Inspector; Dossier is the third Media tab. The single
+`resource-inspector` width policy is independent from the primary reader width.
+`MarginRail` is wide-reader primary-adjacent evidence presentation, not another
+secondary surface. Mobile panes ignore desktop runtime pane sizing and render at
+viewport width. Mobile workspace mode also suppresses fixed primary chrome,
+desktop-attached secondary columns, and pane resize handles; the Resource
+Inspector reaches mobile through the workspace secondary sheet.
 
 ### overview rail positioning
 

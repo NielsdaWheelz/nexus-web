@@ -47,6 +47,23 @@
   flex-wrap: wrap;
 }
 
+.generationForm {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2, 0.5rem);
+  flex-wrap: wrap;
+}
+
+.instructionField {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+  min-width: 0;
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-xs, 0.75rem);
+}
+
 .spacer {
   flex: 1 1 auto;
 }
@@ -64,6 +81,15 @@
 .freshness {
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--text-secondary, #666);
+}
+
+.revisionMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+  margin-top: var(--space-3, 0.75rem);
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-xs, 0.75rem);
 }
 
 .abstract {
@@ -87,6 +113,26 @@
   color: var(--text-secondary, #666);
 }
 
+.abstractAction {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-link, currentColor);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.abstractAction:hover {
+  text-decoration: underline;
+}
+
+.abstractAction:focus-visible {
+  outline: 2px solid var(--focus-ring, currentColor);
+  outline-offset: 2px;
+}
+
 .empty {
   display: flex;
   flex-direction: column;
@@ -101,4 +147,12 @@
   gap: var(--space-2, 0.5rem);
   font-size: var(--font-size-xs, 0.75rem);
   color: var(--text-secondary, #666);
+}
+
+.historyStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-xs, 0.75rem);
 }

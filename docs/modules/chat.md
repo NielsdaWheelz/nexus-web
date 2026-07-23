@@ -20,8 +20,8 @@ lifecycle + tool-output rendering + provider tool-event binding), and the
 append owner (typed streaming methods commit inline for SSE visibility; batch
 tool-result/citation/context events defer to the executor's transaction). The
 cross-surface run-tail query + terminal check are `run_kit.get_run_events` /
-`run_kit.is_run_terminal` (kind-dispatched for chat / oracle / library
-intelligence); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
+`run_kit.is_run_terminal` (kind-dispatched for chat, Oracle, and Dossier
+builds); viewer scoping stays in each `/stream/*` route's `assert_viewer`,
 never in the query.
 
 Frontend owners live under `apps/web/src/components/chat/*` and
@@ -74,8 +74,9 @@ latch in one record per run (`abort === null` ⇔ not streaming). `createRunVisi
 
 `ChatSurface` owns transcript rendering and scroll behavior.
 
-`Conversation` is the full-chat pane adapter. It owns pane chrome, secondary context/forks
-surfaces, open-resource routing, and the full-chat composer target.
+`Conversation` is the full-chat pane adapter. It owns pane chrome, the
+route-owned Context and Forks bodies published into the shared Resource
+Inspector, open-resource routing, and the full-chat composer target.
 
 There is no inline reader-chat adapter. The deleted `ResourceChatDetail` is
 replaced by opening a full `Conversation` pane. Reader Highlight quotes launch
@@ -84,6 +85,22 @@ below); generic resource-context chats go through `startResourceContextChat`
 (`lib/resources/resourceContextChat.ts`), which creates a context-bearing
 conversation via `POST /conversations` and opens it as a `Conversation` pane.
 `startResourceChat` is deleted.
+
+## Conversation Resource Inspector And Dossier
+
+An existing Conversation publishes one Resource Inspector group with
+`Context | Forks | Dossier`; `/conversations/new` publishes none until the
+resource exists. One shared Companion action opens the group on desktop and
+mobile. Context and Forks remain chat-owned bodies; Dossier uses the universal
+surface/controller and workspace-local revision selection.
+
+The Conversation Dossier binding collects every complete message on every
+branch, deduplicates shared prefixes, includes branch topology and attached
+Context, and derives a User audience from the conversation owner. Generation is
+manual. The generic Dossier head/build/history API and
+`artifact_build_events` stream own Generate, Regenerate, cancellation, retry,
+history, provenance, and citations; chat owns no feature-specific synthesis
+route, job, schema, deep link, or inline output.
 
 ## Scrollport Contract
 
@@ -305,7 +322,7 @@ run selects results, `chat_runs.py` calls
 whose source is the assistant `message:<id>`, whose target is the cited resource,
 and whose dense turn-global `[N]` is the edge `ordinal`. The assistant message's
 rendered `citations` are built from those edges by `build_citation_outs`
-(`chat_run_response.py`), uniformly with Oracle and Library Intelligence.
+(`chat_run_response.py`), uniformly with Oracle and Universal Dossiers.
 
 `message_retrievals` is chat-owned **telemetry** and the sole durable
 per-result record: candidate generation and rerank/selection are transient,

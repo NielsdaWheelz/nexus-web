@@ -184,7 +184,7 @@ def delete_document_for_viewer(
         controlled_libraries = library_entries.admin_non_default_library_ids_for_media(
             db, viewer_id=viewer_id, media_id=media_id
         )
-        library_ids = sorted(
+        library_ids: list[UUID] = sorted(
             {
                 *(UUID(str(library_id)) for library_id in controlled_libraries),
                 *([UUID(str(default_library[0]))] if default_library is not None else []),
@@ -209,56 +209,68 @@ def delete_document_for_viewer(
             removed_from_library_ids.append(UUID(str(library_id)))
 
         _delete_viewer_media_state(db, viewer_id, media_id)
+        from nexus.services.artifacts import engine as artifact_engine
+        from nexus.services.artifacts.dossier_types import AudienceUser
 
         remaining_reference_count = _total_reference_count(db, media_id)
         if remaining_reference_count == 0:
             claim_media_teardown(db, media_id)
-            return MediaDeletingResult()
-
-        # The viewer's own document embeds targeting this media now point at a
-        # media they can no longer resolve — mark them unavailable regardless of
-        # whether the outcome is Hidden or Removed (owner-scoped cleanup, not a
-        # tombstone concern).
-        detach_document_embed_targets_for_owner(
-            db, owner_user_id=viewer_id, target_media_id=media_id
-        )
-
-        # A remaining reference the viewer could not remove is either a shared
-        # non-system library still reachable by them (hide it per-viewer) or a
-        # reference they can no longer reach — a system-only library, or another
-        # user's private library (never surfaced to the viewer → nothing to
-        # hide). Branch on whether the viewer retains a reachable NON-SYSTEM
-        # path, not on the presence of a system one: a media with BOTH a system
-        # reference AND a remaining reachable non-system shared reference must
-        # still be Hidden, else it stays visible with no tombstone (AC5
-        # "truthful" violation).
-        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
-            return MediaRemovedResult(
-                removed_from_library_ids=removed_from_library_ids,
-                remaining_reference_count=remaining_reference_count,
+            result: MediaDeleteResult = MediaDeletingResult()
+        else:
+            # The viewer's own document embeds targeting this media now point at a
+            # media they can no longer resolve — mark them unavailable regardless of
+            # whether the outcome is Hidden or Removed (owner-scoped cleanup, not a
+            # tombstone concern).
+            detach_document_embed_targets_for_owner(
+                db, owner_user_id=viewer_id, target_media_id=media_id
             )
 
-        existing = db.execute(
-            text("""
-                SELECT 1
-                FROM user_media_deletions
-                WHERE user_id = :viewer_id
-                  AND media_id = :media_id
-            """),
-            {"viewer_id": viewer_id, "media_id": media_id},
-        ).fetchone()
-        if existing is None:
-            db.execute(
-                text("""
-                    INSERT INTO user_media_deletions (user_id, media_id)
-                    VALUES (:viewer_id, :media_id)
-                """),
-                {"viewer_id": viewer_id, "media_id": media_id},
-            )
-        return MediaHiddenResult(
-            removed_from_library_ids=removed_from_library_ids,
-            remaining_reference_count=remaining_reference_count,
+            # A remaining reference the viewer could not remove is either a shared
+            # non-system library still reachable by them (hide it per-viewer) or a
+            # reference they can no longer reach — a system-only library, or another
+            # user's private library (never surfaced to the viewer → nothing to
+            # hide). Branch on whether the viewer retains a reachable NON-SYSTEM
+            # path, not on the presence of a system one: a media with BOTH a system
+            # reference AND a remaining reachable non-system shared reference must
+            # still be Hidden, else it stays visible with no tombstone (AC5
+            # "truthful" violation).
+            if not _viewer_has_non_system_media_reference(
+                db,
+                viewer_id=viewer_id,
+                media_id=media_id,
+            ):
+                result = MediaRemovedResult(
+                    removed_from_library_ids=removed_from_library_ids,
+                    remaining_reference_count=remaining_reference_count,
+                )
+            else:
+                existing = db.execute(
+                    text("""
+                        SELECT 1
+                        FROM user_media_deletions
+                        WHERE user_id = :viewer_id
+                          AND media_id = :media_id
+                    """),
+                    {"viewer_id": viewer_id, "media_id": media_id},
+                ).fetchone()
+                if existing is None:
+                    db.execute(
+                        text("""
+                            INSERT INTO user_media_deletions (user_id, media_id)
+                            VALUES (:viewer_id, :media_id)
+                        """),
+                        {"viewer_id": viewer_id, "media_id": media_id},
+                    )
+                result = MediaHiddenResult(
+                    removed_from_library_ids=removed_from_library_ids,
+                    remaining_reference_count=remaining_reference_count,
+                )
+
+        artifact_engine.on_audience_visibility_changed(
+            db,
+            audience=AudienceUser(user_id=viewer_id),
         )
+        return result
 
 
 def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> None:
@@ -381,6 +393,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         return None
 
     storage_paths = enumerate_media_storage_paths(db, media_id)
+    from nexus.services.artifacts import engine as artifact_engine
+
+    artifact_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
 
     db.execute(
         text("DELETE FROM document_embeds WHERE media_id = :media_id"), {"media_id": media_id}

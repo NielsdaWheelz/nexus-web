@@ -5,6 +5,7 @@ import {
 } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { normalizeResourceActivation } from "@/lib/resources/activation";
 import {
   RESULT_TYPE_VALUES,
@@ -445,12 +446,15 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         ...base,
         type: "conversation",
       };
-    case "artifact":
+    case "artifact": {
+      const revisionRef = parseResourceRef(base.resource_ref);
       if (
         typeof row.revision_id !== "string" ||
         typeof row.subject_ref !== "string" ||
-        typeof row.kind !== "string" ||
-        base.context_ref.type !== "artifact"
+        base.context_ref.type !== "artifact" ||
+        revisionRef?.scheme !== "artifact_revision" ||
+        revisionRef.id !== row.revision_id ||
+        base.activation.resourceRef !== base.resource_ref
       ) {
         return null;
       }
@@ -459,8 +463,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         type: "artifact",
         revision_id: row.revision_id,
         subject_ref: row.subject_ref,
-        kind: row.kind,
       };
+    }
     case "web_result":
       if (
         base.context_ref.type !== "web_result" ||

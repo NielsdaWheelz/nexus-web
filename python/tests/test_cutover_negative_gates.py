@@ -43,18 +43,6 @@ _CURRENT_CITATION_CONTRACT_DOCS = (
     _REPO_ROOT / "docs" / "cutovers" / "generation-run-harness-hard-cutover.md",
 )
 
-# The post-split achieved line count of the artifact-head owner was 605. The gate
-# threshold is that count plus snug headroom (~15 lines) for small future edits,
-# and it MATCHES the number recorded in the spec (§12 S7 / §14) so the enforced
-# bar IS the contract. Documented deviation from the spec's earlier aspirational
-# ~250: the realistic floor for this module is higher because it carries the
-# raw-SQL read-model + freshness CTEs + five public dataclasses + the SERIALIZABLE
-# generate/promote transactions + docstrings — all of which are the artifact-head
-# owner's genuine, single-owner responsibility (the LLM reduce worker was already
-# extracted to ``library_intelligence_reduce``). Splitting further would invent a
-# hollow middle layer, which cleanliness.md forbids.
-_LIBRARY_INTELLIGENCE_LINE_BUDGET = 620
-
 
 @dataclass(frozen=True)
 class _Hit:
@@ -504,44 +492,44 @@ def test_reader_citation_data_has_one_constructor():
 
 
 # =============================================================================
-# AC-10 — no polling of the intelligence endpoint (apps/web)
+# Universal Dossier controller is stream-driven (apps/web)
 # =============================================================================
 
 
-def test_intelligence_pane_does_not_poll():
-    # LibraryIntelligencePane.tsx was deleted by the machine-output-in-place cutover;
-    # the inline dossier now lives in the LibraryBrief component family.
-    deleted = (
-        _WEB_ROOT / "app" / "(authenticated)" / "libraries" / "[id]" / "LibraryIntelligencePane.tsx"
-    )
-    assert not deleted.exists(), f"LibraryIntelligencePane.tsx should have been deleted: {deleted}"
-
-    # The replacement components and the shared stream hook must not poll either.
-    brief_files = [
-        _WEB_ROOT / "components" / "library" / "LibraryBrief.tsx",
-        _WEB_ROOT / "components" / "library" / "LibraryBriefArtifact.tsx",
-        _WEB_ROOT / "components" / "library" / "useArtifactStream.ts",
+def test_dossier_surface_does_not_poll():
+    dossier_files = [
+        _WEB_ROOT / "components" / "dossier" / "DossierSurface.tsx",
+        _WEB_ROOT / "lib" / "dossiers" / "useResourceInspector.ts",
+        _WEB_ROOT / "lib" / "dossiers" / "generationAdapter.ts",
     ]
-    for f in brief_files:
-        assert f.exists(), f"expected library brief file {f}"
+    for f in dossier_files:
+        assert f.exists(), f"expected universal Dossier owner {f}"
     pattern = r"refreshVersion|setInterval|setTimeout|refetchInterval|pollInterval"
-    hits = _grep(pattern, *brief_files)
-    assert not hits, f"library brief uses a polling primitive (AC-10):\n{_fmt(hits)}"
+    hits = _grep(pattern, *dossier_files)
+    assert not hits, f"Dossier surface uses a polling primitive:\n{_fmt(hits)}"
 
 
 # =============================================================================
-# Line-count gate — the artifact-head owner stays lean
+# Universal Dossier owner gate
 # =============================================================================
 
 
-def test_library_intelligence_line_count_within_budget():
-    path = _PY_ROOT / "services" / "artifacts" / "dossier.py"
-    line_count = sum(1 for _ in path.open(encoding="utf-8"))
-    assert line_count <= _LIBRARY_INTELLIGENCE_LINE_BUDGET, (
-        f"artifacts/dossier.py grew to {line_count} lines "
-        f"(budget {_LIBRARY_INTELLIGENCE_LINE_BUDGET}); split a concern out of the "
-        f"artifact-head owner rather than raising the budget."
+def test_dossier_runtime_has_one_generic_route_and_engine_owner():
+    owners = (
+        _PY_ROOT / "api" / "routes" / "dossiers.py",
+        _PY_ROOT / "services" / "artifacts" / "engine.py",
     )
+    for path in owners:
+        assert path.exists(), f"expected universal Dossier owner {path}"
+    legacy_facades = (
+        _PY_ROOT / "services" / "artifacts" / "dossier.py",
+        _PY_ROOT / "services" / "artifacts" / "distillate.py",
+    )
+    assert not [path for path in legacy_facades if path.exists()]
+    route_source = owners[0].read_text()
+    assert "if manifest.kind" not in route_source
+    assert "media_intelligence" not in route_source
+    assert "_media_abstract" not in route_source
 
 
 # #############################################################################
@@ -1263,21 +1251,20 @@ def test_generation_harness_must_remain_symbols_present():
 # =============================================================================
 
 # The shared transport primitives — minting a stream token and opening an SSE
-# connection — are CALLED from exactly one non-test caller: openGenerationRunStream
-# in useGenerationRun.ts. Their definition modules reference them too (streamToken.ts
-# defines fetchStreamToken; sse-client.ts defines sseClientDirect and mints fresh
-# tokens on its own reconnects). Any other file re-implementing the transport (an
-# oracle/library/media pane, or chat) would resurrect the duplication F01 removed.
+# connection — have two typed transport owners: the general generation-run opener
+# and the one universal Dossier generation adapter. Resource panes never open
+# streams directly.
 _TRANSPORT_PRIMITIVE_OWNERS = (
     "lib/api/streamToken.ts",
     "lib/api/sse-client.ts",
     "lib/api/useGenerationRun.ts",
+    "lib/dossiers/generationAdapter.ts",
 )
 
 
-def test_sse_transport_primitives_have_one_caller_not_per_surface():
-    # Divergence 1: fetchStreamToken + sseClientDirect are used only inside their
-    # definition modules and the one opener — never re-implemented per surface.
+def test_sse_transport_primitives_have_typed_owners_not_per_surface():
+    # Divergence 1: transport primitives stay in their definition modules and
+    # typed adapters, never in a resource-specific pane.
     hits = _excluding(
         [
             hit
@@ -1286,13 +1273,12 @@ def test_sse_transport_primitives_have_one_caller_not_per_surface():
         ],
         *_TRANSPORT_PRIMITIVE_OWNERS,
     )
-    assert not hits, f"SSE transport primitive used outside the one opener:\n{_fmt(hits)}"
+    assert not hits, f"SSE transport primitive used outside a typed adapter:\n{_fmt(hits)}"
 
-    # ...and the opener IS that one caller (guard against the gate going vacuous if
-    # openGenerationRunStream is ever deleted or stops calling the primitives).
-    opener_src = (_WEB_ROOT / "lib" / "api" / "useGenerationRun.ts").read_text()
-    assert "fetchStreamToken" in opener_src, "openGenerationRunStream no longer mints the token"
-    assert "sseClientDirect" in opener_src, "openGenerationRunStream no longer opens the stream"
+    for relative in ("lib/api/useGenerationRun.ts", "lib/dossiers/generationAdapter.ts"):
+        opener_src = (_WEB_ROOT / relative).read_text()
+        assert "fetchStreamToken" in opener_src, f"{relative} no longer mints the token"
+        assert "sseClientDirect" in opener_src, f"{relative} no longer opens the stream"
 
 
 def test_citation_render_reconstruction_family_absent():
@@ -1478,6 +1464,7 @@ def test_resource_edge_durable_writes_stay_in_graph_owner():
         "db/models.py",
         "services/resource_graph/edges.py",
         "services/resource_graph/adjacency.py",
+        "services/resource_graph/citations.py",
         "services/resource_graph/cleanup.py",
     )
     assert not hits, f"direct resource_edges write outside resource_graph owner:\n{_fmt(hits)}"
@@ -1931,15 +1918,14 @@ _API_ROOT = _PY_ROOT / "api"
 
 def test_evidence_span_synapse_edge_target_constructed_only_in_synapse():
     # Clause 1: only services/synapse.py mints a *synapse* edge inline-targeting an
-    # evidence_span. library_intelligence_reduce.py builds an evidence_span target
-    # for a citation-origin edge (LI synthesis citations, pre-existing) — a
-    # different origin/writer, allowlisted here. (The read-model span-ref builders
-    # in resolve.py / reader_connections.py resolve anchors, not edge targets.)
-    hits = _excluding(
-        _grep(r'target=ResourceRef\(scheme="evidence_span"', _PY_ROOT, _SCRIPTS_ROOT),
-        "services/synapse.py",
-        "services/artifacts/reducers/library_dossier.py",
-    )
+    # evidence_span. Dossier bindings may propose evidence-span citation
+    # candidates; those are citation-origin targets, not Synapse writers.
+    hits = [
+        hit
+        for hit in _grep(r'target=ResourceRef\(scheme="evidence_span"', _PY_ROOT, _SCRIPTS_ROOT)
+        if not hit.path.endswith("services/synapse.py")
+        and "/services/artifacts/bindings/" not in hit.path
+    ]
     assert not hits, f"evidence_span synapse edge target built outside synapse.py:\n{_fmt(hits)}"
 
 

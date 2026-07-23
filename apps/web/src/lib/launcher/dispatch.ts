@@ -122,8 +122,11 @@ export async function dispatchTarget(
       activateResource(target.activation, {
         labelHint: target.labelHint,
         navigate: (href) => requestOpenInAppPane(href, { labelHint: target.labelHint }),
-        openInNewPane: (href, labelHint) =>
-          requestOpenInAppPane(href, { labelHint: labelHint ?? target.labelHint }),
+        openInNewPane: (href, labelHint, secondaryActivation) =>
+          requestOpenInAppPane(href, {
+            labelHint: labelHint ?? target.labelHint,
+            secondaryActivation,
+          }),
       });
       return;
     case "ask":

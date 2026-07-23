@@ -62,12 +62,17 @@ def test_background_policy_matches_final_product_portfolio_table():
     # docs/cutovers/llm-provider-runtime-hard-cutover.md §4 background policy
     assert OPERATION_PROFILES == {
         "oracle": "fast",
-        "conversation_distillate": "fast",
         "media_summary": "fast",
         "metadata_enrichment": "fast",
         "synapse": "fast",
-        "library_dossier": "balanced",
         "dawn_write": "balanced",
+        "dossier_media": "balanced",
+        "dossier_conversation": "balanced",
+        "dossier_library": "balanced",
+        "dossier_podcast": "balanced",
+        "dossier_contributor": "balanced",
+        "dossier_page": "fast",
+        "dossier_note": "fast",
     }
 
 

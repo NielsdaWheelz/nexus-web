@@ -16,12 +16,7 @@ import {
   usePaneSearchParams,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
-import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
-import {
-  ModalLayerProvider,
-  modalBackdropProjection,
-} from "@/lib/ui/useModalLayer";
-import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
@@ -47,6 +42,9 @@ import {
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import Button from "@/components/ui/Button";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
   fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
@@ -81,7 +79,6 @@ export default function PodcastDetailPaneBody() {
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
   const paneSearchParams = usePaneSearchParams();
-  const isMobileViewport = useIsMobileViewport();
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
   const lectern = useLectern();
@@ -170,7 +167,6 @@ export default function PodcastDetailPaneBody() {
       );
     },
   });
-  const [episodesDrawerOpen, setEpisodesDrawerOpen] = useState(false);
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
@@ -340,19 +336,6 @@ export default function PodcastDetailPaneBody() {
     paneRouter,
     podcastId,
   ]);
-
-  const episodesDrawerRef = useRef<HTMLElement>(null);
-  const episodesOverlay = useDialogOverlay({
-    ref: episodesDrawerRef,
-    active: isMobileViewport && episodesDrawerOpen,
-    onDismiss: () => setEpisodesDrawerOpen(false),
-  });
-
-  useEffect(() => {
-    if (episodesDrawerOpen && !isMobileViewport) {
-      setEpisodesDrawerOpen(false);
-    }
-  }, [episodesDrawerOpen, isMobileViewport]);
 
   const handleLoadMoreEpisodes = useCallback(async () => {
     if (!podcastId || loadingMoreEpisodes || !hasMoreEpisodes) {
@@ -850,7 +833,38 @@ export default function PodcastDetailPaneBody() {
     onUnsubscribe: unsubscribePodcast,
   });
 
+  const openConnectionRoute = useCallback(
+    (
+      href: string,
+      inNewPane: boolean,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => {
+      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
+      else paneRouter.push(href);
+    },
+    [openInNewPane, paneRouter],
+  );
+  const connectionsComposerController = useConnectionsComposerController({
+    scheme: "podcast",
+    id: podcastId ?? "",
+  });
+  const connectionsBody = useMemo(
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "podcast", id: podcastId ?? "" }}
+        composerController={connectionsComposerController}
+        onOpenRoute={openConnectionRoute}
+      />
+    ),
+    [connectionsComposerController, openConnectionRoute, podcastId],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "podcast",
+    handle: podcastId,
+    bodies: { linkedItems: connectionsBody },
+  });
   usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
     options: paneOptions,
     header: {
       kind: "section",
@@ -920,78 +934,64 @@ export default function PodcastDetailPaneBody() {
 
   return (
     <>
-      <div className={styles.splitLayout}>
-        <div className={styles.primaryColumn}>
-          <div className={styles.primaryScroll}>
-            <SectionOpener
-              heading={detail?.podcast.title ?? "Podcast"}
-              scale="title"
-              pending={loading}
-            />
-            <div className={styles.headerActions}>
-              <Link href="/podcasts" className={styles.navLink}>
-                Podcasts
-              </Link>
-              <div className={styles.headerButtons}>
-                {activeSubscription ? null : (
-                  <div className={styles.subscriptionActions}>
-                    <LibraryDestinationPicker
-                      selected={selectedDestinations}
-                      onChange={setSelectedDestinations}
-                      presentation={{ kind: "Inline" }}
-                      label="Libraries"
-                      interaction={
-                        creatingDestination
-                          ? { kind: "Creating" }
-                          : subscribeBusy
-                            ? { kind: "Disabled" }
-                            : { kind: "Enabled" }
-                      }
-                      onCreateDestination={async (name) => {
-                        setCreatingDestination(true);
-                        try {
-                          return await createLibrary({ name });
-                        } finally {
-                          setCreatingDestination(false);
-                        }
-                      }}
-                    />
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => void handleSubscribe()}
-                      disabled={subscribeBusy || creatingDestination || !detail}
-                    >
-                      {subscribeBusy ? "Subscribing..." : "Subscribe"}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <PaneSection>
-              {loading && <PaneLoadingState />}
-              {error && <FeedbackNotice feedback={error} />}
-              {!loading && detail && (
-                <PodcastSummaryCard
-                  detail={detail}
-                  activeSubscription={activeSubscription}
-                  podcastLibraryCount={podcastLibraryCount}
+      <div className={styles.primaryScroll}>
+        <SectionOpener
+          heading={detail?.podcast.title ?? "Podcast"}
+          scale="title"
+          pending={loading}
+        />
+        <div className={styles.headerActions}>
+          <Link href="/podcasts" className={styles.navLink}>
+            Podcasts
+          </Link>
+          <div className={styles.headerButtons}>
+            {activeSubscription ? null : (
+              <div className={styles.subscriptionActions}>
+                <LibraryDestinationPicker
+                  selected={selectedDestinations}
+                  onChange={setSelectedDestinations}
+                  presentation={{ kind: "Inline" }}
+                  label="Libraries"
+                  interaction={
+                    creatingDestination
+                      ? { kind: "Creating" }
+                      : subscribeBusy
+                        ? { kind: "Disabled" }
+                        : { kind: "Enabled" }
+                  }
+                  onCreateDestination={async (name) => {
+                    setCreatingDestination(true);
+                    try {
+                      return await createLibrary({ name });
+                    } finally {
+                      setCreatingDestination(false);
+                    }
+                  }}
                 />
-              )}
-            </PaneSection>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleSubscribe()}
+                  disabled={subscribeBusy || creatingDestination || !detail}
+                >
+                  {subscribeBusy ? "Subscribing..." : "Subscribe"}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
-
-        {!isMobileViewport ? (
-          <aside className={styles.episodesColumn} aria-label="Episodes">
-            <div className={styles.episodesColumnHeader}>
-              <h2>Episodes</h2>
-            </div>
-            <div className={styles.episodesColumnBody}>
-              {episodePaneContent}
-            </div>
-          </aside>
-        ) : null}
+        <PaneSection>
+          {loading && <PaneLoadingState />}
+          {error && <FeedbackNotice feedback={error} />}
+          {!loading && detail && (
+            <PodcastSummaryCard
+              detail={detail}
+              activeSubscription={activeSubscription}
+              podcastLibraryCount={podcastLibraryCount}
+            />
+          )}
+        </PaneSection>
+        <PaneSection>{episodePaneContent}</PaneSection>
       </div>
 
       <LibraryMembershipPanel
@@ -1019,39 +1019,6 @@ export default function PodcastDetailPaneBody() {
         }
         settingsModal={settingsModal}
       />
-
-      {isMobileViewport && episodesDrawerOpen ? (
-        <ModalLayerProvider token={episodesOverlay.layerToken}>
-          <div
-            className={styles.episodesBackdrop}
-            data-testid="episodes-backdrop"
-            {...modalBackdropProjection(episodesOverlay.isTopmost)}
-            onClick={() => setEpisodesDrawerOpen(false)}
-          >
-            <aside
-              ref={episodesDrawerRef}
-              className={styles.episodesDrawer}
-              role="dialog"
-              aria-label="Episodes"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <header className={styles.episodesDrawerHeader}>
-                <h2>Episodes</h2>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setEpisodesDrawerOpen(false)}
-                >
-                  Close
-                </Button>
-              </header>
-              <div className={styles.episodesDrawerBody}>
-                {episodePaneContent}
-              </div>
-            </aside>
-          </div>
-        </ModalLayerProvider>
-      ) : null}
     </>
   );
 }

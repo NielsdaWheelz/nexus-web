@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sseClientDirect, type SseBackoffConfig } from "./sse-client";
+import {
+  sseClientDirect,
+  type SseBackoffConfig,
+  type SseClientDirectArgs,
+} from "./sse-client";
 
 const STREAM_URL = "https://stream.example.test/chat-runs/run-1/events";
 const TOKEN_PATH = "/api/stream-token";
@@ -103,9 +107,29 @@ function installFetch(connections: Array<() => Response>) {
   };
 }
 
-function startClient(
-  overrides: Partial<Parameters<typeof sseClientDirect<TestEvent>>[0]> = {},
-) {
+type TestClientOverrides = Partial<
+  Omit<
+    Parameters<typeof sseClientDirect<TestEvent>>[0],
+    "url" | "initialConnection" | "initialToken"
+  >
+> &
+  (
+    | {
+        url?: string;
+        initialConnection?: never;
+        initialToken?: string;
+      }
+    | {
+        url?: never;
+        initialConnection: () => Promise<{
+          url: string;
+          token: string;
+        }>;
+        initialToken?: never;
+      }
+  );
+
+function startClient(overrides: TestClientOverrides = {}) {
   const seen: TestEvent[] = [];
   const errors: string[] = [];
   const completions: boolean[] = [];
@@ -113,9 +137,11 @@ function startClient(
   const settled = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  const abort = sseClientDirect<TestEvent>({
-    url: STREAM_URL,
-    initialToken: "initial-token",
+  const { url, initialConnection, initialToken, ...commonOverrides } = overrides;
+  const common: Omit<
+    SseClientDirectArgs<TestEvent>,
+    "url" | "initialConnection" | "initialToken"
+  > = {
     backoff: FAST_BACKOFF,
     decode: (type, data, id) => ({ type, data, id }),
     isTerminal: (event) => event.type === "done",
@@ -128,8 +154,19 @@ function startClient(
       completions.push(terminalEventSeen);
       settle();
     },
-    ...overrides,
-  });
+    ...commonOverrides,
+  };
+  const abort =
+    initialConnection === undefined
+      ? sseClientDirect<TestEvent>({
+          url: url ?? STREAM_URL,
+          initialToken: initialToken ?? "initial-token",
+          ...common,
+        })
+      : sseClientDirect<TestEvent>({
+          initialConnection,
+          ...common,
+        });
   return { seen, errors, completions, settled, abort };
 }
 
@@ -160,6 +197,55 @@ describe("sseClientDirect", () => {
     expect(streams[1].headers["x-nexus-sse-attempt"]).toBe("1");
     expect(client.completions).toEqual([true]);
     expect(client.errors).toEqual([]);
+  });
+
+  it("retries lazy initial connection acquisition through the shared reconnect loop", async () => {
+    const fetchBoundary = installFetch([
+      sseConnection([{ id: "1", type: "done", data: {} }]),
+    ]);
+    let bootstrapAttempts = 0;
+    const onReconnect = vi.fn(async () => "continue" as const);
+
+    const client = startClient({
+      initialConnection: async () => {
+        bootstrapAttempts += 1;
+        if (bootstrapAttempts === 1) {
+          throw new TypeError("stream-token transport unavailable");
+        }
+        return { url: STREAM_URL, token: "bootstrap-token" };
+      },
+      onReconnect,
+    });
+    await client.settled;
+
+    expect(bootstrapAttempts).toBe(2);
+    expect(onReconnect).toHaveBeenCalledOnce();
+    expect(onReconnect).toHaveBeenCalledWith(1);
+    expect(fetchBoundary.streamRequests()[0].headers.authorization).toBe(
+      "Bearer bootstrap-token",
+    );
+    expect(fetchBoundary.streamRequests()[0].headers["x-nexus-sse-attempt"]).toBe(
+      "1",
+    );
+    expect(client.completions).toEqual([true]);
+    expect(client.errors).toEqual([]);
+  });
+
+  it("bounds repeated lazy initial connection failures", async () => {
+    installFetch([]);
+    let bootstrapAttempts = 0;
+    const client = startClient({
+      initialConnection: async () => {
+        bootstrapAttempts += 1;
+        throw new TypeError("stream-token transport unavailable");
+      },
+      maxReconnects: 1,
+    });
+    await client.settled;
+
+    expect(bootstrapAttempts).toBe(2);
+    expect(client.completions).toEqual([]);
+    expect(client.errors).toEqual(["stream-token transport unavailable"]);
   });
 
   it("passes the wire event id through to decode", async () => {

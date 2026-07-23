@@ -8,6 +8,7 @@ import {
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type ReactNode,
   type KeyboardEvent,
@@ -57,6 +58,7 @@ import {
   hrefForResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import { useResourceTargetSearch } from "@/lib/resources/useResourceTargetSearch";
@@ -68,6 +70,10 @@ import {
 } from "@/lib/synapse";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./ConnectionsSurface.module.css";
+import type {
+  ConnectionsComposerController,
+  ConnectionsComposerDraft,
+} from "./connectionsComposerController";
 
 /** The endpoint of a connection that is NOT the object being viewed. */
 interface Connection {
@@ -110,13 +116,24 @@ const CONNECTION_PANEL_KINDS: EdgeKind[] = [
 
 export default function ConnectionsSurface({
   resourceRef,
+  composerController,
   onOpenRoute,
 }: {
   resourceRef: ResourceRef;
-  onOpenRoute?: (href: string, openInNewPane: boolean) => void;
+  composerController: ConnectionsComposerController;
+  onOpenRoute?: (
+    href: string,
+    openInNewPane: boolean,
+    secondaryActivation?: WorkspaceSecondaryActivation,
+  ) => void;
 }) {
   const composerId = useId();
-  const [composerOpen, setComposerOpen] = useState(false);
+  const composerDraft = useSyncExternalStore(
+    composerController.subscribe,
+    composerController.getSnapshot,
+    composerController.getSnapshot,
+  );
+  const composerOpen = composerDraft.open;
   const [refreshTick, setRefreshTick] = useState(0);
   const selfRef = formatResourceRef(resourceRef);
   const connectionsResource = useResource<{ data: ConnectionOut[] }>({
@@ -226,7 +243,8 @@ export default function ConnectionsSurface({
     (connection: Connection, openInNewPane: boolean) => {
       activateResource(connection.activation, {
         labelHint: connection.label,
-        openInNewPane: (href) => onOpenRoute?.(href, true),
+        openInNewPane: (href, _labelHint, secondaryActivation) =>
+          onOpenRoute?.(href, true, secondaryActivation),
         navigate: (href) => onOpenRoute?.(href, false),
         newPane: openInNewPane,
       });
@@ -244,7 +262,7 @@ export default function ConnectionsSurface({
             className={styles.composerToggle}
             aria-expanded={composerOpen}
             aria-controls={composerId}
-            onClick={() => setComposerOpen((open) => !open)}
+            onClick={() => composerController.update({ open: !composerOpen })}
           >
             ＋ Link
           </button>
@@ -279,6 +297,8 @@ export default function ConnectionsSurface({
         selfRef={selfRef}
         onChanged={reloadConnections}
         active={composerOpen}
+        draft={composerDraft}
+        controller={composerController}
       />
       {loading ? (
         <FeedbackNotice severity="info" title="Loading connections..." />
@@ -378,18 +398,19 @@ function ConnectionComposer({
   selfRef,
   onChanged,
   active,
+  draft,
+  controller,
 }: {
   id: string;
   selfRef: string;
   onChanged: () => void;
   active: boolean;
+  draft: ConnectionsComposerDraft;
+  controller: ConnectionsComposerController;
 }) {
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const listboxId = useId();
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<EdgeKind>("context");
-  const [selected, setSelected] = useState<ResourceTarget | null>(null);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const { query, kind, selected, activeKey } = draft;
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -443,9 +464,11 @@ function ConnectionComposer({
 
   function pickTarget(target: ResourceTarget | undefined) {
     if (!target) return;
-    setSelected(target);
-    setQuery(targetLabel(target));
-    setActiveKey(null);
+    controller.update({
+      selected: target,
+      query: targetLabel(target),
+      activeKey: null,
+    });
     setFeedback(null);
   }
 
@@ -471,7 +494,7 @@ function ConnectionComposer({
             : event.key === "ArrowDown"
               ? Math.min(last, start + 1)
               : Math.max(0, start - 1);
-      setActiveKey(resourceTargetKey(targets[next]!));
+      controller.update({ activeKey: resourceTargetKey(targets[next]!) });
       return;
     }
     if (event.key === "Enter") {
@@ -518,8 +541,7 @@ function ConnectionComposer({
       } else {
         await putStance({ sourceRef: selfRef, targetRef, kind });
       }
-      setQuery("");
-      setSelected(null);
+      controller.update({ query: "", selected: null, activeKey: null });
       onChanged();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
@@ -718,9 +740,11 @@ function ConnectionComposer({
                 placeholder="Search to link…"
                 aria-label="Connection target"
                 onChange={(event) => {
-                  setSelected(null);
+                  controller.update({
+                    selected: null,
+                    query: event.currentTarget.value,
+                  });
                   setFeedback(null);
-                  setQuery(event.currentTarget.value);
                 }}
                 onKeyDown={onSearchKeyDown}
               />
@@ -734,7 +758,9 @@ function ConnectionComposer({
                     loading={loading}
                     error={searchError}
                     onHover={(target) =>
-                      setActiveKey(resourceTargetKey(target))
+                      controller.update({
+                        activeKey: resourceTargetKey(target),
+                      })
                     }
                     onPick={pickTarget}
                   />
@@ -747,10 +773,10 @@ function ConnectionComposer({
               aria-label="Connection kind"
               onChange={(event) => {
                 const nextKind = event.currentTarget.value as EdgeKind;
-                setKind(nextKind);
+                controller.update({ kind: nextKind });
                 // Passage anchors are Links; Stances require a resource.
                 if (nextKind !== "context" && selected?.kind === "passage") {
-                  setSelected(null);
+                  controller.update({ selected: null });
                   setFeedback(null);
                 }
               }}

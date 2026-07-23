@@ -23,7 +23,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
-from nexus.jobs.queue import JobExecutionContext, claim_next_job
+from nexus.jobs.queue import JobExecutionContext
+from nexus.services import media_intelligence
+from nexus.services.artifacts.dossier_types import (
+    DossierBuildFailureCode,
+    MigratedIncompleteReason,
+    SubjectResource,
+)
+from nexus.services.artifacts.engine import create_build, run_build
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items import versions
@@ -32,15 +39,7 @@ from tests.factories import (
     create_test_conversation,
     create_test_library,
 )
-
-# --- CANONICAL A19 targets (do not exist yet -> ImportError == the RED) -------
-from nexus.services.artifacts.dossier_types import (  # noqa: E402
-    DossierBuildFailureCode,
-    MigratedIncompleteReason,
-    SubjectResource,
-)
-from nexus.services.artifacts.engine import create_build, run_build  # noqa: E402
-from nexus.services.media_intelligence import MediaIntelligence  # noqa: E402
+from tests.utils.dossier_jobs import claim_dossier_build_job
 
 pytestmark = pytest.mark.integration
 
@@ -99,8 +98,7 @@ def _drive_to_failure(db: Session, locator: SubjectResource, uid: UUID) -> Dossi
     ticket = create_build(
         db, locator=locator, requester_user_id=uid, idempotency_key="k-1", instruction=None
     )
-    job = claim_next_job(db, worker_id="w", lease_seconds=600, allowed_kinds=["dossier_build"])
-    assert job is not None
+    job = claim_dossier_build_job(db, build_id=ticket.build_id, worker_id="w")
     ctx = JobExecutionContext(job_id=job.id, worker_id="w", attempt_no=job.attempts)
     rt = _NoDispatchRuntime()
     asyncio.run(run_build(db, build_id=ticket.build_id, ctx=ctx, runtime=rt))
@@ -128,7 +126,7 @@ def _seed_projection(db: Session, media_id: UUID, *, status: str, with_claim: bo
 
     Content indexing creates a `building` media_summaries row; UPDATE it to the
     target state keyed on the CURRENT fingerprint so `ready` means current."""
-    fp = MediaIntelligence.current_content_fingerprint(db, media_id=media_id)
+    fp = media_intelligence.current_content_fingerprint(db, media_id=media_id)
     db.execute(
         text(
             "UPDATE media_summaries SET status = :s, content_fingerprint = :fp, "

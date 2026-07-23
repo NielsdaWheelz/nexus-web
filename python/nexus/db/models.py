@@ -2129,7 +2129,7 @@ class ArtifactBuild(Base):
     )
     requester_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id"),
         nullable=True,
     )
     instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2181,7 +2181,7 @@ class ArtifactRevision(Base):
     )
     creator_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id"),
         nullable=True,
     )
     promoted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -2250,7 +2250,7 @@ class ArtifactBuildCancellation(Base):
     )
     actor_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(

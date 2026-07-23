@@ -1352,10 +1352,9 @@ describe("Conversation", () => {
     expect(screen.queryByRole("figure", { name: "Quoted passage" })).toBeNull();
   });
 
-  it("toggles the context secondary pane from chrome toolbar buttons", async () => {
+  it("opens the Conversation Resource Inspector from Companion", async () => {
     const user = userEvent.setup();
     const onRequestSecondarySurface = vi.fn();
-    const onCloseSecondaryPane = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1375,15 +1374,6 @@ describe("Conversation", () => {
         throw new Error(`Unexpected fetch call: ${path}`);
       }),
     );
-
-    const contextRefsPane: WorkspaceAttachedSecondaryPaneState = {
-      id: "pane-1-secondary",
-      parentPrimaryPaneId: "pane-1",
-      groupId: "conversation-context",
-      activeSurfaceId: "conversation-context-refs",
-      widthPx: 320,
-      visibility: "visible",
-    };
 
     const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
       <PaneRuntimeProvider
@@ -1405,7 +1395,7 @@ describe("Conversation", () => {
         onSetPaneLabel={vi.fn()}
         secondaryPane={secondaryPane}
         onRequestSecondarySurface={onRequestSecondarySurface}
-        onCloseSecondaryPane={onCloseSecondaryPane}
+        onCloseSecondaryPane={vi.fn()}
       >
         <PaneShell
           paneId="pane-1"
@@ -1433,28 +1423,21 @@ describe("Conversation", () => {
       </PaneRuntimeProvider>
     );
 
-    const view = render(tree(null));
+    render(tree(null));
 
-    // Branch history present -> the Forks toggle joins Context in the chrome.
+    // Context and Forks are Inspector tabs, not independent chrome controls.
     expect(await screen.findByText("Answer A")).toBeVisible();
-    const contextRefsToggle = screen.getByRole("button", { name: "Context" });
-    expect(contextRefsToggle).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Forks" })).toBeInTheDocument();
+    const companion = screen.getByRole("button", { name: "Companion" });
+    expect(companion).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Context" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Forks" })).toBeNull();
 
-    await user.click(contextRefsToggle);
+    await user.click(companion);
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "conversation-context-refs",
-      undefined,
+      "resource-context",
+      expect.any(HTMLButtonElement),
     );
 
-    // With the context-ref surface open, the same button collapses it.
-    view.rerender(tree(contextRefsPane));
-    const activeContextRefsToggle = screen.getByRole("button", {
-      name: "Context",
-    });
-    expect(activeContextRefsToggle).toHaveAttribute("aria-pressed", "true");
-    await user.click(activeContextRefsToggle);
-    expect(onCloseSecondaryPane).toHaveBeenCalledWith("pane-1-secondary");
   });
 });

@@ -834,19 +834,19 @@ class TestStreamAuthMiddlewareBoundary:
 
         assert response.status_code == 200
 
-    def test_library_intelligence_events_use_stream_token_auth_boundary(self):
+    def test_artifact_build_events_use_stream_token_auth_boundary(self):
         assert (
             is_stream_path(
-                "/stream/library-intelligence/00000000-0000-0000-0000-000000000000/events"
+                "/stream/artifact-builds/opaque-build-handle/events"
             )
             is True
         )
 
         app = FastAPI()
 
-        @app.get("/stream/library-intelligence/{revision_id}/events")
-        def events(revision_id: str):
-            return {"revision_id": revision_id}
+        @app.get("/stream/artifact-builds/{build_handle}/events")
+        def events(build_handle: str):
+            return {"build_handle": build_handle}
 
         app.add_middleware(
             AuthMiddleware,
@@ -857,7 +857,7 @@ class TestStreamAuthMiddlewareBoundary:
         )
 
         response = TestClient(app).get(
-            "/stream/library-intelligence/00000000-0000-0000-0000-000000000000/events"
+            "/stream/artifact-builds/opaque-build-handle/events"
         )
 
         assert response.status_code == 200

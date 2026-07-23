@@ -127,6 +127,7 @@ class PageInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["page"] = "page"
     page_ref: str
+    input_fingerprint: str
     block_refs: list[str] = Field(default_factory=list)
     connection_refs: list[str] = Field(default_factory=list)
 
@@ -135,6 +136,7 @@ class NoteInputManifestV1(_Manifest):
     version: Literal["v1"] = "v1"
     kind: Literal["note"] = "note"
     note_ref: str
+    input_fingerprint: str
     body_fingerprint: Presence[str]
     connection_refs: list[str] = Field(default_factory=list)
 

@@ -3,7 +3,7 @@
  * sole `CitationOut` producer (built from edges, per the generation-run-harness
  * render contract); this module owns the single remaining transform —
  * `CitationOut` → `ReaderCitationData`, the shape `ReaderCitation` renders.
- * Chat, Oracle, Library Intelligence, attached resources, and read-resource
+ * Chat, Oracle, Universal Dossiers, attached resources, and read-resource
  * evidence all flow through here. The renderer's input type is unchanged.
  */
 

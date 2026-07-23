@@ -2,7 +2,7 @@
 
 Transaction discipline (§9.0): every mutator flushes within the caller's
 transaction and never commits, so conversation create, chat-run citation
-write-through, Oracle phase persistence, and the LI promote compose atomically.
+write-through, Oracle phase persistence, and Dossier promotion compose atomically.
 
 Dedup is explicit SELECT-then-write (database.md: no ``ON CONFLICT``): machine
 bare edges (``ordinal IS NULL``, non-user origin) are unique per viewer, origin,
@@ -272,7 +272,7 @@ def _validate_edge_input(db: Session, *, viewer_id: UUID, edge: EdgeCreate) -> N
     # The source is read-gated only for bare edges (user links, context refs,
     # note edges), whose source the caller supplies. A citation edge's source is
     # the in-flight output minting it — a still-``pending`` assistant message,
-    # oracle reading, or LI revision — trusted by construction and not yet
+    # Oracle reading, or Dossier revision — trusted by construction and not yet
     # read-visible, so gating it here would silently drop every citation.
     if edge.ordinal is None:
         assert_ref_visible(db, viewer_id=viewer_id, ref=edge.source)

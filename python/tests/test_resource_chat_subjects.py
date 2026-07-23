@@ -11,7 +11,12 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.services import context_assembler
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_items.chat_subjects import resolve_chat_subject
-from tests.factories import add_context_edge, create_test_conversation, create_test_library
+from tests.factories import (
+    add_context_edge,
+    create_test_conversation,
+    create_test_library,
+    create_test_library_artifact,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -123,14 +128,14 @@ def test_resolve_chat_subject_rejects_non_subject_resource(
     assert exc.value.code == ApiErrorCode.E_INVALID_REQUEST
 
 
-def test_resolve_li_artifact_consumes_current_revision_and_library_companion(
+def test_resolve_dossier_artifact_consumes_current_revision_and_subject_companion(
     db_session: Session, bootstrapped_user: UUID
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Synthesis Library")
-    artifact_id, revision_id = _li_artifact_with_current_revision(
+    artifact_id, revision_id = create_test_library_artifact(
         db_session,
         library_id=library_id,
-        user_id=bootstrapped_user,
+        requester_user_id=bootstrapped_user,
     )
 
     artifact = ResourceRef(scheme="artifact", id=artifact_id)
@@ -151,19 +156,21 @@ def test_resolve_li_artifact_consumes_current_revision_and_library_companion(
     assert resolved.prompt_mode == "generated_output"
 
 
-def test_resolve_li_artifact_without_current_revision_errors(
+def test_resolve_dossier_artifact_without_current_revision_errors(
     db_session: Session, bootstrapped_user: UUID
 ):
     library_id = create_test_library(db_session, bootstrapped_user, "Empty Synthesis")
     artifact_id = db_session.execute(
         text(
             """
-            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-            VALUES ('library', :library_id, 'library_dossier', :user_id)
+            INSERT INTO artifacts (
+                subject_scheme, subject_id, audience_scheme, audience_id
+            )
+            VALUES ('library', :library_id, 'library', :audience_id)
             RETURNING id
             """
         ),
-        {"library_id": library_id, "user_id": bootstrapped_user},
+        {"library_id": library_id, "audience_id": str(library_id)},
     ).scalar_one()
     db_session.commit()
 
@@ -178,36 +185,3 @@ def test_resolve_li_artifact_without_current_revision_errors(
         )
 
     assert exc.value.code == ApiErrorCode.E_INVALID_REQUEST
-
-
-def _li_artifact_with_current_revision(
-    db: Session, *, library_id: UUID, user_id: UUID
-) -> tuple[UUID, UUID]:
-    artifact_id = db.execute(
-        text(
-            """
-            INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-            VALUES ('library', :library_id, 'library_dossier', :user_id)
-            RETURNING id
-            """
-        ),
-        {"library_id": library_id, "user_id": user_id},
-    ).scalar_one()
-    revision_id = db.execute(
-        text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'Synthesis body.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
-    ).scalar_one()
-    db.execute(
-        text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
-        {"revision_id": revision_id, "artifact_id": artifact_id},
-    )
-    db.commit()
-    return UUID(str(artifact_id)), UUID(str(revision_id))

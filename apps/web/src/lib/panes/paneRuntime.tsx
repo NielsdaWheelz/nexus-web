@@ -21,7 +21,11 @@ import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
-import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
+import type {
+  WorkspaceDossierActivation,
+  WorkspaceSecondaryActivation,
+  WorkspaceSecondarySurfaceId,
+} from "@/lib/panes/paneSecondaryModel";
 import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
 import {
   clearMediaReaderViewTransition,
@@ -75,6 +79,7 @@ interface PaneRuntimeContextValue {
   resourceKey: string | null;
   resourceStatus: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+  secondaryActivation: WorkspaceDossierActivation | null;
   pathParams: Record<string, string>;
   searchParams: URLSearchParams;
   /** The pane-local URL hash (e.g. the reader-Highlight intent
@@ -86,7 +91,7 @@ interface PaneRuntimeContextValue {
   openInNewPane: (
     href: string,
     labelHint?: string,
-    secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+    secondaryActivation?: WorkspaceSecondaryActivation,
   ) => void;
   setPaneLabel: (label: string | null) => void;
   setPaneLayout: (layout: PaneRuntimeLayout) => void;
@@ -96,6 +101,7 @@ interface PaneRuntimeContextValue {
   ) => void;
   closeSecondaryPane: () => void;
   setSecondarySurface: (surfaceId: WorkspaceSecondarySurfaceId) => void;
+  acknowledgeSecondaryActivation: () => void;
 }
 
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
@@ -113,6 +119,7 @@ interface PaneRuntimeProviderProps {
   resourceItem?: ResourceItem | null;
   resourceStatus?: PaneResourceStatus;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
+  secondaryActivation?: WorkspaceDossierActivation | null;
   pathParams?: Record<string, string>;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -129,7 +136,7 @@ interface PaneRuntimeProviderProps {
   onOpenInNewPane: (
     href: string,
     labelHint?: string,
-    secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+    secondaryActivation?: WorkspaceSecondaryActivation,
   ) => void;
   onGoBackPane: (paneId: string) => void;
   onGoForwardPane: (paneId: string) => void;
@@ -148,6 +155,11 @@ interface PaneRuntimeProviderProps {
   onSetSecondarySurface?: (
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
+  ) => void;
+  onAcknowledgeSecondaryActivation?: (
+    paneId: string,
+    routeKey: string,
+    activation: WorkspaceDossierActivation,
   ) => void;
   children: React.ReactNode;
 }
@@ -218,6 +230,7 @@ export function PaneRuntimeProvider({
   resourceItem = null,
   resourceStatus = "none",
   secondaryPane = null,
+  secondaryActivation = null,
   pathParams = {},
   canGoBack,
   canGoForward,
@@ -231,6 +244,7 @@ export function PaneRuntimeProvider({
   onRequestSecondarySurface,
   onCloseSecondaryPane,
   onSetSecondarySurface,
+  onAcknowledgeSecondaryActivation,
   children,
 }: PaneRuntimeProviderProps) {
   const parsed = useMemo(() => parsePaneHref(href), [href]);
@@ -257,6 +271,8 @@ export function PaneRuntimeProvider({
     onRequestSecondarySurface,
     onCloseSecondaryPane,
     onSetSecondarySurface,
+    onAcknowledgeSecondaryActivation,
+    secondaryActivation,
   });
   commandsRef.current = {
     paneId,
@@ -272,6 +288,8 @@ export function PaneRuntimeProvider({
     onRequestSecondarySurface,
     onCloseSecondaryPane,
     onSetSecondarySurface,
+    onAcknowledgeSecondaryActivation,
+    secondaryActivation,
   };
   const navigationStateRef = useRef({ canGoBack, canGoForward });
   navigationStateRef.current = { canGoBack, canGoForward };
@@ -328,13 +346,13 @@ export function PaneRuntimeProvider({
     (
       nextHref: string,
       labelHint?: string,
-      secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+      secondaryActivation?: WorkspaceSecondaryActivation,
     ) => {
       const normalized = normalizeWorkspaceHref(nextHref);
       if (!normalized) {
         return;
       }
-      commandsRef.current.onOpenInNewPane(normalized, labelHint, secondarySurfaceId);
+      commandsRef.current.onOpenInNewPane(normalized, labelHint, secondaryActivation);
     },
     [],
   );
@@ -389,6 +407,16 @@ export function PaneRuntimeProvider({
     },
     [],
   );
+  const acknowledgeSecondaryActivation = useCallback(() => {
+    const current = commandsRef.current;
+    if (current.secondaryActivation) {
+      current.onAcknowledgeSecondaryActivation?.(
+        current.paneId,
+        current.routeKey,
+        current.secondaryActivation,
+      );
+    }
+  }, []);
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
@@ -402,6 +430,7 @@ export function PaneRuntimeProvider({
       resourceKey,
       resourceStatus: effectiveResourceStatus,
       secondaryPane,
+      secondaryActivation,
       pathParams,
       searchParams: parsed.searchParams,
       hash: parsed.hash,
@@ -412,6 +441,7 @@ export function PaneRuntimeProvider({
       requestSecondarySurface,
       closeSecondaryPane,
       setSecondarySurface,
+      acknowledgeSecondaryActivation,
     }),
     [
       href,
@@ -422,16 +452,19 @@ export function PaneRuntimeProvider({
       requestSecondarySurface,
       closeSecondaryPane,
       setSecondarySurface,
+      acknowledgeSecondaryActivation,
       paneId,
       isActive,
       parsed.pathname,
       parsed.searchParams,
+      parsed.hash,
       pathParams,
       resourceItem,
       resourceRef,
       resourceKey,
       effectiveResourceStatus,
       secondaryPane,
+      secondaryActivation,
       routeKey,
       routeId,
     ]

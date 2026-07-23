@@ -55,6 +55,7 @@ from nexus.db.models import (
     ResourceEdge,
     SynapseSuppression,
 )
+from nexus.jobs.queue import JobExecutionContext, claim_next_job
 from nexus.schemas.highlights import CreateHighlightRequest, CreatePdfHighlightRequest, PdfQuadIn
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
@@ -336,6 +337,31 @@ def _seed_user(db: Session) -> UUID:
     return user_id
 
 
+def _run_media_unit(db: Session, *, media_id: UUID, runtime) -> str:  # noqa: ANN001
+    while True:
+        job = claim_next_job(
+            db,
+            worker_id="synapse-media-unit-test",
+            lease_seconds=600,
+            allowed_kinds=["media_unit_build"],
+        )
+        assert job is not None, f"no media_unit_build job for {media_id}"
+        if str(job.payload["media_id"]) == str(media_id):
+            return asyncio.run(
+                run_media_unit_build(
+                    db,
+                    media_id=media_id,
+                    content_fingerprint=str(job.payload["content_fingerprint"]),
+                    ctx=JobExecutionContext(
+                        job_id=job.id,
+                        worker_id="synapse-media-unit-test",
+                        attempt_no=job.attempts,
+                    ),
+                    runtime=runtime,
+                )
+            )
+
+
 def _seed_highlight_corpus(db: Session) -> tuple[UUID, ResourceRef, UUID, UUID, UUID]:
     """Anchor media + two resonant media, all lexically retrievable from the
     highlight's dossier (the anchor included — proving kin exclusion, AC7)."""
@@ -582,12 +608,10 @@ class TestRunSynapseScan:
         source_id = create_searchable_media(db_session, user_id, title=_MEDIA_UNIT_STEM)
         other_id = create_searchable_media(db_session, user_id, title=f"{_MEDIA_UNIT_STEM} Other")
         assert (
-            asyncio.run(
-                run_media_unit_build(
-                    db_session,
-                    media_id=source_id,
-                    runtime=_MediaUnitRuntime(summary_md=f"{_MEDIA_UNIT_STEM.lower()}."),
-                )
+            _run_media_unit(
+                db_session,
+                media_id=source_id,
+                runtime=_MediaUnitRuntime(summary_md=f"{_MEDIA_UNIT_STEM.lower()}."),
             )
             == "ok"
         )
@@ -1256,9 +1280,7 @@ class TestSynapseTriggers:
         _grant_platform_llm(db_session, bootstrapped_user)
         media_id = create_searchable_media(db_session, bootstrapped_user, title="Promote Doc")
 
-        asyncio.run(
-            run_media_unit_build(db_session, media_id=media_id, runtime=_MediaUnitRuntime())
-        )
+        _run_media_unit(db_session, media_id=media_id, runtime=_MediaUnitRuntime())
 
         rows = _scan_job_rows(
             db_session, bootstrapped_user, ResourceRef(scheme="media", id=media_id)

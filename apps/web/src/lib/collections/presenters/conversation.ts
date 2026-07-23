@@ -11,8 +11,6 @@ export function presentConversation(
   item: ConversationSummary,
   ctx: {
     deleting?: boolean;
-    distilling?: boolean;
-    onDistill?: () => void;
     onDelete: () => void;
   },
 ): CollectionRowView {

@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
 from fastapi import Request
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from nexus.db.listen import StreamNotificationListener, open_stream_listener
@@ -28,12 +29,23 @@ KEEPALIVE_INTERVAL_SECONDS = STREAM_IDLE_TTL_SECONDS / 3.0
 # Error codes meaning "the streamed resource is gone" → clean terminal close,
 # not a 500. Owned here so chat-run and media share one policy. (Oracle signals
 # gone by returning terminal=True instead — see run_kit.is_run_terminal.)
-STREAM_GONE_CODES = frozenset({ApiErrorCode.E_NOT_FOUND, ApiErrorCode.E_MEDIA_NOT_FOUND})
+STREAM_GONE_CODES = frozenset(
+    {
+        ApiErrorCode.E_NOT_FOUND,
+        ApiErrorCode.E_MEDIA_NOT_FOUND,
+        ApiErrorCode.E_DOSSIER_NOT_FOUND,
+    }
+)
 
 
-def format_sse_event(*, event_type: str, payload: dict[str, Any], seq: int | None = None) -> str:
+def format_sse_event(
+    *, event_type: str, payload: dict[str, Any] | BaseModel, seq: int | None = None
+) -> str:
     """The one SSE frame formatter. Emits the ``id:`` resume line iff seq is set."""
-    data = json.dumps(payload, separators=(",", ":"))
+    data = json.dumps(
+        payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload,
+        separators=(",", ":"),
+    )
     head = f"id: {seq}\n" if seq is not None else ""
     return f"{head}event: {event_type}\ndata: {data}\n\n"
 
@@ -49,6 +61,7 @@ async def tail_cursor_stream(
     listener: StreamNotificationListener,
     after: int,
     read_after: Callable[[int], tuple[Sequence[Any], bool]],
+    read_advisory: Callable[[], tuple[str, dict[str, Any]] | None] | None = None,
 ) -> AsyncIterator[str]:
     """Append-cursor SSE. ``read_after(cursor)`` returns (events, terminal); each
     event exposes ``.seq`` / ``.event_type`` / ``.payload``. Emits every new event
@@ -56,6 +69,7 @@ async def tail_cursor_stream(
     terminal read. A read that raises a gone code OR returns terminal closes cleanly.
     """
     cursor = after
+    last_advisory: tuple[str, dict[str, Any]] | None = None
     last_keepalive = time.monotonic()
     close_reason = "closed"
     try:
@@ -70,6 +84,11 @@ async def tail_cursor_stream(
                     close_reason = "gone"
                     return
                 raise
+            if not terminal and read_advisory is not None:
+                advisory = await run_in_threadpool(read_advisory)
+                if advisory is not None and advisory != last_advisory:
+                    yield format_sse_event(event_type=advisory[0], payload=advisory[1])
+                    last_advisory = advisory
             for event in events:
                 cursor = event.seq
                 yield format_sse_event(

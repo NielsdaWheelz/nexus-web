@@ -351,10 +351,10 @@ export function findEvidenceItem(
 
 export function readerSurfaceForMarkerKind(
   kind: ReaderDocumentMapMarkerKind,
-): "reader-contents" | "reader-evidence" | null {
+): "resource-contents" | "resource-evidence" | null {
   switch (kind) {
     case "Contents":
-      return "reader-contents";
+      return "resource-contents";
     case "Embed":
       return null;
     case "Highlight":
@@ -362,7 +362,7 @@ export function readerSurfaceForMarkerKind(
     case "GeneratedCitation":
     case "Link":
     case "Synapse":
-      return "reader-evidence";
+      return "resource-evidence";
   }
 }
 

@@ -1,6 +1,6 @@
 # Resource Inspector And Universal Dossiers Hard Cutover
 
-Status: APPROVED SPEC · Rev 3
+Status: IMPLEMENTED AND VERIFIED · UNSHIPPED · Rev 3
 Type: hard cutover
 Date: 2026-07-23
 Open questions: none
@@ -1122,7 +1122,7 @@ only new legacy-literal allowlist; migration history is never rewritten.
 | Capability | `resourceCapabilities.ts`, backend `resource_items/{capabilities,routing}.py`, parity tests |
 | Inspector/Dossier UI | `components/{resource-inspector,dossier}/*`, `lib/dossiers/*`, event decoder/generation adapter |
 | Pane bodies | Seven eligible routes, `ConnectionsSurface.tsx`, existing Contents/Evidence/Context/Forks owners |
-| Artifact backend | `services/artifacts/{engine,base}.py`, Dossier definition, policy/binding registries, seven bindings, schemas/routes/BFFs |
+| Artifact backend | `services/artifacts/engine.py`, `services/artifacts/bindings/base.py`, Dossier definition, policy/binding registries, seven bindings, schemas/routes/BFFs |
 | Runtime | `media_intelligence.py`, `run_kit.py`, LLM execution/ledger/profiles, jobs registry/queue/worker/tasks, `config.py` |
 | Graph/consumers | resource-graph citations/resolve/cleanup; search, Dawn Write, agents, Synapse |
 | Deploy/gates | `deploy/hetzner/sync-env.sh`, `deploy/env/env-prod-worker.example`, source-reading negative gates |
@@ -1148,83 +1148,95 @@ No partial state ships.
 
 ### Product and composition
 
-- [ ] Exactly seven subjects, one `resource-inspector` group, and the six
+- [x] Exactly seven subjects, one `resource-inspector` group, and the six
       declared surface IDs exist; capability mirror/backend parity is exact.
-- [ ] Every pane exposes one Companion in the same desktop/mobile position,
+- [x] Every pane exposes one Companion in the same desktop/mobile position,
       survives 390px geometry, satisfies the disclosure/tab ARIA contract, and
       restores focus on every close path; the declared labels/icons and sole
       `360/280/720px` width policy are exact.
-- [ ] Desktop/mobile consume one publication; `SecondaryPaneShell` is the only
+- [x] Desktop/mobile consume one publication; `SecondaryPaneShell` is the only
       desktop presenter; no feature-owned drawer/column or token-driven
       publication/primary-pane rerender remains.
-- [ ] Podcast Episodes and Author Works are inline; Library/Conversation/Page/
+- [x] Podcast Episodes and Author Works are inline; Library/Conversation/Page/
       Note have no inline dossier/distillate/connections; Conversation always
       publishes Context, Forks, Dossier.
-- [ ] Media always publishes typed Evidence and Dossier even when reader content
+- [x] Media always publishes typed Evidence and Dossier even when reader content
       is processing, failed, or empty; every default order terminates in Dossier.
-- [ ] Tab switches preserve historical selection and losable Connections
+- [x] Tab switches preserve historical selection and losable Connections
       drafts; close/reopen alone resets selection. Subject/capability changes
       reconcile stale surfaces during render with no closed-frame flash.
 
 ### Dossier and Media Intelligence
 
-- [ ] One accessible surface covers never-generated/loading/reconnecting/
+- [x] One accessible surface covers never-generated/loading/reconnecting/
       building/suspended/current/stale/historical/regenerating/failed/cancelled
       and all Generate/Regenerate/Cancel/Retry/Make-current/history/citation
       actions.
-- [ ] Every successful revision has a typed immutable manifest and at least one
+- [x] Every successful revision has a typed immutable manifest and at least one
       audience-readable citation; aggregate self-citations and recursive
       Page/Note ingestion fail; atomic Note snapshots follow the declared rule.
-- [ ] Media shows its grounded Abstract; one
+- [x] Media shows its grounded Abstract; one
       `(media_id, content_fingerprint)` produces at most one interpretation;
       aggregate dependency work is bounded/deduplicated with typed coverage.
-- [ ] Binding freshness and coverage are deterministic and make no LLM call.
-- [ ] Failure precedence is deterministic; claimless Media projections are not
+- [x] Binding freshness and coverage are deterministic and make no LLM call.
+- [x] Failure precedence is deterministic; claimless Media projections are not
       usable; Media fingerprint reads and publish fencing invoke no extra LLM.
 
 ### Lifecycle and API
 
-- [ ] Concurrent first/later Generate creates one head/active build and replays
+- [x] Concurrent first/later Generate creates one head/active build and replays
       one Idempotency-Key result; every mutation serializes on that head.
-- [ ] The artifact head is the sole database lock row; `artifact_build_id` is
+- [x] The artifact head is the sole database lock row; `artifact_build_id` is
       the sole durable-operation conflict/replay key, so Cancel permits an
       immediate new build without an old coordination lease blocking it.
-- [ ] First terminal wins gracefully; persisted conflicts defect; event
+- [x] First terminal wins gracefully; persisted conflicts defect; event
       sequence/append replay cannot collide or duplicate.
-- [ ] Reload resumes; stale lease or changed input cannot promote; completed
+- [x] Reload resumes; stale lease or changed input cannot promote; completed
       provider steps do not repeat; Uncertain calls never auto-redispatch.
-- [ ] Dead letters remain operator-repairable/user-cancellable and cannot be
+- [x] Dead letters remain operator-repairable/user-cancellable and cannot be
       bypassed by a second Generate; head read and stream expose `Suspended`
       without synthesizing a failure.
-- [ ] Arrows are view-only; Make current atomically authorizes/repoints and
+- [x] Arrows are view-only; Make current atomically authorizes/repoints and
       recomputes freshness.
-- [ ] Subject/audience/User teardown follows the specified queue, graph,
+- [x] Subject/audience/User teardown follows the specified queue, graph,
       attribution, citation-owner, and FK-safe rules; no late worker recreates
       state.
 
 ### Migration and hard cut
 
-- [ ] Migration tests cover all legacy statuses, owner/audience divergence,
+- [x] Migration tests cover all legacy statuses, owner/audience divergence,
       zero/one/many citations, current and non-current zero-citation rows,
       events/channel/function, exact per-kind manifests, pointers, idempotency,
       and ledgers.
-- [ ] Exact audience/citation-owner derivations hold; every legacy revision maps
+- [x] Exact audience/citation-owner derivations hold; every legacy revision maps
       to one build; every preserved successful revision has one unique build FK;
       every zero-citation success maps once to
       `MigratedIncomplete` with `support.reason=LegacyZeroCitation` and no
       revision.
-- [ ] Citation-valid successful history remains navigable; invalid current
+- [x] Citation-valid successful history remains navigable; invalid current
       pointers are cleared; the preflight census equals transformation counts;
       `artifacts` has one row meaning and no `kind`; build events notify end to
       end.
-- [ ] No runtime legacy literal/file/route/API/job/surface/inline placement/
+- [x] No runtime legacy literal/file/route/API/job/surface/inline placement/
       compatibility path survives.
-- [ ] Source-reading gates are rewritten wholesale and no deleted reducer,
+- [x] Source-reading gates are rewritten wholesale and no deleted reducer,
       facade, BFF, schema, deploy allowlist, environment flag, or file path is
       referenced by runtime source or tests.
-- [ ] Component, integration, migration/schema, and real-stack E2E tests cover
+- [x] Component, integration, migration/schema, and real-stack E2E tests cover
       the public/ARIA/race/reconnect/citation/history/mobile contracts; current
       architecture/module docs describe only the final system.
+
+## Verification
+
+- Migration/schema: 27 focused migration cases pass; the real-stack journey
+  also applies the complete migration chain through `0190` on a clean database.
+- Backend: 81 core Dossier owner cases, 20 authorization/read cases, 13
+  teardown/concurrency cases, and 197 hard-cut residue gates pass.
+- Frontend: TypeScript and changed-file ESLint pass; 66 focused unit and 141
+  focused browser cases pass.
+- Real stack: the exact Resource Inspector Playwright journey passes in Chromium
+  with auth setup, all seven resources, streaming reconnect/cancel, history,
+  citation activation, and 390px mobile coverage.
 
 ## Final State
 

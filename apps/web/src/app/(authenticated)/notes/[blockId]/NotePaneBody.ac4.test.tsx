@@ -50,12 +50,12 @@ describe("NotePaneBody resource identity", () => {
   });
 });
 
-describe("NotePaneBody connections footer", () => {
+describe("NotePaneBody Resource Inspector", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("mounts the connections apparatus inline in the note footer", async () => {
+  it("moves Connections out of the primary body and into Companion", async () => {
     const blockId = "66666666-6666-4666-8666-666666666666";
     // Only the network boundary is mocked: the note body loads, and the
     // connections apparatus answers its resource-graph + synapse probes empty.
@@ -85,21 +85,24 @@ describe("NotePaneBody connections footer", () => {
       return jsonResponse({ data: [] });
     });
 
-    renderHydratedPane({
+    const view = renderHydratedPane({
       href: `/notes/${blockId}`,
       resources: {},
       children: <NotePaneBody />,
     });
 
-    // The connections apparatus renders in place (no secondary drawer); its
-    // composer is quiet by default, collapsed behind the "＋ Link" disclosure.
+    await screen.findByRole("textbox", { name: "Note body" });
+    expect(screen.queryByRole("region", { name: "Connections" })).toBeNull();
+    await waitFor(() => {
+      expect(view.onSetPaneSecondary).toHaveBeenCalled();
+    });
+    const latestPublication = view.onSetPaneSecondary.mock.calls.at(-1)?.[0];
+    expect(latestPublication).toMatchObject({
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-dossier",
+    });
     expect(
-      await screen.findByRole("region", { name: "Connections" }),
-    ).toBeInTheDocument();
-    const disclosure = screen.getByRole("button", { name: "＋ Link" });
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.queryByRole("textbox", { name: "Connection target" }),
-    ).not.toBeInTheDocument();
+      latestPublication.surfaces.map((surface: { id: string }) => surface.id),
+    ).toEqual(["resource-connections", "resource-dossier"]);
   });
 });

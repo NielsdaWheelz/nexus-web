@@ -152,13 +152,9 @@ import {
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneMobileChromeController } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
 import { usePaneFixedChrome } from "@/components/workspace/PaneFixedChrome";
-import type {
-  PanePrimaryChromePublication,
-  PaneSecondaryPublication,
-  PaneSecondarySurfacePublication,
-} from "@/lib/panes/panePublications";
+import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
@@ -272,12 +268,10 @@ import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
 import { buildReaderSurfaceStyle } from "@/lib/reader/readerSurfaceStyle";
-import { documentMapAction } from "@/components/reader/document-map/documentMapAction";
 import { paneSecondaryRegionId } from "@/lib/panes/paneSecondaryModel";
 import type {
   ActionDescriptor,
   ActionSelectDetail,
-  PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
 import styles from "./page.module.css";
@@ -3707,7 +3701,7 @@ export default function MediaPaneBody() {
       const rowId = sourceReferenceByStableKey.get(itemId)?.item.id ?? itemId;
       setFocusedApparatusItemId(rowId);
       commitEvidenceActivation(rowId);
-      requestSecondarySurface?.("reader-evidence");
+      requestSecondarySurface?.("resource-evidence");
       focusReaderApparatusInContent(itemId, false);
     },
     [
@@ -4115,19 +4109,18 @@ export default function MediaPaneBody() {
       : styles.readerThemeLight
   }`;
   const activeReaderSecondarySurface =
-    secondaryPane?.groupId === "reader-tools" &&
+    secondaryPane?.groupId === "resource-inspector" &&
     secondaryPane.visibility === "visible"
       ? secondaryPane.activeSurfaceId
       : null;
-  const defaultDocumentMapSurface: "reader-contents" | "reader-evidence" =
-    contentsAvailable ? "reader-contents" : "reader-evidence";
-  const documentMapSurfaceActive =
-    documentMapAvailable &&
-    (activeReaderSecondarySurface === "reader-evidence" ||
-      (activeReaderSecondarySurface === "reader-contents" &&
+  const defaultInspectorSurface: "resource-contents" | "resource-evidence" =
+    contentsAvailable ? "resource-contents" : "resource-evidence";
+  const inspectorSurfaceActive =
+    (activeReaderSecondarySurface === "resource-evidence" ||
+      (activeReaderSecondarySurface === "resource-contents" &&
         contentsAvailable));
-  const documentMapRegionId = paneRuntime?.paneId
-    ? paneSecondaryRegionId(paneRuntime.paneId, "reader-tools")
+  const inspectorRegionId = paneRuntime?.paneId
+    ? paneSecondaryRegionId(paneRuntime.paneId, "resource-inspector")
     : null;
   const showDesktopDocumentMapRail =
     !isMobileViewport && documentMapAvailable && documentMapMarkers.length > 0;
@@ -4780,23 +4773,23 @@ export default function MediaPaneBody() {
     ],
   );
 
-  const toggleDocumentMap = useCallback((detail: ActionSelectDetail) => {
-    if (documentMapSurfaceActive) {
+  const toggleInspector = useCallback((detail: ActionSelectDetail) => {
+    if (inspectorSurfaceActive) {
       closeSecondaryPane?.();
       return;
     }
-    requestSecondarySurface?.(defaultDocumentMapSurface, {
+    requestSecondarySurface?.(defaultInspectorSurface, {
       returnFocusTo: detail.triggerEl,
     });
   }, [
     closeSecondaryPane,
-    defaultDocumentMapSurface,
-    documentMapSurfaceActive,
+    defaultInspectorSurface,
+    inspectorSurfaceActive,
     requestSecondarySurface,
   ]);
 
   // G-chord keyboard verbs:
-  //   G (bare)  → toggle Document Map (defaultDocumentMapSurface)
+  //   G (bare)  → toggle Companion (defaultInspectorSurface)
   //   Shift+G   → chat (opens new pane)
   //   G c       → chat (opens new pane)
   //   G e       → Evidence surface
@@ -4817,8 +4810,8 @@ export default function MediaPaneBody() {
     const handleGChord = (event: KeyboardEvent) => {
       const readerModalOwnsShortcut =
         !hasActiveInteractionOwner() ||
-        (documentMapRegionId !== null &&
-          isTopmostInteractionOwner(documentMapRegionId));
+        (inspectorRegionId !== null &&
+          isTopmostInteractionOwner(inspectorRegionId));
       if (!readerModalOwnsShortcut) {
         if (chordPendingG) clearChord();
         return;
@@ -4845,7 +4838,7 @@ export default function MediaPaneBody() {
         return;
       }
 
-      // Bare G → start chord; fire toggleDocumentMap after timeout if no follow-up
+      // Bare G → start chord; fire toggleInspector after timeout if no follow-up
       if (event.key.toLowerCase() === "g" && !event.shiftKey) {
         event.preventDefault();
         clearChord();
@@ -4855,10 +4848,10 @@ export default function MediaPaneBody() {
           chordTimeoutId = null;
           const readerModalStillOwnsShortcut =
             !hasActiveInteractionOwner() ||
-            (documentMapRegionId !== null &&
-              isTopmostInteractionOwner(documentMapRegionId));
-          if (readerModalStillOwnsShortcut && documentMapAvailable) {
-            toggleDocumentMap({ triggerEl: null });
+            (inspectorRegionId !== null &&
+              isTopmostInteractionOwner(inspectorRegionId));
+          if (readerModalStillOwnsShortcut) {
+            toggleInspector({ triggerEl: null });
           }
         }, 500);
         return;
@@ -4870,16 +4863,14 @@ export default function MediaPaneBody() {
           event.preventDefault();
           clearChord();
           void openChatForMedia();
-        } else if (event.key === "e" && documentMapAvailable) {
+        } else if (event.key === "e") {
           event.preventDefault();
           clearChord();
-          requestSecondarySurface?.("reader-evidence");
+          requestSecondarySurface?.("resource-evidence");
         } else {
           // Non-chord key: execute bare-G default immediately and pass through
           clearChord();
-          if (documentMapAvailable) {
-            toggleDocumentMap({ triggerEl: null });
-          }
+          toggleInspector({ triggerEl: null });
         }
       }
     };
@@ -4891,11 +4882,11 @@ export default function MediaPaneBody() {
     };
   }, [
     documentMapAvailable,
-    documentMapRegionId,
+    inspectorRegionId,
     openChatForMedia,
     paneRuntime?.isActive,
     requestSecondarySurface,
-    toggleDocumentMap,
+    toggleInspector,
   ]);
 
   const mediaToolbar = useMemo(
@@ -5076,7 +5067,7 @@ export default function MediaPaneBody() {
     }
     const releaseLocks: Array<() => void> = [];
     if (
-      secondaryPane?.groupId === "reader-tools" &&
+      secondaryPane?.groupId === "resource-inspector" &&
       secondaryPane.visibility === "visible"
     ) {
       releaseLocks.push(
@@ -5176,8 +5167,8 @@ export default function MediaPaneBody() {
     onLinked: refreshLinkedReaderState,
     // The Connection's note lives on the Evidence sidecar's Link card, where the
     // Add/Edit/Remove-note controls are hosted; both toast affordances open it.
-    onAddLinkNote: () => requestSecondarySurface?.("reader-evidence"),
-    onViewConnection: () => requestSecondarySurface?.("reader-evidence"),
+    onAddLinkNote: () => requestSecondarySurface?.("resource-evidence"),
+    onViewConnection: () => requestSecondarySurface?.("resource-evidence"),
   });
 
   // Open the Link session with a source built from the gesture — an existing
@@ -5547,7 +5538,7 @@ export default function MediaPaneBody() {
     );
     if (!location) return;
     urlApparatusAppliedRef.current = requestedApparatusStableKey;
-    requestSecondarySurface?.("reader-evidence");
+    requestSecondarySurface?.("resource-evidence");
     const target = location.item.targets.find(
       (candidate) => candidate.stable_key === requestedApparatusStableKey,
     );
@@ -5698,62 +5689,50 @@ export default function MediaPaneBody() {
     );
   }, []);
 
-  const readerSecondarySurfaces = useMemo<
-    PaneSecondarySurfacePublication[]
-  >(() => {
-    const surfaces: PaneSecondarySurfacePublication[] = [];
-    if (contentsAvailable) {
-      surfaces.push({ id: "reader-contents", body: contentsSurfaceBody });
-    }
-    surfaces.push({
-      id: "reader-evidence",
-      body: (
-        <div className={styles.readerSecondaryBody}>
-          <EvidencePaneSurface
-            evidence={readerEvidence}
-            filters={evidenceFilters}
-            activeItemId={activeEvidenceItemId}
-            followGeneration={evidenceFollowGeneration}
-            hoveredItemId={hoveredEvidenceItemId}
-            loading={readerDocumentMapResource.status === "loading"}
-            error={documentMapError}
-            aggregateStatus={readerDocumentMapAggregateStatus}
-            highlightActions={{
-              canQuoteToChat: media?.capabilities?.can_quote ?? false,
-              focusedHighlightId: focusState.focusedId,
-              isEditingBounds: focusState.editingBounds,
-              isReflowable: !isPdf,
-              onFocusHighlight: focusHighlight,
-              onQuoteToNewChat: quoteHighlightToNewChat,
-              onQuoteToExistingChat: quoteHighlightToExistingChat,
-              onLink: handleLink,
-              onColorChange: handleColorChange,
-              onDelete: handleDelete,
-              onStartEditBounds: startEditBounds,
-              onCancelEditBounds: cancelEditBounds,
-              onNoteSave: handleNoteSave,
-              onNoteDelete: handleNoteDelete,
-              onOpenNoteLink: handleOpenNoteLink,
-            }}
-            onActivatePassage={activateEvidencePassage}
-            onActivateObject={handleActivateEvidenceObject}
-            onActivateSourceTarget={handleActivateEvidenceSourceTarget}
-            onHoverItem={handleHoverEvidenceItem}
-            onDismissSynapse={handleDismissSynapse}
-            onRemoveUserEdge={handleRemoveReaderUserEdge}
-            onSaveLinkNote={handleSaveReaderLinkNote}
-            onDeleteLinkNote={handleDeleteReaderLinkNote}
-          />
-        </div>
-      ),
-    });
-    return surfaces;
-  }, [
+  const evidenceSurfaceBody = useMemo(
+    () => (
+      <div className={styles.readerSecondaryBody}>
+        <EvidencePaneSurface
+          evidence={readerEvidence}
+          filters={evidenceFilters}
+          activeItemId={activeEvidenceItemId}
+          followGeneration={evidenceFollowGeneration}
+          hoveredItemId={hoveredEvidenceItemId}
+          loading={readerDocumentMapResource.status === "loading"}
+          error={documentMapError}
+          aggregateStatus={readerDocumentMapAggregateStatus}
+          highlightActions={{
+            canQuoteToChat: media?.capabilities?.can_quote ?? false,
+            focusedHighlightId: focusState.focusedId,
+            isEditingBounds: focusState.editingBounds,
+            isReflowable: !isPdf,
+            onFocusHighlight: focusHighlight,
+            onQuoteToNewChat: quoteHighlightToNewChat,
+            onQuoteToExistingChat: quoteHighlightToExistingChat,
+            onLink: handleLink,
+            onColorChange: handleColorChange,
+            onDelete: handleDelete,
+            onStartEditBounds: startEditBounds,
+            onCancelEditBounds: cancelEditBounds,
+            onNoteSave: handleNoteSave,
+            onNoteDelete: handleNoteDelete,
+            onOpenNoteLink: handleOpenNoteLink,
+          }}
+          onActivatePassage={activateEvidencePassage}
+          onActivateObject={handleActivateEvidenceObject}
+          onActivateSourceTarget={handleActivateEvidenceSourceTarget}
+          onHoverItem={handleHoverEvidenceItem}
+          onDismissSynapse={handleDismissSynapse}
+          onRemoveUserEdge={handleRemoveReaderUserEdge}
+          onSaveLinkNote={handleSaveReaderLinkNote}
+          onDeleteLinkNote={handleDeleteReaderLinkNote}
+        />
+      </div>
+    ),
+    [
     activeEvidenceItemId,
     activateEvidencePassage,
     cancelEditBounds,
-    contentsAvailable,
-    contentsSurfaceBody,
     documentMapError,
     evidenceFollowGeneration,
     evidenceFilters,
@@ -5783,32 +5762,14 @@ export default function MediaPaneBody() {
     readerDocumentMapAggregateStatus,
     startEditBounds,
   ]);
-
-  const readerSecondaryDescriptor = useMemo<PaneSecondaryPublication | null>(
-    () =>
-      documentMapAvailable
-        ? {
-            groupId: "reader-tools",
-            defaultSurfaceId: defaultDocumentMapSurface,
-            surfaces: readerSecondarySurfaces,
-          }
-        : null,
-    [defaultDocumentMapSurface, documentMapAvailable, readerSecondarySurfaces],
-  );
-  usePaneSecondary(readerSecondaryDescriptor);
-  const documentMapHeaderAction = useMemo<PaneHeaderAction | null>(() => {
-    if (!readerSecondaryDescriptor || !documentMapRegionId) return null;
-    return documentMapAction({
-      expanded: documentMapSurfaceActive,
-      regionId: documentMapRegionId,
-      onToggle: toggleDocumentMap,
-    });
-  }, [
-    documentMapSurfaceActive,
-    documentMapRegionId,
-    readerSecondaryDescriptor,
-    toggleDocumentMap,
-  ]);
+  const { companionAction } = useResourceInspector({
+    scheme: "media",
+    handle: id,
+    bodies: {
+      contents: contentsAvailable ? contentsSurfaceBody : undefined,
+      linkedItems: evidenceSurfaceBody,
+    },
+  });
   const primaryChromePublication = useMemo<PanePrimaryChromePublication>(
     () => ({
       ...(mediaResourceHeader
@@ -5820,11 +5781,11 @@ export default function MediaPaneBody() {
           }
         : {}),
       ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
-      actions: documentMapHeaderAction ? [documentMapHeaderAction] : [],
+      actions: companionAction ? [companionAction] : [],
       options: mediaHeaderOptions,
     }),
     [
-      documentMapHeaderAction,
+      companionAction,
       mediaHeaderOptions,
       mediaResourceHeader,
       mediaToolbar,
@@ -6294,12 +6255,12 @@ export default function MediaPaneBody() {
             contentRef={isPdf ? pdfContentRef : contentRef}
             measureKey={documentMapEvidenceMeasureKey}
             isMobile={isMobileViewport}
-            onOpenSidecar={() => requestSecondarySurface?.("reader-evidence")}
+            onOpenSidecar={() => requestSecondarySurface?.("resource-evidence")}
             onActivateItem={(itemId) => {
               if (!readerEvidence) return;
               const location = findEvidenceItem(readerEvidence, itemId);
               if (location?.scope !== "passage" || !location.group) return;
-              requestSecondarySurface?.("reader-evidence");
+              requestSecondarySurface?.("resource-evidence");
               activateEvidencePassage(location.group, location.item.id);
             }}
             onDismissSynapse={handleDismissSynapse}

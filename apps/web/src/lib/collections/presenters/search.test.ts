@@ -60,6 +60,34 @@ describe("presentSearchResult", () => {
     });
   });
 
+  it("publishes an exact Dossier revision as a secondary activation", () => {
+    const revisionRef =
+      "artifact_revision:11111111-1111-4111-8111-111111111111";
+    expect(
+      presentSearchResult(
+        viewModel({
+          resourceRef: revisionRef,
+          type: "artifact",
+          activation: {
+            resourceRef: revisionRef,
+            kind: "route",
+            href: "/conversations/22222222-2222-4222-8222-222222222222",
+            unresolvedReason: null,
+          },
+        }),
+      ).primary,
+    ).toMatchObject({
+      kind: "link",
+      href: "/conversations/22222222-2222-4222-8222-222222222222",
+      resourceActivation: {
+        resourceRef: revisionRef,
+        kind: "route",
+        href: "/conversations/22222222-2222-4222-8222-222222222222",
+        unresolvedReason: null,
+      },
+    });
+  });
+
   it("passes the decoded publication date without duplicating it in context", () => {
     const view = presentSearchResult(
       viewModel({

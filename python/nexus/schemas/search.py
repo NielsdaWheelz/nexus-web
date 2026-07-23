@@ -286,17 +286,16 @@ class SearchResultConversationOut(SearchResultBaseOut):
 
 
 class ConversationArtifactSearchOut(SearchResultBaseOut):
-    """Typed search result for a conversation distillate claim (S4).
+    """Typed search result for a current Conversation Dossier claim.
 
-    Lexical hit over a promoted ``conversation_distillate`` revision. Activates via
-    ``artifact_revision`` context ref → ``/conversations/{cid}?distillate=1`` (AC-10).
+    The exact revision ref preserves historical selection while activation opens
+    the Conversation subject and its workspace-local Dossier surface.
     """
 
     type: Literal["artifact"]
     id: UUID
     revision_id: UUID
     subject_ref: str
-    kind: str
 
 
 class SearchResultWebOut(SearchResultBaseOut):

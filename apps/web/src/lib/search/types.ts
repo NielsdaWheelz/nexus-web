@@ -139,7 +139,6 @@ export interface SearchArtifactResult extends SearchBaseResult {
   type: "artifact";
   revision_id: string;
   subject_ref: string;
-  kind: string;
 }
 
 export interface SearchWebResult extends SearchBaseResult {

@@ -13,64 +13,61 @@ import {
 } from "@/lib/panes/paneSecondaryModel";
 
 describe("paneSecondaryModel", () => {
-  it("scopes secondary region ids by primary pane and group", () => {
-    expect(paneSecondaryRegionId("pane-a", "reader-tools")).toBe(
-      "pane-pane-a-secondary-reader-tools",
+  it("scopes the Inspector region id by primary pane", () => {
+    expect(paneSecondaryRegionId("pane-a", "resource-inspector")).toBe(
+      "pane-pane-a-secondary-resource-inspector",
     );
-    expect(paneSecondaryRegionId("pane-b", "reader-tools")).not.toBe(
-      paneSecondaryRegionId("pane-a", "reader-tools"),
-    );
-    expect(paneSecondaryRegionId("pane-a", "conversation-context")).not.toBe(
-      paneSecondaryRegionId("pane-a", "reader-tools"),
+    expect(paneSecondaryRegionId("pane-b", "resource-inspector")).not.toBe(
+      paneSecondaryRegionId("pane-a", "resource-inspector"),
     );
   });
   it("maps secondary surfaces to their owning groups", () => {
-    expect(getSecondaryGroupForSurface("reader-contents")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("reader-evidence")).toBe("reader-tools");
-    expect(getSecondaryGroupForSurface("conversation-context-refs")).toBe(
-      "conversation-context",
+    expect(getSecondaryGroupForSurface("resource-contents")).toBe("resource-inspector");
+    expect(getSecondaryGroupForSurface("resource-evidence")).toBe("resource-inspector");
+    expect(getSecondaryGroupForSurface("resource-context")).toBe(
+      "resource-inspector",
     );
-    expect(getSecondaryGroupForSurface("conversation-forks")).toBe(
-      "conversation-context",
+    expect(getSecondaryGroupForSurface("resource-forks")).toBe(
+      "resource-inspector",
     );
   });
 
   it("owns surface metadata in one place", () => {
-    expect(getSecondaryGroupDefinition("reader-tools").title).toBe("Document Map");
-    expect(getSecondarySurfaceDefinition("reader-contents")).toMatchObject({
-      groupId: "reader-tools",
+    expect(getSecondaryGroupDefinition("resource-inspector").title).toBe("Companion");
+    expect(getSecondarySurfaceDefinition("resource-contents")).toMatchObject({
+      groupId: "resource-inspector",
       title: "Contents",
       iconId: "list-tree",
     });
-    expect(getSecondarySurfaceDefinition("reader-evidence")).toMatchObject({
-      groupId: "reader-tools",
+    expect(getSecondarySurfaceDefinition("resource-evidence")).toMatchObject({
+      groupId: "resource-inspector",
       title: "Evidence",
       iconId: "link-2",
     });
-    expect(getSecondarySurfaceDefinition("conversation-forks")).toMatchObject({
-      groupId: "conversation-context",
+    expect(getSecondarySurfaceDefinition("resource-forks")).toMatchObject({
+      groupId: "resource-inspector",
       title: "Forks",
       iconId: "git-branch",
     });
-    expect(getSecondarySurfaceIdsForGroup("reader-tools")).toEqual([
-      "reader-contents",
-      "reader-evidence",
-    ]);
-    expect(getSecondarySurfaceIdsForGroup("conversation-context")).toEqual([
-      "conversation-context-refs",
-      "conversation-forks",
+    expect(getSecondarySurfaceIdsForGroup("resource-inspector")).toEqual([
+      "resource-contents",
+      "resource-evidence",
+      "resource-context",
+      "resource-connections",
+      "resource-forks",
+      "resource-dossier",
     ]);
   });
 
   it("validates secondary ids", () => {
-    expect(isWorkspaceSecondarySurfaceId("reader-evidence")).toBe(true);
+    expect(isWorkspaceSecondarySurfaceId("resource-evidence")).toBe(true);
     expect(isWorkspaceSecondarySurfaceId("unknown")).toBe(false);
-    expect(isWorkspaceSecondaryGroupId("conversation-context")).toBe(true);
+    expect(isWorkspaceSecondaryGroupId("resource-inspector")).toBe(true);
     expect(isWorkspaceSecondaryGroupId("unknown")).toBe(false);
   });
 
   it("clamps secondary width to the group policy", () => {
-    const policy = getSecondaryWidthPolicy("reader-tools");
+    const policy = getSecondaryWidthPolicy("resource-inspector");
 
     expect(
       resolveEffectiveSecondarySizing({ storedWidthPx: 100, policy }),
@@ -94,40 +91,17 @@ describe("paneSecondaryModel", () => {
     });
   });
 
-  it("does not include removed reader-tools surfaces", () => {
-    const ids = PANE_SECONDARY_SURFACE_DEFINITIONS.map((d) => d.id);
-    expect(ids).not.toContain("reader-highlights");
-    expect(ids).not.toContain("reader-embeds");
-    expect(ids).not.toContain("reader-apparatus");
-    expect(ids).not.toContain("reader-connections");
-    expect(ids).not.toContain("reader-resource-chat");
-  });
-
-  it("reader-tools has exactly two surfaces", () => {
-    const readerTools = PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
-      (d) => d.groupId === "reader-tools",
+  it("resource-inspector owns exactly the six canonical surfaces", () => {
+    const inspectorSurfaces = PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
+      (d) => d.groupId === "resource-inspector",
     );
-    expect(readerTools).toHaveLength(2);
-    expect(readerTools.map((d) => d.id)).toEqual(
-      expect.arrayContaining(["reader-contents", "reader-evidence"]),
-    );
-  });
-
-  // Machine-output-in-place §13.1 — the dossier and page-connections drawers are
-  // deleted, not toggled: no library-tools/notes-tools group, no
-  // library-intelligence/notes-connections surface.
-  it("has deleted the library-tools and notes-tools groups", () => {
-    expect(isWorkspaceSecondaryGroupId("library-tools")).toBe(false);
-    expect(isWorkspaceSecondaryGroupId("notes-tools")).toBe(false);
-    expect(isWorkspaceSecondaryGroupId("reader-tools")).toBe(true);
-    expect(isWorkspaceSecondaryGroupId("conversation-context")).toBe(true);
-  });
-
-  it("has deleted the library-intelligence and notes-connections surfaces", () => {
-    const ids = PANE_SECONDARY_SURFACE_DEFINITIONS.map((d) => d.id);
-    expect(ids).not.toContain("library-intelligence");
-    expect(ids).not.toContain("notes-connections");
-    expect(isWorkspaceSecondarySurfaceId("library-intelligence")).toBe(false);
-    expect(isWorkspaceSecondarySurfaceId("notes-connections")).toBe(false);
+    expect(inspectorSurfaces.map((d) => d.id)).toEqual([
+      "resource-contents",
+      "resource-evidence",
+      "resource-context",
+      "resource-connections",
+      "resource-forks",
+      "resource-dossier",
+    ]);
   });
 });

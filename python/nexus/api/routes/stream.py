@@ -2,7 +2,7 @@
 
 All four browser-callable streams live under ``/stream/`` (auth via stream-token
 bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
-streams (chat run, oracle reading, library-intelligence revision) that share one
+streams (chat run, oracle reading, Dossier build) that share one
 generic factory; the fourth is the media processing-status snapshot/diff stream.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
@@ -24,7 +24,11 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from nexus.api.deps import get_stream_viewer
-from nexus.api.routes._sse import open_sse_listener, tail_cursor_stream, tail_snapshot_stream
+from nexus.api.routes._sse import (
+    open_sse_listener,
+    tail_cursor_stream,
+    tail_snapshot_stream,
+)
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -32,7 +36,8 @@ from nexus.services import chat_runs as chat_runs_service
 from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
-from nexus.services.artifacts import revisions as artifact_revisions_service
+from nexus.services.artifacts import engine as artifact_engine
+from nexus.services.artifacts.handles import unseal_artifact_build
 from nexus.services.redact import safe_kv
 
 router = APIRouter(tags=["streaming"])
@@ -45,10 +50,11 @@ _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": 
 class CursorStreamKind:
     """Binds a durable-run kind to its ownership assert and after-cursor read.
 
-    ``assert_viewer`` and ``read_after`` both run inside an open session opened by
-    the shared wrapper; they receive ``viewer_id`` even when the underlying read is
-    viewer-less (oracle/LI gate ownership in ``assert_viewer``, so the read ignores
-    the param — a redundant viewer arg on those service reads would be dead checks).
+    ``assert_viewer`` runs before listener setup and again in the same fresh
+    session immediately before every replay/tail ``read_after``. This prevents a
+    terminal event from crossing the stream after ownership or visibility is
+    revoked. Both callbacks receive ``viewer_id`` even when the underlying event
+    read is viewer-less.
     """
 
     run_kind: run_kit.RunStreamKind
@@ -76,15 +82,13 @@ _ORACLE_READING_KIND = CursorStreamKind(
     ),
 )
 
-_ARTIFACT_REVISION_KIND = CursorStreamKind(
-    run_kind=run_kit.RunStreamKind.ArtifactRevision,
-    assert_viewer=lambda db, viewer_id, revision_id: (
-        artifact_revisions_service.assert_revision_viewer(
-            db, viewer_id=viewer_id, revision_id=revision_id
-        )
+_ARTIFACT_BUILD_KIND = CursorStreamKind(
+    run_kind=run_kit.RunStreamKind.ArtifactBuild,
+    assert_viewer=lambda db, viewer_id, build_id: artifact_engine.assert_build_viewer(
+        db, viewer_id=viewer_id, build_id=build_id
     ),
-    read_after=lambda db, viewer_id, revision_id, after: run_kit.get_run_events(
-        db, run_kit.RunStreamKind.ArtifactRevision, revision_id, after
+    read_after=lambda db, viewer_id, build_id, after: run_kit.get_run_events(
+        db, run_kit.RunStreamKind.ArtifactBuild, build_id, after
     ),
 )
 
@@ -100,6 +104,7 @@ async def make_cursor_stream_response(
 
     def read_after(after: int) -> tuple[Sequence[Any], bool]:
         with get_session_factory()() as db:
+            kind.assert_viewer(db, viewer_id, entity_id)
             return kind.read_after(db, viewer_id, entity_id, after)
 
     await run_in_threadpool(assert_viewer)
@@ -156,21 +161,47 @@ async def stream_oracle_reading_events(
     )
 
 
-@router.get("/stream/artifact-revisions/{revision_id}/events")
-async def stream_artifact_revision_events(
+@router.get("/stream/artifact-builds/{artifact_build_handle}/events")
+async def stream_artifact_build_events(
     request: Request,
-    revision_id: UUID,
+    artifact_build_handle: str,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     after: int | None = Query(default=None, ge=0),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    return await make_cursor_stream_response(
-        _ARTIFACT_REVISION_KIND,
-        request=request,
-        entity_id=revision_id,
-        viewer_id=viewer_id,
-        after=cursor,
+    build_id = unseal_artifact_build(artifact_build_handle)
+
+    def assert_viewer() -> None:
+        with get_session_factory()() as db:
+            _ARTIFACT_BUILD_KIND.assert_viewer(db, viewer_id, build_id)
+
+    def read_after(after: int) -> tuple[Sequence[Any], bool]:
+        with get_session_factory()() as db:
+            _ARTIFACT_BUILD_KIND.assert_viewer(db, viewer_id, build_id)
+            return _ARTIFACT_BUILD_KIND.read_after(db, viewer_id, build_id, after)
+
+    def read_advisory() -> tuple[str, dict[str, Any]]:
+        with get_session_factory()() as db:
+            phase = artifact_engine.build_execution_phase(
+                db, build_id=build_id, viewer_id=viewer_id
+            )
+            return "ExecutionAdvisory", {"phase": phase.value}
+
+    await run_in_threadpool(assert_viewer)
+    listener = await open_sse_listener(
+        run_kit.notify_channel(run_kit.RunStreamKind.ArtifactBuild), str(build_id)
+    )
+    return StreamingResponse(
+        tail_cursor_stream(
+            request=request,
+            listener=listener,
+            after=cursor,
+            read_after=read_after,
+            read_advisory=read_advisory,
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
     )
 
 

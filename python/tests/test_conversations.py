@@ -29,6 +29,7 @@ from nexus.services.conversations import (
 from tests.factories import (
     add_context_edge,
     create_test_conversation,
+    create_test_library_artifact,
     create_test_media_in_library,
     create_test_message,
     get_user_default_library,
@@ -138,45 +139,20 @@ class TestCreateConversation:
         assert response.status_code == 400, response.text
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
-    def test_create_conversation_with_li_revision_and_library_refs_in_one_tx(
+    def test_create_conversation_with_dossier_revision_and_library_refs_in_one_tx(
         self, auth_client, direct_db: DirectSessionManager
     ):
-        """AC-4: chat-on-LI-revision attaches revision + library refs atomically."""
+        """AC-4: chat on a Dossier revision attaches both refs atomically."""
         user_id = create_test_user_id()
         auth_client.get("/me", headers=auth_headers(user_id))
 
         with direct_db.session() as session:
             library_id = create_shared_library(session, user_id)
-            artifact_id = uuid4()
-            revision_id = uuid4()
-            session.execute(
-                text(
-                    """
-                    INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)
-                    VALUES (:id, 'library', :library_id, 'library_dossier', :user_id)
-                    """
-                ),
-                {"id": artifact_id, "library_id": library_id, "user_id": user_id},
-            )
-            session.execute(
-                text(
-                    """
-                    INSERT INTO artifact_revisions (
-                        id, artifact_id, content_md, covered_targets, status, promoted_at
-                    )
-                    VALUES (
-                        :id, :artifact_id, 'Synthesis', '[]'::jsonb, 'ready', now()
-                    )
-                    """
-                ),
-                {"id": revision_id, "artifact_id": artifact_id},
-            )
-            session.execute(
-                text(
-                    "UPDATE artifacts "
-                    "SET current_revision_id = :revision_id WHERE id = :artifact_id"
-                ),
-                {"revision_id": revision_id, "artifact_id": artifact_id},
+            _artifact_id, revision_id = create_test_library_artifact(
+                session,
+                library_id=library_id,
+                requester_user_id=user_id,
+                content_md="Synthesis",
             )
             session.commit()
 

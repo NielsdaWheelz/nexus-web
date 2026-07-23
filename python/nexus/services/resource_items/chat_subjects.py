@@ -77,8 +77,17 @@ def resolve_chat_subject(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
     companion_refs: tuple[ResourceRef, ...] = ()
-    if subject_ref.scheme == "artifact_revision" and subject_loaded.related_library_id is not None:
-        companion_refs = (ResourceRef(scheme="library", id=subject_loaded.related_library_id),)
+    if (
+        subject_ref.scheme == "artifact_revision"
+        and subject_loaded.related_subject_scheme is not None
+        and subject_loaded.related_subject_id is not None
+    ):
+        companion_refs = (
+            ResourceRef(
+                scheme=subject_loaded.related_subject_scheme,
+                id=subject_loaded.related_subject_id,
+            ),
+        )
 
     refs: list[ResourceRef] = []
     seen: set[str] = set()

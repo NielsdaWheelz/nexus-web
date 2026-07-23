@@ -10,6 +10,12 @@ const EXTENSION_PROXY_ROUTES = new Set([
   "src/app/api/media/capture/url/route.ts",
 ]);
 const REQUIRED_PROXY_ROUTES = new Set([
+  "src/app/api/artifact-builds/[buildHandle]/cancel/route.ts",
+  "src/app/api/artifact-revisions/[revisionRef]/make-current/route.ts",
+  "src/app/api/artifact-revisions/[revisionRef]/route.ts",
+  "src/app/api/artifacts/[artifactRef]/revisions/route.ts",
+  "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/builds/route.ts",
+  "src/app/api/artifacts/dossiers/[subjectScheme]/[subjectHandle]/route.ts",
   "src/app/api/resource-items/locators/resolve/route.ts",
   "src/app/api/walknotes/transcribe/route.ts",
 ]);

@@ -3,6 +3,7 @@ import {
   parseResourceRef,
   type ResourceRef,
 } from "@/lib/resourceGraph/resourceRef";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 
 export interface ResourceActivation {
   resourceRef: string;
@@ -49,11 +50,32 @@ export function resourceRefForActivation(
   return parseResourceRef(activation.resourceRef);
 }
 
+export function secondaryActivationForResource(
+  activation: ResourceActivation,
+): WorkspaceSecondaryActivation | null {
+  const ref = resourceRefForActivation(activation);
+  if (ref?.scheme === "artifact") {
+    return { kind: "DossierCurrent", surfaceId: "resource-dossier" };
+  }
+  if (ref?.scheme === "artifact_revision") {
+    return {
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef: activation.resourceRef,
+    };
+  }
+  return null;
+}
+
 export function activateResource(
   activation: ResourceActivation,
   options: {
     labelHint?: string | null;
-    openInNewPane?: (href: string, labelHint?: string) => void;
+    openInNewPane?: (
+      href: string,
+      labelHint?: string,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => void;
     navigate?: (href: string) => void;
     newPane?: boolean;
   },
@@ -66,6 +88,15 @@ export function activateResource(
     } else {
       window.location.assign(href);
     }
+    return true;
+  }
+  const secondaryActivation = secondaryActivationForResource(activation);
+  if (secondaryActivation && options.openInNewPane) {
+    options.openInNewPane(
+      href,
+      options.labelHint ?? undefined,
+      secondaryActivation,
+    );
     return true;
   }
   if (options.newPane && options.openInNewPane) {

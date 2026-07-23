@@ -1,11 +1,11 @@
 """Schemas for the universal Dossier engine (stable head + immutable revisions).
 
 Recomposed for CONTRACTS.md A19 (resource-inspector-and-universal-dossiers hard
-cutover): the legacy ``ArtifactBuildOut`` revision-status wrapper and the
-library-dossier / conversation-distillate REST facades are gone. Every eligible
-subject (Media, Conversation, Library, Podcast, Contributor, Page, Note) now
-shares this one generic read/build/event contract; per-kind behavior lives in
-the binding layer (``services/artifacts/bindings/``), never in these shapes.
+cutover): superseded feature-specific revision wrappers and REST facades are
+gone. Every eligible subject (Media, Conversation, Library, Podcast,
+Contributor, Page, Note) shares this one generic read/build/event contract;
+per-subject behavior lives in the binding layer
+(``services/artifacts/bindings/``), never in these shapes.
 
 Owned absence uses the repository-wide ``Presence[T]`` encoding
 (``nexus.schemas.presence`` / ``docs/rules/boundaries.md``). Closed codes and
@@ -33,7 +33,7 @@ from nexus.services.artifacts.dossier_types import (
     StartedEventPayload,
     SucceededEventPayload,
 )
-from nexus.services.artifacts.manifests import InputManifestV1
+from nexus.services.artifacts.manifests import InputManifestV1, MediaDisposition
 
 
 class ArtifactSchemaModel(BaseModel):
@@ -57,6 +57,14 @@ class DossierGenerateRequest(ArtifactSchemaModel):
     instruction: Presence[_InstructionText]
 
 
+class DossierBuildCreatedOut(ArtifactSchemaModel):
+    """The accepted build attempt returned by the generic Generate endpoint."""
+
+    artifact_ref: str
+    build_handle: str
+    created: bool
+
+
 class DossierBuildExecution(ArtifactSchemaModel):
     """The advisory-only queue/coordination liveness for an active build
     (A8/A9). Wraps `DossierBuildExecutionPhase` so the wire shape matches A15's
@@ -68,8 +76,7 @@ class DossierBuildExecution(ArtifactSchemaModel):
 
 
 class DossierBuildSummary(ArtifactSchemaModel):
-    """One build attempt's identity — the replacement for the legacy
-    ``ArtifactBuildOut`` revision-status wrapper (A5 §633).
+    """One build attempt's identity and current execution/terminal summary.
 
     Serves both `DossierHeadOut.active_build` (only `execution` Present) and
     `.latest_unsuccessful_build` (exactly one of `failure`/`cancellation`
@@ -86,6 +93,60 @@ class DossierBuildSummary(ArtifactSchemaModel):
     execution: Presence[DossierBuildExecution]
     failure: Presence[FailedEventPayload]
     cancellation: Presence[CancelledEventPayload]
+
+
+class MediaDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["media"] = "media"
+    offered_claim_count: int = Field(ge=0)
+    omitted_evidence_refs: list[str]
+
+
+class ConversationDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["conversation"] = "conversation"
+    message_refs: list[str]
+    context_refs: list[str]
+
+
+class LibraryDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["library"] = "library"
+    included: list[str]
+    omitted: list[tuple[str, MediaDisposition]]
+
+
+class PodcastDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["podcast"] = "podcast"
+    included: list[str]
+    omitted: list[tuple[str, MediaDisposition]]
+
+
+class ContributorDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["contributor"] = "contributor"
+    included: list[str]
+    omitted: list[tuple[str, MediaDisposition]]
+
+
+class PageDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["page"] = "page"
+    block_refs: list[str]
+    connection_refs: list[str]
+
+
+class NoteDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["note"] = "note"
+    body_present: bool
+    connection_refs: list[str]
+
+
+DossierCoverageOut = Annotated[
+    MediaDossierCoverageOut
+    | ConversationDossierCoverageOut
+    | LibraryDossierCoverageOut
+    | PodcastDossierCoverageOut
+    | ContributorDossierCoverageOut
+    | PageDossierCoverageOut
+    | NoteDossierCoverageOut,
+    Field(discriminator="kind"),
+]
 
 
 class DossierRevisionOut(ArtifactSchemaModel):
@@ -107,7 +168,12 @@ class DossierRevisionOut(ArtifactSchemaModel):
     content_md: str
     citations: list[CitationOut]
     input_manifest: InputManifestV1
+    coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
+    creator_user_id: Presence[UUID]
+    model_provider: Presence[str]
+    model_name: Presence[str]
+    total_tokens: Presence[int]
     created_at: datetime
     promoted_at: Presence[datetime]
 
@@ -127,7 +193,12 @@ class DossierRevisionSummaryOut(ArtifactSchemaModel):
     is_current: bool
     citation_count: int = Field(ge=0)
     input_manifest: InputManifestV1
+    coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
+    creator_user_id: Presence[UUID]
+    model_provider: Presence[str]
+    model_name: Presence[str]
+    total_tokens: Presence[int]
     created_at: datetime
     promoted_at: Presence[datetime]
 
@@ -219,7 +290,7 @@ BuildEventPayload = (
 class ArtifactBuildEventOut(ArtifactSchemaModel):
     """One replayable ``artifact_build_events`` row (A5 §678), strict end to
     end: ``payload`` is always the exact `dossier_types` payload model for
-    ``event_type``, never a loose ``dict`` — replaces `ArtifactRevisionEventOut`
+    ``event_type``, never a loose ``dict`` — one strict build-event boundary
     and folds the old `ArtifactDoneEventPayload` into the typed
     `SucceededEventPayload`/`FailedEventPayload`.
 

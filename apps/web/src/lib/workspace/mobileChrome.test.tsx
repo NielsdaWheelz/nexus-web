@@ -106,6 +106,7 @@ function PaneSwitchConsumer() {
         pending: false,
       },
       navigation: { canGoBack: false, canGoForward: false, onBack: () => {}, onForward: () => {} },
+      actions: [],
       options: [],
     });
   const scroll = (scrollTop: number) =>

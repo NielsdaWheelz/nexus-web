@@ -68,7 +68,7 @@ describe("useEscapeKey", () => {
         useEscapeKey(true, vi.fn(), {
           layer: "modal",
           modalToken: modalLayer.token,
-          scope: "reader-tools",
+          scope: "resource-inspector",
         });
         useEscapeKey(transient, vi.fn(), {
           layer: "transient",
@@ -78,13 +78,13 @@ describe("useEscapeKey", () => {
       { initialProps: { transient: false } },
     );
     expect(hasActiveInteractionOwner()).toBe(true);
-    expect(isTopmostInteractionOwner("reader-tools")).toBe(true);
+    expect(isTopmostInteractionOwner("resource-inspector")).toBe(true);
 
     rerender({ transient: true });
-    expect(isTopmostInteractionOwner("reader-tools")).toBe(false);
+    expect(isTopmostInteractionOwner("resource-inspector")).toBe(false);
 
     rerender({ transient: false });
-    expect(isTopmostInteractionOwner("reader-tools")).toBe(true);
+    expect(isTopmostInteractionOwner("resource-inspector")).toBe(true);
     unmount();
     expect(hasActiveInteractionOwner()).toBe(false);
   });

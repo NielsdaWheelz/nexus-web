@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import (
-    ArtifactRevision,
+    ArtifactBuild,
+    ArtifactBuildFailure,
     ChatRun,
     OracleReading,
     SynthesisArtifact,
@@ -64,24 +65,27 @@ def _streaming_reading(db) -> OracleReading:
     return reading
 
 
-def _building_revision(db) -> ArtifactRevision:
+def _active_artifact_build(db) -> ArtifactBuild:
     user_id = _insert_user(db)
     library_id = create_test_library(db, user_id)
     artifact = SynthesisArtifact(
         id=uuid4(),
         subject_scheme="library",
         subject_id=library_id,
-        kind="library_dossier",
-        user_id=user_id,
+        audience_scheme="library",
+        audience_id=str(library_id),
     )
     db.add(artifact)
     db.flush()
-    revision = ArtifactRevision(
-        id=uuid4(), artifact_id=artifact.id, covered_targets=[], status="building"
+    build = ArtifactBuild(
+        id=uuid4(),
+        artifact_id=artifact.id,
+        requester_user_id=user_id,
+        idempotency_key=f"run-kit-{uuid4()}",
     )
-    db.add(revision)
+    db.add(build)
     db.flush()
-    return revision
+    return build
 
 
 def _event_types(db, table: str, fk: str, parent_id) -> list[str]:
@@ -166,24 +170,31 @@ def test_mark_terminal_complete_oracle_reading_does_not_set_failed_at(db_session
     assert reading.failed_at is None
 
 
-def test_mark_terminal_stamps_error_pair_on_li_revision(db_session):
-    revision = _building_revision(db_session)
-
-    run_kit.mark_terminal(
+def test_artifact_build_stream_replays_events_and_derives_terminal_child(db_session):
+    build = _active_artifact_build(db_session)
+    seq = run_kit.append_event(
         db_session,
-        stream=run_kit.artifact_revision_stream(revision),
-        status="failed",
-        done_payload={"error": "llm_failure"},
-        error_code="timeout",
-        error_detail="took too long",
+        stream=run_kit.artifact_build_stream(build),
+        event_type="Progress",
+        payload={"phase": "Collecting", "message": "Collecting evidence"},
     )
 
-    assert (revision.status, revision.error_code, revision.error_detail) == (
-        "failed",
-        "timeout",
-        "took too long",
+    events, terminal = run_kit.get_run_events(
+        db_session, run_kit.RunStreamKind.ArtifactBuild, build.id, after=0
     )
-    assert revision.completed_at is not None
+    assert seq == 1
+    assert [event.event_type for event in events] == ["Progress"]
+    assert terminal is False
+
+    db_session.add(
+        ArtifactBuildFailure(
+            build_id=build.id,
+            failure_code="ProviderIncomplete",
+            detail="provider stopped",
+        )
+    )
+    db_session.flush()
+    assert run_kit.is_run_terminal(db_session, run_kit.RunStreamKind.ArtifactBuild, build.id)
 
 
 def test_mark_terminal_is_noop_on_already_terminal_parent(db_session):
@@ -203,85 +214,3 @@ def test_mark_terminal_is_noop_on_already_terminal_parent(db_session):
     assert run.status == "complete"
     assert run.error_code is None and run.error_detail is None
     assert _event_types(db_session, "chat_run_events", "run_id", run.id) == []
-
-
-# ---------------------------------------------------------------------------
-# fail_run_after_worker_exception
-# ---------------------------------------------------------------------------
-
-
-def _li_write_failure(db, revision) -> None:
-    run_kit.mark_terminal(
-        db,
-        stream=run_kit.artifact_revision_stream(revision),
-        status="failed",
-        done_payload={"error": "E_INTERNAL"},
-        error_code="E_INTERNAL",
-        error_detail="RuntimeError: boom",
-    )
-
-
-def _li_load(revision_id):
-    return lambda db: db.get(ArtifactRevision, revision_id)
-
-
-def _li_is_terminal(revision) -> bool:
-    return revision.status in ("ready", "failed")
-
-
-def test_fail_run_after_worker_exception_writes_failure_on_nonterminal_parent(db_session):
-    revision = _building_revision(db_session)
-    revision_id = revision.id
-    db_session.commit()
-    # Dirty, uncommitted state stands in for the broken worker transaction; the
-    # helper must roll it back before writing the failure.
-    revision.content_md = "junk from the broken attempt"
-
-    parent, failed_now = run_kit.fail_run_after_worker_exception(
-        db_session,
-        load_parent=_li_load(revision_id),
-        is_terminal=_li_is_terminal,
-        write_failure=_li_write_failure,
-    )
-
-    assert failed_now is True
-    assert parent is not None and parent.id == revision_id
-    assert (parent.status, parent.error_code, parent.error_detail) == (
-        "failed",
-        "E_INTERNAL",
-        "RuntimeError: boom",
-    )
-    assert parent.content_md == "", "the broken transaction's writes must be rolled back"
-    assert _event_types(db_session, "artifact_revision_events", "revision_id", revision_id) == [
-        "done"
-    ]
-
-
-def test_fail_run_after_worker_exception_noops_on_terminal_parent(db_session):
-    revision = _building_revision(db_session)
-    revision.status = "ready"
-    revision_id = revision.id
-    db_session.commit()
-
-    parent, failed_now = run_kit.fail_run_after_worker_exception(
-        db_session,
-        load_parent=_li_load(revision_id),
-        is_terminal=_li_is_terminal,
-        write_failure=_li_write_failure,
-    )
-
-    assert failed_now is False
-    assert parent is not None and parent.status == "ready"
-    assert parent.error_code is None and parent.error_detail is None
-    assert _event_types(db_session, "artifact_revision_events", "revision_id", revision_id) == []
-
-
-def test_fail_run_after_worker_exception_noops_on_missing_parent(db_session):
-    parent, failed_now = run_kit.fail_run_after_worker_exception(
-        db_session,
-        load_parent=_li_load(uuid4()),
-        is_terminal=_li_is_terminal,
-        write_failure=_li_write_failure,
-    )
-
-    assert (parent, failed_now) == (None, False)

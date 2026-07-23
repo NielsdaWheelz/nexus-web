@@ -196,8 +196,8 @@ describe("workspace schema", () => {
           "secondary-1": {
             id: "secondary-1",
             parentPrimaryPaneId: "pane-1",
-            groupId: "reader-tools",
-            activeSurfaceId: "reader-evidence",
+            groupId: "resource-inspector",
+            activeSurfaceId: "resource-evidence",
             widthPx: 9999,
             visibility: "visible",
           },
@@ -209,8 +209,8 @@ describe("workspace schema", () => {
     expect(current.secondaryPanesById["secondary-1"]).toEqual({
       id: "secondary-1",
       parentPrimaryPaneId: "pane-1",
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
       widthPx: 720,
       visibility: "visible",
     });
@@ -228,8 +228,8 @@ describe("workspace schema", () => {
           "secondary-1": {
             id: "secondary-1",
             parentPrimaryPaneId: "pane-1",
-            groupId: "reader-tools",
-            activeSurfaceId: "reader-evidence",
+            groupId: "resource-inspector",
+            activeSurfaceId: "resource-evidence",
             widthPx: 320,
             visibility: "visible",
           },
@@ -252,7 +252,7 @@ describe("workspace schema", () => {
           "secondary-1": {
             id: "secondary-1",
             parentPrimaryPaneId: "pane-1",
-            groupId: "reader-tools",
+            groupId: "resource-inspector",
             activeSurfaceId: "reader-highlights",
             widthPx: 320,
             visibility: "visible",

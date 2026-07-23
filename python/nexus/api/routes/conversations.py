@@ -22,14 +22,7 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok, ok_page
-from nexus.schemas.artifact import (
-    ArtifactBuildOut,
-    ConversationDistillateOut,
-    ConversationDistillOut,
-    RevisionStatus,
-)
 from nexus.services import conversations as conversations_service
-from nexus.services.artifacts import distillate as distillate_service
 
 router = APIRouter(tags=["conversations"])
 
@@ -126,72 +119,6 @@ def get_conversation(
         conversation_id=conversation_id,
     )
     return ok(result)
-
-
-@router.post("/conversations/{conversation_id}/distill", status_code=202)
-def distill_conversation(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Distill a conversation on demand (the ``Distill`` verb).
-
-    Enqueues an artifact revision over the shared generation-run plane and returns
-    the revision id (the revision IS the run).
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
-    """
-    from typing import cast
-
-    ref = distillate_service.distill(db, viewer_id=viewer.user_id, conversation_id=conversation_id)
-    return ok(
-        ConversationDistillOut(
-            artifact_id=ref.artifact_id,
-            revision_id=ref.revision_id,
-            revision_ref=f"artifact_revision:{ref.revision_id}",
-            status=cast("RevisionStatus", ref.status),
-        )
-    )
-
-
-@router.get("/conversations/{conversation_id}/distillate")
-def get_conversation_distillate(
-    conversation_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Return the conversation's current distillate content + citations.
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.
-    """
-    from typing import cast
-
-    view = distillate_service.read_distillate(
-        db, viewer_id=viewer.user_id, conversation_id=conversation_id
-    )
-    build = (
-        ArtifactBuildOut(
-            revision_id=view.build.revision_id,
-            status=cast("RevisionStatus", view.build.status),
-        )
-        if view.build is not None
-        else None
-    )
-    return ok(
-        ConversationDistillateOut(
-            artifact_id=view.artifact_id,
-            revision_id=view.revision_id,
-            revision_ref=(
-                f"artifact_revision:{view.revision_id}" if view.revision_id is not None else None
-            ),
-            status=view.status,
-            content_md=view.content_md,
-            citations=view.citations,
-            build=build,
-        )
-    )
 
 
 @router.post("/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo")

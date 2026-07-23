@@ -18,6 +18,10 @@ import {
   type WorkspacePaneLabelSource,
 } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import {
+  NEXUS_OPEN_PANE_EVENT,
+  type OpenInAppPaneDetail,
+} from "@/lib/panes/openInAppPane";
 
 const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryMinWidthPx: 684,
@@ -253,6 +257,53 @@ describe("WorkspaceStoreProvider", () => {
     flushWorkspaceSession();
   });
 
+  it("owns and acknowledges a queued Dossier revision from the global pane-open contract", async () => {
+    const workspace = await mountWorkspaceStore();
+    const href = "/media/11111111-1111-4111-8111-111111111111";
+    const activation = {
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef:
+        "artifact_revision:22222222-2222-4222-8222-222222222222",
+    } as const;
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent<OpenInAppPaneDetail>(NEXUS_OPEN_PANE_EVENT, {
+          detail: { href, secondaryActivation: activation },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      const targetPane = primaryPanes(workspace().state).find(
+        (item) => item.href === href,
+      );
+      expect(targetPane).toBeDefined();
+      expect(
+        workspace().pendingSecondaryActivationByPaneId.get(targetPane!.id),
+      ).toEqual({
+        routeKey: resolvePaneRouteKey(href),
+        activation,
+      });
+    });
+
+    const targetPane = primaryPanes(workspace().state).find(
+      (item) => item.href === href,
+    )!;
+    act(() => {
+      workspace().acknowledgePendingSecondaryActivation(
+        targetPane.id,
+        resolvePaneRouteKey(href),
+        activation,
+      );
+    });
+    await waitFor(() => {
+      expect(workspace().pendingSecondaryActivationByPaneId.size).toBe(0);
+    });
+    flushWorkspaceSession();
+  });
+
   it("opens distinct route instances instead of deduping by unresolved resource", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
 
@@ -484,7 +535,7 @@ describe("WorkspaceStoreProvider", () => {
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 900);
-      workspace().requestSecondarySurface(paneId, "reader-evidence");
+      workspace().requestSecondarySurface(paneId, "resource-evidence");
     });
 
     await waitFor(() => {
@@ -494,8 +545,8 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPane.primaryWidthPx).toBe(900);
       expect(secondaryPane).toMatchObject({
         parentPrimaryPaneId: paneId,
-        groupId: "reader-tools",
-        activeSurfaceId: "reader-evidence",
+        groupId: "resource-inspector",
+        activeSurfaceId: "resource-evidence",
         widthPx: 360,
         visibility: "visible",
       });
@@ -504,7 +555,7 @@ describe("WorkspaceStoreProvider", () => {
 
     act(() => {
       workspace().resizeSecondaryPane(secondaryPaneId, 9999);
-      workspace().setSecondarySurface(secondaryPaneId, "reader-evidence");
+      workspace().setSecondarySurface(secondaryPaneId, "resource-evidence");
       workspace().closeSecondaryPane(secondaryPaneId);
     });
 
@@ -514,8 +565,8 @@ describe("WorkspaceStoreProvider", () => {
         workspace().state.secondaryPanesById[primaryPane.attachedSecondaryPaneId!];
       expect(primaryPane.primaryWidthPx).toBe(900);
       expect(secondaryPane).toMatchObject({
-        groupId: "reader-tools",
-        activeSurfaceId: "reader-evidence",
+        groupId: "resource-inspector",
+        activeSurfaceId: "resource-evidence",
         widthPx: 720,
         visibility: "collapsed",
       });
@@ -537,12 +588,12 @@ describe("WorkspaceStoreProvider", () => {
       (pane) => pane.href === "/media/22222222-2222-4222-8222-222222222222",
     )!.id;
 
-    // Give each pane a distinct primary width and an attached reader-tools secondary.
+    // Give each pane a distinct primary width and an attached resource-inspector secondary.
     act(() => {
       workspace().resizePrimaryPane(paneAId, 820);
       workspace().resizePrimaryPane(paneBId, 760);
-      workspace().requestSecondarySurface(paneAId, "reader-evidence");
-      workspace().requestSecondarySurface(paneBId, "reader-evidence");
+      workspace().requestSecondarySurface(paneAId, "resource-evidence");
+      workspace().requestSecondarySurface(paneBId, "resource-evidence");
     });
 
     let paneBSecondaryId = "";
@@ -572,7 +623,7 @@ describe("WorkspaceStoreProvider", () => {
     // Resize, switch, and collapse pane A's secondary.
     act(() => {
       workspace().resizeSecondaryPane(paneASecondaryId, 680);
-      workspace().setSecondarySurface(paneASecondaryId, "reader-evidence");
+      workspace().setSecondarySurface(paneASecondaryId, "resource-evidence");
       workspace().closeSecondaryPane(paneASecondaryId);
     });
 
@@ -580,7 +631,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(
         workspace().state.secondaryPanesById[paneASecondaryId],
       ).toMatchObject({
-        activeSurfaceId: "reader-evidence",
+        activeSurfaceId: "resource-evidence",
         widthPx: 680,
         visibility: "collapsed",
       });
@@ -609,7 +660,7 @@ describe("WorkspaceStoreProvider", () => {
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().requestSecondarySurface(paneId, "reader-evidence");
+      workspace().requestSecondarySurface(paneId, "resource-evidence");
       workspace().navigatePane(paneId, "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     });
 
@@ -626,7 +677,7 @@ describe("WorkspaceStoreProvider", () => {
     const paneId = workspace().state.activePrimaryPaneId;
 
     act(() => {
-      workspace().requestSecondarySurface(paneId, "reader-evidence");
+      workspace().requestSecondarySurface(paneId, "resource-evidence");
     });
 
     let secondaryPaneId: string | null = null;

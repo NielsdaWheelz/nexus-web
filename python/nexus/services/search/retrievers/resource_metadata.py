@@ -46,10 +46,10 @@ class OracleReadingCandidate:
 
 @dataclass(slots=True)
 class LibraryDossierCandidate:
-    """A library-dossier artifact head (``artifacts`` row, scheme ``artifact``).
+    """A Library-audience Dossier head (``artifacts`` row, scheme ``artifact``).
 
-    Shares the ``artifact`` weight/normalization pool with the conversation
-    distillate results of ordinary search; identity is the artifact head id.
+    Shares the ``artifact`` weight/normalization pool with Conversation Dossier
+    results of ordinary search; identity is the artifact head id.
     """
 
     id: UUID
@@ -178,15 +178,14 @@ def retrieve_oracle_reading_candidates(
     ]
 
 
-def retrieve_library_dossier_candidates(
+def retrieve_library_artifact_candidates(
     db: Session, *, viewer_id: UUID, q: str, limit: int
 ) -> list[LibraryDossierCandidate]:
-    """Membership-visible library-dossier artifact heads matched on current ready content.
+    """Membership-visible Library Dossier heads matched on current content.
 
-    ``artifact``/``artifact_revision`` resource schemes are library-dossier-only
-    (``resource_graph/resolve.py`` masks other subjects), so only those heads are
-    retrieved; the head is the canonical target and individual revisions stay
-    reachable through exact-ResourceRef input.
+    Only the Library subject plus its derived Library audience is eligible for
+    this metadata search. The head is the canonical target; exact historical
+    revisions remain reachable through ResourceRef input.
     """
     rows = db.execute(
         text(
@@ -200,9 +199,10 @@ def retrieve_library_dossier_candidates(
             FROM artifacts a
             JOIN libraries l ON l.id = a.subject_id
             JOIN memberships mem ON mem.library_id = l.id AND mem.user_id = :viewer_id
-            JOIN artifact_revisions r ON r.id = a.current_revision_id AND r.status = 'ready'
+            JOIN artifact_revisions r ON r.id = a.current_revision_id
             WHERE a.subject_scheme = 'library'
-              AND a.kind = 'library_dossier'
+              AND a.audience_scheme = 'library'
+              AND a.audience_id = a.subject_id::text
               AND {_lexical_match_sql("r.content_md")}
             ORDER BY score DESC, a.id ASC
             LIMIT :limit

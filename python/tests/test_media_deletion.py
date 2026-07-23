@@ -36,6 +36,7 @@ from tests.factories import (
     create_test_fragment,
     create_test_highlight,
     create_test_library,
+    create_test_library_artifact,
     create_test_media,
 )
 from tests.helpers import auth_headers, create_test_user_id
@@ -1134,37 +1135,18 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     source)."""
     user_id = create_test_user_id()
     auth_client.get("/me", headers=auth_headers(user_id))
+    direct_db.register_cleanup("users", "id", user_id)
 
     with direct_db.session() as session:
         library_id = create_test_library(session, user_id, name="Doomed Library")
         conversation_id, message_id = create_test_conversation_with_message(
             session, user_id, content="Scopes the doomed library"
         )
-        artifact_id = session.execute(
-            text(
-                """
-                INSERT INTO artifacts (subject_scheme, subject_id, kind, user_id)
-                VALUES ('library', :library_id, 'library_dossier', :user_id)
-                RETURNING id
-                """
-            ),
-            {"library_id": library_id, "user_id": user_id},
-        ).scalar_one()
-        revision_id = session.execute(
-            text(
-                """
-                INSERT INTO artifact_revisions (
-                    artifact_id, content_md, covered_targets, status, promoted_at
-                )
-                VALUES (:artifact_id, 'Doomed revision [1].', '[]'::jsonb, 'ready', now())
-                RETURNING id
-                """
-            ),
-            {"artifact_id": artifact_id},
-        ).scalar_one()
-        session.execute(
-            text("UPDATE artifacts SET current_revision_id = :revision_id WHERE id = :artifact_id"),
-            {"revision_id": revision_id, "artifact_id": artifact_id},
+        artifact_id, revision_id = create_test_library_artifact(
+            session,
+            library_id=library_id,
+            requester_user_id=user_id,
+            content_md="Doomed revision [1].",
         )
 
         session.add_all(
@@ -1201,7 +1183,7 @@ def test_delete_library_applies_graph_cleanup_two_rules(
                     ordinal=2,
                     snapshot={"title": "Doomed Library", "excerpt": "scoped"},
                 ),
-                # LI artifact/revision refs belong to the deleted library. Bare
+                # Dossier artifact/revision refs belong to the deleted library. Bare
                 # links touching them and citations sourced by the revision must die.
                 ResourceEdge(
                     user_id=user_id,
@@ -1239,8 +1221,6 @@ def test_delete_library_applies_graph_cleanup_two_rules(
     direct_db.register_cleanup("conversations", "id", conversation_id)
     direct_db.register_cleanup("messages", "conversation_id", conversation_id)
     direct_db.register_cleanup("resource_edges", "user_id", user_id)
-    direct_db.register_cleanup("artifact_revisions", "artifact_id", artifact_id)
-    direct_db.register_cleanup("artifacts", "id", artifact_id)
 
     delete_response = auth_client.delete(f"/libraries/{library_id}", headers=auth_headers(user_id))
     assert delete_response.status_code == 204, delete_response.text

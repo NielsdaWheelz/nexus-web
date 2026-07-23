@@ -56,7 +56,7 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   }
 
   if (result.type === "artifact") {
-    return result.source_label ?? "distillate";
+    return result.source_label ?? "artifact";
   }
 
   if (result.type === "evidence_span") {
@@ -156,7 +156,7 @@ function buildPrimaryText(result: SearchApiResult): string {
     return result.title || sanitizeSnippet(result.snippet) || "Conversation";
   }
   if (result.type === "artifact") {
-    return result.title || sanitizeSnippet(result.snippet) || "Distillate";
+    return result.title || sanitizeSnippet(result.snippet) || "Dossier";
   }
   if (result.type === "evidence_span") {
     return sanitizeSnippet(result.snippet) || result.citation_label;
@@ -223,7 +223,7 @@ export function adaptSearchResultRow(
             : result.type === "conversation"
               ? "conversation"
             : result.type === "artifact"
-              ? "distillate"
+              ? "artifact"
             : result.type === "web_result"
               ? "web result"
             : result.type,

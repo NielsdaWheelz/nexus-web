@@ -39,7 +39,7 @@ class JobDefinition:
 
 
 # Non-periodic kinds whose work a user directly observes (ingest progress, chat/
-# oracle/intelligence output, search indexing, subscription sync, shared-library
+# oracle/Dossier output, search indexing, subscription sync, shared-library
 # backfill). Every kind here must be claimable by the production worker.
 # test_config.py asserts this tuple is a subset of the default allowlist and that
 # the default allowlist contains only registered kinds.
@@ -128,7 +128,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         # Universal dossier generation (resource-inspector-and-universal-dossiers
         # hard cutover). One job kind for all seven subject bindings, dispatched
         # through the DossierBindingRegistry by the durable job body itself
-        # (CONTRACTS.md A19/B1a). Paid + non-idempotent (unlike media_unit_build):
+        # (CONTRACTS.md A19/B1a). Paid + non-idempotent:
         # a moderate retry budget covers a worker crash/restart before the
         # per-step Uncertain checkpoint commits; once a step is Uncertain on
         # replay, run_build raises (never auto-redispatches a billed call) and
@@ -233,7 +233,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(60, 300, 900),
             lease_seconds=300,
-            failed_result_statuses=("failed",),
+            # Provider replay state lives in the job payload. Dead uncertain
+            # transitions stay operator-discoverable.
+            never_prune_dead=True,
         ),
         "synapse_scan": JobDefinition(
             kind="synapse_scan",
@@ -344,7 +346,7 @@ def _dead_letter_chat_run(db: Session, job: JobRow) -> None:
 
 def _run_dossier_build(
     *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
+) -> Mapping[str, Any] | RescheduleRequested | None:
     from nexus.tasks.artifacts import dossier_build
 
     return dossier_build(payload=payload, context=context)
@@ -482,7 +484,11 @@ def _run_media_unit_build(
 ) -> Mapping[str, Any] | None:
     from nexus.tasks.media_unit_build import media_unit_build
 
-    return media_unit_build(media_id=str(payload["media_id"]))
+    return media_unit_build(
+        media_id=str(payload["media_id"]),
+        content_fingerprint=str(payload["content_fingerprint"]),
+        context=context,
+    )
 
 
 def _run_synapse_scan(

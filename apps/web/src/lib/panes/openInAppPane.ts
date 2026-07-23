@@ -1,6 +1,10 @@
 "use client";
 
 import { isRecord } from "@/lib/validation";
+import {
+  isWorkspaceSecondarySurfaceId,
+  type WorkspaceSecondaryActivation,
+} from "@/lib/panes/paneSecondaryModel";
 import { normalizePaneLabel } from "@/lib/workspace/schema";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
@@ -19,12 +23,14 @@ declare global {
 export interface OpenInAppPaneDetail {
   href: string;
   labelHint?: string;
+  secondaryActivation?: WorkspaceSecondaryActivation;
 }
 
 interface OpenInAppPaneMessage {
   type: typeof NEXUS_OPEN_PANE_MESSAGE_TYPE;
   href: string;
   labelHint?: string;
+  secondaryActivation?: WorkspaceSecondaryActivation;
 }
 
 function paneWindow(): Window | null {
@@ -36,6 +42,36 @@ function paneWindow(): Window | null {
 
 function isPaneGraphReady(): boolean {
   return paneWindow()?.[NEXUS_PANE_GRAPH_READY_KEY] === true;
+}
+
+function sanitizeSecondaryActivation(
+  value: unknown,
+): WorkspaceSecondaryActivation | undefined {
+  if (!isRecord(value) || !isWorkspaceSecondarySurfaceId(value.surfaceId)) {
+    return undefined;
+  }
+  if (value.kind === "Surface") {
+    return { kind: "Surface", surfaceId: value.surfaceId };
+  }
+  if (
+    value.surfaceId === "resource-dossier" &&
+    value.kind === "DossierCurrent"
+  ) {
+    return { kind: "DossierCurrent", surfaceId: "resource-dossier" };
+  }
+  if (
+    value.surfaceId === "resource-dossier" &&
+    value.kind === "DossierRevision" &&
+    typeof value.revisionRef === "string" &&
+    value.revisionRef.startsWith("artifact_revision:")
+  ) {
+    return {
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef: value.revisionRef,
+    };
+  }
+  return undefined;
 }
 
 function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
@@ -55,6 +91,9 @@ function sanitizeOpenPaneDetail(detail: unknown): OpenInAppPaneDetail | null {
       typeof detail.labelHint === "string"
         ? normalizePaneLabel(detail.labelHint) ?? undefined
         : undefined,
+    secondaryActivation: sanitizeSecondaryActivation(
+      detail.secondaryActivation,
+    ),
   };
 }
 
@@ -106,13 +145,20 @@ export function parseOpenInAppPaneEvent(event: Event): OpenInAppPaneDetail | nul
   return sanitizeOpenPaneDetail(event.detail);
 }
 
-export function requestOpenInAppPane(href: string, options?: { labelHint?: string }): boolean {
+export function requestOpenInAppPane(
+  href: string,
+  options?: {
+    labelHint?: string;
+    secondaryActivation?: WorkspaceSecondaryActivation;
+  },
+): boolean {
   if (typeof window === "undefined") {
     return false;
   }
   const detail = sanitizeOpenPaneDetail({
     href,
     labelHint: options?.labelHint,
+    secondaryActivation: options?.secondaryActivation,
   });
   if (!detail) {
     return false;
@@ -124,6 +170,7 @@ export function requestOpenInAppPane(href: string, options?: { labelHint?: strin
         type: NEXUS_OPEN_PANE_MESSAGE_TYPE,
         href: detail.href,
         labelHint: detail.labelHint,
+        secondaryActivation: detail.secondaryActivation,
       } satisfies OpenInAppPaneMessage,
       window.location.origin
     );

@@ -242,7 +242,7 @@ def _result_resource_ref(result: InternalSearchResult) -> ResourceRef:
     if isinstance(result, _RankedConversationResult):
         return ResourceRef(scheme="conversation", id=result.id)
     if isinstance(result, _RankedArtifactResult):
-        # Activate on the revision so route_for_ref lands on ?distillate=1 (AC-10).
+        # The exact revision ref lets workspace-local activation select history.
         return ResourceRef(scheme="artifact_revision", id=result.revision_id)
     if isinstance(result, _RankedEvidenceSpanResult):
         return ResourceRef(scheme="evidence_span", id=result.id)
@@ -339,8 +339,8 @@ def _result_model_fields(
 
     if isinstance(result, _RankedArtifactResult):
         return {
-            "title": "Distillate",
-            "source_label": "distillate",
+            "title": "Dossier",
+            "source_label": "dossier",
             "media_id": None,
             "media_kind": None,
             **fields,
@@ -524,7 +524,6 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
             type="artifact",
             revision_id=result.revision_id,
             subject_ref=f"conversation:{result.id}",
-            kind="conversation_distillate",
             **base_payload,
         )
 

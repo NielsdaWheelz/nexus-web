@@ -35,8 +35,7 @@ function unwrapEnvelope(raw: unknown): unknown {
   if (
     isRecord(raw) &&
     Object.keys(raw).length === 1 &&
-    "data" in raw &&
-    isRecord((raw as { data: unknown }).data)
+    "data" in raw
   ) {
     return (raw as { data: unknown }).data;
   }
@@ -110,7 +109,7 @@ export async function makeDossierRevisionCurrent(
 
 type DossierStreamArgs = Omit<
   Parameters<typeof sseClientDirect<DossierStreamEvent>>[0],
-  "url" | "initialToken"
+  "url" | "initialConnection" | "initialToken"
 >;
 
 /**
@@ -123,11 +122,14 @@ export async function openDossierBuildStream(
   buildHandle: string,
   sseArgs: DossierStreamArgs,
 ): Promise<() => void> {
-  const connection = await fetchStreamToken();
-  if (sseArgs.signal?.aborted) return () => {};
   return sseClientDirect<DossierStreamEvent>({
-    url: `${connection.stream_base_url}/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
-    initialToken: connection.token,
+    initialConnection: async () => {
+      const connection = await fetchStreamToken();
+      return {
+        url: `${connection.stream_base_url}/stream/artifact-builds/${encodeURIComponent(buildHandle)}/events`,
+        token: connection.token,
+      };
+    },
     ...sseArgs,
   });
 }

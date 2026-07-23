@@ -85,7 +85,7 @@ class LlmCallOwner:
     kind: Literal[
         "chat_run",
         "oracle_reading",
-        "artifact_revision",
+        "artifact_build",
         "media_summary",
         "media_enrichment",
         "synapse_scan",

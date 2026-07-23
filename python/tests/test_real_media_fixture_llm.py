@@ -38,14 +38,6 @@ from provider_runtime import (
 )
 from pydantic import BaseModel
 
-from nexus.services.artifacts.reducers.library_dossier import (
-    _LI_SYSTEM_PROMPT,
-    _LiSynthesis,
-    _map_li_citations,
-)
-from nexus.services.artifacts.reducers.library_dossier import (
-    _Candidate as LiCandidate,
-)
 from nexus.services.llm_profiles import profile as profile_lookup
 from nexus.services.media_intelligence import (
     _MEDIA_UNIT_SYSTEM_PROMPT,
@@ -307,8 +299,8 @@ def _strict_json_output(schema: type[BaseModel]) -> StrictJsonOutput:
 async def _synthesize[T: BaseModel](system_prompt: str, *, schema: type[T]) -> T:
     """Run `generate` against a synthesis-marker intent and decode the outcome
     through the REAL `structured_synthesis.decode_structured_synthesis`, the
-    same path every structured-synthesis owner (oracle, LI reduce,
-    media-unit, metadata enrichment, synapse) uses in production. This
+    same path every structured-synthesis owner (Oracle, Media Intelligence,
+    metadata enrichment, and Synapse) uses in production. This
     exercises the fixture's `StrictJsonOutput` -> `StructuredContent`
     contract, not just its canned JSON text.
     """
@@ -371,24 +363,6 @@ async def test_real_media_fixture_llm_oracle_synthesis_passes_real_validator() -
     by_phase = parsed[4]
     assert set(by_phase) == {"descent", "ordeal", "ascent"}
     assert {index for index, _marginalia in by_phase.values()} == {0, 1, 2}
-
-
-async def test_real_media_fixture_llm_library_reduce_synthesis_grounds() -> None:
-    value = await _synthesize(_LI_SYSTEM_PROMPT, schema=_LiSynthesis)
-
-    candidate = LiCandidate(
-        global_index=0,
-        media_id=uuid4(),
-        evidence_span_id=uuid4(),
-        claim_text="SOFIA confirmed water on the sunlit Moon.",
-        summary_md="s",
-    )
-    grounded = _map_li_citations(value, [candidate])
-
-    assert value.content_md.strip()
-    assert [(g.ordinal, g.role, g.evidence_span_id) for g in grounded] == [
-        (1, "supports", candidate.evidence_span_id)
-    ]
 
 
 async def test_real_media_fixture_llm_media_unit_synthesis_grounds() -> None:

@@ -617,8 +617,8 @@ function readerContentsSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
   return {
     id: "secondary-1",
     parentPrimaryPaneId: "pane-1",
-    groupId: "reader-tools",
-    activeSurfaceId: "reader-contents",
+    groupId: "resource-inspector",
+    activeSurfaceId: "resource-contents",
     widthPx: 360,
     visibility: "visible",
   };
@@ -627,7 +627,7 @@ function readerContentsSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
 function readerEvidenceSecondaryPane(): WorkspaceAttachedSecondaryPaneState {
   return {
     ...readerContentsSecondaryPane(),
-    activeSurfaceId: "reader-evidence",
+    activeSurfaceId: "resource-evidence",
   };
 }
 
@@ -663,7 +663,7 @@ async function getContentsSurfaceBody(
   await waitFor(() => {
     const publication = latestSecondaryPublication(onSetPaneSecondary);
     body =
-      getPublishedSecondarySurface(publication, "reader-contents")?.body ??
+      getPublishedSecondarySurface(publication, "resource-contents")?.body ??
       null;
     expect(body).not.toBeNull();
   });
@@ -768,7 +768,7 @@ function ReaderInteractionStack({
   useEscapeKey(true, () => undefined, {
     layer: "modal",
     modalToken: readerModal.token,
-    scope: "pane-pane-1-secondary-reader-tools",
+    scope: "pane-pane-1-secondary-resource-inspector",
   });
   useEscapeKey(blocker === "modal", () => undefined, {
     layer: "modal",
@@ -1116,7 +1116,9 @@ describe("MediaPaneBody pane sizing", () => {
     const { onSetPaneLabel, routeKey } = renderMediaPane();
 
     const publication = await getReadyPrimaryChrome();
-    expect(publication.actions).toEqual([]);
+    expect(publication.actions?.map((action) => action.id)).toEqual([
+      "resource-inspector-companion",
+    ]);
     expect(onSetPaneLabel).toHaveBeenCalledWith({
       paneId: "pane-1",
       routeKey,
@@ -1201,7 +1203,7 @@ describe("MediaPaneBody pane sizing", () => {
     const pulseHandler = vi.fn();
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     try {
-      renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
+      renderMediaPane({ renderSecondarySurfaceId: "resource-evidence" });
       await userEvent.click(
         await screen.findByRole("button", { name: "1 linked object" }),
       );
@@ -1235,7 +1237,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.includeSecondEpubSection = true;
     testState.documentMapPassageGroups = [crossSectionSourceReferencePassage()];
     const { onOpenInNewPane } = renderMediaPane({
-      renderSecondarySurfaceId: "reader-evidence",
+      renderSecondarySurfaceId: "resource-evidence",
     });
 
     await userEvent.click(
@@ -1264,7 +1266,7 @@ describe("MediaPaneBody pane sizing", () => {
     try {
       renderMediaPane({
         href: "/media/media-1?apparatus=target",
-        renderSecondarySurfaceId: "reader-evidence",
+        renderSecondarySurfaceId: "resource-evidence",
       });
 
       await waitFor(() => {
@@ -1368,17 +1370,18 @@ describe("MediaPaneBody pane sizing", () => {
     await waitFor(() => {
       const publication = latestSecondaryPublication(onSetPaneSecondary);
       expect(publication).toMatchObject({
-        groupId: "reader-tools",
-        defaultSurfaceId: "reader-contents",
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-contents",
       });
       expect(publication?.surfaces.map((surface) => surface.id)).toEqual([
-        "reader-contents",
-        "reader-evidence",
+        "resource-contents",
+        "resource-evidence",
+        "resource-dossier",
       ]);
     });
   });
 
-  it("does not publish reader-embeds; publishes reader-evidence instead, even with embed items", async () => {
+  it("does not publish reader-embeds; publishes resource-evidence instead, even with embed items", async () => {
     testState.mediaKind = "web_article";
     testState.fragmentHtml =
       '<p>Before.</p><figure data-nexus-document-embed-id="embed:000000:youtube:dQw4w9WgXcQ"><figcaption>Embedded video: Launch video</figcaption></figure>';
@@ -1425,7 +1428,7 @@ describe("MediaPaneBody pane sizing", () => {
         "reader-embeds",
       );
       expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-        "reader-evidence",
+        "resource-evidence",
       );
     });
   });
@@ -1485,7 +1488,7 @@ describe("MediaPaneBody pane sizing", () => {
     await waitFor(() => {
       const publication = latestSecondaryPublication(onSetPaneSecondary);
       expect(publication?.surfaces.map((surface) => surface.id)).toContain(
-        "reader-evidence",
+        "resource-evidence",
       );
     });
 
@@ -1500,7 +1503,7 @@ describe("MediaPaneBody pane sizing", () => {
     fireEvent.click(screen.getByText("1"));
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-evidence",
+      "resource-evidence",
       undefined,
     );
   });
@@ -1530,7 +1533,7 @@ describe("MediaPaneBody pane sizing", () => {
       }),
     ];
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane({
-      renderSecondarySurfaceId: "reader-evidence",
+      renderSecondarySurfaceId: "resource-evidence",
     });
 
     const marginNoteButton = await screen.findByRole("button", {
@@ -1577,7 +1580,7 @@ describe("MediaPaneBody pane sizing", () => {
   it("mirrors transient PDF highlight hover and focus into Evidence without activating the row", async () => {
     testState.mediaKind = "pdf";
     testState.documentMapPassageGroups = [pdfHighlightPassage()];
-    renderMediaPane({ renderSecondarySurfaceId: "reader-evidence" });
+    renderMediaPane({ renderSecondarySurfaceId: "resource-evidence" });
 
     expect(await screen.findAllByText("PDF hover target")).not.toHaveLength(0);
     const evidenceRow = screen.getByRole("article");
@@ -1664,7 +1667,7 @@ describe("MediaPaneBody pane sizing", () => {
     try {
       const { onCloseSecondaryPane } = renderMediaPane({
         secondaryPane: readerEvidenceSecondaryPane(),
-        renderSecondarySurfaceId: "reader-evidence",
+        renderSecondarySurfaceId: "resource-evidence",
       });
 
       const refButton = await screen.findByRole("button", {
@@ -1740,7 +1743,7 @@ describe("MediaPaneBody pane sizing", () => {
     ];
     const { onCloseSecondaryPane } = renderMediaPane({
       secondaryPane: readerEvidenceSecondaryPane(),
-      renderSecondarySurfaceId: "reader-evidence",
+      renderSecondarySurfaceId: "resource-evidence",
     });
 
     await userEvent.click(
@@ -1786,7 +1789,7 @@ describe("MediaPaneBody pane sizing", () => {
     ];
     const { onCloseSecondaryPane, onNavigatePane } = renderMediaPane({
       secondaryPane: readerEvidenceSecondaryPane(),
-      renderSecondarySurfaceId: "reader-evidence",
+      renderSecondarySurfaceId: "resource-evidence",
     });
 
     await userEvent.click(
@@ -1803,7 +1806,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.includeToc = true;
     testState.documentMapDocumentItems = [noteTargetDocumentItem()];
     const { onNavigatePane } = renderMediaPane({
-      renderSecondarySurfaceId: "reader-evidence",
+      renderSecondarySurfaceId: "resource-evidence",
     });
 
     await userEvent.click(
@@ -1821,39 +1824,35 @@ describe("MediaPaneBody pane sizing", () => {
   });
 
   it.each([
-    { kind: "pdf" as const, canRead: true, canPlay: false, available: true },
-    { kind: "epub" as const, canRead: true, canPlay: false, available: true },
+    { kind: "pdf" as const, canRead: true, canPlay: false },
+    { kind: "epub" as const, canRead: true, canPlay: false },
     {
       kind: "web_article" as const,
       canRead: true,
       canPlay: false,
-      available: true,
     },
     {
       kind: "podcast_episode" as const,
       canRead: true,
       canPlay: true,
-      available: true,
     },
-    { kind: "video" as const, canRead: true, canPlay: true, available: true },
+    { kind: "video" as const, canRead: true, canPlay: true },
     {
       kind: "podcast_episode" as const,
       canRead: false,
       canPlay: true,
-      available: false,
     },
-    { kind: "video" as const, canRead: false, canPlay: true, available: false },
-    { kind: "pdf" as const, canRead: false, canPlay: false, available: false },
-    { kind: "audio" as const, canRead: true, canPlay: true, available: false },
+    { kind: "video" as const, canRead: false, canPlay: true },
+    { kind: "pdf" as const, canRead: false, canPlay: false },
+    { kind: "audio" as const, canRead: true, canPlay: true },
     {
       kind: "future_kind" as const,
       canRead: true,
       canPlay: false,
-      available: false,
     },
   ])(
-    "projects Document Map availability for $kind (readable=$canRead, playable=$canPlay)",
-    async ({ kind, canRead, canPlay, available }) => {
+    "publishes the Media Resource Inspector for $kind (readable=$canRead, playable=$canPlay)",
+    async ({ kind, canRead, canPlay }) => {
       testState.mediaKind = kind;
       testState.canRead = canRead;
       testState.canPlay = canPlay;
@@ -1861,14 +1860,20 @@ describe("MediaPaneBody pane sizing", () => {
 
       const publication = await getReadyPrimaryChrome();
       expect(
-        publication.actions?.filter((action) => action.id === "document-map"),
-      ).toHaveLength(available ? 1 : 0);
+        publication.actions?.filter(
+          (action) => action.id === "resource-inspector-companion",
+        ),
+      ).toHaveLength(1);
       expect(
-        publication.options?.filter((option) => option.id === "document-map"),
+        publication.options?.filter(
+          (option) => option.id === "resource-inspector-companion",
+        ),
       ).toHaveLength(0);
-      expect(Boolean(latestSecondaryPublication(onSetPaneSecondary))).toBe(
-        available,
-      );
+      expect(
+        latestSecondaryPublication(onSetPaneSecondary)?.surfaces.map(
+          (surface) => surface.id,
+        ),
+      ).toEqual(["resource-evidence", "resource-dossier"]);
       if (kind === "future_kind") {
         expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(0);
         expect(
@@ -1883,7 +1888,7 @@ describe("MediaPaneBody pane sizing", () => {
     { isActive: true, expectedRequests: 1 },
     { isActive: false, expectedRequests: 0 },
   ])(
-    "routes the Document Map keyboard chord only from an active media pane (active=$isActive)",
+    "routes the Companion keyboard chord only from an active media pane (active=$isActive)",
     async ({ isActive, expectedRequests }) => {
       testState.mediaKind = "epub";
       const { onRequestSecondarySurface } = renderMediaPane({ isActive });
@@ -1896,14 +1901,14 @@ describe("MediaPaneBody pane sizing", () => {
       if (expectedRequests > 0) {
         expect(onRequestSecondarySurface).toHaveBeenCalledWith(
           "pane-1",
-          "reader-evidence",
+          "resource-evidence",
           undefined,
         );
       }
     },
   );
 
-  it("lets bare G close a topmost mobile Document Map", async () => {
+  it("lets bare G close a topmost mobile Companion", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     const { onCloseSecondaryPane } = renderMediaPane({
@@ -1922,7 +1927,7 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("does not let bare G mutate Document Map beneath a nested modal", async () => {
+  it("does not let bare G mutate Companion beneath a nested modal", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     const { onCloseSecondaryPane } = renderMediaPane({
@@ -1941,7 +1946,7 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("does not let bare G mutate Document Map beneath its Options menu", async () => {
+  it("does not let bare G mutate Companion beneath its Options menu", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     const { onCloseSecondaryPane } = renderMediaPane({
@@ -1960,7 +1965,7 @@ describe("MediaPaneBody pane sizing", () => {
     }
   });
 
-  it("publishes one collapsed Document Map command with no toolbar or Options duplicate", async () => {
+  it("publishes one collapsed Companion command with no toolbar or Options duplicate", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     testState.readerFocusMode = "paragraph";
@@ -1968,17 +1973,17 @@ describe("MediaPaneBody pane sizing", () => {
     const { onRequestSecondarySurface, onSetPaneSecondary } = renderMediaPane();
     await getContentsSurfaceBody(onSetPaneSecondary);
 
-    const action = await getHeaderAction("document-map");
+    const action = await getHeaderAction("resource-inspector-companion");
     expect(action).toMatchObject({
       kind: "command",
-      label: "Document Map",
+      label: "Companion",
       restoreFocusOnClose: false,
       state: {
         kind: "disclosure",
         expanded: false,
         menuLabels: {
-          collapsed: "Show Document Map",
-          expanded: "Hide Document Map",
+          collapsed: "Show Companion",
+          expanded: "Hide Companion",
         },
       },
     });
@@ -1987,45 +1992,45 @@ describe("MediaPaneBody pane sizing", () => {
     );
     expect(
       latestPrimaryChrome()?.actions?.filter(
-        (candidate) => candidate.id === "document-map",
+        (candidate) => candidate.id === "resource-inspector-companion",
       ),
     ).toHaveLength(1);
     expect(
       latestPrimaryChrome()?.options?.some(
-        (option) => option.id === "document-map",
+        (option) => option.id === "resource-inspector-companion",
       ),
     ).toBe(false);
 
     await renderLatestToolbar();
     expect(
-      screen.queryByRole("button", { name: "Document Map" }),
+      screen.queryByRole("button", { name: "Companion" }),
     ).not.toBeInTheDocument();
 
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl });
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-contents",
+      "resource-contents",
       triggerEl,
     );
   });
 
-  it("opens readable transcript Document Map on Evidence", async () => {
+  it("opens a readable transcript Inspector on Evidence", async () => {
     testState.mediaKind = "video";
     const { onRequestSecondarySurface } = renderMediaPane();
 
-    const action = await getHeaderAction("document-map");
+    const action = await getHeaderAction("resource-inspector-companion");
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
 
     expect(onRequestSecondarySurface).toHaveBeenCalledWith(
       "pane-1",
-      "reader-evidence",
+      "resource-evidence",
       null,
     );
   });
 
-  it("publishes expanded Document Map state and closes the visible secondary", async () => {
+  it("publishes expanded Companion state and closes the visible Inspector", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
     const { onCloseSecondaryPane } = renderMediaPane({
@@ -2035,50 +2040,47 @@ describe("MediaPaneBody pane sizing", () => {
     let action: PaneHeaderAction | undefined;
     await waitFor(() => {
       action = latestPrimaryChrome()?.actions?.find(
-        (item) => item.id === "document-map",
+        (item) => item.id === "resource-inspector-companion",
       );
       expect(action?.state).toEqual({
         kind: "disclosure",
         expanded: true,
-        controls: "pane-pane-1-secondary-reader-tools",
+        controls: "pane-pane-1-secondary-resource-inspector",
         menuLabels: {
-          collapsed: "Show Document Map",
-          expanded: "Hide Document Map",
+          collapsed: "Show Companion",
+          expanded: "Hide Companion",
         },
       });
     });
-    if (!action) throw new Error("Expected Document Map action");
+    if (!action) throw new Error("Expected Companion action");
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
 
     expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
   });
 
-  it("omits a broken Document Map IDREF while a retained active surface is unpublished", async () => {
+  it("keeps Companion expanded while reconciling a retained unpublished surface", async () => {
     testState.mediaKind = "video";
     testState.canRead = true;
     const { onCloseSecondaryPane, onRequestSecondarySurface } = renderMediaPane({
       secondaryPane: readerContentsSecondaryPane(),
     });
 
-    const action = await getHeaderAction("document-map");
+    const action = await getHeaderAction("resource-inspector-companion");
     expect(action.state).toEqual({
       kind: "disclosure",
-      expanded: false,
+      expanded: true,
+      controls: "pane-pane-1-secondary-resource-inspector",
       menuLabels: {
-        collapsed: "Show Document Map",
-        expanded: "Hide Document Map",
+        collapsed: "Show Companion",
+        expanded: "Hide Companion",
       },
     });
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
 
-    expect(onCloseSecondaryPane).not.toHaveBeenCalled();
-    expect(onRequestSecondarySurface).toHaveBeenCalledWith(
-      "pane-1",
-      "reader-evidence",
-      null,
-    );
+    expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
+    expect(onRequestSecondarySurface).not.toHaveBeenCalled();
   });
 
   it("keeps the desktop secondary pane open after Contents selection", async () => {

@@ -32,14 +32,14 @@ describe("panePublications", () => {
       toolbar,
       actions: [{
         kind: "command",
-        id: "map",
-        label: "Document Map",
+        id: "companion",
+        label: "Companion",
         icon,
         state: {
           kind: "disclosure",
           expanded: true,
-          controls: "map-region",
-          menuLabels: { collapsed: "Show map", expanded: "Hide map" },
+          controls: "companion-region",
+          menuLabels: { collapsed: "Open Companion", expanded: "Close Companion" },
         },
         onSelect,
       }],
@@ -88,10 +88,10 @@ describe("panePublications", () => {
 
   it("normalizes and clones valid secondary publications", () => {
     const body = createElement("div");
-    const surface = { id: "reader-evidence" as const, body };
+    const surface = { id: "resource-evidence" as const, body };
     const publication: PaneSecondaryPublication = {
-      groupId: "reader-tools",
-      defaultSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-evidence",
       surfaces: [surface],
     };
 
@@ -107,33 +107,26 @@ describe("panePublications", () => {
 
     expect(() =>
       normalizePaneSecondaryPublication({
-        groupId: "reader-tools",
-        defaultSurfaceId: "reader-evidence",
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-evidence",
         surfaces: [],
       }),
     ).toThrow("at least one surface");
     expect(() =>
       normalizePaneSecondaryPublication({
-        groupId: "reader-tools",
-        defaultSurfaceId: "reader-evidence",
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-evidence",
         surfaces: [
-          { id: "reader-evidence", body },
-          { id: "reader-evidence", body },
+          { id: "resource-evidence", body },
+          { id: "resource-evidence", body },
         ],
       }),
     ).toThrow("Duplicate secondary surface publication");
     expect(() =>
       normalizePaneSecondaryPublication({
-        groupId: "reader-tools",
-        defaultSurfaceId: "conversation-context-refs",
-        surfaces: [{ id: "conversation-context-refs", body }],
-      }),
-    ).toThrow("does not belong to group");
-    expect(() =>
-      normalizePaneSecondaryPublication({
-        groupId: "reader-tools",
-        defaultSurfaceId: "reader-contents",
-        surfaces: [{ id: "reader-evidence", body }],
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-contents",
+        surfaces: [{ id: "resource-evidence", body }],
       }),
     ).toThrow("is not published");
   });
@@ -142,11 +135,11 @@ describe("panePublications", () => {
     const body = createElement("div");
     const otherBody = createElement("div");
     const publication: PaneSecondaryPublication = {
-      groupId: "reader-tools",
-      defaultSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-evidence",
       surfaces: [
-        { id: "reader-contents", body },
-        { id: "reader-evidence", body },
+        { id: "resource-contents", body },
+        { id: "resource-evidence", body },
       ],
     };
 
@@ -163,8 +156,8 @@ describe("panePublications", () => {
       arePaneSecondaryPublicationsEqual(publication, {
         ...publication,
         surfaces: [
-          { id: "reader-evidence", body },
-          { id: "reader-contents", body },
+          { id: "resource-evidence", body },
+          { id: "resource-contents", body },
         ],
       }),
     ).toBe(false);
@@ -172,36 +165,36 @@ describe("panePublications", () => {
       arePaneSecondaryPublicationsEqual(publication, {
         ...publication,
         surfaces: [
-          { id: "reader-contents", body: otherBody },
-          { id: "reader-evidence", body },
+          { id: "resource-contents", body: otherBody },
+          { id: "resource-evidence", body },
         ],
       }),
     ).toBe(false);
     expect(
       arePaneSecondaryPublicationsEqual(publication, {
-        groupId: "conversation-context",
-        defaultSurfaceId: "conversation-context-refs",
-        surfaces: [{ id: "conversation-context-refs", body }],
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-context",
+        surfaces: [{ id: "resource-context", body }],
       }),
     ).toBe(false);
     expect(
       arePaneSecondaryPublicationsEqual(publication, {
         ...publication,
-        defaultSurfaceId: "reader-contents",
+        defaultSurfaceId: "resource-contents",
       }),
     ).toBe(false);
     expect(
       arePaneSecondaryPublicationsEqual(publication, {
         ...publication,
-        surfaces: [{ id: "reader-evidence", body }],
+        surfaces: [{ id: "resource-evidence", body }],
       }),
     ).toBe(false);
     expect(
       arePaneSecondaryPublicationsEqual(publication, {
         ...publication,
         surfaces: [
-          { id: "reader-contents", body },
-          { id: "reader-evidence", body: otherBody },
+          { id: "resource-contents", body },
+          { id: "resource-evidence", body: otherBody },
         ],
       }),
     ).toBe(false);
@@ -210,21 +203,21 @@ describe("panePublications", () => {
   it("finds published secondary surfaces", () => {
     const body = createElement("div");
     const publication: PaneSecondaryPublication = {
-      groupId: "reader-tools",
-      defaultSurfaceId: "reader-evidence",
-      surfaces: [{ id: "reader-evidence", body }],
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-evidence",
+      surfaces: [{ id: "resource-evidence", body }],
     };
 
-    expect(getPublishedSecondarySurface(publication, "reader-evidence")).toEqual({
-      id: "reader-evidence",
+    expect(getPublishedSecondarySurface(publication, "resource-evidence")).toEqual({
+      id: "resource-evidence",
       body,
     });
-    expect(getPublishedSecondarySurface(null, "reader-evidence")).toBeNull();
+    expect(getPublishedSecondarySurface(null, "resource-evidence")).toBeNull();
     expect(getPublishedSecondarySurface(publication, null)).toBeNull();
     expect(getPublishedSecondarySurface(publication, undefined)).toBeNull();
-    expect(getPublishedSecondarySurface(publication, "reader-contents")).toBeNull();
-    expect(secondaryPublicationIncludesSurface(publication, "reader-evidence")).toBe(true);
-    expect(secondaryPublicationIncludesSurface(null, "reader-evidence")).toBe(false);
+    expect(getPublishedSecondarySurface(publication, "resource-contents")).toBeNull();
+    expect(secondaryPublicationIncludesSurface(publication, "resource-evidence")).toBe(true);
+    expect(secondaryPublicationIncludesSurface(null, "resource-evidence")).toBe(false);
   });
 
   it("normalizes fixed chrome width", () => {

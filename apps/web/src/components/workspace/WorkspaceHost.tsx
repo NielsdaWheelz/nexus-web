@@ -29,7 +29,6 @@ import {
   type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
 } from "@/lib/workspace/schema";
-import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 import {
   DEFAULT_PANE_RUNTIME_LAYOUT,
   isEmptyPaneRuntimeLayout,
@@ -42,6 +41,8 @@ import {
 import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
+  type WorkspaceDossierActivation,
+  type WorkspaceSecondaryActivation,
   type WorkspaceSecondarySizing,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -61,7 +62,6 @@ import {
   resolvePaneRouteIdentity,
 } from "@/lib/panes/paneIdentity";
 import {
-  resolvePaneRouteKey,
   resolveWorkspacePaneLabel,
   useWorkspaceHostStore,
   type WorkspacePaneLabelDescriptor,
@@ -113,9 +113,9 @@ interface PaneFixedChromePublicationRecord {
   publication: PaneFixedChromePublication;
 }
 
-interface PendingSecondarySurfaceRequest {
-  surfaceId: WorkspaceSecondarySurfaceId;
-  targetPaneId: string | null;
+interface SecondaryActivationDelivery {
+  routeKey: string;
+  activation: WorkspaceDossierActivation;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +205,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceItem,
   resourceStatus,
   secondaryPane,
+  secondaryActivation,
   navigatePane,
   openPane,
   canGoBack,
@@ -218,6 +219,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   requestSecondarySurface,
   closeSecondaryPane,
   setSecondarySurface,
+  acknowledgeSecondaryActivation,
   children,
 }: {
   paneId: string;
@@ -228,6 +230,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
+  secondaryActivation: WorkspaceDossierActivation | null;
   navigatePane: (
     paneId: string,
     href: string,
@@ -238,7 +241,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     openerPaneId?: string | null;
     activate?: boolean;
     labelHint?: string;
-    secondarySurfaceId?: WorkspaceSecondarySurfaceId;
+    secondaryActivation?: WorkspaceSecondaryActivation;
   }) => void;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -270,6 +273,11 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
+  acknowledgeSecondaryActivation: (
+    paneId: string,
+    routeKey: string,
+    activation: WorkspaceDossierActivation,
+  ) => void;
   children: React.ReactNode;
 }) {
   const handleReplacePane = useCallback(
@@ -281,14 +289,14 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     (
       h: string,
       labelHint?: string,
-      secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+      secondaryActivation?: WorkspaceSecondaryActivation,
     ) =>
       openPane({
         href: h,
         openerPaneId: paneId,
         activate: true,
         labelHint,
-        secondarySurfaceId,
+        secondaryActivation,
       }),
     [openPane, paneId]
   );
@@ -315,6 +323,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       resourceItem={resourceItem}
       resourceStatus={resourceStatus}
       secondaryPane={secondaryPane}
+      secondaryActivation={secondaryActivation}
       pathParams={route.params}
       canGoBack={canGoBack}
       canGoForward={canGoForward}
@@ -328,6 +337,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       onRequestSecondarySurface={requestSecondarySurface}
       onCloseSecondaryPane={closeSecondaryPane}
       onSetSecondarySurface={setSecondarySurface}
+      onAcknowledgeSecondaryActivation={acknowledgeSecondaryActivation}
     >
       <PaneSecondaryContext.Provider value={handlePaneSecondaryPublication}>
         <PaneFixedChromeContext.Provider value={handlePaneFixedChromePublication}>
@@ -540,26 +550,35 @@ function buildHostPane(input: {
   const { routeKey, route, label, labelState } = input.descriptor;
 
   const routeWidth = route.definition ?? resolvePaneRouteWidthContract(input.pane.href);
-  const hasVisibleSecondaryMismatch =
+  const hasVisibleSecondaryGroupMismatch =
     input.secondaryPane?.visibility === "visible" &&
     input.secondaryPublication &&
-    (
-      input.secondaryPane.groupId !== input.secondaryPublication.groupId ||
-      !secondaryPublicationIncludesSurface(
-        input.secondaryPublication,
-        input.secondaryPane.activeSurfaceId,
-      )
+    input.secondaryPane.groupId !== input.secondaryPublication.groupId;
+  const hasVisibleStaleSurface =
+    input.secondaryPane?.visibility === "visible" &&
+    input.secondaryPublication &&
+    !hasVisibleSecondaryGroupMismatch &&
+    !secondaryPublicationIncludesSurface(
+      input.secondaryPublication,
+      input.secondaryPane.activeSurfaceId,
     );
-  const runtimeSecondaryPane = hasVisibleSecondaryMismatch
+  const renderSecondaryPane =
+    hasVisibleStaleSurface && input.secondaryPane && input.secondaryPublication
+      ? {
+          ...input.secondaryPane,
+          activeSurfaceId: input.secondaryPublication.defaultSurfaceId,
+        }
+      : input.secondaryPane;
+  const runtimeSecondaryPane = hasVisibleSecondaryGroupMismatch
     ? null
-    : input.secondaryPane;
+    : renderSecondaryPane;
   const visibleSecondaryPane =
-    input.secondaryPane?.visibility === "visible" &&
+    renderSecondaryPane?.visibility === "visible" &&
     input.secondaryPublication &&
-    !hasVisibleSecondaryMismatch
-      ? input.secondaryPane
-      : input.secondaryPane?.visibility === "collapsed"
-        ? input.secondaryPane
+    !hasVisibleSecondaryGroupMismatch
+      ? renderSecondaryPane
+      : renderSecondaryPane?.visibility === "collapsed"
+        ? renderSecondaryPane
         : null;
 
   return {
@@ -616,8 +635,10 @@ function WorkspaceHost() {
   const {
     state,
     runtimeLabelByPaneId,
+    pendingSecondaryActivationByPaneId,
     activatePane,
     openPane,
+    acknowledgePendingSecondaryActivation,
     navigatePane,
     goBackPane,
     goForwardPane,
@@ -642,6 +663,8 @@ function WorkspaceHost() {
   >(() => new Map());
   const [fixedChromePublicationByPaneId, setFixedChromePublicationByPaneId] =
     useState<Map<string, PaneFixedChromePublicationRecord>>(() => new Map());
+  const [secondaryActivationByPaneId, setSecondaryActivationByPaneId] =
+    useState<Map<string, SecondaryActivationDelivery>>(() => new Map());
   const [resourceItemByRouteKey, setResourceItemByRouteKey] = useState<Map<string, ResourceItem>>(
     () => new Map(),
   );
@@ -655,9 +678,6 @@ function WorkspaceHost() {
   const layoutMode = isMobile ? "mobile" : "desktop";
   const paneWrapRefById = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingPaneChromeFocusPaneIdRef = useRef<string | null>(null);
-  const pendingSecondarySurfaceByRouteKeyRef = useRef<
-    Map<string, PendingSecondarySurfaceRequest>
-  >(new Map());
   const secondaryReturnFocusByPaneIdRef = useRef<Map<string, HTMLElement>>(
     new Map(),
   );
@@ -806,42 +826,6 @@ function WorkspaceHost() {
     [],
   );
 
-  const openPaneWithPendingSecondary = useCallback(
-    (input: {
-      href: string;
-      openerPaneId?: string | null;
-      activate?: boolean;
-      labelHint?: string;
-      secondarySurfaceId?: WorkspaceSecondarySurfaceId;
-    }) => {
-      const href = normalizeWorkspaceHref(input.href);
-      if (
-        href &&
-        input.secondarySurfaceId &&
-        paneRouteAllowsSecondarySurface(href, input.secondarySurfaceId)
-      ) {
-        const routeKey = resolvePaneRouteKey(href);
-        pendingSecondarySurfaceByRouteKeyRef.current.set(
-          routeKey,
-          {
-            surfaceId: input.secondarySurfaceId,
-            targetPaneId:
-              [...currentRouteKeyByPaneIdRef.current].find(
-                ([, currentRouteKey]) => currentRouteKey === routeKey,
-              )?.[0] ?? null,
-          },
-        );
-      }
-      openPane({
-        href: input.href,
-        openerPaneId: input.openerPaneId,
-        activate: input.activate,
-        labelHint: input.labelHint,
-      });
-    },
-    [openPane],
-  );
-
   useEffect(() => {
     setRuntimeLayoutByPaneId((current) =>
       pruneRuntimePaneLayoutRecords(current, currentRouteKeyByPaneId),
@@ -852,6 +836,17 @@ function WorkspaceHost() {
     setFixedChromePublicationByPaneId((current) =>
       prunePaneFixedChromePublicationRecords(current, currentRouteKeyByPaneId),
     );
+    setSecondaryActivationByPaneId((current) => {
+      let next: Map<string, SecondaryActivationDelivery> | null = null;
+      for (const [paneId, delivery] of current) {
+        if (currentRouteKeyByPaneId.get(paneId) === delivery.routeKey) {
+          continue;
+        }
+        next ??= new Map(current);
+        next.delete(paneId);
+      }
+      return next ?? current;
+    });
     const liveRouteKeys = new Set(currentRouteKeyByPaneId.values());
     setResourceItemByRouteKey((current) => {
       let next: Map<string, ResourceItem> | null = null;
@@ -959,44 +954,98 @@ function WorkspaceHost() {
     });
 
   useEffect(() => {
-    const pending = pendingSecondarySurfaceByRouteKeyRef.current;
-    if (pending.size === 0) {
+    if (pendingSecondaryActivationByPaneId.size === 0) {
       return;
     }
-    for (const [routeKey, request] of pending) {
-      const pane = request.targetPaneId
-        ? panes.find(
-            (item) =>
-              item.paneId === request.targetPaneId && item.routeKey === routeKey,
-          )
-        : panes.find((item) => item.routeKey === routeKey);
+    for (const [paneId, request] of pendingSecondaryActivationByPaneId) {
+      const pane = panes.find(
+        (item) => item.paneId === paneId && item.routeKey === request.routeKey,
+      );
       if (!pane) {
-        if (request.targetPaneId) {
-          pending.delete(routeKey);
-        }
+        acknowledgePendingSecondaryActivation(
+          paneId,
+          request.routeKey,
+          request.activation,
+        );
         continue;
       }
-      if (!paneRouteAllowsSecondarySurface(pane.href, request.surfaceId)) {
-        pending.delete(routeKey);
+      if (
+        !paneRouteAllowsSecondarySurface(
+          pane.href,
+          request.activation.surfaceId,
+        )
+      ) {
+        acknowledgePendingSecondaryActivation(
+          paneId,
+          request.routeKey,
+          request.activation,
+        );
         continue;
-      }
-      if (!request.targetPaneId) {
-        pending.set(routeKey, { ...request, targetPaneId: pane.paneId });
       }
       if (!pane.secondaryPublication) {
         continue;
       }
-      pending.delete(routeKey);
       if (
         secondaryPublicationIncludesSurface(
           pane.secondaryPublication,
-          request.surfaceId,
+          request.activation.surfaceId,
         )
       ) {
-        requestSecondarySurface(pane.paneId, request.surfaceId);
+        if (request.activation.kind !== "Surface") {
+          const activation = request.activation;
+          setSecondaryActivationByPaneId((current) => {
+            const next = new Map(current);
+            next.set(pane.paneId, {
+              routeKey: request.routeKey,
+              activation,
+            });
+            return next;
+          });
+        }
+        requestSecondarySurface(
+          pane.paneId,
+          request.activation.surfaceId,
+        );
       }
+      acknowledgePendingSecondaryActivation(
+        paneId,
+        request.routeKey,
+        request.activation,
+      );
     }
-  }, [panes, requestSecondarySurface]);
+  }, [
+    acknowledgePendingSecondaryActivation,
+    panes,
+    pendingSecondaryActivationByPaneId,
+    requestSecondarySurface,
+  ]);
+
+  const acknowledgeSecondaryActivation = useCallback(
+    (
+      paneId: string,
+      routeKey: string,
+      activation: WorkspaceDossierActivation,
+    ) => {
+      setSecondaryActivationByPaneId((current) => {
+        const delivered = current.get(paneId);
+        if (
+          delivered?.routeKey !== routeKey ||
+          delivered.activation.kind !== activation.kind ||
+          (
+            delivered.activation.kind === "DossierRevision" &&
+            activation.kind === "DossierRevision" &&
+            delivered.activation.revisionRef !== activation.revisionRef
+          )
+        ) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(paneId);
+        return next;
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (isMobile) {
@@ -1301,8 +1350,15 @@ function WorkspaceHost() {
                   resourceItem={pane.resourceItem}
                   resourceStatus={pane.resourceStatus}
                   secondaryPane={pane.runtimeSecondaryPane}
+                  secondaryActivation={
+                    secondaryActivationByPaneId.get(pane.paneId)?.routeKey ===
+                    pane.routeKey
+                      ? (secondaryActivationByPaneId.get(pane.paneId)
+                          ?.activation ?? null)
+                      : null
+                  }
                   navigatePane={navigatePane}
-                  openPane={openPaneWithPendingSecondary}
+                  openPane={openPane}
                   canGoBack={pane.navigation.canGoBack}
                   canGoForward={pane.navigation.canGoForward}
                   goBackPane={goBackPane}
@@ -1314,6 +1370,9 @@ function WorkspaceHost() {
                   requestSecondarySurface={handleRequestSecondarySurface}
                   closeSecondaryPane={handleCloseSecondaryPane}
                   setSecondarySurface={handleSetSecondarySurface}
+                  acknowledgeSecondaryActivation={
+                    acknowledgeSecondaryActivation
+                  }
                 >
                   {pane.route.id !== "unsupported" ? (
                     <PaneShell

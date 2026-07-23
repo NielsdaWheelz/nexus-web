@@ -100,10 +100,9 @@ class ReadResourceResult:
     citation_result_type: str | None = None
     citation_source_id: str | None = None
     error_code: str | None = None
-    library_ref: str | None = None
+    subject_ref: str | None = None
     artifact_ref: str | None = None
     revision_ref: str | None = None
-    revision_status: str | None = None
     revision_is_current: bool | None = None
 
     @property
@@ -121,14 +120,12 @@ class ReadResourceResult:
         n_attr = f' n="{n}"' if n is not None else ""
         kind_attr = f' kind="{_xml_attr(self.kind)}"' if self.kind else ""
         metadata_attrs = []
-        if self.library_ref is not None:
-            metadata_attrs.append(f'library_ref="{_xml_attr(self.library_ref)}"')
+        if self.subject_ref is not None:
+            metadata_attrs.append(f'subject_ref="{_xml_attr(self.subject_ref)}"')
         if self.artifact_ref is not None:
             metadata_attrs.append(f'artifact_ref="{_xml_attr(self.artifact_ref)}"')
         if self.revision_ref is not None:
             metadata_attrs.append(f'revision_ref="{_xml_attr(self.revision_ref)}"')
-        if self.revision_status is not None:
-            metadata_attrs.append(f'revision_status="{_xml_attr(self.revision_status)}"')
         if self.revision_is_current is not None:
             metadata_attrs.append(f'revision_is_current="{str(self.revision_is_current).lower()}"')
         metadata_attr = f" {' '.join(metadata_attrs)}" if metadata_attrs else ""
@@ -334,9 +331,9 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
     if scheme in ("artifact", "artifact_revision"):
         # Synthesis prose is NON-citable here: inline [N] markers reference the
         # revision's own citations, not a get_search_result chip.
-        library_ref = (
-            f"library:{loaded.related_library_id}"
-            if loaded.related_library_id is not None
+        subject_ref = (
+            f"{loaded.related_subject_scheme}:{loaded.related_subject_id}"
+            if loaded.related_subject_scheme is not None and loaded.related_subject_id is not None
             else None
         )
         artifact_ref = (
@@ -354,15 +351,14 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=loaded.body or "",
             kind=("artifact_revision" if scheme == "artifact_revision" else "artifact"),
-            library_ref=library_ref,
+            subject_ref=subject_ref,
             artifact_ref=artifact_ref,
             revision_ref=revision_ref,
-            revision_status=loaded.related_revision_status,
             revision_is_current=loaded.related_revision_is_current,
         )
     if scheme == "oracle_reading":
         # The reading's body is its question + motto/argument + interpretation. NON-citable
-        # (like the LI artifact): its per-phase passages are rendered as chips by the oracle
+        # (like a Dossier artifact): its per-phase passages are rendered as chips by the Oracle
         # pane from the reading's own citation edges, not a get_search_result chip.
         return ReadResourceResult(
             uri=loaded.uri,

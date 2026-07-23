@@ -24,7 +24,7 @@ from uuid import UUID
 import httpx
 from sqlalchemy.orm import Session
 
-from nexus.jobs.queue import JobExecutionContext, JobRow
+from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested
 from nexus.logging import get_logger
 from nexus.services.artifacts import engine
 from nexus.services.llm_execution import ExecutionRuntime
@@ -33,7 +33,9 @@ from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 logger = get_logger(__name__)
 
 
-def dossier_build(*, payload: Mapping[str, Any], context: JobExecutionContext) -> Mapping[str, Any]:
+def dossier_build(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | RescheduleRequested:
     """Run one dossier build attempt (job kind ``dossier_build``, A19).
 
     ``engine.run_build`` is replay-safe (a no-op once the build already has a
@@ -47,8 +49,12 @@ def dossier_build(*, payload: Mapping[str, Any], context: JobExecutionContext) -
 
     async def _handler(
         db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient
-    ) -> Mapping[str, Any]:
-        await engine.run_build(db, build_id=build_id, ctx=context, runtime=runtime)
+    ) -> Mapping[str, Any] | RescheduleRequested:
+        reschedule = await engine.run_build(
+            db, build_id=build_id, ctx=context, runtime=runtime
+        )
+        if reschedule is not None:
+            return reschedule
         return {"status": "ok", "build_id": str(build_id)}
 
     return run_llm_task(spec, _handler)

@@ -328,6 +328,7 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
     """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
     from nexus.services import library_entries, media_deletion
     from nexus.services.artifacts import engine as artifact_engine
+    from nexus.services.artifacts.dossier_types import AudienceUser
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
@@ -358,6 +359,36 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
             if locked_media_ids != media_ids:
                 raise TransactionRestart("library media lock set changed before deletion")
 
+            affected_user_ids = [
+                UUID(str(user_id))
+                for user_id in db.execute(
+                    text(
+                        "SELECT user_id FROM memberships "
+                        "WHERE library_id = :library_id ORDER BY user_id FOR UPDATE"
+                    ),
+                    {"library_id": library_id},
+                ).scalars()
+            ]
+            # This transaction composes Library-subject cleanup, zero-reference
+            # Media-subject cleanup, and every affected member's User-audience
+            # visibility sweep. Prelock their complete possible head union once
+            # in the Dossier owner's canonical order before any nested cleanup.
+            # Using all original Media members is intentionally conservative:
+            # the reference owner decides which are actually hard-deleted later.
+            artifact_engine.lock_cleanup_heads_in_order(
+                db,
+                subject_refs=[
+                    ResourceRef(scheme="library", id=library_id),
+                    *(
+                        ResourceRef(scheme="media", id=media_id)
+                        for media_id in media_ids
+                    ),
+                ],
+                audiences=[
+                    AudienceUser(user_id=affected_user_id)
+                    for affected_user_id in affected_user_ids
+                ],
+            )
             artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
 
             # The library itself is a graph resource: context refs and app_search
@@ -378,6 +409,11 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 paths = media_deletion.delete_document_media_if_unreferenced(db, media_id)
                 if paths:
                     storage_paths.extend(paths)
+            for affected_user_id in affected_user_ids:
+                artifact_engine.on_audience_visibility_changed(
+                    db,
+                    audience=AudienceUser(user_id=affected_user_id),
+                )
             return storage_paths
 
     storage_paths = retry_read_committed(db, "delete_library", attempt)
@@ -752,6 +788,13 @@ def remove_library_member(
         db.execute(
             text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
             {"lid": library_id, "uid": target_user_id},
+        )
+        from nexus.services.artifacts.dossier_types import AudienceUser
+        from nexus.services.artifacts.engine import on_audience_visibility_changed
+
+        on_audience_visibility_changed(
+            db,
+            audience=AudienceUser(user_id=target_user_id),
         )
 
 

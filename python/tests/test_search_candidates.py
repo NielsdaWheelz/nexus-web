@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
+    ArtifactBuild,
     ArtifactRevision,
     Contributor,
     ContributorCredit,
@@ -191,7 +192,7 @@ class TestReferenceProfile:
             "a zero-visible-credit contributor must stay hidden from the picker (D-8)"
         )
 
-    def test_library_dossier_head_requires_membership_and_ready_current_revision(
+    def test_library_artifact_head_requires_membership_and_current_revision(
         self, db_session: Session, bootstrapped_user, monkeypatch
     ) -> None:
         _no_embedding_calls(monkeypatch)
@@ -200,17 +201,29 @@ class TestReferenceProfile:
             id=uuid4(),
             subject_scheme="library",
             subject_id=library_id,
-            kind="library_dossier",
-            user_id=bootstrapped_user,
+            audience_scheme="library",
+            audience_id=str(library_id),
         )
         db_session.add(artifact)
         db_session.flush()
+        build = ArtifactBuild(
+            artifact_id=artifact.id,
+            requester_user_id=bootstrapped_user,
+            idempotency_key=f"search-{uuid4()}",
+        )
+        db_session.add(build)
+        db_session.flush()
         revision = ArtifactRevision(
             id=uuid4(),
-            artifact_id=artifact.id,
+            build_id=build.id,
             content_md="dossierword synthesis of the shelf",
-            covered_targets=[],
-            status="ready",
+            input_manifest={
+                "version": "v1",
+                "kind": "library",
+                "library_ref": f"library:{library_id}",
+                "media": [],
+            },
+            citation_owner_user_id=bootstrapped_user,
         )
         db_session.add(revision)
         db_session.flush()
@@ -233,8 +246,8 @@ class TestReferenceProfile:
             reference_candidates(db_session, outsider, q="dossierword", schemes={"artifact"}) == []
         )
 
-        # A non-ready current revision never matches.
-        revision.status = "building"
+        # A head without a current revision never matches.
+        artifact.current_revision_id = None
         db_session.flush()
         assert (
             reference_candidates(

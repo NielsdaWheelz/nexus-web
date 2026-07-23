@@ -6,21 +6,19 @@
  * lifecycle/messages/branch state), and renders the shared `ChatSurface` view
  * (which owns scroll). This adapter only holds pane chrome: typed section
  * publication, toolbar toggles and action menu, the
- * conversation-context secondary panes (context refs + forks), and the open-resource /
+ * Resource Inspector surfaces (context refs + forks + Dossier), and the open-resource /
  * reader-source navigation wiring.
  */
 
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GitBranch, Link2 } from "lucide-react";
 import DocentOverlay from "@/components/chat/DocentOverlay";
 import { useDocentWalk } from "@/lib/conversations/useDocentWalk";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import Button from "@/components/ui/Button";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatSurface from "@/components/chat/ChatSurface";
-import ConversationDistillate from "@/components/chat/ConversationDistillate";
 import ConversationForksPanel from "@/components/chat/ConversationForksPanel";
 import ConversationContextRefsSurface from "@/components/chat/ConversationContextRefsSurface";
 import { useConversation } from "@/components/chat/useConversation";
@@ -68,7 +66,7 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
-import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
 
 // ---------------------------------------------------------------------------
@@ -203,13 +201,9 @@ export default function Conversation() {
     router,
     isMobile,
   });
-  const requestSecondarySurface = paneRuntime?.requestSecondarySurface;
-  const closeSecondaryPane = paneRuntime?.closeSecondaryPane;
-  const secondaryPane = paneRuntime?.secondaryPane ?? null;
   const resourceRef = paneRuntime?.resourceRef ?? null;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
-  const distillateForceOpen = searchParams.get("distillate") === "1";
   const initialTargetMessageId = searchParams.get("message");
 
   // Sole launch-intent owner: strictly parse the pane-local hash into a reader
@@ -248,8 +242,6 @@ export default function Conversation() {
   const [readerAnnouncement, setReaderAnnouncement] = useState("");
 
   const [deleting, setDeleting] = useState(false);
-  const [distilling, setDistilling] = useState(false);
-  const [distillNonce, setDistillNonce] = useState(0);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
   // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
@@ -469,23 +461,6 @@ export default function Conversation() {
     }
   }, [convo.conversationId, router]);
 
-  const handleDistillConversation = useCallback(async () => {
-    const id = convo.conversationId;
-    if (!id) return;
-    setDistilling(true);
-    try {
-      await apiFetch(`/api/conversations/${id}/distill`, { method: "POST" });
-      setDistillNonce((n) => n + 1);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setDeleteError(
-        toFeedback(err, { fallback: "Failed to distill conversation" }),
-      );
-    } finally {
-      setDistilling(false);
-    }
-  }, [convo.conversationId]);
-
   // --------------------------------------------------------------------------
   // Reader-source activation + open cited resource
   // --------------------------------------------------------------------------
@@ -589,7 +564,7 @@ export default function Conversation() {
   }, [conversationId, pendingContext]);
 
   // --------------------------------------------------------------------------
-  // Pane chrome: action menu + conversation-context secondary panes
+  // Pane chrome: action menu + Resource Inspector surfaces
   // --------------------------------------------------------------------------
 
   const paneOptions = useMemo(
@@ -597,10 +572,6 @@ export default function Conversation() {
       convo.conversationId
         ? conversationResourceOptions({
             deleting,
-            distilling,
-            onDistill: () => {
-              void handleDistillConversation();
-            },
             onDelete: () => {
               void handleDeleteConversation();
             },
@@ -609,128 +580,64 @@ export default function Conversation() {
     [
       convo.conversationId,
       deleting,
-      distilling,
-      handleDistillConversation,
       handleDeleteConversation,
     ],
   );
-  const activeChatSurface =
-    secondaryPane?.visibility === "visible"
-      ? secondaryPane.activeSurfaceId
-      : null;
-  const contextRefsSurfaceActive =
-    activeChatSurface === "conversation-context-refs";
-  const forksSurfaceActive = activeChatSurface === "conversation-forks";
-
-  const toggleContextRefs = useCallback(() => {
-    if (contextRefsSurfaceActive) {
-      closeSecondaryPane?.();
-      return;
-    }
-    requestSecondarySurface?.("conversation-context-refs");
-  }, [closeSecondaryPane, contextRefsSurfaceActive, requestSecondarySurface]);
-
-  const toggleForks = useCallback(() => {
-    if (forksSurfaceActive) {
-      closeSecondaryPane?.();
-      return;
-    }
-    requestSecondarySurface?.("conversation-forks");
-  }, [closeSecondaryPane, forksSurfaceActive, requestSecondarySurface]);
-
-  const showForksToggle = Boolean(branch && convo.conversationId);
-
-  const chatToolbar = useMemo(
+  const contextBody = useMemo(
     () => (
-      <>
-        <Button
-          variant="ghost"
-          size="sm"
-          leadingIcon={<Link2 size={16} aria-hidden="true" />}
-          onClick={toggleContextRefs}
-          aria-pressed={contextRefsSurfaceActive}
-        >
-          Context
-        </Button>
-        {showForksToggle ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<GitBranch size={16} aria-hidden="true" />}
-            onClick={toggleForks}
-            aria-pressed={forksSurfaceActive}
-          >
-            Forks
-          </Button>
-        ) : null}
-      </>
+      <div className={styles.chatSecondaryBody}>
+        <ConversationContextRefsSurface
+          contextRefs={contextRefs}
+          removeContextRef={removeContextRef}
+          onOpenResource={handleOpenResource}
+        />
+      </div>
     ),
-    [
-      forksSurfaceActive,
-      contextRefsSurfaceActive,
-      showForksToggle,
-      toggleForks,
-      toggleContextRefs,
-    ],
+    [contextRefs, handleOpenResource, removeContextRef],
   );
-
-  usePanePrimaryChrome({ toolbar: chatToolbar, options: paneOptions });
-
-  const secondaryDescriptor = useMemo(
-    () => ({
-      groupId: "conversation-context" as const,
-      defaultSurfaceId: "conversation-context-refs" as const,
-      surfaces: [
-        {
-          id: "conversation-context-refs" as const,
-          body: (
-            <div className={styles.chatSecondaryBody}>
-              <ConversationContextRefsSurface
-                contextRefs={contextRefs}
-                removeContextRef={removeContextRef}
-                onOpenResource={handleOpenResource}
-              />
-            </div>
-          ),
-        },
-        ...(branch && convo.conversationId
-          ? [
-              {
-                id: "conversation-forks" as const,
-                body: (
-                  <div className={styles.chatSecondaryBody}>
-                    <ConversationForksPanel
-                      conversationId={convo.conversationId}
-                      forkOptionsByParentId={branch.forkOptionsByParentId}
-                      branchGraph={branch.branchGraph}
-                      switchableLeafIds={branch.switchableLeafIds}
-                      activeLeafMessageId={branch.activeLeafMessageId}
-                      selectedPathMessageIds={branch.selectedPathMessageIds}
-                      onSelectFork={handleSelectFork}
-                      onSelectGraphLeaf={(leafId) => {
-                        void branch.switchToLeaf(leafId, null);
-                      }}
-                      onForksChanged={() => {
-                        void branch.reload();
-                      }}
-                    />
-                  </div>
-                ),
-              },
-            ]
-          : []),
-      ],
-    }),
+  const forksBody = useMemo(
+    () => (
+      <div className={styles.chatSecondaryBody}>
+        {branch && convo.conversationId ? (
+          <ConversationForksPanel
+            conversationId={convo.conversationId}
+            forkOptionsByParentId={branch.forkOptionsByParentId}
+            branchGraph={branch.branchGraph}
+            switchableLeafIds={branch.switchableLeafIds}
+            activeLeafMessageId={branch.activeLeafMessageId}
+            selectedPathMessageIds={branch.selectedPathMessageIds}
+            onSelectFork={handleSelectFork}
+            onSelectGraphLeaf={(leafId) => {
+              void branch.switchToLeaf(leafId, null);
+            }}
+            onForksChanged={() => {
+              void branch.reload();
+            }}
+          />
+        ) : (
+          <FeedbackNotice
+            severity="neutral"
+            title="No forks in this conversation yet."
+          />
+        )}
+      </div>
+    ),
     [
       branch,
       convo.conversationId,
-      contextRefs,
-      handleOpenResource,
       handleSelectFork,
-      removeContextRef,
     ],
   );
-  usePaneSecondary(secondaryDescriptor);
+  const { companionAction } = useResourceInspector({
+    scheme: "conversation",
+    handle: convo.conversationId,
+    bodies: { linkedItems: contextBody, forks: forksBody },
+    onCitationActivate: handleReaderSourceActivate,
+  });
+  usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
+    options: paneOptions,
+  });
 
   // --------------------------------------------------------------------------
   // Render
@@ -791,14 +698,6 @@ export default function Conversation() {
             <FeedbackNotice feedback={readerSelectionDefect} />
           ) : null}
           {error ? <FeedbackNotice feedback={error} /> : null}
-          {convo.conversationId ? (
-            <ConversationDistillate
-              conversationId={convo.conversationId}
-              reloadNonce={distillNonce}
-              forceExpand={distillateForceOpen}
-              navigate={(href) => router.push(href)}
-            />
-          ) : null}
           <ChatSurface
             ref={convo.scrollRef}
             messages={convo.messages}

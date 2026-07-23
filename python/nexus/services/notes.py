@@ -174,6 +174,9 @@ def update_page(
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     ref = _page_ref(page.id)
+    from nexus.services.artifacts import engine as artifact_engine
+
+    artifact_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
         delete(DailyNotePage).where(
@@ -421,6 +424,9 @@ def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     if block is None or block.user_id != viewer_id:
         return
     ref = _note_ref(block.id)
+    from nexus.services.artifacts import engine as artifact_engine
+
+    artifact_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     # True owner deletion: passage anchors owned by this block (and edges/view
     # states touching them) die with it. Refresh/reindex never runs this.
@@ -516,6 +522,9 @@ def delete_highlight_note(
     if note_block_id is not None and existing.id != note_block_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     ref = _note_ref(existing.id)
+    from nexus.services.artifacts import engine as artifact_engine
+
+    artifact_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     # True owner deletion: passage anchors owned by this block die with it.
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)

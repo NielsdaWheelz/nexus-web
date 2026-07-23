@@ -31,9 +31,11 @@ from tests.factories import (
 )
 from tests.test_resource_graph_resolve import (
     _add_fragment,
-    _current_li_revision_id,
+    _add_library_revision,
+    _current_dossier_revision_id,
+    _make_conversation_artifact,
     _make_highlight_with_anchor,
-    _make_li_artifact,
+    _make_library_artifact,
     _make_note_block,
     _make_oracle_reading,
     _make_page,
@@ -236,7 +238,7 @@ def test_read_resource_library_uri_returns_scope_not_readable_error(
     assert result.error_code == "scope_not_readable"
 
 
-def test_read_resource_li_artifact_returns_current_revision_body(
+def test_read_resource_dossier_artifact_returns_current_revision_body(
     db_session: Session, bootstrapped_user: UUID
 ):
     from tests.factories import create_test_library
@@ -244,10 +246,10 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Readable Synthesis")
     content_md = "The whole synthesis prose with a citation [1]."
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session, library_id, bootstrapped_user, content_md=content_md
     )
-    revision_id = _current_li_revision_id(db_session, artifact_id)
+    revision_id = _current_dossier_revision_id(db_session, artifact_id)
     uri = f"artifact:{artifact_id}"
     _admit_reference(db_session, conversation_id, uri)
 
@@ -258,10 +260,9 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     assert not result.is_error, f"A member should read the artifact body; got {result}"
     assert result.kind == "artifact"
     assert result.body == content_md
-    assert result.library_ref == f"library:{library_id}"
+    assert result.subject_ref == f"library:{library_id}"
     assert result.artifact_ref == uri
     assert result.revision_ref == f"artifact_revision:{revision_id}"
-    assert result.revision_status == "ready"
     assert result.revision_is_current is True
     assert f'revision_ref="artifact_revision:{revision_id}"' in result.tool_output()
     # NON-citable: its [N] reference the revision's own citations, not a search chip.
@@ -269,7 +270,7 @@ def test_read_resource_li_artifact_returns_current_revision_body(
     assert result.citation_source_id is None
 
 
-def test_read_resource_li_revision_returns_exact_body_after_head_moves(
+def test_read_resource_dossier_revision_returns_exact_body_after_head_moves(
     db_session: Session, bootstrapped_user: UUID
 ):
     from sqlalchemy import text as sql_text
@@ -278,24 +279,19 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
 
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     library_id = create_test_library(db_session, bootstrapped_user, "Pinned Read")
-    artifact_id = _make_li_artifact(
+    artifact_id = _make_library_artifact(
         db_session,
         library_id,
         bootstrapped_user,
         content_md="Pinned synthesis body.",
     )
-    pinned_revision_id = _current_li_revision_id(db_session, artifact_id)
-    new_revision_id = db_session.execute(
-        sql_text(
-            """
-            INSERT INTO artifact_revisions (
-                artifact_id, content_md, covered_targets, status, promoted_at
-            )
-            VALUES (:artifact_id, 'New head body.', '[]'::jsonb, 'ready', now())
-            RETURNING id
-            """
-        ),
-        {"artifact_id": artifact_id},
+    pinned_revision_id = _current_dossier_revision_id(db_session, artifact_id)
+    new_revision_id = _add_library_revision(
+        db_session,
+        artifact_id=artifact_id,
+        library_id=library_id,
+        user_id=bootstrapped_user,
+        content_md="New head body.",
     ).scalar_one()
     db_session.execute(
         sql_text("UPDATE artifacts SET current_revision_id = :rev WHERE id = :artifact_id"),
@@ -313,10 +309,9 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
     assert not result.is_error, f"A member should read the exact revision body; got {result}"
     assert result.kind == "artifact_revision"
     assert result.body == "Pinned synthesis body."
-    assert result.library_ref == f"library:{library_id}"
+    assert result.subject_ref == f"library:{library_id}"
     assert result.artifact_ref == f"artifact:{artifact_id}"
     assert result.revision_ref == uri
-    assert result.revision_status == "ready"
     assert result.revision_is_current is False
     output = result.tool_output()
     assert f'artifact_ref="artifact:{artifact_id}"' in output
@@ -326,13 +321,15 @@ def test_read_resource_li_revision_returns_exact_body_after_head_moves(
     assert result.citation_source_id is None
 
 
-def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootstrapped_user: UUID):
+def test_read_resource_dossier_artifact_non_member_masked(
+    db_session: Session, bootstrapped_user: UUID
+):
     from tests.factories import create_test_library
 
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     other_library_id = create_test_library(db_session, other_user_id, "Closed Synthesis")
-    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
+    artifact_id = _make_library_artifact(db_session, other_library_id, other_user_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     uri = f"artifact:{artifact_id}"
     # Admit the reference so the gate passes; the loader masks the non-member.
@@ -346,14 +343,16 @@ def test_read_resource_li_artifact_non_member_masked(db_session: Session, bootst
     assert result.error_code == "missing"
 
 
-def test_read_resource_li_revision_non_member_masked(db_session: Session, bootstrapped_user: UUID):
+def test_read_resource_dossier_revision_non_member_masked(
+    db_session: Session, bootstrapped_user: UUID
+):
     from tests.factories import create_test_library
 
     other_user_id = uuid4()
     ensure_user_and_default_library(db_session, other_user_id)
     other_library_id = create_test_library(db_session, other_user_id, "Closed Revision")
-    artifact_id = _make_li_artifact(db_session, other_library_id, other_user_id)
-    revision_id = _current_li_revision_id(db_session, artifact_id)
+    artifact_id = _make_library_artifact(db_session, other_library_id, other_user_id)
+    revision_id = _current_dossier_revision_id(db_session, artifact_id)
     conversation_id = create_test_conversation(db_session, bootstrapped_user)
     uri = f"artifact_revision:{revision_id}"
     _admit_reference(db_session, conversation_id, uri)
@@ -362,8 +361,45 @@ def test_read_resource_li_revision_non_member_masked(db_session: Session, bootst
         db_session, viewer_id=bootstrapped_user, conversation_id=conversation_id, uri=uri
     )
 
-    assert result.is_error, "A non-member must not read another library's LI revision"
+    assert result.is_error, "A non-member must not read another library's Dossier revision"
     assert result.error_code == "missing"
+
+
+def test_read_resource_user_audience_dossier_fails_closed_when_subject_is_missing(
+    db_session: Session,
+    bootstrapped_user: UUID,
+):
+    subject_conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    artifact_id, revision_id = _make_conversation_artifact(
+        db_session,
+        subject_conversation_id,
+        bootstrapped_user,
+    )
+    reader_conversation_id = create_test_conversation(db_session, bootstrapped_user)
+    uris = [
+        f"artifact:{artifact_id}",
+        f"artifact_revision:{revision_id}",
+    ]
+    for uri in uris:
+        _admit_reference(db_session, reader_conversation_id, uri)
+    db_session.execute(
+        text("DELETE FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": subject_conversation_id},
+    )
+    db_session.commit()
+
+    results = [
+        execute_read_resource(
+            db_session,
+            viewer_id=bootstrapped_user,
+            conversation_id=reader_conversation_id,
+            uri=uri,
+        )
+        for uri in uris
+    ]
+
+    assert all(result.is_error for result in results)
+    assert [result.error_code for result in results] == ["missing", "missing"]
 
 
 def test_read_resource_oracle_reading_returns_body_non_citable(
@@ -387,7 +423,7 @@ def test_read_resource_oracle_reading_returns_body_non_citable(
     assert result.kind == "oracle_reading"
     assert "Question: What does the lamp reveal?" in result.body
     assert "I saw the dawn break over the wood." in result.body
-    # NON-citable, like the LI artifact: passage chips are rendered by the oracle pane.
+    # NON-citable, like a Dossier artifact: passage chips are rendered by the Oracle pane.
     assert result.citation_result_type is None
     assert result.citation_source_id is None
 

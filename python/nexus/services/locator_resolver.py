@@ -392,7 +392,7 @@ def locator_from_resolution(
     """Map a ``resolve_evidence_span`` resolution to a validated retrieval locator.
 
     The single owner of the resolver-kind -> ``RetrievalLocator`` mapping, shared
-    by ``search`` (content-chunk results) and the library-intelligence citation
+    by ``search`` (content-chunk results) and the Universal Dossier citation
     producer. Strictly behavior-preserving for search (extracted unchanged).
     """
     resolver = resolution.get("resolver")

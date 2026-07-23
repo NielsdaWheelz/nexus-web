@@ -11,6 +11,8 @@ import {
 } from "react";
 import Button from "@/components/ui/Button";
 import CollectionView from "@/components/collections/CollectionView";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import Input from "@/components/ui/Input";
 import Dialog from "@/components/ui/Dialog";
 import PaneSurface from "@/components/ui/PaneSurface";
@@ -35,12 +37,57 @@ import {
 import { createMutationIntent } from "@/lib/contributors/mutationIntent";
 import type { ContributorDetail } from "@/lib/contributors/types";
 import { presentContributorWork } from "@/lib/collections/presenters/presentContributorWork";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
-import { usePaneParam, useSetPaneLabel } from "@/lib/panes/paneRuntime";
+import {
+  type PaneResourceStatus,
+  usePaneParam,
+  usePaneRouter,
+  usePaneRuntime,
+  useSetPaneLabel,
+} from "@/lib/panes/paneRuntime";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import styles from "./page.module.css";
+
+type AuthorConnectionsResource =
+  | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
+  | { kind: "Loading" }
+  | { kind: "Unavailable" };
+
+function resolveAuthorConnectionsResource(
+  resourceRef: string | null,
+  resourceStatus: PaneResourceStatus,
+): AuthorConnectionsResource {
+  const parsed = resourceRef ? parseResourceRef(resourceRef) : null;
+  if (parsed?.scheme === "contributor") {
+    return {
+      kind: "Ready",
+      ref: { scheme: "contributor", id: parsed.id },
+    };
+  }
+  switch (resourceStatus) {
+    case "none":
+    case "pending":
+      return { kind: "Loading" };
+    case "ready":
+    case "missing":
+    case "unauthorized":
+    case "invalid":
+    case "error":
+      return { kind: "Unavailable" };
+    default: {
+      const exhaustive: never = resourceStatus;
+      return exhaustive;
+    }
+  }
+}
 
 export default function AuthorPaneBody() {
   const handle = usePaneParam("handle");
+  const router = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
+  const openInNewPane = paneRuntime?.openInNewPane;
   const initialAuthor = useResource<AuthorPaneSeed, { handle: string }>({
     descriptor: contributorResource,
     params: handle ? { handle } : null,
@@ -94,9 +141,56 @@ export default function AuthorPaneBody() {
     () => data?.works.map(presentContributorWork) ?? [],
     [data?.works],
   );
+  const openRoute = useCallback(
+    (
+      href: string,
+      inNewPane: boolean,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => {
+      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
+      else router.push(href);
+    },
+    [openInNewPane, router],
+  );
+  const canonicalHandle = data?.detail.handle ?? null;
+  const connectionsComposerController = useConnectionsComposerController({
+    scheme: "contributor",
+    id: canonicalHandle ?? handle ?? "",
+  });
+  const connectionsResource = useMemo(
+    () =>
+      resolveAuthorConnectionsResource(
+        paneRuntime?.resourceRef ?? null,
+        paneRuntime?.resourceStatus ?? "none",
+      ),
+    [paneRuntime?.resourceRef, paneRuntime?.resourceStatus],
+  );
+  const connectionsBody = useMemo(
+    () =>
+      connectionsResource.kind === "Ready" ? (
+        <ConnectionsSurface
+          resourceRef={connectionsResource.ref}
+          composerController={connectionsComposerController}
+          onOpenRoute={openRoute}
+        />
+      ) : connectionsResource.kind === "Loading" ? (
+        <FeedbackNotice severity="info" title="Loading connections…" />
+      ) : (
+        <FeedbackNotice severity="neutral" title="Connections unavailable">
+          This author’s resource identity could not be resolved.
+        </FeedbackNotice>
+      ),
+    [connectionsComposerController, connectionsResource, openRoute],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "contributor",
+    handle: canonicalHandle,
+    bodies: { linkedItems: connectionsBody },
+  });
   // Render no folio when there are no works (content spec M3); a zero count
   // would render the banned "0 works".
   usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
     header: {
       kind: "section",
       folio:

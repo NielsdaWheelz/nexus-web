@@ -62,6 +62,7 @@ import {
   getSecondaryGroupForSurface,
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
+  type WorkspaceSecondaryActivation,
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import { useWorkspaceSession } from "./useWorkspaceSession";
@@ -661,6 +662,11 @@ export function resolveWorkspacePaneLabel(
   };
 }
 
+export interface WorkspacePendingSecondaryActivation {
+  routeKey: string;
+  activation: WorkspaceSecondaryActivation;
+}
+
 // ---------------------------------------------------------------------------
 // Store context + provider
 // ---------------------------------------------------------------------------
@@ -669,6 +675,10 @@ interface WorkspaceStoreValue {
   state: WorkspaceState;
   workspacePrimaryMetrics: WorkspacePrimaryMetrics;
   runtimeLabelByPaneId: ReadonlyMap<string, WorkspacePaneLabelRecord>;
+  pendingSecondaryActivationByPaneId: ReadonlyMap<
+    string,
+    WorkspacePendingSecondaryActivation
+  >;
   activatePane: (paneId: string) => void;
   openPane: (input: {
     href: string;
@@ -676,7 +686,13 @@ interface WorkspaceStoreValue {
     activate?: boolean;
     replace?: boolean;
     labelHint?: string;
+    secondaryActivation?: WorkspaceSecondaryActivation;
   }) => void;
+  acknowledgePendingSecondaryActivation: (
+    paneId: string,
+    routeKey: string,
+    activation: WorkspaceSecondaryActivation,
+  ) => void;
   navigatePane: (
     paneId: string,
     href: string,
@@ -732,6 +748,12 @@ export function WorkspaceStoreProvider({
   const [runtimeLabelByPaneId, setRuntimeLabelByPaneId] = useState<
     Map<string, WorkspacePaneLabelRecord>
   >(() => new Map());
+  const [
+    pendingSecondaryActivationByPaneId,
+    setPendingSecondaryActivationByPaneId,
+  ] = useState<Map<string, WorkspacePendingSecondaryActivation>>(
+    () => new Map(),
+  );
   const readyRef = useRef(false);
   const hashFoldedRef = useRef(false);
   const lastFoldedLocationHashHrefRef = useRef<string | null>(null);
@@ -766,6 +788,33 @@ export function WorkspaceStoreProvider({
       });
     },
     []
+  );
+
+  const publishPendingSecondaryActivation = useCallback(
+    (
+      paneId: string,
+      href: string,
+      activation: WorkspaceSecondaryActivation | undefined,
+    ) => {
+      if (
+        !activation ||
+        !paneRouteAllowsSecondaryGroup(
+          href,
+          getSecondaryGroupForSurface(activation.surfaceId),
+        )
+      ) {
+        return;
+      }
+      setPendingSecondaryActivationByPaneId((current) => {
+        const next = new Map(current);
+        next.set(paneId, {
+          routeKey: resolvePaneRouteKey(href),
+          activation,
+        });
+        return next;
+      });
+    },
+    [],
   );
 
   // --- Mark mounted; fold in a client-only URL hash ---
@@ -866,6 +915,11 @@ export function WorkspaceStoreProvider({
         pane,
       );
       publishPaneLabelHint(targetPaneId, href, detail.labelHint);
+      publishPendingSecondaryActivation(
+        targetPaneId,
+        href,
+        detail.secondaryActivation,
+      );
       dispatch({
         type: "open_pane",
         pane,
@@ -899,7 +953,11 @@ export function WorkspaceStoreProvider({
       window.removeEventListener("message", handleWindowMessage);
       setPaneGraphReady(false);
     };
-  }, [publishPaneLabelHint, workspacePrimaryMetrics]);
+  }, [
+    publishPaneLabelHint,
+    publishPendingSecondaryActivation,
+    workspacePrimaryMetrics,
+  ]);
 
   // --- Prune stale label caches when panes change ---
   useEffect(() => {
@@ -924,6 +982,18 @@ export function WorkspaceStoreProvider({
       return changed || next.size !== prev.size ? next : prev;
     });
 
+    setPendingSecondaryActivationByPaneId((current) => {
+      let changed = false;
+      const next = new Map<string, WorkspacePendingSecondaryActivation>();
+      for (const [paneId, request] of current) {
+        if (request.routeKey !== currentRouteKeyByPaneId.get(paneId)) {
+          changed = true;
+          continue;
+        }
+        next.set(paneId, request);
+      }
+      return changed ? next : current;
+    });
   }, [primaryPanes]);
 
   // --- Apply label hints to the live pane after open-pane de-duplication ---
@@ -990,6 +1060,7 @@ export function WorkspaceStoreProvider({
       activate?: boolean;
       replace?: boolean;
       labelHint?: string;
+      secondaryActivation?: WorkspaceSecondaryActivation;
     }) => {
       const href = normalizeWorkspaceHref(input.href);
       if (!href) return;
@@ -999,6 +1070,11 @@ export function WorkspaceStoreProvider({
         pane,
       );
       publishPaneLabelHint(targetPaneId, href, input.labelHint);
+      publishPendingSecondaryActivation(
+        targetPaneId,
+        href,
+        input.secondaryActivation,
+      );
       dispatch({
         type: "open_pane",
         pane,
@@ -1007,7 +1083,39 @@ export function WorkspaceStoreProvider({
         mode: input.replace ? "replace" : "push",
       });
     },
-    [publishPaneLabelHint, workspacePrimaryMetrics]
+    [
+      publishPaneLabelHint,
+      publishPendingSecondaryActivation,
+      workspacePrimaryMetrics,
+    ]
+  );
+
+  const acknowledgePendingSecondaryActivation = useCallback(
+    (
+      paneId: string,
+      routeKey: string,
+      activation: WorkspaceSecondaryActivation,
+    ) => {
+      setPendingSecondaryActivationByPaneId((current) => {
+        const pending = current.get(paneId);
+        if (
+          pending?.routeKey !== routeKey ||
+          pending.activation.kind !== activation.kind ||
+          pending.activation.surfaceId !== activation.surfaceId ||
+          (
+            pending.activation.kind === "DossierRevision" &&
+            activation.kind === "DossierRevision" &&
+            pending.activation.revisionRef !== activation.revisionRef
+          )
+        ) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(paneId);
+        return next;
+      });
+    },
+    [],
   );
 
   const navigatePane = useCallback(
@@ -1125,8 +1233,10 @@ export function WorkspaceStoreProvider({
       state,
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
+      pendingSecondaryActivationByPaneId,
       activatePane,
       openPane,
+      acknowledgePendingSecondaryActivation,
       navigatePane,
       goBackPane,
       goForwardPane,
@@ -1145,8 +1255,10 @@ export function WorkspaceStoreProvider({
       state,
       workspacePrimaryMetrics,
       runtimeLabelByPaneId,
+      pendingSecondaryActivationByPaneId,
       activatePane,
       openPane,
+      acknowledgePendingSecondaryActivation,
       navigatePane,
       goBackPane,
       goForwardPane,

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
+from nexus.api.routes import stream as stream_routes
 from nexus.api.routes._sse import (
     STREAM_GONE_CODES,
     format_sse_event,
@@ -13,6 +15,7 @@ from nexus.api.routes._sse import (
     tail_snapshot_stream,
 )
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.services import run_kit
 
 pytestmark = pytest.mark.unit
 
@@ -51,9 +54,10 @@ def test_format_sse_event_without_seq_omits_id_line():
     assert "id:" not in out
 
 
-def test_stream_gone_codes_cover_both_not_found_codes():
+def test_stream_gone_codes_cover_all_stream_not_found_codes():
     assert ApiErrorCode.E_NOT_FOUND in STREAM_GONE_CODES
     assert ApiErrorCode.E_MEDIA_NOT_FOUND in STREAM_GONE_CODES
+    assert ApiErrorCode.E_DOSSIER_NOT_FOUND in STREAM_GONE_CODES
 
 
 @pytest.mark.asyncio
@@ -108,6 +112,98 @@ async def test_cursor_closes_cleanly_when_read_returns_terminal():
     ]
     assert chunks == []
     assert listener.closed_reason == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_cursor_reauthorizes_before_terminal_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_checks = 0
+    event_reads = 0
+    listener = _FakeListener(ticks=1)
+
+    class _SessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    def assert_viewer(_db, _viewer_id, _entity_id) -> None:
+        nonlocal auth_checks
+        auth_checks += 1
+        if auth_checks > 1:
+            raise ApiError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "revoked")
+
+    def read_after(_db, _viewer_id, _entity_id, _after):
+        nonlocal event_reads
+        event_reads += 1
+        return (
+            [
+                SimpleNamespace(
+                    seq=1,
+                    event_type="Succeeded",
+                    payload={"artifact_revision_ref": "artifact_revision:r1"},
+                )
+            ],
+            True,
+        )
+
+    async def open_listener(_channel: str, _key: str):
+        return listener
+
+    monkeypatch.setattr(
+        stream_routes,
+        "get_session_factory",
+        lambda: lambda: _SessionContext(),
+    )
+    monkeypatch.setattr(stream_routes, "open_sse_listener", open_listener)
+    response = await stream_routes.make_cursor_stream_response(
+        stream_routes.CursorStreamKind(
+            run_kind=run_kit.RunStreamKind.ArtifactBuild,
+            assert_viewer=assert_viewer,
+            read_after=read_after,
+        ),
+        request=_FakeRequest(),
+        entity_id=uuid4(),
+        viewer_id=uuid4(),
+        after=0,
+    )
+
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert auth_checks == 2
+    assert event_reads == 0
+    assert chunks == []
+    assert listener.closed_reason == "gone"
+
+
+@pytest.mark.asyncio
+async def test_cursor_emits_changed_unsequenced_execution_advisories():
+    advisories = iter(
+        [
+            ("ExecutionAdvisory", {"phase": "Queued"}),
+            ("ExecutionAdvisory", {"phase": "Queued"}),
+            ("ExecutionAdvisory", {"phase": "Suspended"}),
+        ]
+    )
+    listener = _FakeListener(ticks=3)
+    chunks = [
+        chunk
+        async for chunk in tail_cursor_stream(
+            request=_FakeRequest(),
+            listener=listener,
+            after=0,
+            read_after=lambda _cursor: ([], False),
+            read_advisory=lambda: next(advisories),
+        )
+    ]
+
+    assert chunks == [
+        'event: ExecutionAdvisory\ndata: {"phase":"Queued"}\n\n',
+        'event: ExecutionAdvisory\ndata: {"phase":"Suspended"}\n\n',
+    ]
+    assert all("id:" not in chunk for chunk in chunks)
 
 
 @pytest.mark.asyncio

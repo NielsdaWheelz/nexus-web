@@ -164,13 +164,8 @@ def _delete_oracle_corpus_for_libraries(
         session.execute(text("DELETE FROM media WHERE id = :media_id"), mp)
 
 
-def _delete_library_intelligence(session: Session, artifact_filter: str, value: Any) -> None:
-    """Tear down the LI head + revisions (non-cascading, migration 0141) for cleanup.
-
-    ``artifact_filter`` is a WHERE clause over ``artifacts``
-    (e.g. ``WHERE library_id = :value``). Order: null the circular pointer, drop
-    graph refs, revision children (events), then revisions, then the head.
-    """
+def _delete_dossiers(session: Session, artifact_filter: str, value: Any) -> None:
+    """Tear down universal Dossier heads and build-owned history for test cleanup."""
     artifact_ids = [
         row[0]
         for row in session.execute(
@@ -180,13 +175,24 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
     ]
     if not artifact_ids:
         return
-    revision_ids = [
+    build_ids = [
         row[0]
         for row in session.execute(
-            text("SELECT id FROM artifact_revisions WHERE artifact_id = ANY(:artifact_ids)"),
+            text("SELECT id FROM artifact_builds WHERE artifact_id = ANY(:artifact_ids)"),
             {"artifact_ids": artifact_ids},
         )
     ]
+    revision_ids = (
+        [
+            row[0]
+            for row in session.execute(
+                text("SELECT id FROM artifact_revisions WHERE build_id = ANY(:build_ids)"),
+                {"build_ids": build_ids},
+            )
+        ]
+        if build_ids
+        else []
+    )
     for scheme, ids in (
         ("artifact_revision", revision_ids),
         ("artifact", artifact_ids),
@@ -205,15 +211,27 @@ def _delete_library_intelligence(session: Session, artifact_filter: str, value: 
         text("UPDATE artifacts SET current_revision_id = NULL WHERE id = ANY(:artifact_ids)"),
         {"artifact_ids": artifact_ids},
     )
-    if revision_ids:
+    if build_ids:
         session.execute(
-            text("DELETE FROM artifact_revision_events WHERE revision_id = ANY(:revision_ids)"),
-            {"revision_ids": revision_ids},
+            text("DELETE FROM artifact_build_events WHERE build_id = ANY(:build_ids)"),
+            {"build_ids": build_ids},
         )
-    session.execute(
-        text("DELETE FROM artifact_revisions WHERE artifact_id = ANY(:artifact_ids)"),
-        {"artifact_ids": artifact_ids},
-    )
+        session.execute(
+            text("DELETE FROM artifact_build_failures WHERE build_id = ANY(:build_ids)"),
+            {"build_ids": build_ids},
+        )
+        session.execute(
+            text("DELETE FROM artifact_build_cancellations WHERE build_id = ANY(:build_ids)"),
+            {"build_ids": build_ids},
+        )
+        session.execute(
+            text("DELETE FROM artifact_revisions WHERE build_id = ANY(:build_ids)"),
+            {"build_ids": build_ids},
+        )
+        session.execute(
+            text("DELETE FROM artifact_builds WHERE id = ANY(:build_ids)"),
+            {"build_ids": build_ids},
+        )
     session.execute(
         text("DELETE FROM artifacts WHERE id = ANY(:artifact_ids)"),
         {"artifact_ids": artifact_ids},
@@ -699,18 +717,19 @@ class DirectSessionManager:
                         library_filter="SELECT id FROM libraries WHERE owner_user_id = :value",
                         params={"value": value},
                     )
-                    # library_intelligence head/revisions are non-cascading (migration
-                    # 0141) and the head FKs both library_id and user_id; tear them down
-                    # before the user (and its cascaded libraries).
-                    _delete_library_intelligence(
+                    # Dossier heads are FK-less polymorphic subjects/audiences.
+                    _delete_dossiers(
                         session,
-                        "WHERE user_id = :value "
+                        "WHERE (audience_scheme = 'user' AND audience_id = CAST(:value AS text)) "
                         "OR (subject_scheme = 'library' AND subject_id IN "
                         "(SELECT id FROM libraries WHERE owner_user_id = :value))",
                         value,
                     )
 
                 if table == "media" and column == "id":
+                    _delete_dossiers(
+                        session, "WHERE subject_scheme = 'media' AND subject_id = :value", value
+                    )
                     session.execute(
                         text(
                             "UPDATE message_retrievals SET media_id = NULL WHERE media_id = :value"
@@ -810,6 +829,9 @@ class DirectSessionManager:
                     )
 
                 if table == "podcasts" and column == "id":
+                    _delete_dossiers(
+                        session, "WHERE subject_scheme = 'podcast' AND subject_id = :value", value
+                    )
                     session.execute(
                         text("DELETE FROM contributor_credits WHERE podcast_id = :value"),
                         {"value": value},
@@ -835,10 +857,7 @@ class DirectSessionManager:
                         text("DELETE FROM library_entries WHERE library_id = :value"),
                         {"value": value},
                     )
-                    # library_intelligence head/revisions are non-cascading (migration
-                    # 0141): null the circular pointer, then drop revision children, then
-                    # revisions + the head, before the library row.
-                    _delete_library_intelligence(
+                    _delete_dossiers(
                         session, "WHERE subject_scheme = 'library' AND subject_id = :value", value
                     )
 
@@ -858,7 +877,7 @@ class DirectSessionManager:
                         ),
                         {"value": value},
                     )
-                    _delete_library_intelligence(
+                    _delete_dossiers(
                         session,
                         "WHERE subject_scheme = 'library' AND subject_id IN "
                         "(SELECT id FROM libraries WHERE owner_user_id = :value)",
@@ -866,6 +885,11 @@ class DirectSessionManager:
                     )
 
                 if table == "conversations" and column == "id":
+                    _delete_dossiers(
+                        session,
+                        "WHERE subject_scheme = 'conversation' AND subject_id = :value",
+                        value,
+                    )
                     # Context edges (source conversation:<id>), citation edges
                     # (source message:<one of its messages>), and any edges
                     # targeting the conversation. No FKs — explicit cleanup.
@@ -1305,6 +1329,19 @@ class DirectSessionManager:
                             """
                         ),
                         {"value": value},
+                    )
+
+                dossier_subject_scheme = {
+                    "contributors": "contributor",
+                    "pages": "page",
+                    "note_blocks": "note_block",
+                }.get(table)
+                if column == "id" and dossier_subject_scheme is not None:
+                    _delete_dossiers(
+                        session,
+                        f"WHERE subject_scheme = '{dossier_subject_scheme}' "
+                        "AND subject_id = :value",
+                        value,
                     )
 
                 session.execute(

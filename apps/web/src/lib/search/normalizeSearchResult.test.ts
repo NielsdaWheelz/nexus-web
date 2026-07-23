@@ -494,42 +494,44 @@ describe("normalizeSearchResult happy-path adaptation", () => {
   });
 });
 
-describe("normalizeSearchResult artifact (distillate) handling", () => {
+describe("normalizeSearchResult artifact handling", () => {
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+  const revisionId = "22222222-2222-4222-8222-222222222222";
+
   function artifactRow(overrides: Record<string, unknown> = {}) {
     return {
       type: "artifact",
-      id: "artifact-1",
+      id: conversationId,
       score: 0.81,
-      snippet: "distilled <b>synthesis</b>",
-      title: "Memory Distillate",
-      source_label: "distillate",
+      snippet: "generated <b>synthesis</b>",
+      title: "Resource Dossier",
+      source_label: "artifact",
       media_id: null,
       media_kind: null,
-      activationHref: "/artifacts/artifact-1",
-      revision_id: "rev-3",
-      subject_ref: "media:media-1",
-      kind: "library_intelligence",
-      context_ref: { type: "artifact", id: "artifact-1" },
+      resource_ref: `artifact_revision:${revisionId}`,
+      activationHref: `/conversations/${conversationId}`,
+      revision_id: revisionId,
+      subject_ref: `conversation:${conversationId}`,
+      context_ref: { type: "artifact", id: conversationId },
       ...overrides,
     };
   }
 
-  it("adapts an artifact row as a distillate result and carries its identity", () => {
+  it("adapts an artifact row and carries its identity", () => {
     const row = adapt(artifactRow());
     expect(row).toMatchObject({
-      key: "artifact-artifact-1",
+      key: `artifact-${conversationId}`,
       type: "artifact",
-      typeLabel: "distillate",
-      primaryText: "Memory Distillate",
-      sourceMeta: "distillate",
-      resourceRef: "artifact:artifact-1",
-      contextRef: { type: "artifact", id: "artifact-1", evidenceSpanIds: [] },
+      typeLabel: "artifact",
+      primaryText: "Resource Dossier",
+      sourceMeta: "artifact",
+      resourceRef: `artifact_revision:${revisionId}`,
+      contextRef: { type: "artifact", id: conversationId, evidenceSpanIds: [] },
     });
     expect(normalize(artifactRow())).toMatchObject({
       type: "artifact",
-      revision_id: "rev-3",
-      subject_ref: "media:media-1",
-      kind: "library_intelligence",
+      revision_id: revisionId,
+      subject_ref: `conversation:${conversationId}`,
     });
   });
 
@@ -542,13 +544,20 @@ describe("normalizeSearchResult artifact (distillate) handling", () => {
     expect(normalize(rest)).toBeNull();
   });
 
-  it("rejects an artifact row with a non-string kind", () => {
-    expect(normalize(artifactRow({ kind: null }))).toBeNull();
-  });
-
   it("rejects an artifact row whose context_ref type drifts from artifact", () => {
     expect(
-      normalize(artifactRow({ context_ref: { type: "page", id: "artifact-1" } })),
+      normalize(artifactRow({ context_ref: { type: "page", id: conversationId } })),
+    ).toBeNull();
+  });
+
+  it("rejects an artifact row whose activation identity is not the exact revision", () => {
+    expect(
+      normalize(
+        artifactRow({
+          resource_ref:
+            "artifact_revision:33333333-3333-4333-8333-333333333333",
+        }),
+      ),
     ).toBeNull();
   });
 });

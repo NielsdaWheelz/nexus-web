@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { ResourceCache, ResourceCacheContext } from "@/lib/api/resourceCache";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
-import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 
 // preloadPane dynamically imports the real pane body (ProseMirror, the reader stack, …);
@@ -23,7 +23,7 @@ type NavigatePane = (
 type OpenInNewPane = (
   href: string,
   labelHint?: string,
-  secondarySurfaceId?: WorkspaceSecondarySurfaceId,
+  secondaryActivation?: WorkspaceSecondaryActivation,
 ) => void;
 
 function renderBoundary(input: {

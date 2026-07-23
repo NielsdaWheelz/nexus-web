@@ -14,7 +14,7 @@ const locator = {
 // reader jump (real media_id + RetrievalLocator). The backend is the sole
 // CitationOut producer and reconstructs this from the target's own anchoring
 // (resource_graph.resolve.reader_target_for_citation_target), uniformly for
-// chat / Oracle / Library Intelligence.
+// chat / Oracle / Universal Dossiers.
 function mediaCitation(overrides: Partial<CitationOut> = {}): CitationOut {
   return {
     ordinal: 1,

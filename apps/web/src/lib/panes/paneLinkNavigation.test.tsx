@@ -195,6 +195,35 @@ describe("paneLinkNavigation", () => {
     expect(paneRuntime.router.push).not.toHaveBeenCalled();
   });
 
+  it("opens an exact Dossier revision through the canonical subject pane command", () => {
+    const event = click();
+    const paneRuntime = runtime();
+    const subjectHref =
+      "/conversations/22222222-2222-4222-8222-222222222222";
+    const revisionRef =
+      "artifact_revision:33333333-3333-4333-8333-333333333333";
+    const element = anchor(subjectHref, {
+      "data-pane-label-hint": "Conversation Dossier",
+      "data-pane-secondary-surface": "resource-dossier",
+      "data-pane-secondary-activation": "DossierRevision",
+      "data-pane-dossier-revision": revisionRef,
+    });
+
+    handlePaneInternalAnchorClick(event, paneRuntime, element);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(paneRuntime.openInNewPane).toHaveBeenCalledWith(
+      subjectHref,
+      "Conversation Dossier",
+      {
+        kind: "DossierRevision",
+        surfaceId: "resource-dossier",
+        revisionRef,
+      },
+    );
+    expect(paneRuntime.router.push).not.toHaveBeenCalled();
+  });
+
   it("leaves native and unsupported anchor clicks alone", () => {
     const cases = [
       anchor("/authors/ursula-le-guin", { "aria-disabled": "true" }),

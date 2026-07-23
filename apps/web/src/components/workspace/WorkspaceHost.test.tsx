@@ -22,6 +22,7 @@ import type {
 } from "@/lib/panes/panePublications";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import type {
+  WorkspaceSecondaryActivation,
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
@@ -72,7 +73,7 @@ const hostMocks = vi.hoisted(() => ({
   openInNewPaneRequest: null as {
     href: string;
     labelHint?: string;
-    surfaceId: WorkspaceSecondarySurfaceId;
+    activation: WorkspaceSecondaryActivation;
   } | null,
   resolveResourceLocators: vi.fn<
     (locators: readonly unknown[]) => Promise<ResourceLocatorResolution[]>
@@ -121,8 +122,10 @@ const hostMocks = vi.hoisted(() => ({
       primaryDefaultWidthPx: 684,
     },
     runtimeLabelByPaneId: new Map(),
+    pendingSecondaryActivationByPaneId: new Map(),
     activatePane: vi.fn(),
     openPane: vi.fn(),
+    acknowledgePendingSecondaryActivation: vi.fn(),
     navigatePane: vi.fn(),
     goBackPane: vi.fn(),
     goForwardPane: vi.fn(),
@@ -263,7 +266,7 @@ function TestPaneBody() {
     paneRuntime.openInNewPane(
       request.href,
       request.labelHint,
-      request.surfaceId,
+      request.activation,
     );
   }, [paneRuntime]);
   return (
@@ -274,6 +277,14 @@ function TestPaneBody() {
       data-runtime-secondary-id={paneRuntime?.secondaryPane?.id ?? "none"}
       data-runtime-resource-ref={paneRuntime?.resourceRef ?? "none"}
       data-runtime-resource-status={paneRuntime?.resourceStatus ?? "none"}
+      data-runtime-dossier-activation={
+        paneRuntime?.secondaryActivation?.kind ?? "none"
+      }
+      data-runtime-dossier-revision={
+        paneRuntime?.secondaryActivation?.kind === "DossierRevision"
+          ? paneRuntime.secondaryActivation.revisionRef
+          : "none"
+      }
     >
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- justify-eslint-override: test fixture uses a plain anchor so WorkspaceHost link interception is the behavior under test */}
       <a href="/authors/body-author" data-pane-label-hint="Body Author">
@@ -282,12 +293,18 @@ function TestPaneBody() {
       <button
         type="button"
         onClick={(event) =>
-          paneRuntime?.requestSecondarySurface("reader-evidence", {
+          paneRuntime?.requestSecondarySurface("resource-evidence", {
             returnFocusTo: event.currentTarget,
           })
         }
       >
-        Open document map
+        Open Companion
+      </button>
+      <button
+        type="button"
+        onClick={() => paneRuntime?.acknowledgeSecondaryActivation()}
+      >
+        Acknowledge secondary activation
       </button>
     </div>
   );
@@ -359,6 +376,9 @@ vi.mock("@/components/workspace/PaneShell", async () => {
           data-fixed-chrome-width-px={fixedChromePublication?.widthPx ?? 0}
           data-secondary-width-px={secondarySizing?.widthPx ?? 0}
           data-secondary-pane-id={secondaryPane?.id ?? "none"}
+          data-secondary-active-surface={
+            secondaryPane?.activeSurfaceId ?? "none"
+          }
           data-secondary-surfaces={secondarySurfaces}
           data-mobile={isMobile ? "true" : "false"}
           data-pane-id-contract={paneId}
@@ -563,6 +583,13 @@ describe("WorkspaceHost pane route lifecycle", () => {
     hostMocks.resolveResourceLocators.mockResolvedValue([]);
     hostMocks.store.activatePane.mockReset();
     hostMocks.store.openPane.mockReset();
+    hostMocks.store.acknowledgePendingSecondaryActivation.mockReset();
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map();
+    hostMocks.store.acknowledgePendingSecondaryActivation.mockImplementation(
+      (paneId: string) => {
+        hostMocks.store.pendingSecondaryActivationByPaneId.delete(paneId);
+      },
+    );
     hostMocks.store.navigatePane.mockReset();
     hostMocks.store.goBackPane.mockReset();
     hostMocks.store.goForwardPane.mockReset();
@@ -672,8 +699,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
   it("contains an invalid current secondary publication to its pane", async () => {
     setTwoPaneHrefs(MEDIA_HREF_1, MEDIA_HREF_2);
     hostMocks.secondaryPublicationByPaneId.set("pane-1", {
-      groupId: "reader-tools",
-      defaultSurfaceId: "reader-contents",
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-contents",
       surfaces: [],
     });
     const consoleError = vi
@@ -740,7 +767,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     await waitFor(() =>
       expect(screen.getByTestId("pane-shell")).toHaveAttribute(
         "data-secondary-surfaces",
-        "reader-evidence",
+        "resource-evidence",
       ),
     );
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
@@ -751,8 +778,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(() => {
       act(() => {
         staleSecondaryPublisher({
-          groupId: "reader-tools",
-          defaultSurfaceId: "reader-contents",
+          groupId: "resource-inspector",
+          defaultSurfaceId: "resource-contents",
           surfaces: [],
         });
         staleFixedChromePublisher({
@@ -767,7 +794,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
 
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-secondary-surfaces",
-      "reader-evidence",
+      "resource-evidence",
     );
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-fixed-chrome-width-px",
@@ -943,26 +970,32 @@ describe("WorkspaceHost pane route lifecycle", () => {
 });
 
 const READER_TOOLS_EVIDENCE_ONLY: PaneSecondaryPublication = {
-  groupId: "reader-tools",
-  defaultSurfaceId: "reader-evidence",
-  surfaces: [{ id: "reader-evidence", body: <div>Evidence</div> }],
+  groupId: "resource-inspector",
+  defaultSurfaceId: "resource-evidence",
+  surfaces: [{ id: "resource-evidence", body: <div>Evidence</div> }],
 };
 
 const READER_TOOLS_HIGHLIGHTS_ONLY = READER_TOOLS_EVIDENCE_ONLY;
 
 const READER_TOOLS_WITH_DOC_CHAT: PaneSecondaryPublication = {
-  groupId: "reader-tools",
-  defaultSurfaceId: "reader-evidence",
+  groupId: "resource-inspector",
+  defaultSurfaceId: "resource-evidence",
   surfaces: [
-    { id: "reader-contents", body: <div>Contents</div> },
-    { id: "reader-evidence", body: <div>Evidence</div> },
+    { id: "resource-contents", body: <div>Contents</div> },
+    { id: "resource-evidence", body: <div>Evidence</div> },
   ],
 };
 
+const RESOURCE_DOSSIER_PUBLICATION: PaneSecondaryPublication = {
+  groupId: "resource-inspector",
+  defaultSurfaceId: "resource-dossier",
+  surfaces: [{ id: "resource-dossier", body: <div>Dossier</div> }],
+};
+
 const CONVERSATION_CONTEXT_PUBLICATION: PaneSecondaryPublication = {
-  groupId: "conversation-context",
-  defaultSurfaceId: "conversation-context-refs",
-  surfaces: [{ id: "conversation-context-refs", body: <div>References</div> }],
+  groupId: "resource-inspector",
+  defaultSurfaceId: "resource-context",
+  surfaces: [{ id: "resource-context", body: <div>References</div> }],
 };
 
 function setPaneWithSecondary(secondary: {
@@ -1031,6 +1064,13 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.fixedChromePublisherByPaneId = new Map();
     hostMocks.openInNewPaneRequest = null;
     hostMocks.store.openPane.mockReset();
+    hostMocks.store.acknowledgePendingSecondaryActivation.mockReset();
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map();
+    hostMocks.store.acknowledgePendingSecondaryActivation.mockImplementation(
+      (paneId: string) => {
+        hostMocks.store.pendingSecondaryActivationByPaneId.delete(paneId);
+      },
+    );
     hostMocks.store.requestSecondarySurface.mockReset();
     hostMocks.store.dropSecondaryPane.mockReset();
     hostMocks.store.setSecondarySurface.mockReset();
@@ -1040,8 +1080,8 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("does not render a visible secondary without a matching publication", () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = null;
 
@@ -1059,8 +1099,8 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("renders and exposes a visible secondary backed by a matching publication", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
@@ -1085,8 +1125,8 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("republishes secondary and fixed chrome when a same-resource route instance changes", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
@@ -1122,8 +1162,8 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("keeps secondary runtime state during the publication gap for a same-resource route instance", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     const { rerender } = render(<WorkspaceHost />);
@@ -1159,8 +1199,8 @@ describe("WorkspaceHost secondary publication validation", () => {
 
   it("does not clear and republish secondary or fixed chrome on unrelated host renders", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
     hostMocks.fixedChromeWidthPx = 48;
@@ -1170,7 +1210,7 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(screen.getByTestId("pane-shell")).toHaveAttribute(
         "data-secondary-surfaces",
-        "reader-evidence",
+        "resource-evidence",
       );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
@@ -1193,35 +1233,40 @@ describe("WorkspaceHost secondary publication validation", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
     expect(hostMocks.paneShellSnapshots).toEqual([
-      { fixedChromeWidthPx: 48, secondarySurfaces: "reader-evidence" },
+      { fixedChromeWidthPx: 48, secondarySurfaces: "resource-evidence" },
     ]);
   });
 
-  it("drops a persisted secondary when the publication group no longer matches", async () => {
+  it("renders the new subject default while repairing a same-group stale surface", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = CONVERSATION_CONTEXT_PUBLICATION;
 
     render(<WorkspaceHost />);
 
     await waitFor(() => {
-      expect(hostMocks.store.dropSecondaryPane).toHaveBeenCalledWith(
+      expect(hostMocks.store.setSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
+        "resource-context",
       );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-secondary-pane-id",
-      "none",
+      "secondary-1",
     );
-    expect(hostMocks.store.setSecondarySurface).not.toHaveBeenCalled();
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-active-surface",
+      "resource-context",
+    );
+    expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
   });
 
   it("repairs a persisted secondary surface to the published default when the active surface is unpublished", async () => {
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-contents",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-contents",
     });
     hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
 
@@ -1230,51 +1275,162 @@ describe("WorkspaceHost secondary publication validation", () => {
     await waitFor(() => {
       expect(hostMocks.store.setSecondarySurface).toHaveBeenCalledWith(
         "secondary-1",
-        "reader-evidence",
+        "resource-evidence",
       );
     });
     expect(screen.getByTestId("pane-shell")).toHaveAttribute(
       "data-secondary-pane-id",
-      "none",
+      "secondary-1",
+    );
+    expect(screen.getByTestId("pane-shell")).toHaveAttribute(
+      "data-secondary-active-surface",
+      "resource-evidence",
     );
     expect(hostMocks.store.dropSecondaryPane).not.toHaveBeenCalled();
   });
 
-  it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
-    hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
+  it("publishes a pane-runtime Dossier activation through the workspace store", async () => {
+    const activation = {
+      kind: "DossierRevision",
+      surfaceId: "resource-dossier",
+      revisionRef:
+        "artifact_revision:44444444-4444-4444-8444-444444444444",
+    } as const;
     hostMocks.openInNewPaneRequest = {
       href: MEDIA_HREF_1,
-      labelHint: "Doc chat",
-      surfaceId: "reader-evidence",
+      labelHint: "Dossier",
+      activation,
     };
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.openPane).toHaveBeenCalledWith({
+        href: MEDIA_HREF_1,
+        openerPaneId: "pane-1",
+        activate: true,
+        labelHint: "Dossier",
+        secondaryActivation: activation,
+      });
+    });
+  });
+
+  it("launches a pending cross-pane secondary request once the target publishes the surface", async () => {
+    hostMocks.secondaryPublication = READER_TOOLS_WITH_DOC_CHAT;
+    const activation = { kind: "Surface", surfaceId: "resource-evidence" } as const;
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
+      ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
+    ]);
 
     render(<WorkspaceHost />);
 
     await waitFor(() => {
       expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-evidence",
+        "resource-evidence",
       );
+      expect(
+        hostMocks.store.acknowledgePendingSecondaryActivation,
+      ).toHaveBeenCalledWith("pane-1", `media:${MEDIA_HREF_1}`, activation);
     });
   });
 
   it("discards a pending cross-pane secondary request when the target publishes without the surface", async () => {
     hostMocks.secondaryPublication = READER_TOOLS_EVIDENCE_ONLY;
-    hostMocks.openInNewPaneRequest = {
-      href: MEDIA_HREF_1,
-      labelHint: "Doc chat",
-      surfaceId: "reader-contents",
-    };
+    const activation = { kind: "Surface", surfaceId: "resource-contents" } as const;
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
+      ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
+    ]);
 
     render(<WorkspaceHost />);
 
     await waitFor(() => {
       expect(screen.getByTestId("pane-shell")).toHaveAttribute(
         "data-secondary-surfaces",
-        "reader-evidence",
+        "resource-evidence",
       );
     });
     expect(hostMocks.store.requestSecondarySurface).not.toHaveBeenCalled();
+    expect(
+      hostMocks.store.acknowledgePendingSecondaryActivation,
+    ).toHaveBeenCalledWith("pane-1", `media:${MEDIA_HREF_1}`, activation);
+  });
+
+  it("delivers and acknowledges an exact Dossier revision inside the target pane runtime", async () => {
+    const revisionRef =
+      "artifact_revision:44444444-4444-4444-8444-444444444444";
+    hostMocks.secondaryPublication = RESOURCE_DOSSIER_PUBLICATION;
+    const activation = {
+        kind: "DossierRevision",
+        surfaceId: "resource-dossier",
+        revisionRef,
+      } as const;
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
+      ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
+    ]);
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "resource-dossier",
+      );
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-dossier-revision",
+        revisionRef,
+      );
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Acknowledge secondary activation",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-dossier-revision",
+        "none",
+      );
+    });
+  });
+
+  it("delivers and acknowledges the canonical current Dossier for an artifact head", async () => {
+    hostMocks.secondaryPublication = RESOURCE_DOSSIER_PUBLICATION;
+    const activation = {
+        kind: "DossierCurrent",
+        surfaceId: "resource-dossier",
+      } as const;
+    hostMocks.store.pendingSecondaryActivationByPaneId = new Map([
+      ["pane-1", { routeKey: `media:${MEDIA_HREF_1}`, activation }],
+    ]);
+
+    render(<WorkspaceHost />);
+
+    await waitFor(() => {
+      expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
+        "pane-1",
+        "resource-dossier",
+      );
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-dossier-activation",
+        "DossierCurrent",
+      );
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Acknowledge secondary activation",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-body")).toHaveAttribute(
+        "data-runtime-dossier-activation",
+        "none",
+      );
+    });
   });
 
   it("uses mobile canvas mode and mobile secondary sheet without desktop edge chrome", () => {
@@ -1282,8 +1438,8 @@ describe("WorkspaceHost secondary publication validation", () => {
     hostMocks.canvasEdges = { atStart: true, atEnd: true };
     hostMocks.fixedChromeWidthPx = 48;
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
@@ -1314,21 +1470,21 @@ describe("WorkspaceHost secondary publication validation", () => {
   it("passes the pane-scoped mobile secondary return-focus target explicitly", async () => {
     hostMocks.isMobile = true;
     setPaneWithSecondary({
-      groupId: "reader-tools",
-      activeSurfaceId: "reader-evidence",
+      groupId: "resource-inspector",
+      activeSurfaceId: "resource-evidence",
     });
     hostMocks.secondaryPublication = READER_TOOLS_HIGHLIGHTS_ONLY;
 
     render(<WorkspaceHost />);
 
     await screen.findByTestId("mobile-secondary-host");
-    const trigger = screen.getByRole("button", { name: "Open document map" });
+    const trigger = screen.getByRole("button", { name: "Open Companion" });
     fireEvent.click(trigger);
 
     await waitFor(() => {
       expect(hostMocks.store.requestSecondarySurface).toHaveBeenCalledWith(
         "pane-1",
-        "reader-evidence",
+        "resource-evidence",
       );
     });
     const mobileInput = hostMocks.mobileSecondaryInputs.at(-1);

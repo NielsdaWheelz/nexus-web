@@ -54,12 +54,12 @@ describe("pane route identity", () => {
       kind: "resource_ref",
       ref: `library:${LIBRARY_ID_1}`,
     });
-    const items = resolvePaneRouteIdentity(`/libraries/${LIBRARY_ID_1}?tab=items`);
-    const intelligence = resolvePaneRouteIdentity(
-      `/libraries/${LIBRARY_ID_1}?tab=intelligence`,
+    const items = resolvePaneRouteIdentity(`/libraries/${LIBRARY_ID_1}?view=items`);
+    const filtered = resolvePaneRouteIdentity(
+      `/libraries/${LIBRARY_ID_1}?filter=recent`,
     );
     const other = resolvePaneRouteIdentity(`/libraries/${LIBRARY_ID_2}`);
-    expect(items.resourceLocator).toEqual(intelligence.resourceLocator);
+    expect(items.resourceLocator).toEqual(filtered.resourceLocator);
     expect(items.resourceLocator).not.toEqual(other.resourceLocator);
   });
 

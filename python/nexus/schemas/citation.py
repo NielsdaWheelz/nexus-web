@@ -24,7 +24,7 @@ from nexus.services.resource_graph.schemas import EdgeKind
 # citation contract reads in its own vocabulary.
 CitationRole = EdgeKind
 # The closed set of citation-edge target schemes that render as chips. Other
-# slices (oracle, library intelligence) rely on exactly this set.
+# slices (Oracle, Universal Dossiers) rely on exactly this set.
 CitationTargetType = Literal[
     "evidence_span",
     "content_chunk",

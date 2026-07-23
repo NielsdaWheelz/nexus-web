@@ -48,6 +48,12 @@ import {
   planInspectorSurfaces,
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
+import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import {
+  activateResource,
+  secondaryActivationForResource,
+} from "@/lib/resources/activation";
+import { hasSamePaneResource } from "@/lib/panes/paneIdentity";
 
 export interface UseResourceInspectorParams {
   /** The subject's capability scheme (RESOURCE_CAPABILITIES key) — also the A9
@@ -83,6 +89,9 @@ export function useResourceInspector({
   const paneRuntime = usePaneRuntime();
   const paneId = paneRuntime?.paneId ?? null;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
+  const secondaryActivation = paneRuntime?.secondaryActivation ?? null;
+  const acknowledgeSecondaryActivation =
+    paneRuntime?.acknowledgeSecondaryActivation;
 
   const policy = RESOURCE_CAPABILITIES[scheme].inspectorPolicy;
   const eligible = policy !== null && handle !== null;
@@ -104,26 +113,86 @@ export function useResourceInspector({
     );
   }
   const store = storeBox?.store ?? null;
-  // Dispose the PRIOR store when the subject changes (StrictMode-safe: it only
-  // ever disposes a store that has already been replaced, never the current
-  // instance a simulated remount would reuse). The live SSE connection is
-  // released by `DossierSurface`'s own detach on unmount/prop-change, and the
-  // unreferenced old store is then GC'd — so there is no unmount stream leak.
-  const priorStoreRef = useRef<DossierControllerStore | null>(null);
+  // Dispose exactly the prior store on subject change and the current store on
+  // true owner unmount. The epoch defers disposal by one microtask so React
+  // StrictMode's simulated cleanup/setup pair can reclaim the same store
+  // without disposing it; a changed store is always disposed regardless.
+  const currentStoreRef = useRef<DossierControllerStore | null>(store);
+  currentStoreRef.current = store;
+  const lifecycleEpochRef = useRef(0);
   useEffect(() => {
-    const prior = priorStoreRef.current;
-    if (prior && prior !== store) prior.dispose();
-    priorStoreRef.current = store;
+    if (!store) return;
+    const ownedStore = store;
+    const epoch = lifecycleEpochRef.current + 1;
+    lifecycleEpochRef.current = epoch;
+    return () => {
+      queueMicrotask(() => {
+        if (
+          currentStoreRef.current !== ownedStore ||
+          lifecycleEpochRef.current === epoch
+        ) {
+          ownedStore.dispose();
+        }
+      });
+    };
   }, [store]);
 
   // --- Stable citation-activation (protects the Dossier body identity) -------
-  const onCitationActivateRef = useRef(onCitationActivate);
-  onCitationActivateRef.current = onCitationActivate;
+  const citationCommandsRef = useRef({
+    onCitationActivate,
+    paneRuntime,
+  });
+  citationCommandsRef.current = {
+    onCitationActivate,
+    paneRuntime,
+  };
   const stableCitationActivate = useCallback<DossierCitationActivate>(
-    (activation, target, event) =>
-      onCitationActivateRef.current?.(activation, target, event),
+    (activation, target, event) => {
+      const commands = citationCommandsRef.current;
+      if (commands.onCitationActivate) {
+        commands.onCitationActivate(activation, target, event);
+        return;
+      }
+      if (target) {
+        dispatchReaderSourceActivation(target);
+      }
+      const runtime = commands.paneRuntime;
+      if (event?.shiftKey) {
+        activateResource(activation, {
+          labelHint: target?.label,
+          openInNewPane: runtime?.openInNewPane,
+          newPane: true,
+        });
+        return;
+      }
+      const isSecondaryActivation =
+        secondaryActivationForResource(activation) !== null;
+      if (
+        !isSecondaryActivation &&
+        (
+          runtime?.resourceRef === activation.resourceRef ||
+          (
+            runtime &&
+            activation.href &&
+            hasSamePaneResource(runtime.href, activation.href)
+          )
+        )
+      ) {
+        return;
+      }
+      activateResource(activation, {
+        labelHint: target?.label,
+        navigate: runtime ? (href) => runtime.router.push(href) : undefined,
+        openInNewPane: runtime?.openInNewPane,
+      });
+    },
     [],
   );
+  const viewMediaEvidence = useCallback(() => {
+    citationCommandsRef.current.paneRuntime?.requestSecondarySurface(
+      "resource-evidence",
+    );
+  }, []);
 
   // --- Reference-stable Dossier body (stream tokens do NOT recreate it) ------
   const dossierBody = useMemo<ReactNode>(
@@ -131,10 +200,11 @@ export function useResourceInspector({
       store
         ? createElement(DossierSurface, {
             store,
+            onViewMediaEvidence: viewMediaEvidence,
             onCitationActivate: stableCitationActivate,
           })
         : null,
-    [store, stableCitationActivate],
+    [store, stableCitationActivate, viewMediaEvidence],
   );
 
   // --- One memoized publication (stable when the pane's bodies are stable) ---
@@ -229,11 +299,23 @@ export function useResourceInspector({
   const wasVisibleRef = useRef(false);
   useEffect(() => {
     const visibleNow = Boolean(inspectorVisible);
-    if (visibleNow && !wasVisibleRef.current) {
+    if (visibleNow && store && secondaryActivation) {
+      if (secondaryActivation.kind === "DossierRevision") {
+        store.selectHistorical(secondaryActivation.revisionRef);
+      } else {
+        store.selectCurrent();
+      }
+      acknowledgeSecondaryActivation?.();
+    } else if (visibleNow && !wasVisibleRef.current) {
       store?.resetRevisionSelection();
     }
     wasVisibleRef.current = visibleNow;
-  }, [inspectorVisible, store]);
+  }, [
+    acknowledgeSecondaryActivation,
+    inspectorVisible,
+    secondaryActivation,
+    store,
+  ]);
 
   return { companionAction: companion };
 }

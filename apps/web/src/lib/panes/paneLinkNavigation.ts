@@ -1,6 +1,10 @@
 "use client";
 
 import type { MouseEvent as ReactMouseEvent } from "react";
+import {
+  isWorkspaceSecondarySurfaceId,
+  type WorkspaceSecondaryActivation,
+} from "@/lib/panes/paneSecondaryModel";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneScopedRouter } from "@/lib/panes/paneRuntime";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
@@ -8,7 +12,11 @@ import { beginMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
 
 type PaneLinkRuntime = {
   router: PaneScopedRouter;
-  openInNewPane: (href: string, labelHint?: string) => void;
+  openInNewPane: (
+    href: string,
+    labelHint?: string,
+    secondaryActivation?: WorkspaceSecondaryActivation,
+  ) => void;
 };
 
 type PaneLinkMouseEvent = Pick<
@@ -43,8 +51,37 @@ export function handlePaneInternalAnchorClick(
       (anchor.getAttribute("role") === "menuitem"
         ? anchor.textContent?.trim() || undefined
         : undefined),
-    { sourceAnchor: anchor },
+    {
+      sourceAnchor: anchor,
+      secondaryActivation: secondaryActivationForAnchor(anchor),
+    },
   );
+}
+
+function secondaryActivationForAnchor(
+  anchor: HTMLAnchorElement,
+): WorkspaceSecondaryActivation | null {
+  const surfaceId = anchor.dataset.paneSecondarySurface;
+  if (!isWorkspaceSecondarySurfaceId(surfaceId)) {
+    return null;
+  }
+  const activationKind = anchor.dataset.paneSecondaryActivation;
+  const revisionRef = anchor.dataset.paneDossierRevision;
+  if (activationKind === "DossierRevision" && revisionRef !== undefined) {
+    return surfaceId === "resource-dossier"
+      ? { kind: "DossierRevision", surfaceId, revisionRef }
+      : null;
+  }
+  if (
+    activationKind === "DossierCurrent" &&
+    revisionRef === undefined &&
+    surfaceId === "resource-dossier"
+  ) {
+    return { kind: "DossierCurrent", surfaceId };
+  }
+  return activationKind === undefined || activationKind === "Surface"
+    ? { kind: "Surface", surfaceId }
+    : null;
 }
 
 export function handlePaneInternalHrefClick(
@@ -52,7 +89,10 @@ export function handlePaneInternalHrefClick(
   paneRuntime: PaneLinkRuntime | null,
   href: string | null,
   labelHint?: string,
-  options: { sourceAnchor?: HTMLAnchorElement } = {},
+  options: {
+    sourceAnchor?: HTMLAnchorElement;
+    secondaryActivation?: WorkspaceSecondaryActivation | null;
+  } = {},
 ): void {
   const normalizedHref = href && !href.startsWith("#") ? normalizeWorkspaceHref(href) : null;
   const resolvedRoute = normalizedHref ? resolvePaneRoute(normalizedHref) : null;
@@ -70,7 +110,14 @@ export function handlePaneInternalHrefClick(
   }
 
   event.preventDefault();
-  if (event.shiftKey) {
+  const secondaryActivation = options.secondaryActivation ?? null;
+  if (secondaryActivation) {
+    paneRuntime.openInNewPane(
+      normalizedHref,
+      labelHint,
+      secondaryActivation,
+    );
+  } else if (event.shiftKey) {
     paneRuntime.openInNewPane(normalizedHref, labelHint);
   } else {
     const viewTransition =

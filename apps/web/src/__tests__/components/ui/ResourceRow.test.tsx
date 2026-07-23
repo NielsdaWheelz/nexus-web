@@ -44,6 +44,35 @@ describe("ResourceRow", () => {
     );
   });
 
+  it("derives an exact Dossier revision command from a resource activation", () => {
+    const revisionRef =
+      "artifact_revision:11111111-1111-4111-8111-111111111111";
+    render(
+      <ResourceList ariaLabel="Resources">
+        <ResourceRow
+          primary={{
+            kind: "link",
+            href: "/conversations/22222222-2222-4222-8222-222222222222",
+            resourceActivation: {
+              resourceRef: revisionRef,
+              kind: "route",
+              href: "/conversations/22222222-2222-4222-8222-222222222222",
+              unresolvedReason: null,
+            },
+          }}
+          title="Historical Dossier"
+        />
+      </ResourceList>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "Historical Dossier" }),
+    ).toHaveAttribute("data-pane-secondary-activation", "DossierRevision");
+    expect(
+      screen.getByRole("link", { name: "Historical Dossier" }),
+    ).toHaveAttribute("data-pane-dossier-revision", revisionRef);
+  });
+
   it("renders one exceptional state instead of normal activity", () => {
     render(
       <ResourceList ariaLabel="Resources">

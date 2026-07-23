@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.services.artifacts.subject_policy import SUBJECT_POLICIES, visible_persisted_subject
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,
@@ -47,21 +48,27 @@ def route_for_visible_apparatus_item(
     return f"/media/{media_id}?{params}"
 
 
-def _artifact_subject_route(row: Any, *, revision_id: UUID | None) -> str | None:
-    """Route an artifact head/revision by its subject scheme (§4.1).
+def _artifact_subject_route(db: Session, row: Any, *, viewer_id: UUID) -> str | None:
+    """Route a visible Dossier head/revision to its canonical subject.
 
-    ``library`` -> the dossier tab (unchanged, D-7); ``conversation`` -> the
-    conversation with the distillate forced open (§4.5).
+    Dossier surface and historical-revision selection are workspace-local
+    companion state; backend routes never encode either as legacy query state.
     """
     if row is None:
         return None
-    subject_scheme, subject_id = row[0], row[1]
-    if subject_scheme == "library":
-        base = f"/libraries/{subject_id}?tab=intelligence"
-        return f"{base}&revision={revision_id}" if revision_id is not None else base
-    if subject_scheme == "conversation":
-        return f"/conversations/{subject_id}?distillate=1"
-    return None
+    subject_scheme, raw_subject_id, audience_scheme, audience_id = row
+    subject_id = UUID(str(raw_subject_id))
+    resolved = visible_persisted_subject(
+        db,
+        subject_scheme=str(subject_scheme),
+        subject_id=subject_id,
+        audience_scheme=str(audience_scheme),
+        audience_id=str(audience_id),
+        viewer_id=viewer_id,
+    )
+    if resolved is None:
+        return None
+    return SUBJECT_POLICIES[resolved.scheme].activate(db, resolved.ref).href
 
 
 def resource_activation_for_ref(
@@ -301,23 +308,27 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
         return None
     if ref.scheme == "artifact":
         row = db.execute(
-            text("SELECT subject_scheme, subject_id FROM artifacts WHERE id = :id"),
+            text(
+                "SELECT subject_scheme, subject_id, audience_scheme, audience_id "
+                "FROM artifacts WHERE id = :id"
+            ),
             {"id": ref.id},
         ).first()
-        return _artifact_subject_route(row, revision_id=None)
+        return _artifact_subject_route(db, row, viewer_id=viewer_id)
     if ref.scheme == "artifact_revision":
         row = db.execute(
             text(
                 """
-                SELECT a.subject_scheme, a.subject_id
+                SELECT a.subject_scheme, a.subject_id, a.audience_scheme, a.audience_id
                 FROM artifact_revisions r
-                JOIN artifacts a ON a.id = r.artifact_id
+                JOIN artifact_builds b ON b.id = r.build_id
+                JOIN artifacts a ON a.id = b.artifact_id
                 WHERE r.id = :id
                 """
             ),
             {"id": ref.id},
         ).first()
-        return _artifact_subject_route(row, revision_id=ref.id)
+        return _artifact_subject_route(db, row, viewer_id=viewer_id)
     if ref.scheme == "contributor":
         handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
         return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
@@ -344,4 +355,5 @@ def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | No
         return None
     if ref.scheme == "external_snapshot":
         return None
-    assert_never(ref.scheme)
+    # Static and batched schemes are handled by the shared route owners above.
+    return None

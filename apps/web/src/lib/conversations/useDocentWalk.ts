@@ -11,7 +11,7 @@ export function useDocentWalk({
   router,
   isMobile,
 }: {
-  /** Narrows paneRuntime.tsx openInNewPane (omits unused secondarySurfaceId). */
+  /** Narrows paneRuntime.tsx openInNewPane (omits unused secondary activation). */
   openInNewPane: ((href: string, labelHint?: string) => void) | undefined;
   router: PaneScopedRouter;
   isMobile: boolean;

@@ -21736,14 +21736,13 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
     is adapted per-kind (Library -> ``LibraryInputManifestV1.media[]``,
     Conversation -> ``ConversationInputManifestV1`` w/
     ``completeness=Incomplete(MigratedCoverageGap)``). The migration DEFECTS
-    (aborts atomically, leaving the schema at 0189) on a missing subject/audience,
-    an unmappable ledger row, or a citation-owner mismatch. Downgrade is blocked.
+    (aborts atomically, leaving the schema at 0189) on an illegal legacy
+    kind/subject pairing, a missing subject/audience, an ambiguous head
+    collision, an unmappable ledger row/operation, or a citation-owner mismatch.
+    Downgrade is blocked.
 
-    NOTE (test-first / RED): 0190 does not yet exist. These tests are expected to
-    FAIL until CP2 authors the migration (schema-shape tests fail because the new
-    tables/columns/notify objects are absent; data-transform tests fail because
-    ``upgrade head`` is a no-op at 0189; defect + downgrade tests fail because the
-    no-op returns 0). Mirrors the ``0188``/``0189`` class style.
+    The class deliberately exercises the destructive transformation from an
+    explicitly seeded 0189 schema rather than constructing post-cutover rows.
     """
 
     _BUILD_EVENT_TYPES = frozenset(
@@ -21949,6 +21948,54 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 "tgt": target_media_id,
                 "ordinal": ordinal,
                 "snap": json.dumps({"excerpt": "cited passage"}),
+            },
+        )
+
+    def _insert_bare_revision_edge(
+        self,
+        session: Session,
+        *,
+        edge_id,
+        owner_user_id,
+        revision_id,
+        target_media_id,
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO resource_edges"
+                " (id, user_id, kind, origin, source_scheme, source_id,"
+                "  target_scheme, target_id)"
+                " VALUES (:id, :uid, 'context', 'user', 'artifact_revision', :src,"
+                "  'media', :target)"
+            ),
+            {
+                "id": edge_id,
+                "uid": owner_user_id,
+                "src": revision_id,
+                "target": target_media_id,
+            },
+        )
+
+    def _insert_edge_view_state(
+        self,
+        session: Session,
+        *,
+        state_id,
+        owner_user_id,
+        edge_id,
+        surface_media_id,
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO resource_view_states"
+                " (id, user_id, surface_scheme, surface_id, edge_id, state)"
+                " VALUES (:id, :uid, 'media', :surface, :edge, CAST('{}' AS jsonb))"
+            ),
+            {
+                "id": state_id,
+                "uid": owner_user_id,
+                "surface": surface_media_id,
+                "edge": edge_id,
             },
         )
 
@@ -22161,6 +22208,61 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             run_alembic_command("upgrade head")
             engine.dispose()
 
+    def test_0190_attribution_fks_require_explicit_user_teardown(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                rows = session.execute(
+                    text(
+                        """
+                        SELECT
+                            tc.table_name,
+                            kcu.column_name,
+                            rc.delete_rule
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                          ON kcu.constraint_schema = tc.constraint_schema
+                         AND kcu.constraint_name = tc.constraint_name
+                        JOIN information_schema.referential_constraints rc
+                          ON rc.constraint_schema = tc.constraint_schema
+                         AND rc.constraint_name = tc.constraint_name
+                        WHERE tc.constraint_schema = 'public'
+                          AND tc.constraint_type = 'FOREIGN KEY'
+                          AND (
+                                (tc.table_name = 'artifact_builds'
+                                 AND kcu.column_name = 'requester_user_id')
+                             OR (tc.table_name = 'artifact_revisions'
+                                 AND kcu.column_name IN (
+                                     'creator_user_id', 'citation_owner_user_id'
+                                 ))
+                             OR (tc.table_name = 'artifact_build_cancellations'
+                                 AND kcu.column_name = 'actor_user_id')
+                          )
+                        """
+                    )
+                ).fetchall()
+                rules = {(row.table_name, row.column_name): row.delete_rule for row in rows}
+                expected = {
+                    ("artifact_builds", "requester_user_id"),
+                    ("artifact_revisions", "creator_user_id"),
+                    ("artifact_revisions", "citation_owner_user_id"),
+                    ("artifact_build_cancellations", "actor_user_id"),
+                }
+                assert set(rules) == expected, (
+                    f"expected every Dossier attribution FK; found {rules}"
+                )
+                assert set(rules.values()) == {"NO ACTION"}, (
+                    "User teardown must null/rehome attribution explicitly; database"
+                    f" cascading actions are forbidden, found {rules}"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
     def test_0190_llm_calls_owner_kind_admits_build_rejects_revision(self):
         reset_test_schema()
         result = run_alembic_command("upgrade head")
@@ -22273,6 +22375,59 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             assert '"artifact_build_events"' in self._run_kit_source(), (
                 "run_kit must LISTEN the artifact_build_events channel"
             )
+
+            # Exercise the trigger/channel contract, not only its catalog shape.
+            import psycopg
+
+            listener_url = get_test_database_url().replace(
+                "postgresql+psycopg://", "postgresql://", 1
+            )
+            artifact_id = uuid4()
+            build_id = uuid4()
+            subject_id = uuid4()
+            audience_id = uuid4()
+            with psycopg.connect(listener_url, autocommit=True) as listener:
+                listener.execute("LISTEN artifact_build_events")
+                with Session(engine) as session:
+                    session.execute(
+                        text(
+                            "INSERT INTO artifacts"
+                            " (id, subject_scheme, subject_id, audience_scheme, audience_id)"
+                            " VALUES (:id, 'media', :subject, 'user', :audience)"
+                        ),
+                        {
+                            "id": artifact_id,
+                            "subject": subject_id,
+                            "audience": str(audience_id),
+                        },
+                    )
+                    session.execute(
+                        text(
+                            "INSERT INTO artifact_builds"
+                            " (id, artifact_id, idempotency_key)"
+                            " VALUES (:id, :artifact, 'notify-contract')"
+                        ),
+                        {"id": build_id, "artifact": artifact_id},
+                    )
+                    session.execute(
+                        text(
+                            "INSERT INTO artifact_build_events"
+                            " (build_id, seq, event_type, payload)"
+                            " VALUES (:build, 1, 'Progress', CAST('{}' AS jsonb))"
+                        ),
+                        {"build": build_id},
+                    )
+                    session.commit()
+
+                notification = next(
+                    listener.notifies(timeout=2, stop_after=1),
+                    None,
+                )
+                assert notification is not None, (
+                    "inserting a build event must emit artifact_build_events"
+                )
+                assert notification.channel == "artifact_build_events"
+                assert notification.payload == str(build_id)
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -22307,39 +22462,64 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
         result = run_alembic_command("upgrade 0189")
         assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
         engine = create_engine(get_test_database_url())
-        user_id = uuid4()
+        library_owner_id = uuid4()
+        requester_id = uuid4()
         library_id = uuid4()
         media_id = uuid4()
+        second_media_id = uuid4()
+        omitted_media_id = uuid4()
         artifact_id = uuid4()
         revision_id = uuid4()
         try:
             with Session(engine) as session:
-                self._insert_user(session, user_id)
-                self._insert_library(session, library_id, user_id)
+                self._insert_user(session, library_owner_id)
+                self._insert_user(session, requester_id)
+                self._insert_library(session, library_id, library_owner_id)
                 self._insert_media(session, media_id, title="The Cited Source")
+                self._insert_media(session, second_media_id, title="The Second Cited Source")
+                self._insert_media(session, omitted_media_id, title="The Omitted Source")
                 self._insert_head(
                     session,
                     artifact_id=artifact_id,
                     subject_scheme="library",
                     subject_id=library_id,
                     kind="library_dossier",
-                    user_id=user_id,
+                    user_id=requester_id,
                 )
                 self._insert_revision(
                     session,
                     revision_id=revision_id,
                     artifact_id=artifact_id,
                     status="ready",
-                    covered_targets=self._library_covered(media_id),
+                    covered_targets=[
+                        *self._library_covered(media_id),
+                        *self._library_covered(
+                            second_media_id,
+                            fingerprint="fp-second",
+                        ),
+                        *self._library_covered(
+                            omitted_media_id,
+                            fingerprint="fp-omitted",
+                            coverage="omitted_budget",
+                        ),
+                    ],
                     idempotency_key="idem-lib-ready",
                     promoted_at="2026-05-01T00:06:00Z",
                 )
                 self._set_current(session, artifact_id, revision_id)
                 self._insert_citation_edge(
                     session,
-                    owner_user_id=user_id,
+                    owner_user_id=requester_id,
                     revision_id=revision_id,
                     target_media_id=media_id,
+                    ordinal=1,
+                )
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=requester_id,
+                    revision_id=revision_id,
+                    target_media_id=second_media_id,
+                    ordinal=2,
                 )
                 self._insert_revision_event(
                     session, revision_id=revision_id, seq=1, event_type="meta",
@@ -22385,23 +22565,39 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     {"r": revision_id},
                 ).mappings().one()
                 assert rev["build_id"] is not None, "the preserved revision must gain a build FK"
-                assert str(rev["citation_owner_user_id"]) == str(user_id), (
+                assert str(rev["citation_owner_user_id"]) == str(requester_id), (
                     "citation_owner_user_id backfills from historical artifacts.user_id"
                 )
-                assert str(rev["creator_user_id"]) == str(user_id)
+                assert str(rev["creator_user_id"]) == str(requester_id)
+                assert str(rev["citation_owner_user_id"]) != str(library_owner_id), (
+                    "Library audience/owner and historical citation owner are distinct facts"
+                )
                 assert rev["content_md"] == "Generated synthesis body.", "content is immutable"
                 assert rev["promoted_at"] is not None, "legacy promoted_at is retained"
 
                 manifest = rev["input_manifest"]
-                assert isinstance(manifest, dict), f"input_manifest must be a JSON object: {manifest!r}"
-                media_entries = manifest["media"]
-                assert isinstance(media_entries, list) and len(media_entries) == 1
-                entry = media_entries[0]
-                assert entry["content_fingerprint"] == "fp-abc"
-                assert entry["disposition"] == "Included", "coverage 'included' -> disposition Included"
-                assert str(media_id) in json.dumps(entry["media_ref"]), (
-                    "the Library manifest media entry must reference the covered media"
-                )
+                assert manifest == {
+                    "version": "v1",
+                    "kind": "library",
+                    "library_ref": f"library:{library_id}",
+                    "media": [
+                        {
+                            "media_ref": f"media:{media_id}",
+                            "content_fingerprint": "fp-abc",
+                            "disposition": "Included",
+                        },
+                        {
+                            "media_ref": f"media:{second_media_id}",
+                            "content_fingerprint": "fp-second",
+                            "disposition": "Included",
+                        },
+                        {
+                            "media_ref": f"media:{omitted_media_id}",
+                            "content_fingerprint": "fp-omitted",
+                            "disposition": "OmittedBudget",
+                        },
+                    ],
+                }, f"Library migration manifest must use the exact typed adapter: {manifest!r}"
 
                 build = session.execute(
                     text(
@@ -22411,9 +22607,10 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     {"b": rev["build_id"]},
                 ).mappings().one()
                 assert str(build["artifact_id"]) == str(artifact_id)
-                assert str(build["requester_user_id"]) == str(user_id), (
+                assert str(build["requester_user_id"]) == str(requester_id), (
                     "requester backfills from historical artifacts.user_id"
                 )
+                assert str(build["requester_user_id"]) != str(library_owner_id)
                 assert build["idempotency_key"] == "idem-lib-ready", "idempotency moves to the build"
                 assert build["created_at"] == rev["created_at"], (
                     "build created_at is the legacy revision start"
@@ -22436,7 +22633,121 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     ),
                     {"r": revision_id},
                 ).scalar_one()
-                assert edge_count == 1, "citation edges for a preserved revision stay intact"
+                assert edge_count == 2, (
+                    "all citation edges for a many-citation preserved revision stay intact"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_clears_cross_artifact_current_revision_pointer(self):
+        """A ready cited revision is current only for the head that owns it."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        first_library_id = uuid4()
+        second_library_id = uuid4()
+        first_media_id = uuid4()
+        second_media_id = uuid4()
+        first_artifact_id = uuid4()
+        second_artifact_id = uuid4()
+        first_revision_id = uuid4()
+        second_revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, first_library_id, user_id)
+                self._insert_library(session, second_library_id, user_id)
+                self._insert_media(session, first_media_id, title="First cited source")
+                self._insert_media(session, second_media_id, title="Second cited source")
+                self._insert_head(
+                    session,
+                    artifact_id=first_artifact_id,
+                    subject_scheme="library",
+                    subject_id=first_library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_head(
+                    session,
+                    artifact_id=second_artifact_id,
+                    subject_scheme="library",
+                    subject_id=second_library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=first_revision_id,
+                    artifact_id=first_artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(first_media_id),
+                    idempotency_key="idem-first",
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=second_revision_id,
+                    artifact_id=second_artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(second_media_id),
+                    idempotency_key="idem-second",
+                )
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=first_revision_id,
+                    target_media_id=first_media_id,
+                )
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=second_revision_id,
+                    target_media_id=second_media_id,
+                )
+                # Legacy 0189 enforces only revision existence, so this
+                # cross-head pointer can exist despite violating ownership.
+                self._set_current(session, first_artifact_id, second_revision_id)
+                self._set_current(session, second_artifact_id, second_revision_id)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                current_by_head = dict(
+                    session.execute(
+                        text(
+                            "SELECT id, current_revision_id FROM artifacts"
+                            " WHERE id IN (:first, :second)"
+                        ),
+                        {"first": first_artifact_id, "second": second_artifact_id},
+                    ).all()
+                )
+                assert current_by_head[first_artifact_id] is None, (
+                    "0190 must clear a current pointer to another artifact's revision"
+                )
+                assert str(current_by_head[second_artifact_id]) == str(second_revision_id), (
+                    "0190 must retain the owning head's ready cited current revision"
+                )
+
+                revision_owners = dict(
+                    session.execute(
+                        text(
+                            "SELECT r.id, b.artifact_id"
+                            " FROM artifact_revisions r"
+                            " JOIN artifact_builds b ON b.id = r.build_id"
+                            " WHERE r.id IN (:first, :second)"
+                        ),
+                        {"first": first_revision_id, "second": second_revision_id},
+                    ).all()
+                )
+                assert revision_owners == {
+                    first_revision_id: first_artifact_id,
+                    second_revision_id: second_artifact_id,
+                }, "both ready cited revisions remain owned by their original heads"
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -22452,6 +22763,8 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
         media_id = uuid4()
         artifact_id = uuid4()
         revision_id = uuid4()
+        bare_edge_id = uuid4()
+        edge_state_id = uuid4()
         body = "ZERO_CITATION_BODY_DO_NOT_STORE"
         try:
             with Session(engine) as session:
@@ -22479,7 +22792,22 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 )
                 # current points at the zero-citation success -> must be cleared.
                 self._set_current(session, artifact_id, revision_id)
-                # NO citation edge is inserted.
+                # A bare graph edge does not satisfy the citation invariant and
+                # must be removed, with its FK-dependent view state first.
+                self._insert_bare_revision_edge(
+                    session,
+                    edge_id=bare_edge_id,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
+                )
+                self._insert_edge_view_state(
+                    session,
+                    state_id=edge_state_id,
+                    owner_user_id=user_id,
+                    edge_id=bare_edge_id,
+                    surface_media_id=media_id,
+                )
                 session.commit()
 
             result = run_alembic_command("upgrade head")
@@ -22523,6 +22851,20 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert terminal == ["Failed"], (
                     f"a zero-citation success terminalizes Failed, never Succeeded; got {event_types}"
                 )
+                assert (
+                    session.execute(
+                        text("SELECT count(*) FROM resource_edges WHERE id = :id"),
+                        {"id": bare_edge_id},
+                    ).scalar_one()
+                    == 0
+                ), "discarding the revision removes its bare incident graph edge"
+                assert (
+                    session.execute(
+                        text("SELECT count(*) FROM resource_view_states WHERE id = :id"),
+                        {"id": edge_state_id},
+                    ).scalar_one()
+                    == 0
+                ), "edge view state is removed before its graph edge"
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -22713,13 +23055,38 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                     text("SELECT input_manifest FROM artifact_revisions WHERE id = :r"),
                     {"r": revision_id},
                 ).scalar_one()
-                assert isinstance(manifest, dict), f"manifest must be a JSON object: {manifest!r}"
-                blob = json.dumps(manifest)
-                assert str(conversation_id) in blob, "the Conversation manifest references its subject"
-                assert "MigratedCoverageGap" in blob, (
-                    "a migrated conversation manifest is Incomplete(MigratedCoverageGap)"
+                assert manifest == {
+                    "version": "v1",
+                    "kind": "conversation",
+                    "conversation_ref": f"conversation:{conversation_id}",
+                    "message_refs": [],
+                    "context_refs": [],
+                    "topology_fingerprint": {"kind": "Absent"},
+                    "completeness": {
+                        "kind": "Incomplete",
+                        "reason": "MigratedCoverageGap",
+                    },
+                }, f"Conversation migration manifest must use the exact typed adapter: {manifest!r}"
+                revision = session.execute(
+                    text(
+                        "SELECT build_id, citation_owner_user_id, creator_user_id"
+                        " FROM artifact_revisions WHERE id = :r"
+                    ),
+                    {"r": revision_id},
+                ).mappings().one()
+                build_requester = session.execute(
+                    text(
+                        "SELECT requester_user_id FROM artifact_builds"
+                        " WHERE id = :build"
+                    ),
+                    {"build": revision["build_id"]},
+                ).scalar_one()
+                assert str(build_requester) == str(requester_id)
+                assert str(revision["citation_owner_user_id"]) == str(requester_id)
+                assert str(revision["creator_user_id"]) == str(requester_id)
+                assert str(revision["citation_owner_user_id"]) != str(conv_owner_id), (
+                    "owner-User audience and historical citation owner remain distinct"
                 )
-                assert "Incomplete" in blob
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -22962,19 +23329,47 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 build_id = self._build_id_for_revision(session, revision_id)
                 rows = session.execute(
                     text(
-                        "SELECT seq, event_type FROM artifact_build_events"
+                        "SELECT seq, event_type, payload FROM artifact_build_events"
                         " WHERE build_id = :b ORDER BY seq"
                     ),
                     {"b": build_id},
-                ).fetchall()
+                ).mappings().all()
                 assert rows, "the legacy events must be re-keyed onto the mapped build"
-                seqs = [r[0] for r in rows]
+                seqs = [row["seq"] for row in rows]
                 assert len(seqs) == len(set(seqs)), "unique (build_id, seq)"
-                types = [r[1] for r in rows]
+                types = [row["event_type"] for row in rows]
                 assert set(types) <= self._BUILD_EVENT_TYPES, f"untranslated event type in {types}"
+                assert types == ["Started", "Progress", "Delta", "Succeeded"]
                 terminal = [t for t in types if t in self._TERMINAL_EVENT_TYPES]
                 assert terminal == ["Succeeded"], (
                     f"exactly one terminal event (Succeeded) for a preserved success; got {types}"
+                )
+
+                from nexus.services.artifacts.dossier_types import (
+                    DeltaEventPayload,
+                    ProgressEventPayload,
+                    StartedEventPayload,
+                    SucceededEventPayload,
+                )
+                from nexus.services.artifacts.handles import parse_artifact_build_handle
+
+                payload_by_type = {
+                    row["event_type"]: row["payload"] for row in rows
+                }
+                started = StartedEventPayload.model_validate(payload_by_type["Started"])
+                parsed_handle = parse_artifact_build_handle(started.build_handle)
+                assert parsed_handle.build_id == build_id, (
+                    "migrated Started carries the real sealed identity of its build"
+                )
+                assert started.artifact_ref == f"artifact:{artifact_id}"
+                assert started.subject_locator.ref == f"library:{library_id}"
+                ProgressEventPayload.model_validate(payload_by_type["Progress"])
+                DeltaEventPayload.model_validate(payload_by_type["Delta"])
+                succeeded = SucceededEventPayload.model_validate(
+                    payload_by_type["Succeeded"]
+                )
+                assert succeeded.artifact_revision_ref == (
+                    f"artifact_revision:{revision_id}"
                 )
         finally:
             reset_test_schema()
@@ -23088,6 +23483,32 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
                 assert terminal_counts.get("Failed", 0) == 3
                 assert terminal_counts.get("Cancelled", 0) == 0
 
+                assert (
+                    session.execute(
+                        text("SELECT count(*) FROM artifact_revisions WHERE id = :id"),
+                        {"id": rev_ready_zero},
+                    ).scalar_one()
+                    == 0
+                ), "a non-current zero-citation success is removed from revision history"
+                zero_mapping = session.execute(
+                    text(
+                        "SELECT count(*) FROM artifact_build_failures f"
+                        " JOIN artifact_builds b ON b.id = f.build_id"
+                        " WHERE b.artifact_id = :artifact"
+                        " AND f.failure_code = 'MigratedIncomplete'"
+                        " AND f.support ->> 'reason' = 'LegacyZeroCitation'"
+                        " AND f.support ->> 'legacy_revision_id' = :revision"
+                    ),
+                    {
+                        "artifact": artifact_id,
+                        "revision": str(rev_ready_zero),
+                    },
+                ).scalar_one()
+                assert zero_mapping == 1, (
+                    "the non-current zero-citation revision maps exactly once to"
+                    " MigratedIncomplete(LegacyZeroCitation)"
+                )
+
                 current = session.execute(
                     text("SELECT current_revision_id FROM artifacts WHERE id = :a"),
                     {"a": artifact_id},
@@ -23103,6 +23524,193 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
     # ================================================================== #
     # T3 -- migration DEFECTS (abort atomically, leave the schema at 0189)
     # ================================================================== #
+    def test_0190_aborts_on_missing_library_subject(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        missing_library_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_head(
+                    session,
+                    artifact_id=uuid4(),
+                    subject_scheme="library",
+                    subject_id=missing_library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, (
+                "0190 must not turn a nonexistent Library id into an audience"
+            )
+            with Session(engine) as session:
+                assert (
+                    session.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    ).scalar_one()
+                    == "0189"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    @pytest.mark.parametrize(
+        ("subject_scheme", "legacy_kind"),
+        [
+            ("library", "conversation_distillate"),
+            ("conversation", "library_dossier"),
+        ],
+    )
+    def test_0190_aborts_on_illegal_legacy_kind_subject_pair(
+        self,
+        subject_scheme: str,
+        legacy_kind: str,
+    ):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        subject_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                if subject_scheme == "library":
+                    self._insert_library(session, subject_id, user_id)
+                else:
+                    self._insert_conversation(session, subject_id, user_id)
+                self._insert_head(
+                    session,
+                    artifact_id=uuid4(),
+                    subject_scheme=subject_scheme,
+                    subject_id=subject_id,
+                    kind=legacy_kind,
+                    user_id=user_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, (
+                f"0190 must reject {legacy_kind!r} on {subject_scheme!r}"
+            )
+            with Session(engine) as session:
+                assert (
+                    session.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    ).scalar_one()
+                    == "0189"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_aborts_on_ambiguous_head_collision(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                # Corrupt the legacy uniqueness deliberately: preflight must
+                # detect the collision before installing the new identity.
+                session.execute(
+                    text(
+                        "ALTER TABLE artifacts DROP CONSTRAINT"
+                        " uq_artifacts_subject_kind"
+                    )
+                )
+                for _ in range(2):
+                    self._insert_head(
+                        session,
+                        artifact_id=uuid4(),
+                        subject_scheme="library",
+                        subject_id=library_id,
+                        kind="library_dossier",
+                        user_id=user_id,
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, (
+                "0190 must defect before an ambiguous resource-plus-audience merge"
+            )
+            with Session(engine) as session:
+                assert (
+                    session.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    ).scalar_one()
+                    == "0189"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_aborts_on_unmappable_ledger_operation(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="building",
+                    covered_targets=[],
+                    completed_at=None,
+                )
+                self._insert_llm_call(
+                    session,
+                    owner_kind="artifact_revision",
+                    owner_id=revision_id,
+                    call_seq=1,
+                    llm_operation="media_summary",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, (
+                "0190 must not retain an operation outside the exact legacy mapping"
+            )
+            with Session(engine) as session:
+                assert (
+                    session.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    ).scalar_one()
+                    == "0189"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
     def test_0190_aborts_on_missing_audience_subject(self):
         """A conversation distillate whose subject conversation no longer exists
         has no derivable audience: the migration defects atomically."""

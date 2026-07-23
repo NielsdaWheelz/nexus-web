@@ -893,7 +893,7 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
         db, ref=ResourceRef(scheme="conversation", id=conversation_id)
     )
 
-    # FK-less artifact subject cleanup: drop this conversation's distillate head +
+    # FK-less artifact subject cleanup: drop this conversation's Dossier head +
     # revisions + events + citation edges (D-10; no cascade, D-2).
     from nexus.services.artifacts import engine as artifact_engine
 

@@ -15,6 +15,7 @@
 import { useEffect } from "react";
 import { GitBranch, RotateCcw, X } from "lucide-react";
 import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import { MarkdownMessage } from "@/components/ui/MarkdownMessage";
 import { toReaderCitationData } from "@/lib/conversations/citations";
@@ -32,6 +33,7 @@ import {
   type DossierBodyView,
   type DossierViewModel,
 } from "@/components/dossier/dossierViewModel";
+import { dossierCoverageLabel } from "@/components/dossier/dossierCoverage";
 import styles from "./DossierSurface.module.css";
 
 export type DossierCitationActivate = (
@@ -42,6 +44,7 @@ export type DossierCitationActivate = (
 
 interface DossierSurfaceProps {
   store: DossierControllerStore;
+  onViewMediaEvidence: () => void;
   /** Wired by the pane/controller to route citation clicks through the pane
    * router; defaults to reader-source dispatch for in-document targets. */
   onCitationActivate?: DossierCitationActivate;
@@ -53,6 +56,7 @@ const defaultCitationActivate: DossierCitationActivate = (_activation, target) =
 
 export default function DossierSurface({
   store,
+  onViewMediaEvidence,
   onCitationActivate = defaultCitationActivate,
 }: DossierSurfaceProps) {
   // A14: connect on mount / disconnect the CLIENT stream on unmount — the
@@ -63,7 +67,21 @@ export default function DossierSurface({
   }, [store]);
 
   const vm = useDossierSelector(store, deriveDossierViewModel);
+  const instructionDraft = useDossierSelector(
+    store,
+    (state) => state.instructionDraft,
+  );
   const busy = vm.controls.busy !== null;
+  const canStartGeneration =
+    vm.controls.canGenerate || vm.controls.canRegenerate;
+  const submitInstruction = () => {
+    const instruction = instructionDraft.trim();
+    if (vm.controls.canGenerate) {
+      store.generate(instruction || null);
+    } else if (vm.controls.canRegenerate) {
+      store.regenerate(instruction || null);
+    }
+  };
 
   return (
     <div className={styles.surface} data-testid="resource-dossier-surface">
@@ -71,7 +89,12 @@ export default function DossierSurface({
         {vm.statusMessage}
       </div>
 
-      {vm.mediaAbstract ? <MediaAbstract abstract={vm.mediaAbstract} /> : null}
+      {vm.mediaAbstract ? (
+        <MediaAbstract
+          abstract={vm.mediaAbstract}
+          onViewEvidence={onViewMediaEvidence}
+        />
+      ) : null}
 
       <ActivityBanner activity={vm.activity} />
 
@@ -94,28 +117,39 @@ export default function DossierSurface({
         </div>
       ) : null}
 
-      <div className={styles.controls}>
-        {vm.controls.canGenerate ? (
+      {canStartGeneration ? (
+        <form
+          className={styles.generationForm}
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitInstruction();
+          }}
+        >
+          <label className={styles.instructionField}>
+            <span>Optional instruction</span>
+            <Input
+              size="sm"
+              maxLength={4000}
+              value={instructionDraft}
+              onChange={(event) =>
+                store.setInstructionDraft(event.currentTarget.value)
+              }
+              disabled={busy}
+              placeholder="What should this dossier emphasize?"
+            />
+          </label>
           <Button
+            type="submit"
             variant="primary"
             size="sm"
-            onClick={() => store.generate(null)}
             disabled={busy}
           >
-            Generate dossier
+            {vm.controls.canGenerate ? "Generate dossier" : "Regenerate"}
           </Button>
-        ) : null}
-        {vm.controls.canRegenerate ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => store.regenerate(null)}
-            disabled={busy}
-            leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
-          >
-            Regenerate
-          </Button>
-        ) : null}
+        </form>
+      ) : null}
+
+      <div className={styles.controls}>
         {vm.controls.canRetry ? (
           <Button
             variant="primary"
@@ -154,9 +188,7 @@ export default function DossierSurface({
       </div>
 
       {vm.actionError ? (
-        <p className={styles.freshness} role="status">
-          {vm.actionError}
-        </p>
+        <p className={styles.freshness}>{vm.actionError}</p>
       ) : null}
 
       <div className={styles.content}>
@@ -267,6 +299,20 @@ function DossierBody({
               onCitationActivate={onCitationActivate}
             />
           </MachineText>
+          <div className={styles.revisionMeta} aria-label="Dossier coverage">
+            <span className={styles.abstractLabel}>Coverage</span>
+            <span>{dossierCoverageLabel(body.revision.inputManifest)}</span>
+          </div>
+          <RevisionProvenance revision={body.revision} />
+          {body.revision.instruction.kind === "Present" ? (
+            <div
+              className={styles.revisionMeta}
+              aria-label="Dossier instruction"
+            >
+              <span className={styles.abstractLabel}>Instruction</span>
+              <span>{body.revision.instruction.value}</span>
+            </div>
+          ) : null}
         </div>
       );
     default: {
@@ -274,6 +320,32 @@ function DossierBody({
       throw new Error(`Unhandled body: ${JSON.stringify(exhaustive)}`);
     }
   }
+}
+
+function RevisionProvenance({
+  revision,
+}: {
+  revision: Extract<DossierBodyView, { kind: "Revision" }>["revision"];
+}) {
+  const facts = [
+    revision.creatorUserId.kind === "Present"
+      ? `Creator ${revision.creatorUserId.value}`
+      : "Deleted user",
+    revision.modelProvider.kind === "Present"
+      ? revision.modelProvider.value
+      : null,
+    revision.modelName.kind === "Present" ? revision.modelName.value : null,
+    revision.totalTokens.kind === "Present"
+      ? `${revision.totalTokens.value.toLocaleString()} tokens`
+      : null,
+    revision.createdAt,
+  ].filter((fact): fact is string => fact !== null);
+  return (
+    <div className={styles.revisionMeta} aria-label="Dossier provenance">
+      <span className={styles.abstractLabel}>Provenance</span>
+      <span>{facts.join(" · ")}</span>
+    </div>
+  );
 }
 
 /** View-only revision arrows (A15): step through history; Make-current is the
@@ -285,7 +357,27 @@ function HistoryNav({
   store: DossierControllerStore;
   vm: DossierViewModel;
 }) {
-  if (!vm.controls.historyAvailable || vm.history.length === 0) return null;
+  if (!vm.controls.historyAvailable) return null;
+  if (vm.historyStatus === "idle" || vm.historyStatus === "loading") {
+    return (
+      <p className={styles.historyStatus}>Loading revision history…</p>
+    );
+  }
+  if (vm.historyStatus === "failed") {
+    return (
+      <div className={styles.historyStatus} role="alert">
+        <span>Revision history is unavailable.</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => store.loadHistory()}
+        >
+          Retry revision history
+        </Button>
+      </div>
+    );
+  }
+  if (vm.history.length === 0) return null;
   const index = vm.history.findIndex(
     (entry) => entry.revisionRef === vm.selectedRevisionRef,
   );

@@ -15,6 +15,8 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import ProseMirrorOutlineEditor, {
   type NotePulseEditorTarget,
@@ -27,6 +29,7 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
@@ -648,8 +651,14 @@ export default function PagePaneBody({
   );
 
   const openRoute = useCallback(
-    (href: string, openInNewPane: boolean) => {
-      if (openInNewPane) openInNewPaneCommand?.(href);
+    (
+      href: string,
+      openInNewPane: boolean,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => {
+      if (openInNewPane) {
+        openInNewPaneCommand?.(href, undefined, secondaryActivation);
+      }
       else router.push(href);
     },
     [openInNewPaneCommand, router],
@@ -687,7 +696,29 @@ export default function PagePaneBody({
     ],
     [dailyLocalDate, openDatedPage],
   );
-  usePanePrimaryChrome({ options: paneOptions });
+  const connectionsComposerController = useConnectionsComposerController({
+    scheme: "page",
+    id: pageId,
+  });
+  const connectionsBody = useMemo(
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "page", id: pageId }}
+        composerController={connectionsComposerController}
+        onOpenRoute={openRoute}
+      />
+    ),
+    [connectionsComposerController, openRoute, pageId],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "page",
+    handle: pageId,
+    bodies: { linkedItems: connectionsBody },
+  });
+  usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
+    options: paneOptions,
+  });
 
   // Dawn write: fetch for daily note pages only (not focused-block views).
   // cacheKey is null until the page loads and confirms a dailyNote — the fetch
@@ -699,14 +730,6 @@ export default function PagePaneBody({
   });
   const dawnWrite =
     dawnWriteResource.status === "ready" ? dawnWriteResource.data : null;
-
-  const backlinkResourceRef = useMemo(
-    () => ({
-      scheme: focusBlockId ? ("note_block" as const) : ("page" as const),
-      id: focusBlockId ?? pageId,
-    }),
-    [focusBlockId, pageId],
-  );
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;
   if (!page || !initialDoc) return <PaneLoadingState />;
@@ -747,10 +770,6 @@ export default function PagePaneBody({
               toFeedback(error, { fallback: "Attachment could not be added." }),
             );
           }}
-        />
-        <ConnectionsSurface
-          resourceRef={backlinkResourceRef}
-          onOpenRoute={openRoute}
         />
       </div>
     </>

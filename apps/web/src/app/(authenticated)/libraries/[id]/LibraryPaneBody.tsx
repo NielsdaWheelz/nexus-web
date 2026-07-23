@@ -20,6 +20,8 @@ import {
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
+import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { libraryResourceOptions } from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { parseMediaId } from "@/lib/lectern/contract";
@@ -44,7 +46,6 @@ import {
   fetchPodcastLibraries,
   removePodcastFromLibrary,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
-import LibraryBrief from "@/components/library/LibraryBrief";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
@@ -72,6 +73,7 @@ import {
 import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
   usePaneParam,
@@ -79,6 +81,7 @@ import {
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
   decodeLibraryView,
@@ -1442,7 +1445,38 @@ export default function LibraryPaneBody() {
     loadMoreError,
     handleLoadMoreEntries,
   ]);
+  const openConnectionRoute = useCallback(
+    (
+      href: string,
+      inNewPane: boolean,
+      secondaryActivation?: WorkspaceSecondaryActivation,
+    ) => {
+      if (inNewPane) openInNewPane?.(href, undefined, secondaryActivation);
+      else router.push(href);
+    },
+    [openInNewPane, router],
+  );
+  const connectionsComposerController = useConnectionsComposerController({
+    scheme: "library",
+    id,
+  });
+  const connectionsBody = useMemo(
+    () => (
+      <ConnectionsSurface
+        resourceRef={{ scheme: "library", id }}
+        composerController={connectionsComposerController}
+        onOpenRoute={openConnectionRoute}
+      />
+    ),
+    [connectionsComposerController, id, openConnectionRoute],
+  );
+  const { companionAction } = useResourceInspector({
+    scheme: "library",
+    handle: id,
+    bodies: { linkedItems: connectionsBody },
+  });
   usePanePrimaryChrome({
+    actions: companionAction ? [companionAction] : [],
     options: paneOptions,
     header: {
       kind: "section",
@@ -1768,7 +1802,6 @@ export default function LibraryPaneBody() {
       />
       <PaneSurface
         opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
-        brief={<LibraryBrief libraryId={id} />}
         toolbar={toolbar}
         state={
           error || entryReconciliationNotice ? (

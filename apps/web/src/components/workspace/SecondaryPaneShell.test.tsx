@@ -3,17 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 
 const publication = {
-  groupId: "reader-tools" as const,
-  defaultSurfaceId: "reader-evidence" as const,
+  groupId: "resource-inspector" as const,
+  defaultSurfaceId: "resource-evidence" as const,
   surfaces: [
-    { id: "reader-contents" as const, body: <div>Contents body</div> },
-    { id: "reader-evidence" as const, body: <div>Evidence body</div> },
+    { id: "resource-contents" as const, body: <div>Contents body</div> },
+    { id: "resource-evidence" as const, body: <div>Evidence body</div> },
   ],
 };
 
 const state = {
-  groupId: "reader-tools" as const,
-  activeSurfaceId: "reader-contents" as const,
+  groupId: "resource-inspector" as const,
+  activeSurfaceId: "resource-contents" as const,
   widthPx: 360,
   visibility: "visible" as const,
 };
@@ -60,7 +60,7 @@ describe("SecondaryPaneShell", () => {
     );
     expect(screen.getByRole("complementary", { name: "Contents" })).toHaveAttribute(
       "id",
-      "pane-pane-1-secondary-reader-tools",
+      "pane-pane-1-secondary-resource-inspector",
     );
   });
 
@@ -90,7 +90,7 @@ describe("SecondaryPaneShell", () => {
     });
     expect(onActiveSurfaceChange).toHaveBeenCalledWith(
       "secondary-1",
-      "reader-evidence",
+      "resource-evidence",
     );
 
     const resizeHandle = screen.getByRole("separator", { name: "Resize Contents" });

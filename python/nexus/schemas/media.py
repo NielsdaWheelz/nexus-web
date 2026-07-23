@@ -31,7 +31,14 @@ MediaUnitStatus = Literal["building", "ready", "failed"]
 MediaReadState = Literal["unread", "in_progress", "finished"]
 
 
-MediaIntelligenceStatus = Literal["building", "ready", "stale", "failed", "not_available"]
+MediaIntelligenceStatus = Literal[
+    "building",
+    "ready",
+    "stale",
+    "failed",
+    "suspended",
+    "not_available",
+]
 
 
 class MediaIntelligenceOut(BaseModel):
@@ -39,7 +46,7 @@ class MediaIntelligenceOut(BaseModel):
 
     The authorized, compact, current-only per-media intelligence projection
     (spec §252/§826): a read-only view with no Generate control and no history.
-    ``summary_md`` / ``model_name`` are populated only when ``status == "ready"``.
+    ``summary_md`` / ``model_name`` are populated for current and stale summaries.
     """
 
     media_id: UUID

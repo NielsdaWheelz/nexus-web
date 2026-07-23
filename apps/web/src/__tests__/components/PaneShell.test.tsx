@@ -382,8 +382,8 @@ describe("PaneShell", () => {
     const onCredits = vi.fn();
     const mapAction = {
       kind: "command",
-      id: "document-map",
-      label: "Document Map",
+      id: "resource-inspector-companion",
+      label: "Companion",
       icon: <span aria-hidden="true">map</span>,
       onSelect: onMap,
     } satisfies PaneHeaderAction;
@@ -411,7 +411,7 @@ describe("PaneShell", () => {
     );
 
     const mapButton = await screen.findByRole("button", {
-      name: "Document Map",
+      name: "Companion",
     });
     fireEvent.click(mapButton);
     expect(onMap).toHaveBeenCalledWith({ triggerEl: mapButton });
@@ -424,15 +424,15 @@ describe("PaneShell", () => {
         .map((item) => item.textContent?.trim()),
     ).toEqual(["Copy pane link", "Credits…"]);
     expect(
-      within(menu).queryByRole("menuitem", { name: "Document Map" }),
+      within(menu).queryByRole("menuitem", { name: "Companion" }),
     ).not.toBeInTheDocument();
   });
 
-  it("lifts primary actions into the active mobile Options projection", async () => {
-    const mapAction = {
+  it("publishes primary actions separately from mobile Options", async () => {
+    const companion = {
       kind: "command",
-      id: "document-map",
-      label: "Document Map",
+      id: "resource-inspector-companion",
+      label: "Companion",
       icon: <span aria-hidden="true">map</span>,
       onSelect: vi.fn(),
     } satisfies PaneHeaderAction;
@@ -446,7 +446,7 @@ describe("PaneShell", () => {
           <PrimaryChromeProbe
             publication={{
               ...readyResource("Document title"),
-              actions: [mapAction],
+              actions: [companion],
               options: [
                 {
                   kind: "command",
@@ -466,6 +466,7 @@ describe("PaneShell", () => {
         expect.objectContaining({
           paneId: "pane-a",
           header: expect.objectContaining({ kind: "resource" }),
+          actions: expect.any(Array),
           options: expect.any(Array),
         }),
       );
@@ -473,10 +474,13 @@ describe("PaneShell", () => {
     const publication = mobileChromeMock.setPaneChrome.mock.calls
       .map(([value]) => value)
       .findLast((value) => value !== null);
+    expect(publication?.actions.map((action: PaneHeaderAction) => action.label)).toEqual([
+      "Companion",
+    ]);
     expect(
       publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Document Map", "Copy pane link", "Credits…"]);
-    expect(screen.queryByRole("button", { name: "Document Map" })).toBeNull();
+    ).toEqual(["Copy pane link", "Credits…"]);
+    expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
   });
 
@@ -504,17 +508,17 @@ describe("PaneShell", () => {
 
   it("scopes ready same-resource identity, actions, Options, and secondary regions per pane", async () => {
     const secondaryPublication = {
-      groupId: "reader-tools",
-      defaultSurfaceId: "reader-contents",
+      groupId: "resource-inspector",
+      defaultSurfaceId: "resource-contents",
       surfaces: [
         {
-          id: "reader-contents",
+          id: "resource-contents",
           body: <div>Contents secondary</div>,
         },
       ],
     } satisfies NonNullable<PaneProps["secondaryPublication"]>;
     const concurrentPane = (paneId: "pane-a" | "pane-b") => {
-      const secondaryRegionId = paneSecondaryRegionId(paneId, "reader-tools");
+      const secondaryRegionId = paneSecondaryRegionId(paneId, "resource-inspector");
       return (
         <div data-pane-id={paneId} data-testid={paneId}>
           {paneTree({
@@ -525,8 +529,8 @@ describe("PaneShell", () => {
             secondaryPane: {
               id: `secondary-${paneId}`,
               parentPrimaryPaneId: paneId,
-              groupId: "reader-tools",
-              activeSurfaceId: "reader-contents",
+              groupId: "resource-inspector",
+              activeSurfaceId: "resource-contents",
               widthPx: 360,
               visibility: "visible",
             },
@@ -544,16 +548,16 @@ describe("PaneShell", () => {
                   actions: [
                     {
                       kind: "command",
-                      id: "document-map",
-                      label: "Document Map",
+                      id: "resource-inspector-companion",
+                      label: "Companion",
                       icon: <span aria-hidden="true">map</span>,
                       state: {
                         kind: "disclosure",
                         expanded: true,
                         controls: secondaryRegionId,
                         menuLabels: {
-                          collapsed: "Show Document Map",
-                          expanded: "Hide Document Map",
+                          collapsed: "Show Companion",
+                          expanded: "Hide Companion",
                         },
                       },
                       onSelect: vi.fn(),
@@ -599,26 +603,26 @@ describe("PaneShell", () => {
         }),
       ).toHaveLength(1);
       expect(
-        scoped.getAllByRole("button", { name: "Document Map" }),
+        scoped.getAllByRole("button", { name: "Companion" }),
       ).toHaveLength(1);
       expect(scoped.getAllByRole("button", { name: "Options" })).toHaveLength(
         1,
       );
 
       const secondaryRegion = scoped.getByTestId("workspace-secondary-pane");
-      const secondaryRegionId = paneSecondaryRegionId(paneId, "reader-tools");
+      const secondaryRegionId = paneSecondaryRegionId(paneId, "resource-inspector");
       expect(secondaryRegion).toHaveAttribute("id", secondaryRegionId);
       expect(
-        scoped.getByRole("button", { name: "Document Map" }),
+        scoped.getByRole("button", { name: "Companion" }),
       ).toHaveAttribute("aria-controls", secondaryRegionId);
     }
-    expect(paneSecondaryRegionId("pane-a", "reader-tools")).not.toBe(
-      paneSecondaryRegionId("pane-b", "reader-tools"),
+    expect(paneSecondaryRegionId("pane-a", "resource-inspector")).not.toBe(
+      paneSecondaryRegionId("pane-b", "resource-inspector"),
     );
   });
 
   it("retains a controlled desktop secondary region until its disclosure publication collapses", async () => {
-    const secondaryRegionId = paneSecondaryRegionId("pane-a", "reader-tools");
+    const secondaryRegionId = paneSecondaryRegionId("pane-a", "resource-inspector");
     const props: Partial<PaneProps> = {
       routeHeader: sectionHeader,
       label: "Reader",
@@ -629,11 +633,11 @@ describe("PaneShell", () => {
         storedWidthCorrectionPx: null,
       },
       secondaryPublication: {
-        groupId: "reader-tools",
-        defaultSurfaceId: "reader-contents",
+        groupId: "resource-inspector",
+        defaultSurfaceId: "resource-contents",
         surfaces: [
           {
-            id: "reader-contents",
+            id: "resource-contents",
             body: <div>Contents secondary</div>,
           },
         ],
@@ -643,16 +647,16 @@ describe("PaneShell", () => {
       actions: [
         {
           kind: "command",
-          id: "document-map",
-          label: "Document Map",
+          id: "resource-inspector-companion",
+          label: "Companion",
           icon: <span aria-hidden="true">map</span>,
           state: {
             kind: "disclosure",
             expanded: true,
             controls: secondaryRegionId,
             menuLabels: {
-              collapsed: "Show Document Map",
-              expanded: "Hide Document Map",
+              collapsed: "Show Companion",
+              expanded: "Hide Companion",
             },
           },
           onSelect: vi.fn(),
@@ -663,15 +667,15 @@ describe("PaneShell", () => {
       actions: [
         {
           kind: "command",
-          id: "document-map",
-          label: "Document Map",
+          id: "resource-inspector-companion",
+          label: "Companion",
           icon: <span aria-hidden="true">map</span>,
           state: {
             kind: "disclosure",
             expanded: false,
             menuLabels: {
-              collapsed: "Show Document Map",
-              expanded: "Hide Document Map",
+              collapsed: "Show Companion",
+              expanded: "Hide Companion",
             },
           },
           onSelect: vi.fn(),
@@ -681,8 +685,8 @@ describe("PaneShell", () => {
     const secondaryPane = (visibility: "visible" | "collapsed") => ({
       id: "secondary-a",
       parentPrimaryPaneId: "pane-a",
-      groupId: "reader-tools" as const,
-      activeSurfaceId: "reader-contents" as const,
+      groupId: "resource-inspector" as const,
+      activeSurfaceId: "resource-contents" as const,
       widthPx: 360,
       visibility,
     });
@@ -700,7 +704,7 @@ describe("PaneShell", () => {
         secondaryRegionId,
       );
       expect(
-        screen.getByRole("button", { name: "Document Map" }),
+        screen.getByRole("button", { name: "Companion" }),
       ).toHaveAttribute("aria-controls", secondaryRegionId);
     });
 
@@ -726,7 +730,7 @@ describe("PaneShell", () => {
     );
     expect(screen.queryByTestId("workspace-secondary-pane")).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Document Map" }),
+      screen.queryByRole("button", { name: "Companion" }),
     ).toBeNull();
 
     rerender(
@@ -739,7 +743,7 @@ describe("PaneShell", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("workspace-secondary-pane")).toBeNull();
       expect(
-        screen.getByRole("button", { name: "Document Map" }),
+        screen.getByRole("button", { name: "Companion" }),
       ).not.toHaveAttribute("aria-controls");
     });
   });

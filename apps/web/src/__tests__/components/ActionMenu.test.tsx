@@ -244,14 +244,14 @@ describe("ActionMenu", () => {
           },
           {
             kind: "command",
-            id: "document-map",
-            label: "Document Map",
+            id: "resource-inspector-companion",
+            label: "Companion",
             state: {
               kind: "disclosure",
               expanded: false,
               menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
+                collapsed: "Show Companion",
+                expanded: "Hide Companion",
               },
             },
             onSelect: vi.fn(),
@@ -265,7 +265,7 @@ describe("ActionMenu", () => {
       "aria-checked",
       "true",
     );
-    const collapsed = screen.getByRole("menuitem", { name: "Show Document Map" });
+    const collapsed = screen.getByRole("menuitem", { name: "Show Companion" });
     expect(collapsed).not.toHaveAttribute("aria-expanded");
     expect(collapsed).not.toHaveAttribute("aria-controls");
 
@@ -274,15 +274,15 @@ describe("ActionMenu", () => {
         options={[
           {
             kind: "command",
-            id: "document-map",
-            label: "Document Map",
+            id: "resource-inspector-companion",
+            label: "Companion",
             state: {
               kind: "disclosure",
               expanded: true,
-              controls: "reader-tools-pane-1",
+              controls: "resource-inspector-pane-1",
               menuLabels: {
-                collapsed: "Show Document Map",
-                expanded: "Hide Document Map",
+                collapsed: "Show Companion",
+                expanded: "Hide Companion",
               },
             },
             onSelect: vi.fn(),
@@ -291,7 +291,7 @@ describe("ActionMenu", () => {
       />,
     );
 
-    const expanded = screen.getByRole("menuitem", { name: "Hide Document Map" });
+    const expanded = screen.getByRole("menuitem", { name: "Hide Companion" });
     expect(expanded).not.toHaveAttribute("aria-expanded");
     expect(expanded).not.toHaveAttribute("aria-controls");
   });

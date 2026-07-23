@@ -7,6 +7,7 @@ read, search, citation, prompt, attachment, and expansion policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal, assert_never
 from uuid import UUID
 
@@ -32,6 +33,29 @@ ResourceExpansionPolicy = Literal[
 UserLinkTargetMode = Literal["none", "direct", "materialize_passage"]
 
 
+class ResourceInspectorSurfaceRole(StrEnum):
+    Contents = "Contents"
+    LinkedItems = "LinkedItems"
+    Forks = "Forks"
+    Dossier = "Dossier"
+
+
+ResourceInspectorLinkedItemsSurface = Literal[
+    "MediaEvidence", "ConversationContext", "ResourceConnections"
+]
+ResourceInspectorForksSurface = Literal["ConversationForks"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceInspectorResourcePolicy:
+    linked_items: ResourceInspectorLinkedItemsSurface
+    forks: ResourceInspectorForksSurface | None
+    default_surface_order: tuple[ResourceInspectorSurfaceRole, ...]
+
+
+ResourceInspectorPolicy = ResourceInspectorResourcePolicy | None
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceUserRelationPolicy:
     """Universal Link authoring capability (universal-link-authoring-hard-cutover.md,
@@ -55,6 +79,7 @@ class ResourceItemCapability:
     chat_subject: ResourceChatSubjectMode
     readable: ResourceReadMode
     inspectable: ResourceInspectMode
+    inspector_policy: ResourceInspectorPolicy
     citable_result_type: str | None
     app_search_scope: bool
     conversation_search_scope: bool
@@ -76,6 +101,15 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="media",
         inspectable="media_document_map",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="MediaEvidence",
+            forks=None,
+            default_surface_order=(
+                ResourceInspectorSurfaceRole.Contents,
+                ResourceInspectorSurfaceRole.LinkedItems,
+                ResourceInspectorSurfaceRole.Dossier,
+            ),
+        ),
         citable_result_type="media",
         app_search_scope=True,
         conversation_search_scope=False,
@@ -91,6 +125,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="scope",
         readable="scope",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ResourceConnections",
+            forks=None,
+            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
+        ),
         citable_result_type=None,
         app_search_scope=True,
         conversation_search_scope=False,
@@ -108,6 +147,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="evidence_span",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -125,6 +165,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="content_chunk",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -140,6 +181,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="quote",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="highlight",
         app_search_scope=False,
         conversation_search_scope=True,
@@ -155,6 +197,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ResourceConnections",
+            forks=None,
+            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
+        ),
         citable_result_type="page",
         app_search_scope=False,
         conversation_search_scope=True,
@@ -170,6 +217,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ResourceConnections",
+            forks=None,
+            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
+        ),
         citable_result_type="note_block",
         app_search_scope=False,
         conversation_search_scope=True,
@@ -187,6 +239,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="fragment",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -202,6 +255,15 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="label",
         readable="body",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ConversationContext",
+            forks="ConversationForks",
+            default_surface_order=(
+                ResourceInspectorSurfaceRole.LinkedItems,
+                ResourceInspectorSurfaceRole.Forks,
+                ResourceInspectorSurfaceRole.Dossier,
+            ),
+        ),
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -217,6 +279,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="message",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -232,6 +295,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="generated_output",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -249,6 +313,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="none",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -264,6 +329,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="generated_output",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -279,6 +345,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="generated_output",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -294,6 +361,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="none",
         readable="none",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="web_result",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -309,6 +377,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="label",
         readable="none",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ResourceConnections",
+            forks=None,
+            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
+        ),
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -324,6 +397,11 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="label",
         readable="none",
         inspectable="none",
+        inspector_policy=ResourceInspectorResourcePolicy(
+            linked_items="ResourceConnections",
+            forks=None,
+            default_surface_order=(ResourceInspectorSurfaceRole.Dossier,),
+        ),
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -341,6 +419,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="readable",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type="reader_apparatus_item",
         app_search_scope=False,
         conversation_search_scope=False,
@@ -356,6 +435,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         chat_subject="quote",
         readable="body",
         inspectable="none",
+        inspector_policy=None,
         citable_result_type=None,
         app_search_scope=False,
         conversation_search_scope=False,
@@ -369,6 +449,57 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
 
 if set(RESOURCE_ITEM_CAPABILITIES) != set(RESOURCE_SCHEMES):
     raise AssertionError("Every ResourceScheme needs one resource item capability")
+
+_RESOURCE_INSPECTOR_SCHEMES: frozenset[ResourceScheme] = frozenset(
+    {"media", "conversation", "library", "podcast", "contributor", "page", "note_block"}
+)
+if {
+    scheme
+    for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+    if capability.inspector_policy is not None
+} != _RESOURCE_INSPECTOR_SCHEMES:
+    raise AssertionError("Resource Inspector policy must cover exactly the seven dossier subjects")
+
+for scheme in _RESOURCE_INSPECTOR_SCHEMES:
+    capability = RESOURCE_ITEM_CAPABILITIES[scheme]
+    policy = capability.inspector_policy
+    if policy is None:
+        raise AssertionError(f"{scheme} is missing its Resource Inspector policy")
+    if not policy.default_surface_order:
+        raise AssertionError(f"{scheme} needs a Resource Inspector default surface")
+    if len(policy.default_surface_order) != len(set(policy.default_surface_order)):
+        raise AssertionError(f"{scheme} has duplicate Resource Inspector surfaces")
+    if policy.default_surface_order[-1] != ResourceInspectorSurfaceRole.Dossier:
+        raise AssertionError(f"{scheme} must terminate in the always-published Dossier surface")
+
+if RESOURCE_ITEM_CAPABILITIES["media"].inspector_policy != ResourceInspectorResourcePolicy(
+    linked_items="MediaEvidence",
+    forks=None,
+    default_surface_order=(
+        ResourceInspectorSurfaceRole.Contents,
+        ResourceInspectorSurfaceRole.LinkedItems,
+        ResourceInspectorSurfaceRole.Dossier,
+    ),
+):
+    raise AssertionError("Media Resource Inspector policy drifted")
+
+if RESOURCE_ITEM_CAPABILITIES["conversation"].inspector_policy != (
+    ResourceInspectorResourcePolicy(
+        linked_items="ConversationContext",
+        forks="ConversationForks",
+        default_surface_order=(
+            ResourceInspectorSurfaceRole.LinkedItems,
+            ResourceInspectorSurfaceRole.Forks,
+            ResourceInspectorSurfaceRole.Dossier,
+        ),
+    )
+):
+    raise AssertionError("Conversation Resource Inspector policy drifted")
+
+for scheme in ("library", "podcast", "contributor", "page", "note_block"):
+    policy = RESOURCE_ITEM_CAPABILITIES[scheme].inspector_policy
+    if policy is None or policy.linked_items != "ResourceConnections" or policy.forks is not None:
+        raise AssertionError(f"{scheme} needs the generic Connections surface")
 
 
 def capability_for_scheme(scheme: ResourceScheme) -> ResourceItemCapability:
@@ -550,7 +681,9 @@ def expand_owned_child_refs(
         return _child_refs(
             db,
             "artifact_revision",
-            "SELECT id FROM artifact_revisions WHERE artifact_id = :id",
+            "SELECT r.id FROM artifact_revisions r "
+            "JOIN artifact_builds b ON b.id = r.build_id "
+            "WHERE b.artifact_id = :id",
             ref.id,
         )
     assert_never(policy)

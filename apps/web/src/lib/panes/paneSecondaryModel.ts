@@ -87,6 +87,26 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
 export type WorkspaceSecondarySurfaceId =
   (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["id"];
 
+export type WorkspaceSecondaryActivation =
+  | {
+      readonly kind: "Surface";
+      readonly surfaceId: WorkspaceSecondarySurfaceId;
+    }
+  | {
+      readonly kind: "DossierCurrent";
+      readonly surfaceId: "resource-dossier";
+    }
+  | {
+      readonly kind: "DossierRevision";
+      readonly surfaceId: "resource-dossier";
+      readonly revisionRef: string;
+    };
+
+export type WorkspaceDossierActivation = Extract<
+  WorkspaceSecondaryActivation,
+  { kind: "DossierCurrent" | "DossierRevision" }
+>;
+
 export type PaneSecondaryIconId =
   (typeof PANE_SECONDARY_SURFACE_DEFINITIONS)[number]["iconId"];
 

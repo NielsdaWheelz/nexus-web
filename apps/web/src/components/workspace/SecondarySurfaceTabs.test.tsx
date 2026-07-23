@@ -6,8 +6,8 @@ import SecondarySurfaceTabs, {
 } from "@/components/workspace/SecondarySurfaceTabs";
 
 const surfaces = [
-  { id: "reader-contents" as const, body: <div /> },
-  { id: "reader-evidence" as const, body: <div /> },
+  { id: "resource-contents" as const, body: <div /> },
+  { id: "resource-evidence" as const, body: <div /> },
 ];
 
 describe("SecondarySurfaceTabs", () => {
@@ -16,7 +16,7 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-evidence"
+        activeSurfaceId="resource-evidence"
         onSelect={vi.fn()}
       />,
     );
@@ -25,10 +25,10 @@ describe("SecondarySurfaceTabs", () => {
     const evidence = screen.getByRole("tab", { name: "Evidence" });
     expect(contents).toHaveAttribute("tabIndex", "-1");
     expect(evidence).toHaveAttribute("tabIndex", "0");
-    expect(contents.id).toBe(secondarySurfaceTabId("base", "reader-contents"));
+    expect(contents.id).toBe(secondarySurfaceTabId("base", "resource-contents"));
     expect(contents).toHaveAttribute(
       "aria-controls",
-      secondarySurfacePanelId("base", "reader-contents"),
+      secondarySurfacePanelId("base", "resource-contents"),
     );
   });
 
@@ -38,16 +38,16 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-evidence"
+        activeSurfaceId="resource-evidence"
         onSelect={onSelect}
       />,
     );
 
     const evidence = screen.getByRole("tab", { name: "Evidence" });
     fireEvent.keyDown(evidence, { key: "End" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-evidence");
+    expect(onSelect).toHaveBeenLastCalledWith("resource-evidence");
     fireEvent.keyDown(evidence, { key: "Home" });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-contents");
+    expect(onSelect).toHaveBeenLastCalledWith("resource-contents");
   });
 
   it("wraps around with ArrowLeft from the first surface", () => {
@@ -56,7 +56,7 @@ describe("SecondarySurfaceTabs", () => {
       <SecondarySurfaceTabs
         baseId="base"
         surfaces={surfaces}
-        activeSurfaceId="reader-contents"
+        activeSurfaceId="resource-contents"
         onSelect={onSelect}
       />,
     );
@@ -64,6 +64,6 @@ describe("SecondarySurfaceTabs", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "Contents" }), {
       key: "ArrowLeft",
     });
-    expect(onSelect).toHaveBeenLastCalledWith("reader-evidence");
+    expect(onSelect).toHaveBeenLastCalledWith("resource-evidence");
   });
 });
