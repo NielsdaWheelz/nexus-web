@@ -7,6 +7,7 @@ Run with: make test-migrations
 Do NOT run with: make test (these are excluded)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -21695,3 +21696,1581 @@ class TestMigration0189ReaderHighlightQuoteChat:
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
+
+
+class TestMigration0190ResourceInspectorAndUniversalDossiers:
+    """0190: the Resource-Inspector + Universal-Dossiers hard cutover.
+
+    Schema (``artifacts`` head): drops ``kind`` + ``user_id`` and their CHECKs
+    (``ck_artifacts_kind``/``ck_artifacts_subject_scheme``) and the
+    ``uq_artifacts_subject_kind`` unique; adds ``audience_scheme``/``audience_id``
+    and a resource-plus-audience unique
+    ``(subject_scheme, subject_id, audience_scheme, audience_id)``. The building
+    revision that WAS the run is split into ``artifact_builds`` (one attempt,
+    unique ``(artifact_id, idempotency_key)``, NO status column), re-normalized
+    ``artifact_revisions`` (non-null unique ``build_id`` FK, non-null
+    ``citation_owner_user_id``, typed ``input_manifest``), and the terminal
+    children ``artifact_build_failures``/``artifact_build_cancellations`` (each a
+    unique ``build_id`` FK). ``artifact_revision_events`` is replaced by
+    build-keyed ``artifact_build_events`` (unique ``(build_id, seq)``, event_type
+    in the 6-value build union). ``media_summaries``/``media_claims`` are
+    untouched. ``llm_calls.ck_llm_calls_owner_kind`` swaps
+    ``artifact_revision`` -> ``artifact_build``. The inherited-from-0142 notify
+    function ``notify_library_intelligence_revision_event`` + trigger
+    ``library_intelligence_revision_events_notify`` are dropped and rebuilt as
+    ``notify_artifact_build_event`` + trigger ``artifact_build_events_notify`` on
+    the new channel ``artifact_build_events`` (matching the run_kit listener).
+
+    Data (per-row, no runtime branch): each legacy revision becomes exactly one
+    build; ``ready`` w/ >=1 citation edge -> preserved revision + Succeeded event
+    + retained current pointer + ``citation_owner_user_id`` = historical
+    ``artifacts.user_id``; ``ready`` w/ 0 citation edges ->
+    ``MigratedIncomplete``/``LegacyZeroCitation`` (no revision, current cleared,
+    Failed event, SHA-256 support, NOT the body); ``failed`` ->
+    ``MigratedFailure``; ``building`` -> ``MigratedIncomplete``/``LegacyBuilding``.
+    idempotency moves to the build (``migrated:<legacy_revision_id>`` fallback);
+    events are re-keyed to the build and translated (exactly one terminal event
+    per child); ``llm_calls(owner_kind='artifact_revision')`` -> ``artifact_build``
+    + mapped build id, ``library_dossier`` -> ``dossier_library`` /
+    ``conversation_distillate`` -> ``dossier_conversation``; ``covered_targets``
+    is adapted per-kind (Library -> ``LibraryInputManifestV1.media[]``,
+    Conversation -> ``ConversationInputManifestV1`` w/
+    ``completeness=Incomplete(MigratedCoverageGap)``). The migration DEFECTS
+    (aborts atomically, leaving the schema at 0189) on a missing subject/audience,
+    an unmappable ledger row, or a citation-owner mismatch. Downgrade is blocked.
+
+    NOTE (test-first / RED): 0190 does not yet exist. These tests are expected to
+    FAIL until CP2 authors the migration (schema-shape tests fail because the new
+    tables/columns/notify objects are absent; data-transform tests fail because
+    ``upgrade head`` is a no-op at 0189; defect + downgrade tests fail because the
+    no-op returns 0). Mirrors the ``0188``/``0189`` class style.
+    """
+
+    _BUILD_EVENT_TYPES = frozenset(
+        {"Started", "Progress", "Delta", "Succeeded", "Failed", "Cancelled"}
+    )
+    _TERMINAL_EVENT_TYPES = frozenset({"Succeeded", "Failed", "Cancelled"})
+
+    # ------------------------------------------------------------------ #
+    # schema-introspection helpers
+    # ------------------------------------------------------------------ #
+    def _table_exists(self, session: Session, table: str) -> bool:
+        return (
+            session.execute(
+                text("SELECT to_regclass(:q)"), {"q": f"public.{table}"}
+            ).scalar_one()
+            is not None
+        )
+
+    def _column_nullability(self, session: Session, table: str) -> dict[str, str]:
+        return {
+            row[0]: row[1]
+            for row in session.execute(
+                text(
+                    "SELECT column_name, is_nullable FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = :t"
+                ),
+                {"t": table},
+            ).fetchall()
+        }
+
+    def _unique_column_sets(self, session: Session, table: str) -> set[frozenset[str]]:
+        """Every unique index (which backs unique constraints too) on ``table``,
+        as a set of its column-name frozensets. Tolerant of constraint-vs-index
+        and of names the spec left unpinned."""
+        rows = session.execute(
+            text(
+                "SELECT i.indexrelid::regclass::text AS idx, a.attname AS col"
+                " FROM pg_index i"
+                " JOIN pg_attribute a"
+                "   ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)"
+                " WHERE i.indrelid = CAST(:t AS regclass) AND i.indisunique"
+            ),
+            {"t": table},
+        ).fetchall()
+        grouped: dict[str, set[str]] = {}
+        for idx, col in rows:
+            grouped.setdefault(idx, set()).add(col)
+        return {frozenset(cols) for cols in grouped.values()}
+
+    def _constraint_names(self, session: Session, table: str) -> set[str]:
+        return {
+            row[0]
+            for row in session.execute(
+                text(
+                    "SELECT conname FROM pg_constraint"
+                    " WHERE conrelid = CAST(:t AS regclass)"
+                ),
+                {"t": table},
+            ).fetchall()
+        }
+
+    def _check_defs(self, session: Session, table: str) -> str:
+        rows = session.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conrelid = CAST(:t AS regclass) AND contype = 'c'"
+            ),
+            {"t": table},
+        ).fetchall()
+        return "\n".join(r[0] for r in rows)
+
+    def _run_kit_source(self) -> str:
+        repo_root = os.path.dirname(get_migrations_dir())
+        path = os.path.join(repo_root, "python", "nexus", "services", "run_kit.py")
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    # ------------------------------------------------------------------ #
+    # seed helpers (operate on the 0189 schema)
+    # ------------------------------------------------------------------ #
+    def _insert_user(self, session: Session, user_id) -> None:
+        session.execute(text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+
+    def _insert_media(self, session: Session, media_id, title: str = "Cited Work") -> None:
+        session.execute(
+            text("INSERT INTO media (id, kind, title) VALUES (:id, 'web_article', :title)"),
+            {"id": media_id, "title": title},
+        )
+
+    def _insert_library(self, session: Session, library_id, owner_user_id) -> None:
+        session.execute(
+            text(
+                "INSERT INTO libraries (id, owner_user_id, name, is_default)"
+                " VALUES (:id, :owner, 'Reading Library', false)"
+            ),
+            {"id": library_id, "owner": owner_user_id},
+        )
+
+    def _insert_conversation(self, session: Session, conversation_id, owner_user_id) -> None:
+        session.execute(
+            text("INSERT INTO conversations (id, owner_user_id) VALUES (:id, :owner)"),
+            {"id": conversation_id, "owner": owner_user_id},
+        )
+
+    def _insert_head(
+        self,
+        session: Session,
+        *,
+        artifact_id,
+        subject_scheme: str,
+        subject_id,
+        kind: str,
+        user_id,
+    ) -> None:
+        """A legacy artifact head (current_revision_id starts NULL to avoid the
+        artifacts<->artifact_revisions FK cycle; set it after inserting revs)."""
+        session.execute(
+            text(
+                "INSERT INTO artifacts (id, subject_scheme, subject_id, kind, user_id)"
+                " VALUES (:id, :ss, :si, :kind, :uid)"
+            ),
+            {"id": artifact_id, "ss": subject_scheme, "si": subject_id, "kind": kind, "uid": user_id},
+        )
+
+    def _insert_revision(
+        self,
+        session: Session,
+        *,
+        revision_id,
+        artifact_id,
+        status: str,
+        covered_targets: list,
+        content: str = "Generated synthesis body.",
+        idempotency_key: str | None = None,
+        custom_instruction: str | None = "Summarize the sources.",
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        completed_at: str | None = "2026-05-01T00:05:00Z",
+        promoted_at: str | None = None,
+        created_at: str = "2026-05-01T00:00:00Z",
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO artifact_revisions"
+                " (id, artifact_id, content_md, covered_targets, status, idempotency_key,"
+                "  custom_instruction, error_code, error_detail, completed_at, promoted_at,"
+                "  created_at)"
+                " VALUES (:id, :aid, :content, CAST(:covered AS jsonb), :status, :idem,"
+                "  :instr, :ecode, :edetail, CAST(:completed AS timestamptz),"
+                "  CAST(:promoted AS timestamptz), CAST(:created AS timestamptz))"
+            ),
+            {
+                "id": revision_id,
+                "aid": artifact_id,
+                "content": content,
+                "covered": json.dumps(covered_targets),
+                "status": status,
+                "idem": idempotency_key,
+                "instr": custom_instruction,
+                "ecode": error_code,
+                "edetail": error_detail,
+                "completed": completed_at,
+                "promoted": promoted_at,
+                "created": created_at,
+            },
+        )
+
+    def _set_current(self, session: Session, artifact_id, revision_id) -> None:
+        session.execute(
+            text("UPDATE artifacts SET current_revision_id = :r WHERE id = :a"),
+            {"r": revision_id, "a": artifact_id},
+        )
+
+    def _insert_revision_event(
+        self, session: Session, *, revision_id, seq: int, event_type: str, payload: dict
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO artifact_revision_events (revision_id, seq, event_type, payload)"
+                " VALUES (:rid, :seq, :etype, CAST(:payload AS jsonb))"
+            ),
+            {"rid": revision_id, "seq": seq, "etype": event_type, "payload": json.dumps(payload)},
+        )
+
+    def _insert_citation_edge(
+        self, session: Session, *, owner_user_id, revision_id, target_media_id, ordinal: int = 1
+    ) -> None:
+        """A citation edge sourced from the revision (origin='citation', ordinal
+        present -> the ck_resource_edges_citation_shape branch for
+        source_scheme='artifact_revision'). ``owner_user_id`` is the graph owner
+        the migration must reconcile against ``artifacts.user_id``."""
+        session.execute(
+            text(
+                "INSERT INTO resource_edges"
+                " (user_id, kind, origin, source_scheme, source_id, target_scheme, target_id,"
+                "  ordinal, snapshot)"
+                " VALUES (:uid, 'supports', 'citation', 'artifact_revision', :src,"
+                "  'media', :tgt, :ordinal, CAST(:snap AS jsonb))"
+            ),
+            {
+                "uid": owner_user_id,
+                "src": revision_id,
+                "tgt": target_media_id,
+                "ordinal": ordinal,
+                "snap": json.dumps({"excerpt": "cited passage"}),
+            },
+        )
+
+    def _insert_llm_call(
+        self,
+        session: Session,
+        *,
+        owner_kind: str,
+        owner_id,
+        call_seq: int,
+        llm_operation: str,
+    ) -> None:
+        session.execute(
+            text(
+                "INSERT INTO llm_calls"
+                " (owner_kind, owner_id, call_seq, provider, model_name, llm_operation,"
+                "  streaming, reasoning_effort, cost_status)"
+                " VALUES (:ok, :oid, :seq, 'openai', 'gpt-x', :op, true, 'medium', 'missing_usage')"
+            ),
+            {"ok": owner_kind, "oid": owner_id, "seq": call_seq, "op": llm_operation},
+        )
+
+    def _library_covered(self, media_id, *, fingerprint: str = "fp-abc", coverage: str = "included"):
+        # Shape produced by reducers/library_dossier.py:296-302.
+        return [{"kind": "media", "id": str(media_id), "fingerprint": fingerprint, "coverage": coverage}]
+
+    def _conversation_covered(self, conversation_id, *, leaf_id, message_count: int = 3):
+        # Shape produced by reducers/conversation_distillate.py:165-174.
+        return [
+            {
+                "kind": "conversation",
+                "id": str(conversation_id),
+                "active_leaf_message_id": str(leaf_id),
+                "message_count": message_count,
+            }
+        ]
+
+    def _build_id_for_revision(self, session: Session, revision_id):
+        return session.execute(
+            text("SELECT build_id FROM artifact_revisions WHERE id = :r"),
+            {"r": revision_id},
+        ).scalar_one()
+
+    def _sole_build_id_for_artifact(self, session: Session, artifact_id):
+        return session.execute(
+            text("SELECT id FROM artifact_builds WHERE artifact_id = :a"),
+            {"a": artifact_id},
+        ).scalar_one()
+
+    def _event_types(self, session: Session, build_id) -> list[str]:
+        return [
+            row[0]
+            for row in session.execute(
+                text(
+                    "SELECT event_type FROM artifact_build_events"
+                    " WHERE build_id = :b ORDER BY seq"
+                ),
+                {"b": build_id},
+            ).fetchall()
+        ]
+
+    # ================================================================== #
+    # T1 -- post-0190 schema shape
+    # ================================================================== #
+    def test_0190_artifacts_head_reshaped(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                cols = self._column_nullability(session, "artifacts")
+                assert "audience_scheme" in cols, "artifacts must gain audience_scheme"
+                assert "audience_id" in cols, "artifacts must gain audience_id"
+                assert "kind" not in cols, "artifacts.kind must be dropped"
+                assert "user_id" not in cols, "artifacts.user_id must be dropped"
+
+                uniques = self._unique_column_sets(session, "artifacts")
+                assert (
+                    frozenset({"subject_scheme", "subject_id", "audience_scheme", "audience_id"})
+                    in uniques
+                ), f"missing resource-plus-audience unique; found {uniques}"
+
+                connames = self._constraint_names(session, "artifacts")
+                assert "ck_artifacts_kind" not in connames
+                assert "ck_artifacts_subject_scheme" not in connames
+                assert "uq_artifacts_subject_kind" not in connames
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_artifact_builds_table_shape(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), (
+                    "artifact_builds table must exist"
+                )
+                cols = self._column_nullability(session, "artifact_builds")
+                assert {
+                    "id",
+                    "artifact_id",
+                    "requester_user_id",
+                    "instruction",
+                    "idempotency_key",
+                    "created_at",
+                }.issubset(cols), f"artifact_builds columns: {sorted(cols)}"
+                assert "status" not in cols, "artifact_builds must NOT carry a status column"
+                assert cols["requester_user_id"] == "YES", "requester_user_id is a nullable FK"
+                assert cols["idempotency_key"] == "NO", "idempotency_key is not-null on builds"
+
+                uniques = self._unique_column_sets(session, "artifact_builds")
+                assert frozenset({"artifact_id", "idempotency_key"}) in uniques, (
+                    f"idempotency uniqueness must move to builds; found {uniques}"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_artifact_revisions_renormalized(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                cols = self._column_nullability(session, "artifact_revisions")
+                assert "build_id" in cols, "artifact_revisions must gain a build_id FK"
+                assert cols["build_id"] == "NO", "build_id is non-null (every revision has a build)"
+                assert "citation_owner_user_id" in cols
+                assert cols["citation_owner_user_id"] == "NO", (
+                    "citation_owner_user_id is non-null (graph ownership)"
+                )
+                assert "input_manifest" in cols, (
+                    "the typed input manifest column (A19 name 'input_manifest') must exist"
+                )
+                assert "content_md" in cols
+                assert "status" not in cols, "revision status moves to terminal children"
+                assert "idempotency_key" not in cols, "idempotency moves to builds"
+                # A19: covered_targets-name is dropped, replaced by input_manifest.
+                assert "covered_targets" not in cols, (
+                    "A19 replaces covered_targets with input_manifest"
+                )
+
+                uniques = self._unique_column_sets(session, "artifact_revisions")
+                assert frozenset({"build_id"}) in uniques, (
+                    f"build_id must be UNIQUE (one revision per build); found {uniques}"
+                )
+                assert frozenset({"artifact_id", "idempotency_key"}) not in uniques, (
+                    "the legacy idempotency unique must not remain on revisions"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_terminal_children_and_events_tables(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_build_failures")
+                fcols = self._column_nullability(session, "artifact_build_failures")
+                assert {"id", "build_id", "failure_code", "detail", "support", "created_at"}.issubset(
+                    fcols
+                ), f"failure columns: {sorted(fcols)}"
+                assert fcols["build_id"] == "NO"
+                assert frozenset({"build_id"}) in self._unique_column_sets(
+                    session, "artifact_build_failures"
+                ), "each failure is a unique build FK"
+
+                assert self._table_exists(session, "artifact_build_cancellations")
+                ccols = self._column_nullability(session, "artifact_build_cancellations")
+                assert {"id", "build_id", "actor_user_id", "created_at"}.issubset(ccols)
+                assert ccols["actor_user_id"] == "YES", "cancellation actor is a nullable FK"
+                assert frozenset({"build_id"}) in self._unique_column_sets(
+                    session, "artifact_build_cancellations"
+                )
+
+                assert self._table_exists(session, "artifact_build_events")
+                ecols = self._column_nullability(session, "artifact_build_events")
+                assert {"id", "build_id", "seq", "event_type", "payload", "created_at"}.issubset(
+                    ecols
+                )
+                assert ecols["build_id"] == "NO"
+                assert frozenset({"build_id", "seq"}) in self._unique_column_sets(
+                    session, "artifact_build_events"
+                ), "event sequencing is unique per build"
+
+                event_checks = self._check_defs(session, "artifact_build_events")
+                for value in self._BUILD_EVENT_TYPES:
+                    assert f"'{value}'" in event_checks, (
+                        f"event_type CHECK must admit {value!r}; def={event_checks!r}"
+                    )
+                assert "'meta'" not in event_checks, "legacy 'meta' event type must be gone"
+                assert "'done'" not in event_checks, "legacy 'done' event type must be gone"
+
+                assert not self._table_exists(session, "artifact_revision_events"), (
+                    "artifact_revision_events must be dropped"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_llm_calls_owner_kind_admits_build_rejects_revision(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            allowed_owner = uuid4()
+            with Session(engine) as session:
+                self._insert_llm_call(
+                    session,
+                    owner_kind="artifact_build",
+                    owner_id=allowed_owner,
+                    call_seq=1,
+                    llm_operation="dossier_library",
+                )
+                session.commit()
+                kind = session.execute(
+                    text("SELECT owner_kind FROM llm_calls WHERE owner_id = :o"),
+                    {"o": allowed_owner},
+                ).scalar_one()
+                assert kind == "artifact_build"
+
+            with Session(engine) as session:
+                with pytest.raises(IntegrityError) as exc_info:
+                    self._insert_llm_call(
+                        session,
+                        owner_kind="artifact_revision",
+                        owner_id=uuid4(),
+                        call_seq=1,
+                        llm_operation="dossier_library",
+                    )
+                    session.commit()
+                session.rollback()
+                assert "ck_llm_calls_owner_kind" in str(exc_info.value)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_media_projection_unchanged(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                assert self._table_exists(session, "media_summaries")
+                assert frozenset({"media_id"}) in self._unique_column_sets(
+                    session, "media_summaries"
+                ), "media_summaries must keep UNIQUE(media_id)"
+                assert self._table_exists(session, "media_claims")
+                assert frozenset({"summary_id", "ordinal"}) in self._unique_column_sets(
+                    session, "media_claims"
+                ), "media_claims unique(summary_id, ordinal) must be unchanged"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_notify_channel_rebuilt(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        try:
+            with Session(engine) as session:
+                old_fn = session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_proc"
+                        " WHERE proname = 'notify_library_intelligence_revision_event'"
+                    )
+                ).scalar_one()
+                assert old_fn == 0, "the 0142 notify function must be dropped by name"
+                old_trigger = session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_trigger"
+                        " WHERE tgname = 'library_intelligence_revision_events_notify'"
+                    )
+                ).scalar_one()
+                assert old_trigger == 0, "the inherited library-intelligence trigger must be dropped"
+
+                new_fn = session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_proc WHERE proname = 'notify_artifact_build_event'"
+                    )
+                ).scalar_one()
+                assert new_fn >= 1, "notify_artifact_build_event function must exist"
+                trigger_table = session.execute(
+                    text(
+                        "SELECT tgrelid::regclass::text FROM pg_trigger"
+                        " WHERE tgname = 'artifact_build_events_notify'"
+                    )
+                ).scalar_one_or_none()
+                assert trigger_table == "artifact_build_events", (
+                    f"artifact_build_events_notify must fire on artifact_build_events; "
+                    f"got {trigger_table!r}"
+                )
+                fn_def = session.execute(
+                    text(
+                        "SELECT pg_get_functiondef(oid) FROM pg_proc"
+                        " WHERE proname = 'notify_artifact_build_event'"
+                    )
+                ).scalar_one()
+                assert "artifact_build_events" in fn_def, (
+                    "the notify function must pg_notify the artifact_build_events channel"
+                )
+
+            # The runtime listener constant must match the new channel (A19: the
+            # run_kit listener -> "artifact_build_events").
+            assert '"artifact_build_events"' in self._run_kit_source(), (
+                "run_kit must LISTEN the artifact_build_events channel"
+            )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    # ================================================================== #
+    # T2 -- downgrade blocked
+    # ================================================================== #
+    def test_0190_downgrade_is_blocked(self):
+        """0190 is a hard cutover: downgrading off it surfaces NotImplementedError."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade head")
+        assert result.returncode == 0, f"upgrade head failed: {result.stderr}"
+        try:
+            result = run_alembic_command("downgrade 0189")
+            assert result.returncode != 0
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert (
+                "NotImplementedError" in combined
+                or "hard cutover migration and has no downgrade path" in combined
+                or "Hard cutover" in combined
+            ), f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+
+    # ================================================================== #
+    # T3 -- per-row data transform
+    # ================================================================== #
+    def test_0190_library_dossier_ready_with_citation_preserved(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id, title="The Cited Source")
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-lib-ready",
+                    promoted_at="2026-05-01T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    payload={"revision_id": str(revision_id)},
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=2, event_type="progress",
+                    payload={"message": "reducing"},
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=3, event_type="done",
+                    payload={"status": "ready", "revision_id": str(revision_id)},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+
+                head = session.execute(
+                    text(
+                        "SELECT audience_scheme, audience_id, current_revision_id"
+                        " FROM artifacts WHERE id = :a"
+                    ),
+                    {"a": artifact_id},
+                ).mappings().one()
+                assert head["audience_scheme"] == "library"
+                assert str(head["audience_id"]) == str(library_id), (
+                    "library dossier audience is Library(subject_id)"
+                )
+                assert str(head["current_revision_id"]) == str(revision_id), (
+                    "a preserved citation-valid success keeps the current pointer"
+                )
+
+                rev = session.execute(
+                    text(
+                        "SELECT build_id, citation_owner_user_id, creator_user_id, input_manifest,"
+                        " content_md, created_at, promoted_at"
+                        " FROM artifact_revisions WHERE id = :r"
+                    ),
+                    {"r": revision_id},
+                ).mappings().one()
+                assert rev["build_id"] is not None, "the preserved revision must gain a build FK"
+                assert str(rev["citation_owner_user_id"]) == str(user_id), (
+                    "citation_owner_user_id backfills from historical artifacts.user_id"
+                )
+                assert str(rev["creator_user_id"]) == str(user_id)
+                assert rev["content_md"] == "Generated synthesis body.", "content is immutable"
+                assert rev["promoted_at"] is not None, "legacy promoted_at is retained"
+
+                manifest = rev["input_manifest"]
+                assert isinstance(manifest, dict), f"input_manifest must be a JSON object: {manifest!r}"
+                media_entries = manifest["media"]
+                assert isinstance(media_entries, list) and len(media_entries) == 1
+                entry = media_entries[0]
+                assert entry["content_fingerprint"] == "fp-abc"
+                assert entry["disposition"] == "Included", "coverage 'included' -> disposition Included"
+                assert str(media_id) in json.dumps(entry["media_ref"]), (
+                    "the Library manifest media entry must reference the covered media"
+                )
+
+                build = session.execute(
+                    text(
+                        "SELECT artifact_id, requester_user_id, idempotency_key, created_at"
+                        " FROM artifact_builds WHERE id = :b"
+                    ),
+                    {"b": rev["build_id"]},
+                ).mappings().one()
+                assert str(build["artifact_id"]) == str(artifact_id)
+                assert str(build["requester_user_id"]) == str(user_id), (
+                    "requester backfills from historical artifacts.user_id"
+                )
+                assert build["idempotency_key"] == "idem-lib-ready", "idempotency moves to the build"
+                assert build["created_at"] == rev["created_at"], (
+                    "build created_at is the legacy revision start"
+                )
+
+                event_types = self._event_types(session, rev["build_id"])
+                terminal = [e for e in event_types if e in self._TERMINAL_EVENT_TYPES]
+                assert terminal == ["Succeeded"], (
+                    f"a preserved success ends with exactly one Succeeded event; got {event_types}"
+                )
+                assert set(event_types) <= self._BUILD_EVENT_TYPES
+                # meta -> Started opener (inferred translation; flag for integrator).
+                assert "Started" in event_types
+
+                edge_count = session.execute(
+                    text(
+                        "SELECT count(*) FROM resource_edges"
+                        " WHERE source_scheme = 'artifact_revision' AND source_id = :r"
+                        " AND origin = 'citation'"
+                    ),
+                    {"r": revision_id},
+                ).scalar_one()
+                assert edge_count == 1, "citation edges for a preserved revision stay intact"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_library_dossier_ready_zero_citation_incomplete(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        body = "ZERO_CITATION_BODY_DO_NOT_STORE"
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    content=body,
+                    idempotency_key="idem-zero",
+                    completed_at="2026-05-02T00:05:00Z",
+                    promoted_at="2026-05-02T00:06:00Z",
+                )
+                # current points at the zero-citation success -> must be cleared.
+                self._set_current(session, artifact_id, revision_id)
+                # NO citation edge is inserted.
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+
+                surviving = session.execute(
+                    text("SELECT count(*) FROM artifact_revisions WHERE id = :r"),
+                    {"r": revision_id},
+                ).scalar_one()
+                assert surviving == 0, "a zero-citation success must NOT become a revision"
+
+                current = session.execute(
+                    text("SELECT current_revision_id FROM artifacts WHERE id = :a"),
+                    {"a": artifact_id},
+                ).scalar_one()
+                assert current is None, "the current pointer must be cleared for a zero-citation head"
+
+                build_id = self._sole_build_id_for_artifact(session, artifact_id)
+                failure = session.execute(
+                    text(
+                        "SELECT failure_code, support FROM artifact_build_failures"
+                        " WHERE build_id = :b"
+                    ),
+                    {"b": build_id},
+                ).mappings().one()
+                assert failure["failure_code"] == "MigratedIncomplete"
+                support_blob = json.dumps(failure["support"])
+                assert "LegacyZeroCitation" in support_blob, "support.reason = LegacyZeroCitation"
+                assert str(revision_id) in support_blob, "support carries the legacy revision id"
+                assert "ready" in support_blob, "support carries the legacy status"
+                assert hashlib.sha256(body.encode()).hexdigest() in support_blob, (
+                    "support carries the content SHA-256"
+                )
+                assert body not in support_blob, "support must NOT carry the raw body"
+
+                event_types = self._event_types(session, build_id)
+                terminal = [e for e in event_types if e in self._TERMINAL_EVENT_TYPES]
+                assert terminal == ["Failed"], (
+                    f"a zero-citation success terminalizes Failed, never Succeeded; got {event_types}"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_failed_revision_becomes_migrated_failure(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="failed",
+                    covered_targets=[],
+                    content="",
+                    idempotency_key="idem-failed",
+                    error_code="context_too_large",
+                    error_detail="too big",
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    payload={"revision_id": str(revision_id)},
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=2, event_type="done",
+                    payload={"status": "failed", "error_code": "context_too_large"},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                build_id = self._sole_build_id_for_artifact(session, artifact_id)
+                failure_code = session.execute(
+                    text("SELECT failure_code FROM artifact_build_failures WHERE build_id = :b"),
+                    {"b": build_id},
+                ).scalar_one()
+                assert failure_code == "MigratedFailure"
+                terminal = [e for e in self._event_types(session, build_id) if e in self._TERMINAL_EVENT_TYPES]
+                assert terminal == ["Failed"]
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_building_revision_becomes_migrated_incomplete(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="building",
+                    covered_targets=[],
+                    content="",
+                    idempotency_key="idem-building",
+                    completed_at=None,
+                )
+                self._insert_revision_event(
+                    session, revision_id=revision_id, seq=1, event_type="meta",
+                    payload={"revision_id": str(revision_id)},
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                build_id = self._sole_build_id_for_artifact(session, artifact_id)
+                failure = session.execute(
+                    text(
+                        "SELECT failure_code, support FROM artifact_build_failures WHERE build_id = :b"
+                    ),
+                    {"b": build_id},
+                ).mappings().one()
+                assert failure["failure_code"] == "MigratedIncomplete"
+                assert "LegacyBuilding" in json.dumps(failure["support"]), (
+                    "an in-flight legacy build maps to support.reason = LegacyBuilding"
+                )
+                terminal = [e for e in self._event_types(session, build_id) if e in self._TERMINAL_EVENT_TYPES]
+                assert terminal == ["Failed"], "a never-finished build terminalizes Failed"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_conversation_distillate_audience_and_manifest(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        requester_id = uuid4()
+        conv_owner_id = uuid4()
+        conversation_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        leaf_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, requester_id)
+                self._insert_user(session, conv_owner_id)
+                self._insert_conversation(session, conversation_id, conv_owner_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="conversation",
+                    subject_id=conversation_id,
+                    kind="conversation_distillate",
+                    user_id=requester_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._conversation_covered(conversation_id, leaf_id=leaf_id),
+                    idempotency_key="idem-conv",
+                    promoted_at="2026-05-03T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                # citation graph owner is the historical requester (artifacts.user_id).
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=requester_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                head = session.execute(
+                    text("SELECT audience_scheme, audience_id FROM artifacts WHERE id = :a"),
+                    {"a": artifact_id},
+                ).mappings().one()
+                assert head["audience_scheme"] == "user", (
+                    "a conversation distillate becomes owner-User audience"
+                )
+                assert str(head["audience_id"]) == str(conv_owner_id), (
+                    "audience derives from conversations.owner_user_id, NOT artifacts.user_id"
+                )
+
+                manifest = session.execute(
+                    text("SELECT input_manifest FROM artifact_revisions WHERE id = :r"),
+                    {"r": revision_id},
+                ).scalar_one()
+                assert isinstance(manifest, dict), f"manifest must be a JSON object: {manifest!r}"
+                blob = json.dumps(manifest)
+                assert str(conversation_id) in blob, "the Conversation manifest references its subject"
+                assert "MigratedCoverageGap" in blob, (
+                    "a migrated conversation manifest is Incomplete(MigratedCoverageGap)"
+                )
+                assert "Incomplete" in blob
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_missing_idempotency_key_backfills_migrated_fallback(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key=None,  # no historical key
+                    promoted_at="2026-05-04T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                self._insert_citation_edge(
+                    session,
+                    owner_user_id=user_id,
+                    revision_id=revision_id,
+                    target_media_id=media_id,
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                build_id = self._build_id_for_revision(session, revision_id)
+                key = session.execute(
+                    text("SELECT idempotency_key FROM artifact_builds WHERE id = :b"),
+                    {"b": build_id},
+                ).scalar_one()
+                assert key == f"migrated:{revision_id}", (
+                    "a missing historical idempotency key backfills to migrated:<legacy_revision_id>"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_llm_calls_reattributed_to_build_and_operation_rewritten(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        # library dossier ledger row
+        lib_user = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        lib_artifact = uuid4()
+        lib_revision = uuid4()
+        # conversation distillate ledger row
+        conv_user = uuid4()
+        conversation_id = uuid4()
+        conv_media = uuid4()
+        conv_artifact = uuid4()
+        conv_revision = uuid4()
+        conv_leaf = uuid4()
+        try:
+            with Session(engine) as session:
+                # Library dossier: ready + citation so the revision survives.
+                self._insert_user(session, lib_user)
+                self._insert_library(session, library_id, lib_user)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=lib_artifact,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=lib_user,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=lib_revision,
+                    artifact_id=lib_artifact,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-lib-llm",
+                    promoted_at="2026-05-05T00:06:00Z",
+                )
+                self._set_current(session, lib_artifact, lib_revision)
+                self._insert_citation_edge(
+                    session, owner_user_id=lib_user, revision_id=lib_revision, target_media_id=media_id
+                )
+                self._insert_llm_call(
+                    session,
+                    owner_kind="artifact_revision",
+                    owner_id=lib_revision,
+                    call_seq=1,
+                    llm_operation="library_dossier",
+                )
+                # Conversation distillate ledger row.
+                self._insert_user(session, conv_user)
+                self._insert_conversation(session, conversation_id, conv_user)
+                self._insert_media(session, conv_media)
+                self._insert_head(
+                    session,
+                    artifact_id=conv_artifact,
+                    subject_scheme="conversation",
+                    subject_id=conversation_id,
+                    kind="conversation_distillate",
+                    user_id=conv_user,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=conv_revision,
+                    artifact_id=conv_artifact,
+                    status="ready",
+                    covered_targets=self._conversation_covered(conversation_id, leaf_id=conv_leaf),
+                    idempotency_key="idem-conv-llm",
+                    promoted_at="2026-05-05T00:07:00Z",
+                )
+                self._set_current(session, conv_artifact, conv_revision)
+                self._insert_citation_edge(
+                    session, owner_user_id=conv_user, revision_id=conv_revision, target_media_id=conv_media
+                )
+                self._insert_llm_call(
+                    session,
+                    owner_kind="artifact_revision",
+                    owner_id=conv_revision,
+                    call_seq=1,
+                    llm_operation="conversation_distillate",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                assert (
+                    session.execute(
+                        text("SELECT count(*) FROM llm_calls WHERE owner_kind = 'artifact_revision'")
+                    ).scalar_one()
+                    == 0
+                ), "no ledger row may retain owner_kind='artifact_revision'"
+
+                lib_build = self._build_id_for_revision(session, lib_revision)
+                lib_row = session.execute(
+                    text(
+                        "SELECT owner_kind, owner_id, llm_operation FROM llm_calls"
+                        " WHERE owner_id = :b"
+                    ),
+                    {"b": lib_build},
+                ).mappings().one()
+                assert lib_row["owner_kind"] == "artifact_build"
+                assert lib_row["llm_operation"] == "dossier_library", (
+                    "library_dossier operation rewrites to dossier_library"
+                )
+
+                conv_build = self._build_id_for_revision(session, conv_revision)
+                conv_row = session.execute(
+                    text("SELECT owner_kind, llm_operation FROM llm_calls WHERE owner_id = :b"),
+                    {"b": conv_build},
+                ).mappings().one()
+                assert conv_row["owner_kind"] == "artifact_build"
+                assert conv_row["llm_operation"] == "dossier_conversation", (
+                    "conversation_distillate operation rewrites to dossier_conversation"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_revision_events_rekeyed_and_terminalized(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-events",
+                    promoted_at="2026-05-06T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                self._insert_citation_edge(
+                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                )
+                for seq, etype in [(1, "meta"), (2, "progress"), (3, "delta"), (4, "done")]:
+                    self._insert_revision_event(
+                        session, revision_id=revision_id, seq=seq, event_type=etype,
+                        payload={"seq": seq},
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert not self._table_exists(session, "artifact_revision_events"), (
+                    "the legacy per-revision event table must be gone"
+                )
+                build_id = self._build_id_for_revision(session, revision_id)
+                rows = session.execute(
+                    text(
+                        "SELECT seq, event_type FROM artifact_build_events"
+                        " WHERE build_id = :b ORDER BY seq"
+                    ),
+                    {"b": build_id},
+                ).fetchall()
+                assert rows, "the legacy events must be re-keyed onto the mapped build"
+                seqs = [r[0] for r in rows]
+                assert len(seqs) == len(set(seqs)), "unique (build_id, seq)"
+                types = [r[1] for r in rows]
+                assert set(types) <= self._BUILD_EVENT_TYPES, f"untranslated event type in {types}"
+                terminal = [t for t in types if t in self._TERMINAL_EVENT_TYPES]
+                assert terminal == ["Succeeded"], (
+                    f"exactly one terminal event (Succeeded) for a preserved success; got {types}"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_full_census_mixed_population_counts_match(self):
+        """One library head carrying every legacy status at once: the preflight
+        census must equal the transformation report (4 builds; 1 preserved
+        revision; 3 failure children = 1 MigratedFailure + 2 MigratedIncomplete;
+        terminal events 1 Succeeded + 3 Failed)."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        rev_ready_cited = uuid4()
+        rev_ready_zero = uuid4()
+        rev_failed = uuid4()
+        rev_building = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session, revision_id=rev_ready_cited, artifact_id=artifact_id, status="ready",
+                    covered_targets=self._library_covered(media_id), idempotency_key="idem-a",
+                    promoted_at="2026-05-07T00:06:00Z",
+                )
+                self._insert_citation_edge(
+                    session, owner_user_id=user_id, revision_id=rev_ready_cited, target_media_id=media_id
+                )
+                self._insert_revision(
+                    session, revision_id=rev_ready_zero, artifact_id=artifact_id, status="ready",
+                    covered_targets=self._library_covered(media_id), content="zero-cite",
+                    idempotency_key="idem-b",
+                )
+                self._insert_revision(
+                    session, revision_id=rev_failed, artifact_id=artifact_id, status="failed",
+                    covered_targets=[], content="", idempotency_key="idem-c", error_code="provider_refused",
+                )
+                self._insert_revision(
+                    session, revision_id=rev_building, artifact_id=artifact_id, status="building",
+                    covered_targets=[], content="", idempotency_key="idem-d", completed_at=None,
+                )
+                # current points at the citation-valid success -> retained.
+                self._set_current(session, artifact_id, rev_ready_cited)
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode == 0, f"upgrade head (0190) failed: {result.stderr}"
+
+            with Session(engine) as session:
+                assert self._table_exists(session, "artifact_builds"), "0190 must create builds"
+                build_count = session.execute(
+                    text("SELECT count(*) FROM artifact_builds WHERE artifact_id = :a"),
+                    {"a": artifact_id},
+                ).scalar_one()
+                assert build_count == 4, "every legacy revision maps to exactly one build"
+
+                rev_count = session.execute(
+                    text(
+                        "SELECT count(*) FROM artifact_revisions ar"
+                        " JOIN artifact_builds b ON ar.build_id = b.id"
+                        " WHERE b.artifact_id = :a"
+                    ),
+                    {"a": artifact_id},
+                ).scalar_one()
+                assert rev_count == 1, "only the citation-valid success is preserved as a revision"
+
+                failure_codes = sorted(
+                    row[0]
+                    for row in session.execute(
+                        text(
+                            "SELECT f.failure_code FROM artifact_build_failures f"
+                            " JOIN artifact_builds b ON f.build_id = b.id"
+                            " WHERE b.artifact_id = :a"
+                        ),
+                        {"a": artifact_id},
+                    ).fetchall()
+                )
+                assert failure_codes == ["MigratedFailure", "MigratedIncomplete", "MigratedIncomplete"], (
+                    f"3 non-preserved revisions -> 3 failure children; got {failure_codes}"
+                )
+
+                terminal_counts = dict(
+                    session.execute(
+                        text(
+                            "SELECT e.event_type, count(*) FROM artifact_build_events e"
+                            " JOIN artifact_builds b ON e.build_id = b.id"
+                            " WHERE b.artifact_id = :a AND e.event_type IN"
+                            " ('Succeeded', 'Failed', 'Cancelled')"
+                            " GROUP BY e.event_type"
+                        ),
+                        {"a": artifact_id},
+                    ).fetchall()
+                )
+                assert terminal_counts.get("Succeeded", 0) == 1
+                assert terminal_counts.get("Failed", 0) == 3
+                assert terminal_counts.get("Cancelled", 0) == 0
+
+                current = session.execute(
+                    text("SELECT current_revision_id FROM artifacts WHERE id = :a"),
+                    {"a": artifact_id},
+                ).scalar_one()
+                assert str(current) == str(rev_ready_cited), (
+                    "the current pointer stays on the preserved citation-valid success"
+                )
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    # ================================================================== #
+    # T3 -- migration DEFECTS (abort atomically, leave the schema at 0189)
+    # ================================================================== #
+    def test_0190_aborts_on_missing_audience_subject(self):
+        """A conversation distillate whose subject conversation no longer exists
+        has no derivable audience: the migration defects atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        media_id = uuid4()
+        missing_conversation_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="conversation",
+                    subject_id=missing_conversation_id,  # no conversations row
+                    kind="conversation_distillate",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._conversation_covered(
+                        missing_conversation_id, leaf_id=uuid4()
+                    ),
+                    idempotency_key="idem-missing-audience",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                self._insert_citation_edge(
+                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "0190 must abort when a subject/audience is underivable"
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0189", "a defected 0190 must leave the schema at 0189"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_aborts_on_unmappable_ledger_row(self):
+        """An llm_calls row owned by a nonexistent artifact_revision cannot be
+        re-homed onto a build: the migration defects atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        orphan_owner = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, user_id)
+                self._insert_library(session, library_id, user_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=user_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-orphan",
+                    promoted_at="2026-05-08T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                self._insert_citation_edge(
+                    session, owner_user_id=user_id, revision_id=revision_id, target_media_id=media_id
+                )
+                # orphan ledger row: owner_id references no artifact_revision.
+                self._insert_llm_call(
+                    session,
+                    owner_kind="artifact_revision",
+                    owner_id=orphan_owner,
+                    call_seq=1,
+                    llm_operation="library_dossier",
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "0190 must abort on an unmappable ledger row"
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0189", "a defected 0190 must leave the schema at 0189"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0190_aborts_on_citation_owner_mismatch(self):
+        """A preserved revision whose citation edge is owned by someone other than
+        the historical artifacts.user_id is a citation-owner mismatch: the
+        migration defects atomically."""
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0189")
+        assert result.returncode == 0, f"upgrade 0189 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        owner_id = uuid4()
+        other_id = uuid4()
+        library_id = uuid4()
+        media_id = uuid4()
+        artifact_id = uuid4()
+        revision_id = uuid4()
+        try:
+            with Session(engine) as session:
+                self._insert_user(session, owner_id)
+                self._insert_user(session, other_id)
+                self._insert_library(session, library_id, owner_id)
+                self._insert_media(session, media_id)
+                self._insert_head(
+                    session,
+                    artifact_id=artifact_id,
+                    subject_scheme="library",
+                    subject_id=library_id,
+                    kind="library_dossier",
+                    user_id=owner_id,
+                )
+                self._insert_revision(
+                    session,
+                    revision_id=revision_id,
+                    artifact_id=artifact_id,
+                    status="ready",
+                    covered_targets=self._library_covered(media_id),
+                    idempotency_key="idem-mismatch",
+                    promoted_at="2026-05-09T00:06:00Z",
+                )
+                self._set_current(session, artifact_id, revision_id)
+                # edge owned by a DIFFERENT user than artifacts.user_id.
+                self._insert_citation_edge(
+                    session, owner_user_id=other_id, revision_id=revision_id, target_media_id=media_id
+                )
+                session.commit()
+
+            result = run_alembic_command("upgrade head")
+            assert result.returncode != 0, "0190 must abort on a citation-owner mismatch"
+
+            with Session(engine) as session:
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert version == "0189", "a defected 0190 must leave the schema at 0189"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
