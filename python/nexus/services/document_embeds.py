@@ -29,6 +29,14 @@ from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.web_article_structure import WebArticleDocumentEmbed
 
 
+class DocumentEmbedLockSetChanged(Exception):
+    """A concurrent reusable child appeared outside the planned media lock set."""
+
+    def __init__(self, media_id: UUID) -> None:
+        super().__init__(str(media_id))
+        self.media_id = media_id
+
+
 def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
     replace_edges_for_origin(
         db,
@@ -55,6 +63,7 @@ def replace_document_embed_artifact(
     extraction_error_code: str | None,
     extraction_error_message: str | None,
     request_id: str | None,
+    locked_existing_target_media_ids: frozenset[UUID] = frozenset(),
 ) -> list[tuple[UUID, UUID]]:
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
     queued_children: list[tuple[UUID, UUID]] = []
@@ -83,12 +92,19 @@ def replace_document_embed_artifact(
                     request_id=request_id,
                 )
                 target_media_id = accepted.media_id
+                if (
+                    not accepted.needs_enqueue
+                    and target_media_id not in locked_existing_target_media_ids
+                ):
+                    raise DocumentEmbedLockSetChanged(target_media_id)
                 diagnostics["child_source_attempt_id"] = str(accepted.source_attempt_id)
                 resolution_status = _resolution_from_child(
                     accepted.processing_status, accepted.source_attempt_status
                 )
                 if accepted.needs_enqueue:
                     queued_children.append((accepted.media_id, accepted.source_attempt_id))
+            except DocumentEmbedLockSetChanged:
+                raise
             except Exception as exc:  # child source failure must not fail parent publication
                 error_code = getattr(getattr(exc, "code", None), "value", None) or "E_INGEST_FAILED"
                 error_message = str(getattr(exc, "message", None) or exc)[:1000]

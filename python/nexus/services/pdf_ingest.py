@@ -114,6 +114,17 @@ class PdfSourcePackageArtifact:
 
 
 @dataclass(frozen=True)
+class PdfExtractionPlan:
+    result: PdfExtractionResult
+    apparatus: PdfApparatusResult
+    storage_path: str
+    source_size_bytes: int
+    source_sha256_hex: str
+    source_package: PdfSourcePackageArtifact | None
+    source_package_diagnostics: dict[str, object] | None
+
+
+@dataclass(frozen=True)
 class PdfReferenceBlock:
     page_index: int
     label: str
@@ -267,7 +278,7 @@ def _extract_with_pymupdf(
                 terminal=True,
             )
         return PdfExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
+            error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
             error_message=f"Failed to open PDF: {exc}",
             terminal=False,
         )
@@ -291,7 +302,7 @@ def _extract_with_pymupdf(
         page_count = len(doc)
         if page_count < 1:
             return PdfExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
                 error_message="PDF has zero pages",
                 terminal=False,
             )
@@ -1548,43 +1559,22 @@ def validate_page_spans(
 # ---------------------------------------------------------------------------
 
 
-def extract_pdf_artifacts(
-    db: Session,
-    media_id: UUID,
-    storage_client,
+def build_pdf_extraction_plan(
     *,
+    media_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    storage_client,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
-) -> PdfExtractionResult | PdfExtractionError:
-    """Extract and persist PDF text artifacts.
-
-    On success with text: persists page_count, plain_text, and pdf_page_text_spans
-    atomically. On success without text (scanned): persists page_count only.
-    On failure: persists nothing (caller owns failure marking).
-    """
-    media = db.get(Media, media_id)
-    if media is None:
-        return PdfExtractionError(
-            error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value,
-            error_message="Media not found",
-        )
-
-    media_file = media.media_file
-    if not media_file:
-        return PdfExtractionError(
-            error_code=ApiErrorCode.E_STORAGE_MISSING.value,
-            error_message="No media file record",
-        )
-
+) -> PdfExtractionPlan | PdfExtractionError:
+    """Acquire and parse immutable PDF input without opening a DB transaction."""
     t0 = time.monotonic()
 
     try:
-        pdf_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
+        pdf_bytes = b"".join(storage_client.stream_object(storage_path))
     except StorageError as exc:
-        return PdfExtractionError(
-            error_code=ApiErrorCode.E_STORAGE_ERROR.value,
-            error_message=f"Failed to read PDF from storage: {exc}",
-        )
+        raise StorageError(exc.message, exc.code) from exc
 
     result = _extract_with_pymupdf(pdf_bytes)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -1610,7 +1600,35 @@ def extract_pdf_artifacts(
         elapsed_ms=elapsed_ms,
         file_size=len(pdf_bytes),
     )
+    pdf_apparatus = _merge_pdf_apparatus_results(
+        _extract_pdf_native_link_apparatus(pdf_bytes, media_id=media_id),
+        _extract_pdf_legal_footnote_apparatus(pdf_bytes, media_id=media_id),
+        _extract_pdf_source_package_apparatus(
+            storage_client=storage_client,
+            media_id=media_id,
+            source_package=source_package,
+            source_package_diagnostics=source_package_diagnostics,
+        ),
+    )
+    return PdfExtractionPlan(
+        result=result,
+        apparatus=pdf_apparatus,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        source_sha256_hex=hashlib.sha256(pdf_bytes).hexdigest(),
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
 
+
+def publish_pdf_extraction_plan(
+    db: Session,
+    *,
+    media_id: UUID,
+    plan: PdfExtractionPlan,
+) -> PdfExtractionResult:
+    """Replace the complete PDF artifact set in the caller's fenced transaction."""
+    result = plan.result
     # Serialize publication of the complete PDF artifact set against anonymous
     # readers, which hold Media FOR SHARE while resolving a projection.
     locked_media_id = db.execute(
@@ -1618,10 +1636,10 @@ def extract_pdf_artifacts(
         {"media_id": media_id},
     ).scalar()
     if locked_media_id is None:
-        return PdfExtractionError(
-            error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value,
-            error_message="Media row not found before PDF publication",
-        )
+        raise AssertionError("PDF media disappeared inside its publication fence")
+    media = db.get(Media, media_id)
+    if media is None:
+        raise AssertionError("PDF media disappeared inside its publication fence")
 
     if result.has_text:
         validation_err = validate_page_spans(
@@ -1635,11 +1653,7 @@ def extract_pdf_artifacts(
                 media_id=str(media_id),
                 reason=validation_err,
             )
-            return PdfExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
-                error_message=f"Page span invariant failure: {validation_err}",
-                terminal=False,
-            )
+            raise AssertionError(f"PDF page span invariant failure: {validation_err}")
 
         media.page_count = result.page_count
         media.plain_text = result.plain_text
@@ -1666,37 +1680,27 @@ def extract_pdf_artifacts(
         db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
         db.flush()
 
-    pdf_apparatus = _merge_pdf_apparatus_results(
-        _extract_pdf_native_link_apparatus(pdf_bytes, media_id=media_id),
-        _extract_pdf_legal_footnote_apparatus(pdf_bytes, media_id=media_id),
-        _extract_pdf_source_package_apparatus(
-            storage_client=storage_client,
-            media_id=media_id,
-            source_package=source_package,
-            source_package_diagnostics=source_package_diagnostics,
-        ),
-    )
     replace_media_apparatus(
         db,
         media_id=media_id,
         media_kind="pdf",
         source_fingerprint_value=source_fingerprint(
             "pdf",
-            media_file.storage_path,
-            media_file.size_bytes,
-            hashlib.sha256(pdf_bytes).hexdigest(),
-            source_package.storage_path if source_package else None,
-            source_package.size_bytes if source_package else None,
-            source_package.sha256_hex if source_package else None,
-            source_package.source_url if source_package else None,
-            source_package_diagnostics or {},
+            plan.storage_path,
+            plan.source_size_bytes,
+            plan.source_sha256_hex,
+            plan.source_package.storage_path if plan.source_package else None,
+            plan.source_package.size_bytes if plan.source_package else None,
+            plan.source_package.sha256_hex if plan.source_package else None,
+            plan.source_package.source_url if plan.source_package else None,
+            plan.source_package_diagnostics or {},
             result.page_count,
             result.source_byte_length,
         ),
-        items=pdf_apparatus.items,
-        edges=pdf_apparatus.edges,
-        status=pdf_apparatus.status,
-        diagnostics=pdf_apparatus.diagnostics,
+        items=plan.apparatus.items,
+        edges=plan.apparatus.edges,
+        status=plan.apparatus.status,
+        diagnostics=plan.apparatus.diagnostics,
     )
     return result
 

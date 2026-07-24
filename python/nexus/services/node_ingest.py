@@ -1,20 +1,4 @@
-"""Node.js subprocess wrapper for web article ingestion.
-
-Executes the node/ingest/ingest.mjs script as a subprocess with:
-- JSON input/output protocol
-- Hard timeout enforcement
-- Process group isolation for clean kill
-- Structured error handling
-
-The Node script uses native fetch() (Node 20+) for HTTP and
-jsdom + Mozilla Readability for article extraction. No browser required.
-
-Exit codes from Node script:
-    0  - Success
-    10 - Timeout
-    11 - Fetch failed
-    12 - Readability extraction failed
-"""
+"""Strict Node subprocess boundary for web article ingestion."""
 
 import json
 import os
@@ -30,18 +14,28 @@ from nexus.errors import ApiErrorCode
 _DEV_FALLBACK = Path(__file__).parent.parent.parent.parent / "node" / "ingest" / "ingest.mjs"
 NODE_INGEST_SCRIPT = Path(os.environ.get("NODE_INGEST_SCRIPT", _DEV_FALLBACK))
 
-# Exit codes from node script
-EXIT_SUCCESS = 0
-EXIT_TIMEOUT = 10
-EXIT_FETCH_FAILED = 11
-EXIT_READABILITY_FAILED = 12
-
-# Timeout configuration
 DEFAULT_NODE_TIMEOUT_MS = 30000  # 30s for HTTP fetch
 SUBPROCESS_TIMEOUT_S = 40  # 40s hard wall-clock limit for subprocess
+_PROTOCOL_VERSION = 1
+_SUCCESS_KEYS = frozenset(
+    {
+        "version",
+        "tag",
+        "final_url",
+        "base_url",
+        "title",
+        "content_html",
+        "source_html",
+        "byline",
+        "excerpt",
+        "site_name",
+        "published_time",
+    }
+)
+_FAILURE_KEYS = frozenset({"version", "tag", "failure", "message"})
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class IngestResult:
     """Result of successful web article ingestion."""
 
@@ -57,7 +51,7 @@ class IngestResult:
     provider_fixture: dict[str, object] | None = None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class IngestError:
     """Error from web article ingestion."""
 
@@ -65,26 +59,17 @@ class IngestError:
     message: str
 
 
+# justify-defect: every use represents an owned script or wire-contract violation.
+class NodeIngestProtocolDefect(RuntimeError):
+    """The owned Node process violated its closed result contract."""
+
+
 def run_node_ingest(
     url: str,
     timeout_ms: int = DEFAULT_NODE_TIMEOUT_MS,
     subprocess_timeout_s: int = SUBPROCESS_TIMEOUT_S,
 ) -> IngestResult | IngestError:
-    """Run the Node.js ingest script to fetch and extract a web article.
-
-    Args:
-        url: The URL to fetch.
-        timeout_ms: Timeout for HTTP fetch (passed to node script).
-        subprocess_timeout_s: Hard wall-clock timeout for the entire subprocess.
-
-    Returns:
-        IngestResult on success, IngestError on failure.
-
-    Note:
-        This function never raises exceptions for expected failure modes.
-        It returns IngestError instead, allowing the caller to handle
-        failures consistently.
-    """
+    """Return a modeled source result; raise when the owned protocol is broken."""
     from nexus.config import get_settings, real_media_provider_fixtures_requested
 
     if real_media_provider_fixtures_requested():
@@ -92,20 +77,13 @@ def run_node_ingest(
         if settings.real_media_provider_fixtures:
             return _run_real_media_fixture_ingest(url, settings.real_media_fixture_dir)
 
-    # Verify script exists
     if not NODE_INGEST_SCRIPT.exists():
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message=f"Node ingest script not found at {NODE_INGEST_SCRIPT}",
-        )
+        # justify-defect: the deployed owned script is required infrastructure.
+        raise NodeIngestProtocolDefect(f"Node ingest script not found at {NODE_INGEST_SCRIPT}")
 
-    # Prepare input JSON
-    input_data = {"url": url, "timeout_ms": timeout_ms}
-    input_json = json.dumps(input_data).encode("utf-8")
+    input_json = json.dumps({"url": url, "timeout_ms": timeout_ms}).encode("utf-8")
 
     try:
-        # Start subprocess in new process group for clean kill
-        # Using start_new_session=True creates a new session/process group
         proc = subprocess.Popen(
             ["node", str(NODE_INGEST_SCRIPT)],
             stdin=subprocess.PIPE,
@@ -117,107 +95,100 @@ def run_node_ingest(
         try:
             stdout, stderr = proc.communicate(input=input_json, timeout=subprocess_timeout_s)
         except subprocess.TimeoutExpired:
-            # Kill entire process group (POSIX) or process (Windows fallback)
             try:
                 if hasattr(os, "killpg"):
                     os.killpg(proc.pid, signal.SIGKILL)
                 else:
                     proc.kill()
             except (ProcessLookupError, OSError):
-                pass  # Process already dead
+                # justify-ignore-error: the process already exited before the timeout cleanup.
+                pass
             proc.wait()
             return IngestError(
                 error_code=ApiErrorCode.E_INGEST_TIMEOUT,
                 message=f"Subprocess timeout after {subprocess_timeout_s}s",
             )
 
-        # Check exit code
-        exit_code = proc.returncode
-
-        if exit_code == EXIT_SUCCESS:
-            # Parse successful output
-            try:
-                result_data = json.loads(stdout.decode("utf-8"))
-                return IngestResult(
-                    final_url=result_data["final_url"],
-                    base_url=result_data["base_url"],
-                    title=result_data.get("title", ""),
-                    content_html=result_data["content_html"],
-                    source_html=result_data.get("source_html") or result_data["content_html"],
-                    byline=result_data.get("byline") or "",
-                    excerpt=result_data.get("excerpt") or "",
-                    site_name=result_data.get("site_name") or "",
-                    published_time=result_data.get("published_time") or "",
-                )
-            except (json.JSONDecodeError, KeyError) as e:
-                return IngestError(
-                    error_code=ApiErrorCode.E_INGEST_FAILED,
-                    message=f"Invalid output from node script: {e}",
-                )
-
-        # Handle error exit codes
-        error_message = _extract_error_message(stderr, stdout)
-
-        if exit_code == EXIT_TIMEOUT:
-            return IngestError(
-                error_code=ApiErrorCode.E_INGEST_TIMEOUT,
-                message=error_message or "Page load timeout",
+        if proc.returncode != 0:
+            # justify-defect: modeled failures are protocol values with exit zero.
+            raise NodeIngestProtocolDefect(
+                f"Node ingest exited with code {proc.returncode}: "
+                f"{_decode_output_excerpt(stderr or stdout)}"
             )
-        elif exit_code == EXIT_FETCH_FAILED:
-            return IngestError(
-                error_code=ApiErrorCode.E_INGEST_FAILED,
-                message=error_message or "Fetch failed",
-            )
-        elif exit_code == EXIT_READABILITY_FAILED:
-            return IngestError(
-                error_code=ApiErrorCode.E_INGEST_FAILED,
-                message=error_message or "Readability extraction failed",
-            )
-        else:
-            return IngestError(
-                error_code=ApiErrorCode.E_INGEST_FAILED,
-                message=f"Node script exited with code {exit_code}: {error_message}",
-            )
+        return _decode_result(stdout)
 
-    except FileNotFoundError:
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message="Node.js not found. Ensure Node.js is installed.",
-        )
+    except FileNotFoundError as exc:
+        # justify-defect: Node is required infrastructure for this owned adapter.
+        raise NodeIngestProtocolDefect("Node.js executable is unavailable") from exc
     except OSError as e:
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message=f"Subprocess error: {e}",
-        )
+        # justify-defect: process-launch failures are not modeled source outcomes.
+        raise NodeIngestProtocolDefect(f"Node ingest subprocess failed: {e}") from e
 
 
-def _extract_error_message(stderr: bytes, stdout: bytes) -> str:
-    """Extract error message from subprocess output.
-
-    The node script outputs JSON errors to stderr.
-    Falls back to raw stderr/stdout if JSON parsing fails.
-    """
-    if stderr:
-        structured_error = _decode_node_error(stderr)
-        if structured_error is not None:
-            return structured_error
-        return _decode_output_excerpt(stderr)
-
-    if stdout:
-        return _decode_output_excerpt(stdout)
-
-    return ""
-
-
-def _decode_node_error(stderr: bytes) -> str | None:
+def _decode_result(output: bytes) -> IngestResult | IngestError:
     try:
-        error_data = json.loads(stderr.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if not isinstance(error_data, dict):
-        return None
-    error = error_data.get("error")
-    return error if isinstance(error, str) else None
+        value = json.loads(output.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # justify-defect: this process is owned and must emit the closed JSON union.
+        raise NodeIngestProtocolDefect("Node ingest returned malformed JSON") from exc
+    if not isinstance(value, dict):
+        raise NodeIngestProtocolDefect("Node ingest result must be an object")
+    if type(value.get("version")) is not int or value["version"] != _PROTOCOL_VERSION:
+        raise NodeIngestProtocolDefect("Node ingest returned an unsupported protocol version")
+
+    tag = value.get("tag")
+    if tag == "Success":
+        if value.keys() != _SUCCESS_KEYS or not all(
+            isinstance(value[key], str) for key in _SUCCESS_KEYS - {"version", "tag"}
+        ):
+            raise NodeIngestProtocolDefect("Node ingest returned an invalid Success payload")
+        return IngestResult(
+            final_url=value["final_url"],
+            base_url=value["base_url"],
+            title=value["title"],
+            content_html=value["content_html"],
+            source_html=value["source_html"],
+            byline=value["byline"],
+            excerpt=value["excerpt"],
+            site_name=value["site_name"],
+            published_time=value["published_time"],
+        )
+    if tag == "Failure":
+        return _decode_failure(value)
+    raise NodeIngestProtocolDefect(f"Node ingest returned unknown result tag: {tag!r}")
+
+
+def _decode_failure(value: dict[str, object]) -> IngestError:
+    if value.keys() != _FAILURE_KEYS or not isinstance(value["message"], str):
+        raise NodeIngestProtocolDefect("Node ingest returned an invalid Failure payload")
+    failure = value["failure"]
+    if not isinstance(failure, dict):
+        raise NodeIngestProtocolDefect("Node ingest failure must be an object")
+    tag = failure.get("tag")
+    if tag == "Http":
+        if failure.keys() != {"tag", "status"}:
+            raise NodeIngestProtocolDefect("Node ingest returned an invalid Http failure")
+        status = failure["status"]
+        if type(status) is not int or not 100 <= status <= 599 or 200 <= status <= 299:
+            raise NodeIngestProtocolDefect(
+                f"Node ingest returned impossible HTTP status: {status!r}"
+            )
+        error_code = (
+            ApiErrorCode.E_SOURCE_ACCESS_DENIED
+            if status in {401, 403}
+            else ApiErrorCode.E_SOURCE_FETCH_FAILED
+        )
+    elif tag == "Timeout" and failure.keys() == {"tag"}:
+        error_code = ApiErrorCode.E_INGEST_TIMEOUT
+    elif tag == "Network" and failure.keys() == {"tag"}:
+        error_code = ApiErrorCode.E_SOURCE_FETCH_FAILED
+    elif tag == "TooLarge" and failure.keys() == {"tag"}:
+        error_code = ApiErrorCode.E_SOURCE_TOO_LARGE
+    elif tag == "Readability" and failure.keys() == {"tag"}:
+        error_code = ApiErrorCode.E_SOURCE_NOT_READABLE
+    else:
+        raise NodeIngestProtocolDefect(f"Node ingest returned unknown failure variant: {tag!r}")
+    return IngestError(error_code=error_code, message=value["message"])
 
 
 def _decode_output_excerpt(output: bytes) -> str:
@@ -225,34 +196,26 @@ def _decode_output_excerpt(output: bytes) -> str:
     return decoded[:500] if len(decoded) > 500 else decoded
 
 
-def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestResult | IngestError:
-    requested_url = str(url or "").strip()
+def _run_real_media_fixture_ingest(url: str, fixture_dir: str | None) -> IngestResult:
+    requested_url = url.strip()
     if requested_url != "https://science.nasa.gov/solar-system/moon/theres-water-on-the-moon/":
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message=f"No real-media web article fixture for {requested_url}",
-        )
+        # justify-defect: a requested owned fixture must exist in the fixture catalog.
+        raise NodeIngestProtocolDefect(f"No real-media web article fixture for {requested_url}")
     if fixture_dir is None:
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message="REAL_MEDIA_FIXTURE_DIR is required for web article fixtures",
+        # justify-defect: fixture mode requires its declared fixture directory.
+        raise NodeIngestProtocolDefect(
+            "REAL_MEDIA_FIXTURE_DIR is required for web article fixtures"
         )
 
     path = Path(fixture_dir) / "nasa-water-on-moon-capture.html"
     try:
         content_html = path.read_text(encoding="utf-8")
     except OSError as exc:
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message=f"Web article fixture unavailable: {exc}",
-        )
+        raise NodeIngestProtocolDefect(f"Web article fixture unavailable: {exc}") from exc
 
     payload = content_html.encode("utf-8")
     if len(payload) != 1_019:
-        return IngestError(
-            error_code=ApiErrorCode.E_INGEST_FAILED,
-            message="Web article fixture size mismatch",
-        )
+        raise NodeIngestProtocolDefect("Web article fixture size mismatch")
 
     return IngestResult(
         final_url=requested_url,

@@ -12,8 +12,8 @@
  * Input (stdin JSON):
  *   { "url": "https://example.com/article", "timeout_ms": 30000 }
  *
- * Output (stdout JSON on success, stderr JSON on failure):
- *   {
+ * Output (stdout JSON for every modeled result):
+ *   { "version": 1, "tag": "Success",
  *     "final_url": "https://example.com/actual-article",
  *     "base_url": "https://example.com/actual-article",
  *     "title": "Article Title",
@@ -23,40 +23,33 @@
  *     "site_name": "Example.com",
  *     "published_time": "2023-01-15T00:00:00Z"
  *   }
- *
- * Exit Codes:
- *   0  - Success
- *   10 - Timeout
- *   11 - Fetch failed (network error, HTTP error, etc.)
- *   12 - Readability extraction failed
+ *   { "version": 1, "tag": "Failure",
+ *     "failure": { "tag": "Http", "status": 403 },
+ *     "message": "HTTP error: 403"
+ *   }
  *
  * IMPORTANT: Never call process.exit() directly — it kills the process
  * before stdio buffers flush, truncating piped output. Instead, throw
- * an IngestError or set process.exitCode and return.
+ * an IngestFailure or set process.exitCode and return.
  */
 
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 
-// Exit codes per spec
-const EXIT_SUCCESS = 0;
-const EXIT_TIMEOUT = 10;
-const EXIT_FETCH_FAILED = 11;
-const EXIT_READABILITY_FAILED = 12;
-
 const USER_AGENT = 'NexusBot/1.0 (+https://nexus.example.com/bot)';
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MiB safety limit
 const MAX_TIMEOUT_MS = 120000; // hard cap to avoid unbounded hangs
+const PROTOCOL_VERSION = 1;
 
 /**
- * Structured error with exit code for the ingestion pipeline.
+ * Structured modeled failure for the ingestion pipeline.
  * Thrown instead of calling process.exit() to allow proper cleanup
  * and stdio flushing.
  */
-class IngestError extends Error {
-    constructor(code, message) {
+class IngestFailure extends Error {
+    constructor(failure, message) {
         super(message);
-        this.code = code;
+        this.failure = failure;
     }
 }
 
@@ -230,8 +223,8 @@ async function readResponseBytes(response) {
     if (contentLengthHeader) {
         const contentLength = Number.parseInt(contentLengthHeader, 10);
         if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-            throw new IngestError(
-                EXIT_FETCH_FAILED,
+            throw new IngestFailure(
+                { tag: 'TooLarge' },
                 `Response too large: ${contentLength} bytes (max ${MAX_BODY_BYTES})`
             );
         }
@@ -240,8 +233,8 @@ async function readResponseBytes(response) {
     if (!response.body) {
         const arrayBuffer = await response.arrayBuffer();
         if (arrayBuffer.byteLength > MAX_BODY_BYTES) {
-            throw new IngestError(
-                EXIT_FETCH_FAILED,
+            throw new IngestFailure(
+                { tag: 'TooLarge' },
                 `Response too large: ${arrayBuffer.byteLength} bytes (max ${MAX_BODY_BYTES})`
             );
         }
@@ -264,8 +257,8 @@ async function readResponseBytes(response) {
             } catch (_) {
                 // Best-effort cancel only.
             }
-            throw new IngestError(
-                EXIT_FETCH_FAILED,
+            throw new IngestFailure(
+                { tag: 'TooLarge' },
                 `Response too large: exceeded ${MAX_BODY_BYTES} bytes`
             );
         }
@@ -283,7 +276,7 @@ async function readResponseBytes(response) {
 
 /**
  * Core ingestion: fetch URL with native fetch(), extract with Readability.
- * Returns the result object on success, throws IngestError on failure.
+ * Returns the result object on success, throws IngestFailure on modeled failure.
  */
 async function ingest(url, timeoutMs) {
     // Fetch with timeout and redirect following
@@ -301,13 +294,16 @@ async function ingest(url, timeoutMs) {
     } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-            throw new IngestError(EXIT_TIMEOUT, `Fetch timeout: ${message}`);
+            throw new IngestFailure({ tag: 'Timeout' }, `Fetch timeout: ${message}`);
         }
-        throw new IngestError(EXIT_FETCH_FAILED, `Fetch failed: ${message}`);
+        throw new IngestFailure({ tag: 'Network' }, `Fetch failed: ${message}`);
     }
 
     if (!response.ok) {
-        throw new IngestError(EXIT_FETCH_FAILED, `HTTP error: ${response.status}`);
+        throw new IngestFailure(
+            { tag: 'Http', status: response.status },
+            `HTTP error: ${response.status}`
+        );
     }
 
     const finalUrl = response.url;
@@ -323,7 +319,10 @@ async function ingest(url, timeoutMs) {
     const article = extractArticle(dom.window.document);
 
     if (!article || !article.content) {
-        throw new IngestError(EXIT_READABILITY_FAILED, 'Readability could not extract article content');
+        throw new IngestFailure(
+            { tag: 'Readability' },
+            'Readability could not extract article content'
+        );
     }
 
     return {
@@ -346,60 +345,55 @@ async function ingest(url, timeoutMs) {
  * before terminating — critical when stdout is a pipe.
  */
 async function main() {
-    let input;
     try {
-        input = JSON.parse(await readStdin());
-    } catch (e) {
-        process.stderr.write(JSON.stringify({ error: `Invalid JSON input: ${e.message}` }) + '\n');
-        process.exitCode = EXIT_FETCH_FAILED;
-        return;
-    }
-
-    const { url, timeout_ms: timeoutMs = 30000 } = input;
-    if (!url || typeof url !== 'string') {
-        process.stderr.write(JSON.stringify({ error: 'Missing required field: url' }) + '\n');
-        process.exitCode = EXIT_FETCH_FAILED;
-        return;
-    }
-
-    let parsedUrl;
-    try {
-        parsedUrl = new URL(url);
-    } catch (_) {
-        process.stderr.write(JSON.stringify({ error: `Invalid URL: ${url}` }) + '\n');
-        process.exitCode = EXIT_FETCH_FAILED;
-        return;
-    }
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-        process.stderr.write(
-            JSON.stringify({ error: `Unsupported URL scheme: ${parsedUrl.protocol}` }) + '\n'
-        );
-        process.exitCode = EXIT_FETCH_FAILED;
-        return;
-    }
-
-    const timeoutValue = Number(timeoutMs);
-    if (!Number.isInteger(timeoutValue) || timeoutValue <= 0 || timeoutValue > MAX_TIMEOUT_MS) {
-        process.stderr.write(
-            JSON.stringify({
-                error: `Invalid timeout_ms: ${timeoutMs}. Expected integer in range 1-${MAX_TIMEOUT_MS}`,
-            }) + '\n'
-        );
-        process.exitCode = EXIT_FETCH_FAILED;
-        return;
-    }
-
-    try {
-        const result = await ingest(parsedUrl.toString(), timeoutValue);
-        process.stdout.write(JSON.stringify(result) + '\n');
-        process.exitCode = EXIT_SUCCESS;
+        const input = JSON.parse(await readStdin());
+        if (
+            !input
+            || typeof input !== 'object'
+            || Array.isArray(input)
+            || Object.keys(input).length !== 2
+            || !Object.hasOwn(input, 'url')
+            || !Object.hasOwn(input, 'timeout_ms')
+        ) {
+            throw new Error('Input must contain exactly url and timeout_ms');
+        }
+        const { url, timeout_ms: timeoutMs = 30000 } = input;
+        if (!url || typeof url !== 'string') {
+            throw new Error('Missing required field: url');
+        }
+        const parsedUrl = new URL(url);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+            throw new Error(`Unsupported URL scheme: ${parsedUrl.protocol}`);
+        }
+        if (
+            typeof timeoutMs !== 'number'
+            || !Number.isInteger(timeoutMs)
+            || timeoutMs <= 0
+            || timeoutMs > MAX_TIMEOUT_MS
+        ) {
+            throw new Error(
+                `Invalid timeout_ms: ${timeoutMs}. Expected integer in range 1-${MAX_TIMEOUT_MS}`
+            );
+        }
+        const result = await ingest(parsedUrl.toString(), timeoutMs);
+        process.stdout.write(JSON.stringify({
+            version: PROTOCOL_VERSION,
+            tag: 'Success',
+            ...result,
+        }) + '\n');
     } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        const code = e instanceof IngestError ? e.code
-            : message.includes('timeout') ? EXIT_TIMEOUT
-            : EXIT_FETCH_FAILED;
+        if (e instanceof IngestFailure) {
+            process.stdout.write(JSON.stringify({
+                version: PROTOCOL_VERSION,
+                tag: 'Failure',
+                failure: e.failure,
+                message,
+            }) + '\n');
+            return;
+        }
         process.stderr.write(JSON.stringify({ error: message }) + '\n');
-        process.exitCode = code;
+        process.exitCode = 1;
     }
 }
 

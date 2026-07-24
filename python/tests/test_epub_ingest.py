@@ -6,31 +6,29 @@ Covers both EPUB2 NCX and EPUB3 nav TOC variants.
 
 import io
 import zipfile
-from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
     EpubTocNode,
     Fragment,
     FragmentBlock,
     Media,
-    ProcessingStatus,
 )
 from nexus.errors import ApiErrorCode
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionResult,
+    build_epub_extraction_plan,
     check_archive_safety,
-    extract_epub_artifacts,
+    publish_epub_extraction_plan,
 )
-from nexus.storage.paths import build_epub_asset_storage_path, build_storage_path
-from nexus.tasks.ingest_epub import run_epub_ingest_sync
+from nexus.storage.paths import build_storage_path
+from nexus.tasks.storage_object_cleanup import finalize_storage_object_write
 from tests.support.storage import FakeStorageClient
-from tests.utils.db import task_session_factory
 
 pytestmark = pytest.mark.integration
 
@@ -198,6 +196,59 @@ def _create_media_with_epub(
     return media_id
 
 
+def _extract_epub_artifacts(
+    db: Session,
+    media_id: UUID,
+    storage: FakeStorageClient,
+) -> EpubExtractionResult | EpubExtractionError:
+    """Exercise the production prepare/publish split without a legacy service."""
+    storage_path, size_bytes = db.execute(
+        text(
+            """
+            SELECT storage_path, size_bytes
+            FROM media_file
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).one()
+    db.commit()
+    factory = sessionmaker(
+        bind=db.get_bind(),
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    plan = build_epub_extraction_plan(
+        session_factory=factory,
+        media_id=media_id,
+        attempt_id=uuid4(),
+        storage_path=str(storage_path),
+        source_size_bytes=int(size_bytes),
+        storage_client=storage,
+    )
+    if isinstance(plan, EpubExtractionError):
+        return plan
+    result, _old_storage_paths = publish_epub_extraction_plan(
+        db,
+        media_id=media_id,
+        plan=plan,
+    )
+    db.commit()
+    for asset_storage_path in plan.asset_storage_paths.values():
+        finalize_db = factory()
+        try:
+            finalize_storage_object_write(
+                finalize_db,
+                media_id=media_id,
+                storage_path=asset_storage_path,
+                storage_client=storage,
+            )
+        finally:
+            finalize_db.close()
+    return result
+
+
 def _count_fragments(db: Session, media_id: UUID) -> int:
     return db.query(Fragment).filter_by(media_id=media_id).count()
 
@@ -242,7 +293,7 @@ class TestEpubExtractMaterializesContiguousSpineFragmentsAndBlocks:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -303,11 +354,11 @@ class TestEpubExtractPersistsDeterministicTocSnapshot:
 
         # Run extraction twice on separate media rows
         mid1 = _create_media_with_epub(db_session, storage, epub)
-        result1 = run_epub_ingest_sync(db_session, mid1, storage)
+        result1 = _extract_epub_artifacts(db_session, mid1, storage)
         db_session.flush()
 
         mid2 = _create_media_with_epub(db_session, storage, epub)
-        result2 = run_epub_ingest_sync(db_session, mid2, storage)
+        result2 = _extract_epub_artifacts(db_session, mid2, storage)
         db_session.flush()
 
         assert isinstance(result1, EpubExtractionResult)
@@ -359,7 +410,7 @@ class TestEpubExtractPersistsDeterministicTocSnapshot:
         )
 
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -390,7 +441,7 @@ class TestEpubExtractMissingTocIsNonFatal:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -419,7 +470,7 @@ class TestEpubExtractTitleResolution:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub, title="my_great_book.epub")
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -439,7 +490,7 @@ class TestEpubExtractTitleResolution:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -459,7 +510,7 @@ class TestEpubExtractTitleResolution:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -509,7 +560,7 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -542,7 +593,7 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         # javascript: protocol stripped from href
         assert "javascript:" not in html.lower()
 
-    def test_epub_asset_storage_paths_are_canonical(self, db_session: Session):
+    def test_epub_asset_storage_paths_are_attempt_scoped(self, db_session: Session):
         storage = FakeStorageClient()
         img_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
         epub = _make_epub(
@@ -561,13 +612,10 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
-        asset_path = build_epub_asset_storage_path(mid, "OEBPS/images/fig1.png")
         assert isinstance(result, EpubExtractionResult)
-        assert asset_path == f"media/{mid}/assets/OEBPS/images/fig1.png"
-        assert storage.get_object(asset_path) == img_bytes
         stored_path = db_session.execute(
             text(
                 """
@@ -579,7 +627,9 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             ),
             {"media_id": mid},
         ).scalar_one()
-        assert stored_path == asset_path
+        assert stored_path.startswith(f"media/{mid}/source/")
+        assert stored_path.endswith("/assets/OEBPS/images/fig1.png")
+        assert storage.get_object(stored_path) == img_bytes
 
     def test_unsupported_manifest_resources_are_not_stored(self, db_session: Session):
         storage = FakeStorageClient()
@@ -608,7 +658,7 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -636,10 +686,10 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = extract_epub_artifacts(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED.value
+        assert result.error_code == ApiErrorCode.E_INVALID_FILE_TYPE.value
         assert "Referenced EPUB image asset missing" in result.error_message
 
     def test_svg_asset_is_sanitized_before_storage(self, db_session: Session):
@@ -666,11 +716,22 @@ class TestEpubExtractRewritesResourcesAndDegradesUnresolvedAssets:
             },
         )
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
-        stored = storage.get_object(f"media/{mid}/assets/OEBPS/images/unsafe.svg")
+        stored_path = db_session.execute(
+            text(
+                """
+                SELECT storage_path
+                FROM epub_resources
+                WHERE media_id = :media_id
+                  AND asset_key = 'OEBPS/images/unsafe.svg'
+                """
+            ),
+            {"media_id": mid},
+        ).scalar_one()
+        stored = storage.get_object(stored_path)
         assert stored is not None
         stored_text = stored.decode("utf-8").lower()
         assert "<script" not in stored_text
@@ -713,7 +774,7 @@ class TestEpubExtractTocMappingIncludesImageOnlySpineItems:
         )
 
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -760,7 +821,7 @@ class TestEpubExtractPreservesAnchorTargetsForInFragmentNavigation:
         )
 
         mid = _create_media_with_epub(db_session, storage, epub)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
         db_session.flush()
 
         assert isinstance(result, EpubExtractionResult)
@@ -795,7 +856,7 @@ class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
         epub_bytes = buf.getvalue()
 
         mid = _create_media_with_epub(db_session, storage, epub_bytes)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
         assert result.error_code == ApiErrorCode.E_ARCHIVE_UNSAFE.value
@@ -819,7 +880,7 @@ class TestEpubExtractRejectsUnsafeArchiveWithTerminalCode:
         epub_bytes = buf.getvalue()
 
         mid = _create_media_with_epub(db_session, storage, epub_bytes)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
         assert result.error_code == ApiErrorCode.E_ARCHIVE_UNSAFE.value
@@ -850,7 +911,7 @@ class TestEpubExtractFailureClassificationMatrix:
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        result = extract_epub_artifacts(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
         assert result.error_code == ApiErrorCode.E_SANITIZATION_FAILED.value
@@ -867,150 +928,10 @@ class TestEpubExtractFailureClassificationMatrix:
         epub_bytes = buf.getvalue()
 
         mid = _create_media_with_epub(db_session, storage, epub_bytes)
-        result = run_epub_ingest_sync(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED.value
-
-
-class TestIngestEpubTaskMarksReadyForReadingOnSuccess:
-    """test_ingest_epub_task_marks_ready_for_reading_on_success"""
-
-    def test_success_transitions_to_ready_for_reading(self, db_session: Session):
-        storage = FakeStorageClient()
-        epub = _make_epub(
-            {
-                "OEBPS/content.opf": _build_opf(
-                    spine_items=[
-                        ("ch1", "chapter1.xhtml", "application/xhtml+xml"),
-                    ],
-                ),
-                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Chapter One content here.</p>"),
-            },
-        )
-        mid = _create_media_with_epub(db_session, storage, epub)
-
-        db_session.execute(
-            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
-            {"id": mid},
-        )
-        db_session.flush()
-
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        with (
-            patch(
-                "nexus.tasks.ingest_epub.get_session_factory",
-                return_value=task_session_factory(db_session),
-            ),
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-        ):
-            result = ingest_epub(str(mid))
-
-        assert result["status"] == "success"
-
-        db_session.expire_all()
-        media = db_session.get(Media, mid)
-        assert media.processing_status.value == "ready_for_reading"
-        assert media.title == "Test Book"
-        assert media.processing_completed_at is not None
-        assert media.failure_stage is None
-        assert media.last_error_code is None
-
-
-class TestIngestEpubTaskMarksFailedOnExtractionError:
-    """test_ingest_epub_task_marks_failed_on_extraction_error"""
-
-    def test_error_transitions_to_failed(self, db_session: Session):
-        storage = FakeStorageClient()
-        epub = _make_epub(
-            {
-                "OEBPS/content.opf": _build_opf(
-                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
-                ),
-                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Some content.</p>"),
-            },
-        )
-        mid = _create_media_with_epub(db_session, storage, epub)
-
-        db_session.execute(
-            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
-            {"id": mid},
-        )
-        db_session.flush()
-
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        with (
-            patch(
-                "nexus.tasks.ingest_epub.get_session_factory",
-                return_value=task_session_factory(db_session),
-            ),
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-            patch(
-                "nexus.tasks.ingest_epub.extract_epub_artifacts",
-                return_value=EpubExtractionError(
-                    error_code="E_INGEST_FAILED", error_message="forced test failure"
-                ),
-            ),
-        ):
-            result = ingest_epub(str(mid))
-
-        assert result["status"] == "failed"
-
-        db_session.expire_all()
-        media = db_session.get(Media, mid)
-        assert media.processing_status.value == "failed"
-        assert media.failure_stage.value == "extract"
-        assert media.last_error_code == "E_INGEST_FAILED"
-        assert media.failed_at is not None
-
-
-class TestIngestEpubTaskIdempotentOnMissingOrNonextractingMedia:
-    """test_ingest_epub_task_idempotent_on_missing_or_nonextracting_media"""
-
-    def test_deleted_media_noop(self, db_session: Session):
-        fake_mid = uuid4()
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        with (
-            patch(
-                "nexus.tasks.ingest_epub.get_session_factory",
-                return_value=task_session_factory(db_session),
-            ),
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=FakeStorageClient()),
-        ):
-            result = ingest_epub(str(fake_mid))
-
-        assert result["status"] == "skipped"
-
-    def test_pending_media_noop(self, db_session: Session):
-        storage = FakeStorageClient()
-        epub = _make_epub(
-            {
-                "OEBPS/content.opf": _build_opf(
-                    spine_items=[("ch1", "ch.xhtml", "application/xhtml+xml")],
-                ),
-                "OEBPS/ch.xhtml": _build_chapter_xhtml("<p>Text.</p>"),
-            },
-        )
-        mid = _create_media_with_epub(db_session, storage, epub)
-
-        from nexus.tasks.ingest_epub import ingest_epub
-
-        with (
-            patch(
-                "nexus.tasks.ingest_epub.get_session_factory",
-                return_value=task_session_factory(db_session),
-            ),
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-        ):
-            result = ingest_epub(str(mid))
-
-        assert result["status"] == "skipped"
-
-        media = db_session.get(Media, mid)
-        assert media.processing_status.value == "pending"
+        assert result.error_code == ApiErrorCode.E_INVALID_FILE_TYPE.value
 
 
 class TestEpubExtractCommitsArtifactsAtomically:
@@ -1033,7 +954,7 @@ class TestEpubExtractCommitsArtifactsAtomically:
         )
         mid = _create_media_with_epub(db_session, storage, epub)
 
-        result = extract_epub_artifacts(db_session, mid, storage)
+        result = _extract_epub_artifacts(db_session, mid, storage)
 
         assert isinstance(result, EpubExtractionError)
         assert "Referenced EPUB image asset missing" in result.error_message
@@ -1082,110 +1003,3 @@ class TestBuildEpubAuthorObservation:
             batch, truncated = self._observe(creators)
             assert isinstance(batch, NotObserved)
             assert truncated == {}
-
-
-class TestIngestEpubAuthorStep:
-    """The fresh-session author step wired into the EPUB task (D-13, spec 2.4).
-
-    The task and the facade's fresh author session share the test connection so
-    the author op's writes are visible and roll back with the test. Asserts the
-    order contract — ready only after the author op commits (AC 9) — and that the
-    automatic lane writes no ``resource_mutations`` (D-43).
-    """
-
-    @staticmethod
-    def _extracting_epub(db_session: Session, storage: FakeStorageClient, creators: list[str]):
-        epub = _make_epub(
-            {
-                "OEBPS/content.opf": _build_opf(
-                    spine_items=[("ch1", "chapter1.xhtml", "application/xhtml+xml")],
-                    creators=creators,
-                ),
-                "OEBPS/chapter1.xhtml": _build_chapter_xhtml("<p>Chapter One content here.</p>"),
-            },
-        )
-        mid = _create_media_with_epub(db_session, storage, epub)
-        db_session.execute(
-            text("UPDATE media SET processing_status = 'extracting' WHERE id = :id"),
-            {"id": mid},
-        )
-        db_session.flush()
-        return mid
-
-    @staticmethod
-    def _both_factories(db_session: Session):
-        factory = task_session_factory(db_session)
-        return (
-            patch("nexus.tasks.ingest_epub.get_session_factory", return_value=factory),
-            patch("nexus.services.contributors.get_session_factory", return_value=factory),
-        )
-
-    @staticmethod
-    def _credit_names(db_session: Session, media_id) -> list[str]:
-        return list(
-            db_session.execute(
-                text(
-                    "SELECT credited_name FROM contributor_credits "
-                    "WHERE media_id = :mid AND role = 'author' ORDER BY ordinal"
-                ),
-                {"mid": media_id},
-            ).scalars()
-        )
-
-    @staticmethod
-    def _mutation_count(db_session: Session) -> int:
-        return db_session.execute(text("SELECT count(*) FROM resource_mutations")).scalar_one()
-
-    def test_ingest_epub_persists_author_credits_and_marks_ready(self, db_session: Session):
-        storage = FakeStorageClient()
-        mid = self._extracting_epub(db_session, storage, ["Herman Melville", "Melville, Herman"])
-        before = self._mutation_count(db_session)
-
-        task_patch, facade_patch = self._both_factories(db_session)
-        with (
-            task_patch,
-            facade_patch,
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-        ):
-            from nexus.tasks.ingest_epub import ingest_epub
-
-            result = ingest_epub(str(mid))
-
-        assert result["status"] == "success"
-        db_session.expire_all()
-        assert db_session.get(Media, mid).processing_status == ProcessingStatus.ready_for_reading
-        # `Last, First` stays one name (D-31): two distinct creators, two credits.
-        assert self._credit_names(db_session, mid) == ["Herman Melville", "Melville, Herman"]
-        assert self._mutation_count(db_session) == before
-
-    def test_author_step_failure_gates_ready_and_writes_no_credits(self, db_session: Session):
-        # An author-step failure fails the attempt so the durable job retries;
-        # ready is never crossed and no credit is written (AC 9). Convergence of
-        # the retried author op is covered by the PDF lane test — the facade is
-        # shared and EPUB re-extraction is not idempotent at this task level.
-        storage = FakeStorageClient()
-        mid = self._extracting_epub(db_session, storage, ["Ada Lovelace"])
-        before = self._mutation_count(db_session)
-
-        from nexus.services import contributors
-
-        task_patch, facade_patch = self._both_factories(db_session)
-        with (
-            task_patch,
-            facade_patch,
-            patch("nexus.tasks.ingest_epub.get_storage_client", return_value=storage),
-            patch.object(
-                contributors,
-                "replace_observed_role_slices",
-                side_effect=RuntimeError("author boom"),
-            ),
-        ):
-            from nexus.tasks.ingest_epub import ingest_epub
-
-            with pytest.raises(RuntimeError):
-                ingest_epub(str(mid))
-
-        db_session.expire_all()
-        assert db_session.get(Media, mid).processing_status != ProcessingStatus.ready_for_reading
-        assert self._credit_names(db_session, mid) == []
-        assert self._mutation_count(db_session) == before

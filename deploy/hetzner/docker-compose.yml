@@ -69,25 +69,54 @@ services:
       start_period: 30s
     logging: *default-logging
 
-  worker:
+  worker-interactive:
     build:
       context: ../..
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
     env_file:
       - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
-    # The worker interleaves DB writes with long-running jobs
-    # (ingest/transcription/LLM), so it must not be killed by the API's
-    # web-request timeouts. These override env_file.
     environment:
       CUTOVER_SHA: ${CUTOVER_SHA:?set}
-      DATABASE_STATEMENT_TIMEOUT_MS: "0"
+      WORKER_LANE: interactive
+      DATABASE_STATEMENT_TIMEOUT_MS: "300000"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  worker-background:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    env_file:
+      - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
+    environment:
+      CUTOVER_SHA: ${CUTOVER_SHA:?set}
+      WORKER_LANE: background
+      DATABASE_STATEMENT_TIMEOUT_MS: "300000"
+      DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging: *default-logging
 
 volumes:

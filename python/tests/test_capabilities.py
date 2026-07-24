@@ -9,7 +9,7 @@ Tests cover:
 
 import pytest
 
-from nexus.services.capabilities import derive_capabilities
+from nexus.services.capabilities import derive_capabilities, is_same_source_terminal_error
 
 pytestmark = pytest.mark.unit
 
@@ -428,6 +428,7 @@ class TestProcessingStatusProgression:
             ("extracting", False),
             ("ready_for_reading", True),
             ("failed", False),
+            ("suspended", False),
         ],
     )
     def test_web_article_status_progression(self, status, expected_read):
@@ -495,6 +496,33 @@ class TestProcessingStatusProgression:
         )
 
         assert caps.can_retry is False
+
+    @pytest.mark.parametrize(
+        "error_code",
+        [
+            "E_PDF_PASSWORD_REQUIRED",
+            "E_ARCHIVE_UNSAFE",
+            "E_SOURCE_ACCESS_DENIED",
+            "E_INVALID_FILE_TYPE",
+            "E_SOURCE_TOO_LARGE",
+            "E_SOURCE_NOT_READABLE",
+        ],
+    )
+    def test_same_source_terminal_error_suppresses_retry_and_refresh(self, error_code):
+        caps = derive_capabilities(
+            kind="web_article",
+            processing_status="failed",
+            last_error_code=error_code,
+            media_file_exists=False,
+            external_playback_url_exists=False,
+            is_creator=True,
+            source_retry_available=True,
+            source_refresh_available=True,
+        )
+
+        assert is_same_source_terminal_error(error_code) is True
+        assert caps.can_retry is False
+        assert caps.can_refresh_source is False
 
 
 class TestSourceRefreshUploadedFiles:

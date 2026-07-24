@@ -29,11 +29,27 @@ from nexus.services.media_source_ingest import accept_url_source
 from tests.factories import add_media_to_library
 from tests.helpers import auth_headers, create_test_user_id
 from tests.support.mock_verifier import MockJwtVerifier
+from tests.support.source_jobs import run_queued_source_attempt
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _run_source_ingest(
+    db: Session,
+    media_id: UUID,
+    actor_user_id: UUID,
+) -> dict[str, object]:
+    """Execute the exact queued source operation through its production fence."""
+    return run_queued_source_attempt(
+        db,
+        media_id=media_id,
+        actor_user_id=actor_user_id,
+        request_id="web-article-highlight-test",
+    )
+
 
 # =============================================================================
 # Fixtures
@@ -105,12 +121,11 @@ class TestWebArticleHighlightE2E:
         7. Reload and verify no drift
 
         Note: Uses direct_db instead of db_session because this test mixes
-        API calls (e2e_client) with direct service calls (run_ingest_sync).
+        API calls (e2e_client) with direct service calls (_run_source_ingest).
         The db_session fixture uses savepoint isolation which is invisible
         to the API client's sessions.
         """
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         # Create test user
         user_id = create_test_user_id()
@@ -157,7 +172,7 @@ class TestWebArticleHighlightE2E:
 
         # Step 2: Run ingestion synchronously (use direct_db session for visibility)
         with direct_db.session() as session:
-            ingest_result = run_ingest_sync(session, media_id, user_id)
+            ingest_result = _run_source_ingest(session, media_id, user_id)
 
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available for full E2E test")
@@ -719,7 +734,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify no <script> tags survive sanitization."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -738,7 +752,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -761,7 +775,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify no on* event handlers survive sanitization."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -779,7 +792,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -803,7 +816,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify style, class, and id attributes are stripped."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -820,7 +832,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -843,7 +855,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify javascript: and data: URLs are blocked."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -861,7 +872,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -883,7 +894,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify SVG elements are removed."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -901,7 +911,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -923,7 +933,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify <img src> is rewritten to /media/image proxy."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -941,7 +950,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -962,7 +971,6 @@ class TestSanitizationSecurityRegression:
     ):
         """Verify external links include noopener, noreferrer, target="_blank"."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -979,7 +987,7 @@ class TestSanitizationSecurityRegression:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
         if ingest_result.get("status") != "success":
             pytest.skip("Node.js not available")
 
@@ -1015,7 +1023,6 @@ class TestProcessingStateRegression:
     ):
         """Verify processing_attempts is incremented when ingestion runs."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -1036,7 +1043,7 @@ class TestProcessingStateRegression:
         initial = row[0]
 
         # Run ingestion
-        run_ingest_sync(db_session, media_id, user_id)
+        _run_source_ingest(db_session, media_id, user_id)
 
         # Check incremented
         db_session.expire_all()
@@ -1055,7 +1062,6 @@ class TestProcessingStateRegression:
     ):
         """Verify pending → extracting → ready_for_reading on success."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -1076,7 +1082,7 @@ class TestProcessingStateRegression:
         assert row[0] == ProcessingStatus.pending.value
 
         # Run ingestion
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
 
         db_session.expire_all()
         row = db_session.execute(
@@ -1099,7 +1105,6 @@ class TestProcessingStateRegression:
     ):
         """Verify failed ingestion sets proper failure state."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -1111,7 +1116,7 @@ class TestProcessingStateRegression:
         media_id = result.media_id
 
         # Run ingestion (will fail)
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
 
         db_session.expire_all()
         row = db_session.execute(
@@ -1200,7 +1205,6 @@ class TestRedirectDedup:
     ):
         """Verify canonical_url equals normalized final URL after redirect."""
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         user_id = bootstrapped_user
 
@@ -1217,7 +1221,7 @@ class TestRedirectDedup:
         result = accept_url_source(db=db_session, viewer_id=user_id, url=url, library_ids=[])
         media_id = result.media_id
 
-        ingest_result = run_ingest_sync(db_session, media_id, user_id)
+        ingest_result = _run_source_ingest(db_session, media_id, user_id)
 
         if ingest_result.get("status") == "success":
             db_session.expire_all()
@@ -1248,7 +1252,6 @@ class TestRedirectDedup:
         rows.
         """
         pytest.importorskip("nexus.services.node_ingest")
-        from nexus.tasks.ingest_web_article import run_ingest_sync
 
         install_fake_storage_for_teardown(monkeypatch, FakeStorageClient())
 
@@ -1275,41 +1278,53 @@ class TestRedirectDedup:
             result1 = accept_url_source(db=session, viewer_id=user_id, url=url1, library_ids=[])
             media_id1 = result1.media_id
             session.commit()
-            run_ingest_sync(session, media_id1, user_id)
+            _run_source_ingest(session, media_id1, user_id)
 
             # Create and ingest second media (should dedup)
             url2 = httpserver.url_for("/alias2")
             result2 = accept_url_source(db=session, viewer_id=user_id, url=url2, library_ids=[])
             media_id2 = result2.media_id
             session.commit()
-            ingest_result2 = run_ingest_sync(session, media_id2, user_id)
+            ingest_result2 = _run_source_ingest(session, media_id2, user_id)
 
         direct_db.register_cleanup("library_entries", "media_id", media_id1)
         direct_db.register_cleanup("media", "id", media_id1)
+        direct_db.register_cleanup("library_entries", "media_id", media_id2)
+        direct_db.register_cleanup("media", "id", media_id2)
 
-        # Second should be deduped
-        if ingest_result2.get("status") == "deduped":
-            # The loser is claimed for durable teardown, not deleted inline;
-            # drive that job to its terminal status.
-            teardown_status = drive_media_teardown(direct_db.session, media_id2)
-            assert teardown_status == "succeeded", (
-                f"Expected loser media {media_id2} teardown to succeed, got {teardown_status!r}"
-            )
+        assert ingest_result2.get("status") == "deduped", ingest_result2
+        with direct_db.session() as session:
+            operation_identity = session.execute(
+                text(
+                    """
+                    SELECT msa.media_id, msa.status, j.payload->>'media_id'
+                    FROM media_source_attempts msa
+                    JOIN background_jobs j ON j.id = msa.job_id
+                    WHERE msa.id = :attempt_id
+                    """
+                ),
+                {"attempt_id": result2.source_attempt_id},
+            ).one()
+        assert operation_identity == (media_id2, "succeeded", str(media_id2))
 
-            with direct_db.session() as session:
-                # Loser (media_id2) should be deleted
-                row = session.execute(
-                    text("SELECT id FROM media WHERE id = :id"),
-                    {"id": media_id2},
-                ).fetchone()
-                assert row is None, "Duplicate media should be deleted"
+        # The loser is claimed for durable teardown, not deleted inline;
+        # drive that job to its terminal status.
+        teardown_status = drive_media_teardown(direct_db.session, media_id2)
+        assert teardown_status == "succeeded", (
+            f"Expected loser media {media_id2} teardown to succeed, got {teardown_status!r}"
+        )
 
-                # Winner (media_id1) should still exist
-                row = session.execute(
-                    text("SELECT id FROM media WHERE id = :id"),
-                    {"id": media_id1},
-                ).fetchone()
-                assert row is not None
-        else:
-            direct_db.register_cleanup("library_entries", "media_id", media_id2)
-            direct_db.register_cleanup("media", "id", media_id2)
+        with direct_db.session() as session:
+            # Loser (media_id2) should be deleted
+            row = session.execute(
+                text("SELECT id FROM media WHERE id = :id"),
+                {"id": media_id2},
+            ).fetchone()
+            assert row is None, "Duplicate media should be deleted"
+
+            # Winner (media_id1) should still exist
+            row = session.execute(
+                text("SELECT id FROM media WHERE id = :id"),
+                {"id": media_id1},
+            ).fetchone()
+            assert row is not None

@@ -99,6 +99,21 @@ def build_epub_asset_storage_path(media_id: UUID | str, asset_key: str) -> str:
     return f"media/{media_id}/assets/{asset_key}"
 
 
+def build_epub_attempt_asset_storage_path(
+    media_id: UUID | str,
+    attempt_id: UUID | str,
+    asset_key: str,
+) -> str:
+    """Build an immutable EPUB asset key owned by one source attempt."""
+    if not asset_key:
+        raise ValueError("EPUB asset key must be non-empty.")
+    if asset_key.startswith("/"):
+        raise ValueError("EPUB asset key must not start with a slash.")
+    if any(part in {"", ".", ".."} for part in asset_key.split("/")):
+        raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
+    return f"media/{media_id}/source/{attempt_id}/assets/{asset_key}"
+
+
 PLATE_CONTENT_TYPE_TO_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 

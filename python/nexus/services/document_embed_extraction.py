@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
-from lxml.html import Element, HtmlElement, document_fromstring, tostring
+from lxml.html import Element, HtmlElement, tostring
 
 from nexus.errors import InvalidRequestError
+from nexus.services.html_tree import parse_html_document
 from nexus.services.url_normalize import validate_requested_url
 from nexus.services.x_identity import classify_x_url
 from nexus.services.youtube_identity import classify_youtube_url
@@ -46,7 +47,7 @@ def extract_document_embeds(html: str, base_url: str) -> ExtractedDocumentEmbeds
     if not html.strip():
         return ExtractedDocumentEmbeds(html="", embeds=[], diagnostics={"detected_count": 0})
 
-    doc = document_fromstring(html)
+    doc = parse_html_document(html)
     body = doc.body
     if body is None:
         return ExtractedDocumentEmbeds(html=html, embeds=[], diagnostics={"detected_count": 0})

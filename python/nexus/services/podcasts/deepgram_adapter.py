@@ -83,10 +83,7 @@ class DeepgramClient:
             return self._transcribe_real_media_fixture(normalized_audio_url)
 
         if not self.api_key:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "Transcription provider credentials are not configured",
-            )
+            raise RuntimeError("Transcription provider credentials are not configured")
 
         diarized_result = self._transcribe_with_deepgram(normalized_audio_url, diarize=True)
         if diarized_result.status == "completed":
@@ -114,10 +111,7 @@ class DeepgramClient:
         clips). No fixture path — callers must mock the adapter in tests.
         """
         if not self.api_key:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "Transcription provider credentials are not configured",
-            )
+            raise RuntimeError("Transcription provider credentials are not configured")
 
         request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
         try:
@@ -185,26 +179,17 @@ class DeepgramClient:
                 f"No real-media podcast transcript fixture for {audio_url}",
             )
         if self.fixture_dir is None:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "REAL_MEDIA_FIXTURE_DIR is required for podcast transcript fixtures",
-            )
+            raise RuntimeError("REAL_MEDIA_FIXTURE_DIR is required for podcast transcript fixtures")
 
         path = Path(self.fixture_dir) / "nasa-hwhap-crew4-transcript.txt"
         try:
             content = path.read_text(encoding="utf-8")
         except OSError as exc:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                f"Podcast transcript fixture unavailable: {exc}",
-            )
+            raise RuntimeError("Podcast transcript fixture is unavailable") from exc
 
         payload = content.encode("utf-8")
         if len(payload) != _CREW4_FIXTURE_BYTES:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "Podcast transcript fixture size mismatch",
-            )
+            raise RuntimeError("Podcast transcript fixture size mismatch")
 
         from nexus.services.rss_transcript_fetch import parse_plain_text_transcript
 
@@ -227,55 +212,25 @@ class DeepgramClient:
     def _transcribe_with_deepgram(self, audio_url: str, *, diarize: bool) -> TranscriptionResult:
         request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
         diarize_str = "true" if diarize else "false"
-        try:
-            response = httpx.post(
-                request_url,
-                headers={
-                    "Authorization": f"Token {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                params={
-                    "model": self.model,
-                    "diarize": diarize_str,
-                    "utterances": "true",
-                    "smart_format": "true",
-                    "punctuate": "true",
-                    "language": "en",
-                },
-                json={"url": audio_url},
-                timeout=self.timeout_seconds,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except httpx.TimeoutException:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
-                "Transcription timed out",
-            )
-        except httpx.HTTPStatusError as exc:
-            code = (
-                ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value
-                if exc.response.status_code in {408, 504}
-                else ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-            )
-            logger.warning(
-                "podcast_transcription_provider_http_error",
-                audio_url=audio_url,
-                diarize=diarize,
-                status_code=exc.response.status_code,
-            )
-            return _transcription_failure_result(code, "Transcription failed")
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning(
-                "podcast_transcription_provider_request_failed",
-                audio_url=audio_url,
-                diarize=diarize,
-                error=str(exc),
-            )
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-                "Transcription failed",
-            )
+        response = httpx.post(
+            request_url,
+            headers={
+                "Authorization": f"Token {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            params={
+                "model": self.model,
+                "diarize": diarize_str,
+                "utterances": "true",
+                "smart_format": "true",
+                "punctuate": "true",
+                "language": "en",
+            },
+            json={"url": audio_url},
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
 
         segments = _extract_deepgram_segments(payload)
         if not segments:
@@ -311,10 +266,10 @@ def _transcription_failure_result(
 
 def _extract_deepgram_segments(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
-        return []
+        raise ValueError("Deepgram response must be an object")
     results = payload.get("results")
     if not isinstance(results, dict):
-        return []
+        raise ValueError("Deepgram response is missing results")
 
     utterances = results.get("utterances")
     if isinstance(utterances, list):

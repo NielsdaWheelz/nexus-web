@@ -1,16 +1,18 @@
 # Hetzner VPS Deploy
 
-This deploy path runs only the FastAPI API and Postgres-backed worker on one
-Hetzner Cloud server. Vercel keeps serving the Next.js app. Supabase is used for
-Auth only; production data lives in Hetzner Postgres and production objects live
-in Cloudflare R2.
+This deploy path runs the FastAPI API and two Postgres-backed worker lanes on
+one Hetzner Cloud server. Vercel keeps serving the Next.js app. Supabase is used
+for Auth only; production data lives in Hetzner Postgres and production objects
+live in Cloudflare R2.
 
 ## Shape
 
 - `caddy`: public HTTPS reverse proxy for `https://api.example.com`
 - `postgres`: local Postgres with pgvector on a Docker volume
 - `api`: FastAPI from `docker/Dockerfile.api`
-- `worker`: background worker from `docker/Dockerfile.worker`
+- `worker-interactive`: user-waiting jobs from `docker/Dockerfile.worker`
+- `worker-background`: indexing, repair, teardown, and periodic jobs from the
+  same image
 - Secrets live on the server at `/etc/nexus/nexus.env`
 
 ## Prerequisites
@@ -115,13 +117,14 @@ database, and starts the Compose stack.
 By default it also runs `deploy/hetzner/sync-env.sh` first, so production env is
 validated and uploaded on every normal deploy. Set `NEXUS_SYNC_ENV=0` only when
 the remote env was already verified for the same deploy.
-The env sync rejects maintenance worker settings unless
-`NEXUS_ALLOW_WORKER_MAINTENANCE=1` is set for a bounded maintenance sync.
+The env sync rejects stored worker lanes, raw allowlists, maintenance gates, and
+positive maintenance-only schedules. Compose owns both normal lanes.
 
 `CUTOVER_SHA` is deployment-owned attestation, not a persistent secret.
 `deploy.sh` derives it from a clean local `HEAD`, requires a full exact match,
-injects it into API/worker through Compose, then verifies API health, worker
-environment, and migration head. Do not add it to `/etc/nexus/nexus.env`.
+injects it into API and both workers through Compose, then verifies API health,
+both exact lane contracts, process health, and migration head. Do not add it to
+`/etc/nexus/nexus.env`.
 
 To deploy without uploading env again:
 
@@ -159,7 +162,7 @@ deploy/hetzner/resource-sharing-cutover.sh --release
 ```
 
 `--prepare` publishes and reads back the maintenance rule first, proves an
-ordinary `/s` request is denied, stops API/worker, creates a custom-format
+ordinary `/s` request is denied, stops API and both workers, creates a custom-format
 PostgreSQL dump outside the rsynced deploy tree, validates it with
 `pg_restore --file=/dev/null`, records the observed production start contract
 at migration `0188` (distinct from the cutover chain's local
@@ -183,7 +186,7 @@ real-stack E2E owns authenticated API+BFF evidence. The release also checks the
 token is absent from API/Caddy logs and verifies the permanent WAF. Only then
 does it remove/read back the gate, prove ordinary traffic reopened, and repeat
 the typed create/read/revoke smoke. A failure after deploy stops the new API and
-worker; a failure after the gate may have opened first restores and verifies the
+workers; a failure after the gate may have opened first restores and verifies the
 maintenance rule. Either way the state becomes `failed_closed`. While the
 maintenance gate remains closed, inspect that state and run:
 
@@ -194,7 +197,7 @@ deploy/hetzner/resource-sharing-cutover.sh --rollback
 `--rollback` is deliberately explicit and destructive: it rechecks the backup,
 recreates Postgres from that verified dump, deploys an archive of the recorded
 pre-cutover Git revision, invokes Vercel rollback for the recorded production
-deployment, verifies the old API/worker and `/s` contract, and only then removes
+deployment, verifies the old API/workers and `/s` contract, and only then removes
 the maintenance gate. Never use it after the cutover has reopened to user
 writes; post-open recovery is a gated forward fix.
 
@@ -204,9 +207,11 @@ SSH into the server and use:
 
 ```bash
 cd /opt/nexus-web
+export CUTOVER_SHA="$(git rev-parse HEAD)"
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml ps
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f api
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-interactive
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-background
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f caddy
 ```
 
@@ -225,12 +230,16 @@ as one-off worker-image commands. The deploy is not complete until readiness pas
 proves every required media has a ready content index on the active embedding provider/model,
 every anchor resolved, and every plate object present:
 
+The seed drainer claims exactly `ingest_media_source` and
+`media_content_reindex_job`; this is a bounded shared-image contract, not a
+third deployed lane.
+
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker-background \
   /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker-background \
   /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$NEXUS_ORACLE_CORPUS_OWNER_USER_ID" --drain
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml run -T --rm --no-deps worker-background \
   /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py
 ```
 
@@ -280,20 +289,21 @@ exits nonzero if any public schema or Storage leftovers remain.
 Hard cutover means no production fallback to Supabase Database or Supabase
 Storage. Before pointing users at this stack, verify:
 
-- Old production writers and workers are stopped before the Hetzner worker starts.
+- Old production writers and workers are stopped before the two Hetzner lanes start.
 - Fresh cutover: Hetzner Postgres has migrations applied and R2 is empty except
   for objects created by this stack.
 - Data-preserving cutover: Hetzner Postgres has the imported production data and
   R2 has the imported production objects, verified offline before traffic moves.
 - Supabase Auth callback URLs and Vercel env point at the production app/API.
-- The worker allowlist is at the safe default with maintenance schedules at `0`.
+- Both fixed lane contracts match `config.py`, reconciliation is scheduled at
+  600 seconds, and maintenance-only schedules are `0`.
 
 If cutover fails before user traffic is switched, fix the migration and rerun the
-cutover. If it fails after traffic is switched, stop `worker`, keep `api` and
+cutover. If it fails after traffic is switched, stop both workers, keep `api` and
 `caddy` up only if reads/auth still work, restore the last known-good Hetzner
 Postgres backup and R2 object state, redeploy the matching app revision, then
-force-recreate `api` and `worker`. Do not repoint production to Supabase DB or
-Supabase Storage.
+force-recreate `api`, `worker-interactive`, and `worker-background`. Do not
+repoint production to Supabase DB or Supabase Storage.
 
 Use `deploy/cloudflare/r2-cors.example.json` as the production R2 bucket CORS
 shape. The app needs browser `PUT` for presigned uploads and backend `GET`/`HEAD`

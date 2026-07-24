@@ -140,6 +140,10 @@ from nexus.services.resource_mutation_replay import (
     lookup_replay,
     record_replay,
 )
+from nexus.services.source_publication import (
+    SourcePublicationFence,
+    require_source_publication,
+)
 
 # One fresh session + one serializable operation per chunk of gutenberg targets
 # (D-15): caps a 75k-row first sync at ~375 transactions without sharing any
@@ -396,6 +400,43 @@ def replace_observed_role_slices(
             fresh,
             "replace_observed_role_slices",
             partial(_run_observations_op, fresh, ((target, observation, source),)),
+        )
+    finally:
+        fresh.close()
+
+
+def replace_source_observed_role_slices(
+    *,
+    target: MediaTarget,
+    observation: ContributorObservationBatch,
+    source: str,
+    fence: SourcePublicationFence,
+    publication_media_ids: tuple[UUID, ...],
+) -> None:
+    """Apply one source-owned author observation under the exact worker claim."""
+    if isinstance(observation, NotObserved):
+        return
+    fresh = _fresh_author_session()
+    try:
+
+        def apply_source_observation() -> None:
+            require_source_publication(
+                fresh,
+                fence=fence,
+                media_ids=publication_media_ids,
+            )
+            _apply_observation(
+                fresh,
+                target=target,
+                observation=observation,
+                source=source,
+            )
+            fresh.commit()
+
+        retry_serializable(
+            fresh,
+            "replace_source_observed_role_slices",
+            apply_source_observation,
         )
     finally:
         fresh.close()

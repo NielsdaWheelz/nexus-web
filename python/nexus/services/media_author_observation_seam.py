@@ -37,9 +37,7 @@ def attach_author_observation(
     """Attach one author observation to a source-handler result.
 
     ``NOT_OBSERVED`` is dropped here so lanes can attach unconditionally; it
-    never erases prior credits (spec 2.1). (The X lane does not use this seam:
-    it applies its observations in-handler via ``_apply_x_author_observations``
-    and never touches the result key.)
+    never erases prior credits (spec 2.1).
     """
     if isinstance(observation, NotObserved):
         return

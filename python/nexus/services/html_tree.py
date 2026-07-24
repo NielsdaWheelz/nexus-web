@@ -2,7 +2,30 @@
 
 from __future__ import annotations
 
-from lxml.html import HtmlElement
+import re
+
+from lxml.html import HtmlElement, document_fromstring
+
+_LEADING_XML_ENCODING_DECLARATION_RE = re.compile(
+    r"""\A
+    (?P<prefix>\ufeff?[ \t\r\n]*)
+    <\?xml\b
+    (?=[^>]*\bencoding\s*=\s*["'][^"']+["'])
+    [^>]*\?>
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def parse_html_document(html: str | bytes) -> HtmlElement:
+    """Parse HTML while preserving byte encodings and accepted Unicode XML prologs."""
+    if isinstance(html, str):
+        html = _LEADING_XML_ENCODING_DECLARATION_RE.sub(
+            lambda match: match.group("prefix"),
+            html,
+            count=1,
+        )
+    return document_fromstring(html)
 
 
 def remove_element(element: HtmlElement) -> None:

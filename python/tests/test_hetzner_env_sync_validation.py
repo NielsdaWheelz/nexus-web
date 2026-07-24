@@ -1,21 +1,16 @@
 """Hetzner env sync validates required production provider values locally."""
 
-import re
 import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
-
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SYNC_ENV_SCRIPT = _REPO_ROOT / "deploy" / "hetzner" / "sync-env.sh"
-_WORKER_ENV_LOCAL = _REPO_ROOT / "deploy" / "env" / "env-prod-worker"
 _WORKER_ENV_EXAMPLE = _REPO_ROOT / "deploy" / "env" / "env-prod-worker.example"
-_SAFE_WORKER_ALLOWED_JOB_KINDS = DEFAULT_WORKER_ALLOWED_JOB_KINDS
 
 _SHARED_ENV = {
     "NEXUS_ENV": "prod",
@@ -51,9 +46,8 @@ _BACKEND_ENV = {
     "NEXUS_FABLE_RETENTION_ACCEPTED_AT": "2026-01-01T00:00:00Z",
 }
 _WORKER_ENV = {
-    "WORKER_ALLOWED_JOB_KINDS": _SAFE_WORKER_ALLOWED_JOB_KINDS,
     "PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS": "0",
-    "INGEST_RECONCILE_SCHEDULE_SECONDS": "0",
+    "INGEST_RECONCILE_SCHEDULE_SECONDS": "600",
     "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS": "0",
     "BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS": "0",
 }
@@ -237,7 +231,19 @@ def test_hetzner_sync_rejects_cloudflare_ai_keys(tmp_path: Path, forbidden_key: 
     assert "scp must not run" not in result.stderr
 
 
-def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("WORKER_LANE", "background"),
+        ("WORKER_ALLOWED_JOB_KINDS", "prune_background_jobs_job"),
+        ("NEXUS_ALLOW_WORKER_MAINTENANCE", "1"),
+    ],
+)
+def test_hetzner_sync_rejects_stored_worker_invocation_state(
+    tmp_path: Path,
+    key: str,
+    value: str,
+):
     fake_bin_dir = tmp_path / "bin"
     fake_bin_dir.mkdir()
     _fake_bin(fake_bin_dir, "ssh")
@@ -247,7 +253,7 @@ def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
     backend_env = tmp_path / "env-prod-backend"
     worker_env = tmp_path / "env-prod-worker"
     worker = dict(_WORKER_ENV)
-    worker["WORKER_ALLOWED_JOB_KINDS"] = "ingest_media_source,ingest_pdf,enrich_metadata,chat_run"
+    worker[key] = value
     _write_env(shared_env, _SHARED_ENV)
     _write_env(backend_env, _BACKEND_ENV)
     _write_env(worker_env, worker)
@@ -255,46 +261,70 @@ def test_hetzner_sync_rejects_unsafe_worker_allowlist(tmp_path: Path):
     result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
 
     assert result.returncode != 0
-    assert "WORKER_ALLOWED_JOB_KINDS is not the safe production allowlist" in result.stderr
+    assert f"{key} is invocation-owned" in result.stderr
     assert "scp must not run" not in result.stderr
 
 
-def test_worker_env_example_matches_safe_allowlist():
-    """The operator-copied example must not drift from the safe allowlist.
-
-    Operators ``cp env-prod-worker.example env-prod-worker`` per the deploy
-    READMEs, so a stale ``WORKER_ALLOWED_JOB_KINDS`` here makes ``sync-env.sh``
-    abort with "is not the safe production allowlist".
-    """
-    example_value = _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_ALLOWED_JOB_KINDS")
-
-    assert example_value is not None, f"WORKER_ALLOWED_JOB_KINDS not found in {_WORKER_ENV_EXAMPLE}"
-    assert example_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
+def test_worker_env_example_uses_background_schedule_contract():
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_LANE") is None
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "WORKER_ALLOWED_JOB_KINDS") is None
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "NEXUS_ALLOW_WORKER_MAINTENANCE") is None
+    assert _read_env_value(_WORKER_ENV_EXAMPLE, "INGEST_RECONCILE_SCHEDULE_SECONDS") == "600"
 
 
-def test_local_worker_env_matches_safe_allowlist_when_present():
-    """Local ignored env is what operators actually sync from this checkout."""
-    if not _WORKER_ENV_LOCAL.exists():
-        pytest.skip(f"{_WORKER_ENV_LOCAL} is not present")
+def test_hetzner_sync_requires_reconciliation_schedule(tmp_path: Path):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
 
-    local_value = _read_env_value(_WORKER_ENV_LOCAL, "WORKER_ALLOWED_JOB_KINDS")
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    worker = dict(_WORKER_ENV)
+    worker["INGEST_RECONCILE_SCHEDULE_SECONDS"] = "0"
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, _BACKEND_ENV)
+    _write_env(worker_env, worker)
 
-    assert local_value is not None, f"WORKER_ALLOWED_JOB_KINDS not found in {_WORKER_ENV_LOCAL}"
-    assert local_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert "INGEST_RECONCILE_SCHEDULE_SECONDS must be 600" in result.stderr
+    assert "scp must not run" not in result.stderr
 
 
-def test_sync_env_script_safe_allowlist_matches_config_default():
-    match = re.search(
-        r'^SAFE_WORKER_ALLOWED_JOB_KINDS="([^"]*)"',
-        _SYNC_ENV_SCRIPT.read_text(),
-        re.MULTILINE,
-    )
-    script_value = match.group(1) if match else None
+@pytest.mark.parametrize(
+    "schedule_key",
+    [
+        "PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS",
+        "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS",
+        "BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS",
+    ],
+)
+def test_hetzner_sync_rejects_positive_maintenance_schedule(
+    tmp_path: Path,
+    schedule_key: str,
+):
+    fake_bin_dir = tmp_path / "bin"
+    fake_bin_dir.mkdir()
+    _fake_bin(fake_bin_dir, "ssh")
+    _fake_bin(fake_bin_dir, "scp")
 
-    assert script_value is not None, (
-        f"SAFE_WORKER_ALLOWED_JOB_KINDS not found in {_SYNC_ENV_SCRIPT}"
-    )
-    assert script_value == _SAFE_WORKER_ALLOWED_JOB_KINDS
+    shared_env = tmp_path / "env-prod"
+    backend_env = tmp_path / "env-prod-backend"
+    worker_env = tmp_path / "env-prod-worker"
+    worker = dict(_WORKER_ENV)
+    worker[schedule_key] = "3600"
+    _write_env(shared_env, _SHARED_ENV)
+    _write_env(backend_env, _BACKEND_ENV)
+    _write_env(worker_env, worker)
+
+    result = _run_sync(shared_env, backend_env, worker_env, fake_bin_dir)
+
+    assert result.returncode != 0
+    assert f"{schedule_key} must be 0" in result.stderr
+    assert "scp must not run" not in result.stderr
 
 
 def test_hetzner_sync_rejects_removed_x_expansion_knob(tmp_path: Path):

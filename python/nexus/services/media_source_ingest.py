@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
@@ -35,24 +35,21 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.jobs.queue import enqueue_job
+from nexus.jobs.queue import JobExecutionContext, enqueue_job
 from nexus.logging import get_logger
 from nexus.schemas.media import FromUrlResponse
-from nexus.services import (
-    library_entries,
-    library_governance,
-    web_article_indexing,
-)
+from nexus.services import library_entries, library_governance
 from nexus.services import (
     media_source_types as source_types,
 )
+from nexus.services.capabilities import is_same_source_terminal_error
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.contributors import MediaTarget, replace_observed_role_slices
+from nexus.services.contributors import MediaTarget, replace_source_observed_role_slices
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,
@@ -74,7 +71,6 @@ from nexus.services.media_processing_state import (
     mark_stage_warning,
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
-from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import PdfSourcePackageArtifact
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
@@ -90,6 +86,11 @@ from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url, remote_
 from nexus.services.source_attempt_artifacts import (
     clone_source_payload_for_new_attempt,
     source_attempt_storage_paths,
+)
+from nexus.services.source_publication import (
+    SourcePublicationFence,
+    SourcePublicationSuperseded,
+    run_source_publication_phase,
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
@@ -115,6 +116,11 @@ from nexus.tasks.storage_object_cleanup import (
 
 logger = get_logger(__name__)
 
+
+class SourcePublicationLockSetChanged(RuntimeError):
+    """A source projection discovered an affected media row after planning."""
+
+
 _ATTEMPT_ACCEPTED = MediaSourceAttemptStatus.accepted.value
 _ATTEMPT_QUEUED = MediaSourceAttemptStatus.queued.value
 _ATTEMPT_RUNNING = MediaSourceAttemptStatus.running.value
@@ -133,11 +139,6 @@ _NON_REACQUIRABLE_FILE_ERROR_CODES = {
     ApiErrorCode.E_SIGN_UPLOAD_FAILED.value,
     ApiErrorCode.E_STORAGE_MISSING.value,
     ApiErrorCode.E_STORAGE_ERROR.value,
-    ApiErrorCode.E_INVALID_FILE_TYPE.value,
-}
-_TERMINAL_SOURCE_ERROR_CODES = {
-    ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
-    ApiErrorCode.E_ARCHIVE_UNSAFE.value,
 }
 
 
@@ -489,6 +490,7 @@ def accept_browser_article_capture(
             exc=exc,
             stage="upload",
         )
+        db.commit()
         media = db.get(Media, media.id) or media
         attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
         return FromUrlResponse(
@@ -574,7 +576,21 @@ def accept_embedded_source(
     library_entries.assign_libraries_for_media_in_current_transaction(
         db, viewer_id, media.id, library_ids
     )
-    status = _ATTEMPT_ACCEPTED if created else _reused_url_attempt_status(media)
+    if not created:
+        existing_attempt = _latest_source_attempt(db, media.id)
+        if existing_attempt is None:
+            # justify-defect: reusable source-backed media must retain the
+            # durable attempt that owns its source identity.
+            raise AssertionError("reusable embedded media has no source attempt")
+        return EmbeddedSourceAcceptance(
+            media_id=media.id,
+            source_attempt_id=existing_attempt.id,
+            source_type=existing_attempt.source_type,
+            source_attempt_status=existing_attempt.status,
+            processing_status=_status_to_str(media.processing_status),
+            needs_enqueue=False,
+        )
+
     source_payload = {
         "url": url,
         "kind": spec["kind"],
@@ -601,13 +617,8 @@ def accept_embedded_source(
         source_payload=source_payload,
         request_id=request_id,
         idempotency_key=None,
-        status=status,
+        status=_ATTEMPT_ACCEPTED,
     )
-    if not created and attempt.status in {_ATTEMPT_FAILED, _ATTEMPT_SUCCEEDED}:
-        attempt.finished_at = func.now()
-        if attempt.status == _ATTEMPT_FAILED:
-            attempt.error_code = media.last_error_code
-            attempt.error_message = media.last_error_message
     return EmbeddedSourceAcceptance(
         media_id=media.id,
         source_attempt_id=attempt.id,
@@ -616,6 +627,53 @@ def accept_embedded_source(
         processing_status=_status_to_str(media.processing_status),
         needs_enqueue=created,
     )
+
+
+def reusable_embedded_source_media_ids(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    urls: list[str],
+) -> set[UUID]:
+    """Resolve the pre-existing media rows an embed publication must lock."""
+    media_ids: set[UUID] = set()
+    for url in urls:
+        validate_requested_url(url)
+        spec = _url_source_spec(url)
+        if spec["source_type"] == source_types.X_AUTHOR_THREAD:
+            post_id = str(spec["provider_target_ref"] or "")
+            spec = {
+                **spec,
+                "source_type": source_types.X_POST,
+                "provider_id": f"post:{post_id}",
+                "source_payload": {"post_id": post_id},
+            }
+        if spec["source_type"] not in {source_types.YOUTUBE_VIDEO, source_types.X_POST}:
+            continue
+        media = _find_reusable_url_media(db, viewer_id, spec)
+        if media is not None:
+            media_ids.add(media.id)
+    return media_ids
+
+
+def enqueue_accepted_source_attempt_in_transaction(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+) -> None:
+    """Bind a newly accepted child attempt to its durable job without committing."""
+    job = _enqueue_source_job(db, media_id, attempt_id, actor_user_id, request_id)
+    attempt = db.get(MediaSourceAttempt, attempt_id)
+    if attempt is None or attempt.media_id != media_id or attempt.status != _ATTEMPT_ACCEPTED:
+        # justify-defect: the parent publication just created this exact child.
+        raise AssertionError("embedded source acceptance identity changed before enqueue")
+    attempt.job_id = job.id
+    attempt.status = _ATTEMPT_QUEUED
+    attempt.retry_after_seconds = None
+    attempt.updated_at = func.now()
 
 
 def enqueue_accepted_source_attempt(
@@ -781,6 +839,7 @@ def accept_browser_file_capture(
             ),
             stage="upload",
         )
+        db.commit()
         media = db.get(Media, media.id) or media
         attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
         return FromUrlResponse(
@@ -812,6 +871,7 @@ def accept_browser_file_capture(
             exc=exc,
             stage="upload",
         )
+        db.commit()
         media = db.get(Media, media.id) or media
         attempt = db.get(MediaSourceAttempt, attempt.id) or attempt
         return FromUrlResponse(
@@ -947,80 +1007,173 @@ def accept_uploaded_file_source(
 
 def run_source_attempt(
     *,
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     actor_user_id: UUID,
     request_id: str | None,
+    context: JobExecutionContext,
 ) -> dict[str, object]:
     """Run one queued source attempt and persist the terminal attempt state."""
-    attempt = (
-        db.execute(
-            select(MediaSourceAttempt).where(MediaSourceAttempt.id == attempt_id).with_for_update()
-        )
-        .scalars()
-        .one_or_none()
-    )
-    if attempt is None:
-        return {"status": "skipped", "reason": "attempt_not_found"}
-    if attempt.media_id != media_id:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Source attempt media mismatch.")
-    if attempt.status == _ATTEMPT_SUCCEEDED:
-        return {"status": "skipped", "reason": "already_succeeded"}
-    if attempt.status not in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED, _ATTEMPT_RUNNING}:
-        return {"status": "skipped", "reason": f"attempt_{attempt.status}"}
+    fence = SourcePublicationFence.from_context(attempt_id=attempt_id, context=context)
+    try:
 
-    attempt.status = _ATTEMPT_RUNNING
-    attempt.run_count = int(attempt.run_count or 0) + 1
-    attempt.started_at = func.now()
-    attempt.updated_at = func.now()
-    db.commit()
+        def mark_running(_db: Session, attempt: MediaSourceAttempt) -> None:
+            attempt.status = _ATTEMPT_RUNNING
+            attempt.run_count = int(attempt.run_count or 0) + 1
+            attempt.started_at = func.now()
+            attempt.updated_at = func.now()
+
+        run_source_publication_phase(
+            session_factory=session_factory,
+            label="mark_source_attempt_running",
+            fence=fence,
+            media_ids=(media_id,),
+            mutate=mark_running,
+        )
+    except SourcePublicationSuperseded:
+        return {"status": "superseded"}
+
+    db = session_factory()
+    try:
+        return _run_claimed_source_attempt(
+            db=db,
+            session_factory=session_factory,
+            media_id=media_id,
+            attempt_id=attempt_id,
+            actor_user_id=actor_user_id,
+            request_id=request_id,
+            fence=fence,
+        )
+    finally:
+        db.close()
+
+
+def _run_claimed_source_attempt(
+    *,
+    db: Session,
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt_id: UUID,
+    actor_user_id: UUID,
+    request_id: str | None,
+    fence: SourcePublicationFence,
+) -> dict[str, object]:
+    """Acquire immutable source inputs, then cross fenced publication phases."""
+    attempt = db.get(MediaSourceAttempt, attempt_id)
+    if attempt is None:
+        # justify-defect: the fenced running transition just committed this identity.
+        raise AssertionError("source attempt disappeared after running transition")
+    # Source adapters receive an immutable detached snapshot.  Keeping the
+    # acquisition session transaction open while they call providers or object
+    # storage would violate the source I/O boundary even if they never reused
+    # that session for publication.
+    db.expunge(attempt)
+    db.rollback()
 
     superseded_storage_paths: list[str] = []
     try:
         if attempt.source_type == source_types.GENERIC_WEB_URL:
-            result = _run_generic_web_article(db, media_id, attempt, actor_user_id, request_id)
+            result = _run_generic_web_article(
+                session_factory, media_id, attempt, actor_user_id, request_id, fence
+            )
         elif attempt.source_type in {
             source_types.YOUTUBE_VIDEO,
             source_types.VIDEO_TRANSCRIPT,
         }:
-            result = _run_youtube_video(db, media_id, attempt, actor_user_id, request_id)
+            result = _run_youtube_video(
+                session_factory,
+                media_id,
+                attempt,
+                actor_user_id,
+                request_id,
+                fence,
+            )
         elif attempt.source_type == source_types.X_AUTHOR_THREAD:
-            result = _run_x_author_thread(db, media_id, attempt, actor_user_id, request_id)
+            result = _run_x_author_thread(
+                session_factory, media_id, attempt, actor_user_id, request_id, fence
+            )
         elif attempt.source_type == source_types.X_POST:
-            result = _run_x_post(db, media_id, attempt, actor_user_id, request_id)
+            result = _run_x_post(
+                session_factory, media_id, attempt, actor_user_id, request_id, fence
+            )
         elif attempt.source_type in source_types.REMOTE_FILE_SOURCE_TYPES:
-            result = _run_remote_file(db, media_id, attempt, request_id)
+            result = _run_remote_file(session_factory, media_id, attempt, request_id, fence)
         elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
-            result = _run_browser_article_capture(db, media_id, attempt, request_id)
+            result = _run_browser_article_capture(
+                session_factory, media_id, attempt, request_id, fence
+            )
         elif attempt.source_type == source_types.EMAIL_MESSAGE:
-            result = _run_email_message(db, media_id, attempt, request_id)
+            result = _run_email_message(session_factory, media_id, attempt, request_id, fence)
         elif attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
-            result = _run_existing_file(db, media_id, request_id)
+            result = _run_existing_file(session_factory, media_id, fence)
         elif attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
             result = _run_podcast_episode_transcript(
-                db, media_id, attempt, actor_user_id, request_id
+                session_factory,
+                media_id,
+                attempt,
+                actor_user_id,
+                request_id,
+                fence,
             )
         else:
             raise ApiError(
                 ApiErrorCode.E_INVALID_KIND,
                 f"Unsupported source attempt type: {attempt.source_type}",
             )
-        result_media_id = _result_media_id(result)
+        result_media_id = _superseded_media_id(result)
         terminal_media_id = media_id
         if result_media_id is not None and result_media_id != media_id:
-            superseded_storage_paths = _supersede_source_media(
-                db,
-                loser_media_id=media_id,
-                winner_media_id=result_media_id,
-                attempt_id=attempt_id,
+
+            def publish_supersession(phase_db: Session, _attempt: MediaSourceAttempt) -> list[str]:
+                return _supersede_source_media(
+                    phase_db,
+                    loser_media_id=media_id,
+                    winner_media_id=result_media_id,
+                    attempt_id=attempt_id,
+                )
+
+            superseded_storage_paths = run_source_publication_phase(
+                session_factory=session_factory,
+                label="publish_source_media_supersession",
+                fence=fence,
+                media_ids=(media_id, result_media_id),
+                mutate=publish_supersession,
             )
             terminal_media_id = result_media_id
+    except SourcePublicationSuperseded:
+        db.rollback()
+        return {"status": "superseded"}
     except Exception as exc:
         db.rollback()
-        _finish_failed_attempt(db, attempt_id, media_id, exc)
-        _sync_document_embed_targets(db, media_id)
-        error_code, error_message = _source_error_fields(exc)
+        if not _is_post_acceptance_source_failure(exc):
+            raise
+        try:
+            source_failure = exc
+            failure_publication_media_ids = _with_document_embed_owner_media_ids(
+                session_factory,
+                {media_id},
+            )
+
+            def publish_failure(phase_db: Session, _attempt: MediaSourceAttempt) -> tuple[str, str]:
+                _finish_failed_attempt(phase_db, attempt_id, media_id, source_failure)
+                _sync_document_embed_targets(
+                    phase_db,
+                    media_id,
+                    locked_media_ids=failure_publication_media_ids,
+                )
+                return _source_error_fields(source_failure)
+
+            error_code, error_message = run_source_publication_phase(
+                session_factory=session_factory,
+                label="publish_source_attempt_failure",
+                fence=fence,
+                media_ids=failure_publication_media_ids,
+                mutate=publish_failure,
+            )
+        except SourcePublicationSuperseded:
+            db.rollback()
+            return {"status": "superseded"}
         return {
             "status": "failed",
             "error_code": error_code,
@@ -1031,68 +1184,190 @@ def run_source_attempt(
     # result again: they hold credited names and must never reach the logged /
     # returned job result (D-43).
     observations = take_author_observations(result)
+    additional_reindex_media_ids: list[UUID] = []
+    raw_additional_reindex_media_ids = result.pop("additional_reindex_media_ids", [])
+    if not isinstance(raw_additional_reindex_media_ids, list):
+        # justify-defect: source adapters own one closed in-memory result shape.
+        raise AssertionError("additional source reindex media ids must be a list")
+    for value in raw_additional_reindex_media_ids:
+        try:
+            additional_reindex_media_ids.append(UUID(str(value)))
+        except (TypeError, ValueError):
+            # justify-defect: source adapters carry trusted media identities.
+            raise AssertionError("additional source reindex media id is malformed") from None
+    # The queue payload and source attempt remain anchored to the originally
+    # accepted media for the whole operation. Canonical dedupe may publish an
+    # existing winner, but moving the attempt would change the exact operation
+    # identity underneath its running queue claim.
+    observed_media_ids = {
+        observed_media_id
+        for observed_media_id, _observation, _source in observations
+        if observed_media_id is not None
+    }
+    publication_media_ids = _with_document_embed_owner_media_ids(
+        session_factory,
+        {
+            media_id,
+            terminal_media_id,
+            *additional_reindex_media_ids,
+            *observed_media_ids,
+        },
+    )
 
-    db.expire_all()
-    media = db.get(Media, terminal_media_id)
-    attempt = db.get(MediaSourceAttempt, attempt_id)
-    if attempt is None:
-        return {"status": "success", "reason": "attempt_deleted_after_dedupe"}
+    try:
 
-    if media is None or media.processing_status != ProcessingStatus.failed:
-        # Commit the source work WITHOUT crossing ready, then apply each author
-        # observation through the facade in a fresh session (spec 2.4). A failure
-        # here fails the attempt + media and the user-facing source refresh
-        # retries; a crash instead leaves the attempt running and the job's
-        # lease-expiry retry re-runs the source work (AC 9). Either path rebuilds
-        # the observations, and the resolver's deterministic convergence +
-        # no-DML-when-unchanged make re-application safe; ready is only crossed
-        # after every author op commits.
-        db.commit()
+        def inspect_source(phase_db: Session, _attempt: MediaSourceAttempt) -> bool:
+            media = phase_db.get(Media, terminal_media_id)
+            return media is not None and media.processing_status != ProcessingStatus.failed
+
+        source_allows_observations = run_source_publication_phase(
+            session_factory=session_factory,
+            label="inspect_source_before_author_publication",
+            fence=fence,
+            media_ids=publication_media_ids,
+            mutate=inspect_source,
+        )
+    except SourcePublicationSuperseded:
+        db.rollback()
+        return {"status": "superseded"}
+
+    if source_allows_observations:
+        # Apply each author observation through the facade in a fresh session
+        # before crossing ready. A failure here publishes a modeled source
+        # failure; a crash leaves the attempt running for exact job replay.
         try:
             for observed_media_id, observation, source in observations:
-                replace_observed_role_slices(
+                replace_source_observed_role_slices(
                     target=MediaTarget(observed_media_id or terminal_media_id),
                     observation=observation,
                     source=source,
+                    fence=fence,
+                    publication_media_ids=publication_media_ids,
                 )
+        except SourcePublicationSuperseded:
+            db.rollback()
+            return {"status": "superseded"}
         except Exception as exc:
             db.rollback()
-            _finish_failed_attempt(db, attempt_id, terminal_media_id, exc)
-            _sync_document_embed_targets(db, terminal_media_id)
-            error_code, error_message = _source_error_fields(exc)
+            if not _is_post_acceptance_source_failure(exc):
+                raise
+            author_failure = exc
+
+            def publish_author_failure(
+                phase_db: Session, _attempt: MediaSourceAttempt
+            ) -> tuple[str, str]:
+                _finish_failed_attempt(phase_db, attempt_id, media_id, author_failure)
+                _sync_document_embed_targets(
+                    phase_db,
+                    media_id,
+                    locked_media_ids=publication_media_ids,
+                )
+                return _source_error_fields(author_failure)
+
+            try:
+                error_code, error_message = run_source_publication_phase(
+                    session_factory=session_factory,
+                    label="publish_source_author_failure",
+                    fence=fence,
+                    media_ids=publication_media_ids,
+                    mutate=publish_author_failure,
+                )
+            except SourcePublicationSuperseded:
+                db.rollback()
+                return {"status": "superseded"}
             return {
                 "status": "failed",
                 "error_code": error_code,
                 "error_message": error_message,
             }
-        # The author op committed on its own fresh session; refresh the media
-        # state before crossing ready. ``attempt`` (already validated non-None
-        # above) is untouched by the author op — reload it lazily on write.
-        db.expire_all()
-        media = db.get(Media, terminal_media_id)
 
-    if media is not None and media.processing_status == ProcessingStatus.failed:
-        attempt.status = _ATTEMPT_FAILED
-        attempt.error_code = media.last_error_code
-        attempt.error_message = media.last_error_message
-        attempt.retry_after_seconds = None
-    else:
-        if media is not None and media.processing_status == ProcessingStatus.extracting:
-            mark_ready_for_reading(db, media)
-        attempt.status = _ATTEMPT_SUCCEEDED
-        attempt.error_code = None
-        attempt.error_message = None
-        attempt.retry_after_seconds = None
-    attempt.finished_at = func.now()
-    attempt.updated_at = func.now()
-    db.commit()
-    _sync_document_embed_targets(db, terminal_media_id)
-    _run_post_success_source_actions(
-        db,
-        media_id=terminal_media_id,
-        result=result,
-        request_id=request_id,
-    )
+    def publish_terminal(phase_db: Session, attempt: MediaSourceAttempt) -> None:
+        media = phase_db.get(Media, terminal_media_id)
+        if media is None:
+            # justify-defect: the common fence locked this terminal identity.
+            raise AssertionError("terminal source media disappeared while locked")
+        if media.processing_status == ProcessingStatus.failed:
+            attempt.status = _ATTEMPT_FAILED
+            attempt.error_code = media.last_error_code
+            attempt.error_message = media.last_error_message
+            attempt.retry_after_seconds = None
+        else:
+            if media.processing_status == ProcessingStatus.extracting:
+                mark_ready_for_reading(phase_db, media)
+            attempt.status = _ATTEMPT_SUCCEEDED
+            attempt.error_code = None
+            attempt.error_message = None
+            attempt.retry_after_seconds = None
+            if result.get("warning_error_code") == "E_PDF_TEXT_UNAVAILABLE":
+                mark_stage_warning(
+                    phase_db,
+                    media,
+                    stage="extract",
+                    error_code="E_PDF_TEXT_UNAVAILABLE",
+                    error_message="PDF text is unavailable; OCR is required.",
+                )
+            if bool(result.get("transcript_semantic_intent")):
+                enqueue_job(
+                    phase_db,
+                    kind="podcast_reindex_semantic_job",
+                    payload={
+                        "media_id": str(terminal_media_id),
+                        "requested_by_user_id": str(actor_user_id),
+                        "request_reason": str(
+                            result.get("transcript_request_reason") or "episode_open"
+                        ),
+                        "request_id": request_id,
+                    },
+                )
+            if media.kind in {
+                MediaKind.web_article.value,
+                MediaKind.epub.value,
+                MediaKind.pdf.value,
+            }:
+                from nexus.services.content_indexing import request_media_content_reindex
+
+                request_media_content_reindex(
+                    phase_db,
+                    media_id=terminal_media_id,
+                    reason="source_success",
+                    request_id=request_id,
+                )
+                for additional_media_id in additional_reindex_media_ids:
+                    request_media_content_reindex(
+                        phase_db,
+                        media_id=additional_media_id,
+                        reason="source_success",
+                        request_id=request_id,
+                    )
+        attempt.finished_at = func.now()
+        attempt.updated_at = func.now()
+        _sync_document_embed_targets(
+            phase_db,
+            terminal_media_id,
+            locked_media_ids=publication_media_ids,
+        )
+
+    try:
+        run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_source_attempt_terminal",
+            fence=fence,
+            media_ids=publication_media_ids,
+            mutate=publish_terminal,
+        )
+    except SourcePublicationSuperseded:
+        db.rollback()
+        return {"status": "superseded"}
+    post_success_db = session_factory()
+    try:
+        _run_post_success_source_actions(
+            post_success_db,
+            media_id=terminal_media_id,
+            result=result,
+            request_id=request_id,
+        )
+    finally:
+        post_success_db.close()
     delete_document_storage_objects(superseded_storage_paths)
     return result
 
@@ -1160,7 +1435,7 @@ def retry_source_for_viewer(
             ApiErrorCode.E_RETRY_NOT_ALLOWED,
             "Latest source attempt is not retryable.",
         )
-    _raise_if_source_action_not_reacquirable(media, attempt)
+    _raise_if_source_action_not_reacquirable(db, media, attempt)
     retry_attempt = _clone_attempt_for_media(
         db,
         media=media,
@@ -1244,7 +1519,7 @@ def refresh_source_for_viewer(
             ApiErrorCode.E_RETRY_INVALID_STATE,
             "Source ingest is already queued or running.",
         )
-    _raise_if_source_action_not_reacquirable(media, attempt)
+    _raise_if_source_action_not_reacquirable(db, media, attempt)
     refresh_attempt = _clone_attempt_for_media(
         db,
         media=media,
@@ -1357,7 +1632,7 @@ def repair_source_for_system_media(
             "Latest source attempt is not repairable.",
         )
 
-    _raise_if_source_action_not_reacquirable(media, attempt)
+    _raise_if_source_action_not_reacquirable(db, media, attempt)
     repair_attempt = _clone_attempt_for_media(
         db,
         media=media,
@@ -1744,27 +2019,12 @@ def _prepare_source_requeue_domain_state(
     media: Media,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
-) -> tuple[list[str], StorageClientBase | None]:
-    cleanup_storage_client = _source_requeue_storage_client_if_required(media, attempt)
-    if attempt.source_type in source_types.WEB_ARTICLE_ARTIFACT_SOURCE_TYPES:
-        delete_web_article_artifacts(
-            db,
-            owner_user_id=media.created_by_user_id or actor_user_id,
-            media_id=media.id,
-            include_content_index=True,
-        )
-        return [], cleanup_storage_client
-    if media.kind == MediaKind.pdf.value:
-        from nexus.services.pdf_ingest import delete_pdf_text_artifacts
-
-        delete_pdf_text_artifacts(db, media.id)
-        return [], cleanup_storage_client
-    if media.kind == MediaKind.epub.value:
-        from nexus.services.epub_lifecycle import delete_extraction_artifacts
-
-        return delete_extraction_artifacts(db, media.id), cleanup_storage_client
+) -> None:
+    # Requeue is an execution-state transition only.  Current readable
+    # artifacts and the monotonic content-index state remain authoritative
+    # until the fenced replacement publication succeeds.
     if attempt.source_type != source_types.PODCAST_EPISODE_TRANSCRIPT:
-        return [], cleanup_storage_client
+        return
     from nexus.services.podcasts.transcription import (
         prepare_podcast_transcription_for_source_attempt,
     )
@@ -1777,36 +2037,52 @@ def _prepare_source_requeue_domain_state(
             dict(attempt.source_payload or {}).get("request_reason")
         ),
     )
-    return [], cleanup_storage_client
+    return
 
 
-def _source_requeue_storage_client_if_required(
-    media: Media,
-    attempt: MediaSourceAttempt,
-) -> StorageClientBase | None:
-    source_path: str | None = None
+def _source_requeue_storage_path(
+    db: Session,
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+) -> str | None:
+    """Read the immutable source key without retaining a transaction."""
+    attempt = db.get(MediaSourceAttempt, attempt_id)
+    if attempt is None or attempt.media_id != media_id:
+        return None
     if attempt.source_type in source_types.LOCAL_FILE_SOURCE_TYPES:
-        media_file = media.media_file
-        if media_file is None or not media_file.storage_path:
+        source_path = db.scalar(
+            select(MediaFile.storage_path).where(MediaFile.media_id == media_id)
+        )
+        if not source_path:
             raise InvalidRequestError(
                 ApiErrorCode.E_STORAGE_MISSING,
                 "Source file metadata is missing.",
             )
-        source_path = str(media_file.storage_path)
-    elif attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
+        return str(source_path)
+    if attempt.source_type == source_types.BROWSER_ARTICLE_CAPTURE:
         source_path = str((attempt.source_payload or {}).get("storage_path") or "")
         if not source_path:
             raise InvalidRequestError(
                 ApiErrorCode.E_STORAGE_MISSING,
                 "Captured article source artifact is missing.",
             )
+        return source_path
+    return None
 
+
+def _verify_source_requeue_storage(db: Session, *, media_id: UUID, attempt_id: UUID) -> None:
+    """Perform object-store preflight with no database transaction open."""
+    source_path = _source_requeue_storage_path(
+        db,
+        media_id=media_id,
+        attempt_id=attempt_id,
+    )
+    db.rollback()
     if source_path is None:
-        return None
-
-    storage_client = get_storage_client()
+        return
     try:
-        metadata = storage_client.head_object(source_path)
+        metadata = get_storage_client().head_object(source_path)
     except StorageError as exc:
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR,
@@ -1817,7 +2093,6 @@ def _source_requeue_storage_client_if_required(
             ApiErrorCode.E_STORAGE_MISSING,
             "Source storage object is missing.",
         )
-    return storage_client
 
 
 def _podcast_request_reason(value: object) -> str:
@@ -1842,11 +2117,25 @@ def _source_attempt_failure_stage(attempt: MediaSourceAttempt | None) -> str:
 
 
 def _raise_if_source_action_not_reacquirable(
+    db: Session,
     media: Media,
     attempt: MediaSourceAttempt,
 ) -> None:
+    if attempt.job_id is not None:
+        from nexus.jobs.queue import current_dead_job_for_payload
+
+        dead = current_dead_job_for_payload(
+            db,
+            kind="ingest_media_source",
+            expected_payload_match={"attempt_id": str(attempt.id)},
+        )
+        if dead is not None and dead.id == attempt.job_id:
+            raise ConflictError(
+                ApiErrorCode.E_RETRY_NOT_ALLOWED,
+                "Source processing is suspended and requires operator repair.",
+            )
     error_code = str(media.last_error_code or attempt.error_code or "")
-    if error_code in _TERMINAL_SOURCE_ERROR_CODES:
+    if is_same_source_terminal_error(error_code):
         raise ConflictError(
             ApiErrorCode.E_RETRY_NOT_ALLOWED,
             "Source retry is not available for this terminal failure. Provide a new source.",
@@ -1878,23 +2167,74 @@ def _latest_source_attempt(db: Session, media_id: UUID) -> MediaSourceAttempt | 
     )
 
 
-def _result_media_id(result: dict[str, object]) -> UUID | None:
-    value = result.get("media_id")
+def _superseded_media_id(result: dict[str, object]) -> UUID | None:
+    if "superseded_by_media_id" not in result:
+        return None
+    value = result["superseded_by_media_id"]
     if isinstance(value, UUID):
         return value
     if isinstance(value, str) and value:
         try:
             return UUID(value)
         except ValueError:
-            return None
-    return None
+            pass
+    # justify-defect: adapters own a closed source-result protocol; malformed
+    # operation identity must never fail open as ordinary non-deduped success.
+    raise AssertionError("source supersession media id is malformed")
 
 
-def _sync_document_embed_targets(db: Session, media_id: UUID) -> None:
+def _sync_document_embed_targets(
+    db: Session,
+    media_id: UUID,
+    *,
+    locked_media_ids: tuple[UUID, ...] | None = None,
+) -> None:
     from nexus.services.document_embeds import sync_document_embed_targets_for_media
 
-    if sync_document_embed_targets_for_media(db, target_media_id=media_id):
-        db.commit()
+    actual_owner_ids = {
+        UUID(str(value))
+        for value in db.scalars(
+            text(
+                """
+                SELECT DISTINCT media_id
+                FROM document_embeds
+                WHERE target_media_id = :target_media_id
+                """
+            ),
+            {"target_media_id": media_id},
+        ).all()
+    }
+    if locked_media_ids is not None and not actual_owner_ids.issubset(set(locked_media_ids)):
+        # Roll back the complete source phase; a queue retry rediscovers and
+        # locks the expanded owner set before making any projection write.
+        raise SourcePublicationLockSetChanged
+    sync_document_embed_targets_for_media(db, target_media_id=media_id)
+
+
+def _with_document_embed_owner_media_ids(
+    session_factory: sessionmaker[Session],
+    media_ids: set[UUID],
+) -> tuple[UUID, ...]:
+    """Discover the complete existing media lock set for embed projection writes."""
+    snapshot = session_factory()
+    try:
+        owner_ids = {
+            UUID(str(value))
+            for value in snapshot.scalars(
+                text(
+                    """
+                    SELECT DISTINCT media_id
+                    FROM document_embeds
+                    WHERE target_media_id = ANY(:target_media_ids)
+                    """
+                ),
+                {"target_media_ids": sorted(media_ids)},
+            ).all()
+        }
+        snapshot.rollback()
+    finally:
+        snapshot.close()
+    return tuple(sorted({*media_ids, *owner_ids}))
 
 
 def _supersede_source_media(
@@ -1912,7 +2252,7 @@ def _supersede_source_media(
         .one_or_none()
     )
     if attempt is not None:
-        _raise_if_artifact_bearing_attempt_transfer(attempt)
+        _raise_if_source_attempt_has_storage_artifacts(attempt)
         media_ids = [loser_media_id, winner_media_id]
         locked_media_ids = library_entries.lock_media_rows_in_order(db, media_ids)
         if set(locked_media_ids) != set(media_ids):
@@ -1943,18 +2283,6 @@ def _supersede_source_media(
                 winner_media_id,
                 _library_ids_from_payload(attempt.source_payload),
             )
-        next_attempt_no = (
-            db.execute(
-                select(func.coalesce(func.max(MediaSourceAttempt.attempt_no), 0) + 1).where(
-                    MediaSourceAttempt.media_id == winner_media_id
-                )
-            ).scalar_one()
-            or 1
-        )
-        attempt.media_id = winner_media_id
-        attempt.attempt_no = int(next_attempt_no)
-        attempt.updated_at = func.now()
-        db.flush()
     return delete_duplicate_document_media(
         db,
         loser_media_id=loser_media_id,
@@ -1962,53 +2290,10 @@ def _supersede_source_media(
     )
 
 
-def transfer_source_attempts_to_media(
-    db: Session,
-    *,
-    loser_media_id: UUID,
-    winner_media_id: UUID,
-    terminal_status: str | None = None,
-) -> None:
-    """Move durable source attempts before deleting a duplicate media loser."""
-    attempts = list(
-        db.execute(
-            select(MediaSourceAttempt)
-            .where(MediaSourceAttempt.media_id == loser_media_id)
-            .order_by(MediaSourceAttempt.attempt_no.asc(), MediaSourceAttempt.created_at.asc())
-            .with_for_update()
-        ).scalars()
-    )
-    if not attempts:
-        return
-    for attempt in attempts:
-        _raise_if_artifact_bearing_attempt_transfer(attempt)
-
-    next_attempt_no = int(
-        db.execute(
-            select(func.coalesce(func.max(MediaSourceAttempt.attempt_no), 0) + 1).where(
-                MediaSourceAttempt.media_id == winner_media_id
-            )
-        ).scalar_one()
-        or 1
-    )
-    now = func.now()
-    for attempt in attempts:
-        attempt.media_id = winner_media_id
-        attempt.attempt_no = next_attempt_no
-        next_attempt_no += 1
-        if terminal_status is not None:
-            attempt.status = terminal_status
-            attempt.finished_at = now
-        attempt.updated_at = now
-    db.flush()
-
-
-def _raise_if_artifact_bearing_attempt_transfer(attempt: MediaSourceAttempt) -> None:
+def _raise_if_source_attempt_has_storage_artifacts(attempt: MediaSourceAttempt) -> None:
     if not source_attempt_storage_paths(attempt.source_payload):
         return
-    raise RuntimeError(
-        "Source attempt storage artifacts must be rehomed before transferring media ownership."
-    )
+    raise RuntimeError("Source attempt storage artifacts must be rehomed before canonical dedupe.")
 
 
 def enqueue_podcast_episode_transcript_source_attempt(
@@ -2063,82 +2348,57 @@ def enqueue_podcast_episode_transcript_source_attempt(
     )
 
 
-def requeue_latest_source_attempt_for_media(
-    *,
+def ensure_stale_source_attempt_job(
     db: Session,
-    media: Media,
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
     request_id: str | None,
-) -> None:
-    """Requeue the latest source attempt for stale media recovery."""
-    if media.created_by_user_id is None:
-        raise ValueError(f"Missing source actor for stale media: {media.id}")
-
-    attempt = (
-        db.execute(
-            select(MediaSourceAttempt)
-            .where(MediaSourceAttempt.media_id == media.id)
-            .order_by(
-                MediaSourceAttempt.attempt_no.desc(),
-                MediaSourceAttempt.created_at.desc(),
-                MediaSourceAttempt.id.desc(),
-            )
-            .limit(1)
-            .with_for_update()
-        )
-        .scalars()
-        .one_or_none()
+) -> str:
+    """Ensure one legacy stale attempt still has its canonical queue owner."""
+    media = db.scalar(select(Media).where(Media.id == media_id).with_for_update())
+    if media is None:
+        return "skipped"
+    attempt = db.scalar(
+        select(MediaSourceAttempt).where(MediaSourceAttempt.id == attempt_id).with_for_update()
     )
-    if attempt is None:
-        raise ValueError(f"Missing source attempt for stale media: {media.id}")
+    if (
+        attempt is None
+        or attempt.media_id != media.id
+        or attempt.status not in _IN_FLIGHT_ATTEMPT_STATUSES
+    ):
+        return "skipped"
 
-    job = enqueue_job(
+    if attempt.job_id is not None:
+        from nexus.jobs.queue import lock_job
+
+        job = lock_job(db, attempt.job_id)
+        if job is not None:
+            if job.kind != "ingest_media_source":
+                # justify-defect: an attempt job_id always points to its owned kind.
+                raise AssertionError("source attempt points to a foreign job kind")
+            if job.status == "dead":
+                return "suspended"
+            if job.status in {"pending", "failed", "running"}:
+                return "deduplicated"
+            return "skipped"
+
+    actor_user_id = attempt.created_by_user_id or media.created_by_user_id
+    if actor_user_id is None:
+        # justify-defect: a source attempt retains the actor used by its payload.
+        raise AssertionError("source attempt is missing its actor")
+    job = _enqueue_source_job(
         db,
-        kind="ingest_media_source",
-        payload={
-            "media_id": str(media.id),
-            "attempt_id": str(attempt.id),
-            "actor_user_id": str(media.created_by_user_id),
-            "request_id": request_id,
-        },
+        media_id=media.id,
+        attempt_id=attempt.id,
+        actor_user_id=actor_user_id,
+        request_id=request_id,
     )
-    attempt.status = _ATTEMPT_QUEUED
     attempt.job_id = job.id
+    attempt.status = _ATTEMPT_QUEUED
     attempt.retry_after_seconds = None
     attempt.updated_at = func.now()
-    db.flush()
-
-
-def mark_latest_source_attempt_failed(
-    *,
-    db: Session,
-    media_id: UUID,
-    error_code: str,
-    error_message: str,
-) -> None:
-    """Fail the latest in-flight source attempt for stale media recovery."""
-    attempt = (
-        db.execute(
-            select(MediaSourceAttempt)
-            .where(MediaSourceAttempt.media_id == media_id)
-            .order_by(
-                MediaSourceAttempt.attempt_no.desc(),
-                MediaSourceAttempt.created_at.desc(),
-                MediaSourceAttempt.id.desc(),
-            )
-            .limit(1)
-            .with_for_update()
-        )
-        .scalars()
-        .one_or_none()
-    )
-    if attempt is None or attempt.status not in _IN_FLIGHT_ATTEMPT_STATUSES:
-        return
-    attempt.status = _ATTEMPT_FAILED
-    attempt.error_code = error_code
-    attempt.error_message = error_message[:1000]
-    attempt.finished_at = func.now()
-    attempt.updated_at = func.now()
-    db.flush()
+    return "enqueued"
 
 
 def mark_source_attempt_and_media_failed(
@@ -2162,7 +2422,6 @@ def mark_source_attempt_and_media_failed(
         attempt.updated_at = func.now()
     media = db.get(Media, media_id)
     if media is None:
-        db.commit()
         return
     mark_failed(
         db,
@@ -2222,9 +2481,12 @@ def _dispatch_requeue_attempt(
     request_id: str | None,
     failure_stage: str,
 ) -> bool:
-    cleanup_storage_paths: list[str] = []
-    cleanup_storage_client: StorageClientBase | None = None
     try:
+        _verify_source_requeue_storage(
+            db,
+            media_id=media_id,
+            attempt_id=attempt_id,
+        )
         media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
         attempt = (
             db.execute(
@@ -2244,9 +2506,7 @@ def _dispatch_requeue_attempt(
             db.commit()
             return False
 
-        cleanup_storage_paths, cleanup_storage_client = _prepare_source_requeue_domain_state(
-            db, media, attempt, actor_user_id
-        )
+        _prepare_source_requeue_domain_state(db, media, attempt, actor_user_id)
         mark_source_queued(db, media)
         job = _enqueue_source_job(db, media_id, attempt_id, actor_user_id, request_id)
         attempt.job_id = job.id
@@ -2266,6 +2526,7 @@ def _dispatch_requeue_attempt(
                 exc=exc,
                 stage=failure_stage,
             )
+            db.commit()
             raise
         db.rollback()
         _fail_source_attempt_and_media(
@@ -2275,9 +2536,9 @@ def _dispatch_requeue_attempt(
             exc=exc,
             stage=failure_stage,
         )
+        db.commit()
         return False
 
-    delete_document_storage_objects(cleanup_storage_paths, cleanup_storage_client)
     return True
 
 
@@ -2314,110 +2575,135 @@ def _enqueue_accepted_attempt(
             exc=exc,
             stage=failure_stage,
         )
+        db.commit()
         return False
 
 
 def _run_generic_web_article(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.web_article.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Generic web source attempts must target web_article media.",
-        )
-    begin_extraction(db, media)
-    db.commit()
+    def begin_web_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind != MediaKind.web_article.value:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Generic web source attempts must target web_article media.",
+            )
+        begin_extraction(db, media)
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_generic_web_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_web_extraction,
+    )
     return materialize_web_article_source(
-        db,
+        session_factory,
         media_id,
         actor_user_id,
         request_id,
         source_attempt_id=attempt.id,
+        publication_fence=fence,
     )
 
 
 def _run_x_author_thread(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
     from nexus.services import x_ingest
 
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     post_id = str(attempt.provider_target_ref or attempt.source_payload.get("post_id") or "")
     if not post_id:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing X source target.")
-    begin_extraction(db, media)
-    db.commit()
+
+    def begin_x_thread_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        begin_extraction(db, media)
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_x_thread_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_x_thread_extraction,
+    )
     return x_ingest.materialize_x_author_thread_media(
-        db,
+        session_factory,
         viewer_id=actor_user_id,
-        media=media,
+        media_id=media_id,
         post_id=post_id,
         source_attempt_id=attempt.id,
         request_id=request_id,
+        publication_fence=fence,
     )
 
 
 def _run_x_post(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
     from nexus.services import x_ingest
 
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.web_article.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "X post source attempts must target web_article media.",
-        )
     post_id = str(attempt.provider_target_ref or attempt.source_payload.get("post_id") or "")
     if not post_id:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing X post source target.")
-    begin_extraction(db, media)
-    db.commit()
+
+    def begin_x_post_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind != MediaKind.web_article.value:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "X post source attempts must target web_article media.",
+            )
+        begin_extraction(db, media)
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_x_post_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_x_post_extraction,
+    )
     return x_ingest.materialize_x_post_media(
-        db,
+        session_factory,
         viewer_id=actor_user_id,
-        media=media,
+        media_id=media_id,
         post_id=post_id,
         source_attempt_id=attempt.id,
         request_id=request_id,
+        publication_fence=fence,
     )
 
 
 def _run_youtube_video(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.video.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "YouTube source attempts must target video media.",
-        )
-
     payload = dict(attempt.source_payload or {})
     target_ref = str(attempt.provider_target_ref or payload.get("video_id") or "").strip()
     identity = (
@@ -2427,121 +2713,130 @@ def _run_youtube_video(
     )
     if identity is None:
         identity = classify_youtube_url(
-            str(
-                attempt.canonical_source_url
-                or attempt.requested_url
-                or media.canonical_source_url
-                or media.canonical_url
-                or media.requested_url
-                or ""
-            ).strip()
+            str(attempt.canonical_source_url or attempt.requested_url or "").strip()
         )
     if identity is None:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing YouTube source target.")
 
-    media.provider = identity.provider
-    media.provider_id = identity.provider_video_id
-    media.canonical_url = identity.watch_url
-    media.canonical_source_url = identity.watch_url
-    media.external_playback_url = identity.watch_url
-    media.updated_at = datetime.now(UTC)
-    db.flush()
-    begin_extraction(db, media)
-    db.commit()
+    def begin_youtube_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind != MediaKind.video.value:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "YouTube source attempts must target video media.",
+            )
+        media.provider = identity.provider
+        media.provider_id = identity.provider_video_id
+        media.canonical_url = identity.watch_url
+        media.canonical_source_url = identity.watch_url
+        media.external_playback_url = identity.watch_url
+        media.updated_at = datetime.now(UTC)
+        begin_extraction(db, media)
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_youtube_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_youtube_extraction,
+    )
     return run_youtube_video_ingest(
-        db,
+        session_factory,
         media_id,
         actor_user_id,
         request_id,
-        mark_media_ready=False,
-        dispatch_metadata_enrichment=False,
+        publication_fence=fence,
     )
 
 
 def _run_podcast_episode_transcript(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     actor_user_id: UUID,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
     from nexus.services.podcasts.transcription import run_podcast_transcription_now
 
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.podcast_episode.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Podcast transcript source attempts must target podcast episode media.",
-        )
+    def begin_podcast_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind != MediaKind.podcast_episode.value:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Podcast transcript source attempts must target podcast episode media.",
+            )
+        begin_extraction(db, media)
 
-    begin_extraction(db, media)
-    db.commit()
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_podcast_transcript_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_podcast_extraction,
+    )
 
     result = asdict(
         run_podcast_transcription_now(
-            db,
+            session_factory,
             media_id=media_id,
             requested_by_user_id=actor_user_id,
             request_id=request_id,
-            mark_media_ready=False,
-            mark_media_failed=False,
-            dispatch_metadata_enrichment=False,
+            publication_fence=fence,
         )
     )
     result["source_type"] = source_types.PODCAST_EPISODE_TRANSCRIPT
-    result["media_id"] = str(media_id)
-    if result.get("status") == "completed":
-        result["metadata_enrichment"] = True
-    elif result.get("status") == "failed":
-        error_code = _coerce_api_error_code(
-            str(result.get("error_code") or ApiErrorCode.E_TRANSCRIPTION_FAILED.value),
-            fallback=ApiErrorCode.E_TRANSCRIPTION_FAILED,
-        )
-        raise ApiError(error_code, str(result.get("reason") or "Transcription failed"))
-    elif result.get("status") != "skipped":
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Unexpected podcast transcription result.")
-    elif result.get("reason") != "already_ready":
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Podcast transcription job was not runnable.")
+    if result.get("status") != "completed":
+        # justify-defect: the adapter either returns its sole success variant or
+        # raises a typed modeled outcome/unexpected dependency fault.
+        raise AssertionError("unexpected podcast transcription result variant")
+    result["metadata_enrichment"] = True
+    result["transcript_semantic_intent"] = True
+    result["transcript_request_reason"] = _podcast_request_reason(
+        dict(attempt.source_payload or {}).get("request_reason")
+    )
     return result
 
 
 def _run_prepared_html_article(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     *,
     source_storage_path: str | None,
     extract_embeds: bool,
     request_id: str | None,
-) -> tuple[str, UUID, UUID, list[tuple[UUID, UUID]]]:
-    """Shared HTML-in-storage body path for browser-capture and email.
-
-    Streams derived HTML from ``storage_path`` in the attempt payload, sanitises,
-    fragments, and persists apparatus. Does NOT commit and does NOT mark ready —
-    the caller commits its caller-specific writes, and the source-attempt runner
-    crosses ready only after the attached author observation applies in a fresh
-    session (spec 2.4). Returns
-    ``(canonical_text, fragment_id, owner_user_id, queued_children)``.
-
-    Caller-specific concerns are NOT included here:
-    - Fetching ``source_storage_path`` (browser only; ``None`` skips the R2 read).
-    - ``extract_embeds`` / ``replace_document_embed_artifact`` (browser ``True``,
-      email ``False``).
-    - ``_persist_browser_article_metadata`` / title update (browser only).
-    """
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    fence: SourcePublicationFence,
+) -> tuple[UUID, ContributorObservationBatch]:
+    """Acquire stored HTML, then publish its complete artifact set exactly once."""
 
     payload = dict(attempt.source_payload or {})
     storage_path = str(payload.get("storage_path") or "")
     if not storage_path:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing article source artifact.")
 
-    begin_extraction(db, media)
-    db.commit()
+    def begin_html_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind != MediaKind.web_article.value:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Stored HTML source must target web_article media.",
+            )
+        begin_extraction(db, media)
+
+    run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_stored_html_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_html_extraction,
+    )
 
     storage_client = get_storage_client()
     try:
@@ -2578,9 +2873,9 @@ def _run_prepared_html_article(
         prepared = prepare_web_article_fragment(
             html=content_html,
             embed_source_html=source_html,
-            base_url=str(attempt.requested_url or media.requested_url or ""),
+            base_url=str(attempt.requested_url or ""),
             fragment_idx=0,
-            media_title=str(payload.get("title") or media.title or ""),
+            media_title=str(payload.get("title") or ""),
             extract_embeds=extract_embeds,
         )
     except ValueError as exc:
@@ -2596,110 +2891,131 @@ def _run_prepared_html_article(
             "Article has no readable text.",
         )
 
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    owner_user_id = attempt.created_by_user_id or media.created_by_user_id
-    if owner_user_id is None:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Article attempt is missing an owner.")
-    delete_web_article_artifacts(
-        db,
-        owner_user_id=owner_user_id,
-        media_id=media_id,
-        include_content_index=False,
+    from nexus.services.document_embeds import (
+        DocumentEmbedLockSetChanged,
+        replace_document_embed_artifact,
     )
-    fragment = Fragment(
-        media_id=media_id,
-        idx=0,
-        html_sanitized=prepared.html_sanitized,
-        canonical_text=canonical_text,
-        created_at=datetime.now(UTC),
-    )
-    db.add(fragment)
-    db.flush()
-    insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
 
-    if extract_embeds:
-        from nexus.services.document_embeds import replace_document_embed_artifact
+    embed_urls = [
+        item.detected.canonical_source_url
+        for item in prepared.document_embeds
+        if extract_embeds
+        and item.detected.resolution_status == "pending"
+        and item.detected.canonical_source_url
+    ]
+    planned_existing_media_ids: set[UUID] = set()
+    for _lock_set_attempt in range(3):
+        discovery = session_factory()
+        try:
+            if attempt.created_by_user_id is None and embed_urls:
+                raise AssertionError("stored HTML source attempt has no owner")
+            if attempt.created_by_user_id is not None:
+                planned_existing_media_ids.update(
+                    reusable_embedded_source_media_ids(
+                        discovery,
+                        viewer_id=attempt.created_by_user_id,
+                        urls=list(embed_urls),
+                    )
+                )
+            discovery.rollback()
+        finally:
+            discovery.close()
 
-        queued_children = replace_document_embed_artifact(
-            db,
-            owner_user_id=owner_user_id,
-            media_id=media_id,
-            source_attempt_id=attempt.id,
-            fragment_id=fragment.id,
-            document_embeds=prepared.document_embeds,
-            extraction_error_code=prepared.document_embed_extraction_error_code,
-            extraction_error_message=prepared.document_embed_extraction_error_message,
-            request_id=request_id,
-        )
-    else:
-        queued_children = []
+        def publish_html_artifacts(
+            db: Session, locked_attempt: MediaSourceAttempt
+        ) -> tuple[UUID, ContributorObservationBatch]:
+            media = db.get(Media, media_id)
+            if media is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            owner_user_id = locked_attempt.created_by_user_id or media.created_by_user_id
+            if owner_user_id is None:
+                raise AssertionError("stored HTML source attempt has no owner")
+            delete_web_article_artifacts(
+                db,
+                owner_user_id=owner_user_id,
+                media_id=media_id,
+                include_content_index=False,
+            )
+            fragment = Fragment(
+                media_id=media_id,
+                idx=0,
+                html_sanitized=prepared.html_sanitized,
+                canonical_text=canonical_text,
+                created_at=datetime.now(UTC),
+            )
+            db.add(fragment)
+            db.flush()
+            insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
+            if extract_embeds:
+                queued_children = replace_document_embed_artifact(
+                    db,
+                    owner_user_id=owner_user_id,
+                    media_id=media_id,
+                    source_attempt_id=locked_attempt.id,
+                    fragment_id=fragment.id,
+                    document_embeds=prepared.document_embeds,
+                    extraction_error_code=prepared.document_embed_extraction_error_code,
+                    extraction_error_message=prepared.document_embed_extraction_error_message,
+                    request_id=request_id,
+                    locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
+                )
+                for child_media_id, child_attempt_id in queued_children:
+                    enqueue_accepted_source_attempt_in_transaction(
+                        db,
+                        media_id=child_media_id,
+                        attempt_id=child_attempt_id,
+                        actor_user_id=owner_user_id,
+                        request_id=request_id,
+                    )
+            replace_media_apparatus(
+                db,
+                media_id=media_id,
+                media_kind="web_article",
+                source_fingerprint_value=source_fingerprint(
+                    "web_article",
+                    locked_attempt.requested_url or media.requested_url,
+                    storage_path,
+                    hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
+                    canonical_text,
+                ),
+                items=attach_fragment_locators(
+                    media_id=media_id,
+                    fragment_id=fragment.id,
+                    media_kind="web_article",
+                    canonical_text=prepared.canonical_text,
+                    items=prepared.apparatus_items,
+                    html_sanitized=prepared.html_sanitized,
+                ),
+                edges=prepared.apparatus_edges,
+            )
+            observation: ContributorObservationBatch = NOT_OBSERVED
+            if extract_embeds:
+                title = str(payload.get("title") or "").strip()
+                if title:
+                    media.title = title[:255]
+                observation = _persist_browser_article_metadata(db, media, payload)
+            return fragment.id, observation
 
-    replace_media_apparatus(
-        db,
-        media_id=media_id,
-        media_kind="web_article",
-        source_fingerprint_value=source_fingerprint(
-            "web_article",
-            attempt.requested_url or media.requested_url,
-            storage_path,
-            hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
-            canonical_text,
-        ),
-        items=attach_fragment_locators(
-            media_id=media_id,
-            fragment_id=fragment.id,
-            media_kind="web_article",
-            canonical_text=prepared.canonical_text,
-            items=prepared.apparatus_items,
-            html_sanitized=prepared.html_sanitized,
-        ),
-        edges=prepared.apparatus_edges,
-    )
-    fragment_id = fragment.id
-    # No commit and no mark_ready here: the caller commits its writes (browser
-    # title + byline/excerpt/site_name) with the body/apparatus, the runner then
-    # applies the attached author observation in a fresh session, and only after
-    # that success does the runner terminal block cross ready (spec 2.4). A crash
-    # in between leaves the attempt running + media extracting, and the
-    # lease-expiry re-run repeats this source work and converges (AC 9).
-    # Child-embed enqueue also runs post-commit in the caller.
-    return canonical_text, fragment_id, owner_user_id, queued_children
-
-
-def _enqueue_prepared_html_children(
-    db: Session,
-    queued_children: list[tuple[UUID, UUID]],
-    owner_user_id: UUID,
-    request_id: str | None,
-) -> None:
-    """Enqueue child-media ingest jobs for promoted document embeds (post-commit)."""
-    for child_media_id, child_attempt_id in queued_children:
-        enqueue_accepted_source_attempt(
-            db,
-            media_id=child_media_id,
-            attempt_id=child_attempt_id,
-            actor_user_id=owner_user_id,
-            request_id=request_id,
-        )
+        try:
+            return run_source_publication_phase(
+                session_factory=session_factory,
+                label="publish_stored_html_artifacts",
+                fence=fence,
+                media_ids=tuple({media_id, *planned_existing_media_ids}),
+                mutate=publish_html_artifacts,
+            )
+        except DocumentEmbedLockSetChanged as exc:
+            planned_existing_media_ids.add(exc.media_id)
+    raise AssertionError("stored HTML embed media lock set did not stabilize")
 
 
 def _run_browser_article_capture(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.web_article.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Browser article capture must target web_article media.",
-        )
     payload = dict(attempt.source_payload or {})
     storage_path = str(payload.get("storage_path") or "")
     if not storage_path:
@@ -2708,32 +3024,19 @@ def _run_browser_article_capture(
     if not source_storage_path:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing browser article source markup artifact.")
 
-    _canonical_text, fragment_id, owner_user_id, queued_children = _run_prepared_html_article(
-        db,
+    fragment_id, observation = _run_prepared_html_article(
+        session_factory,
         media_id,
         attempt,
         source_storage_path=source_storage_path,
         extract_embeds=True,
         request_id=request_id,
+        fence=fence,
     )
-
-    # Browser-only: title + byline/excerpt/site_name from payload. These persist in
-    # the same commit as the body/apparatus; the runner crosses ready afterwards,
-    # once the attached author observation has applied (spec 2.4).
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    title = str(payload.get("title") or "").strip()
-    if title:
-        media.title = title[:255]
-    observation = _persist_browser_article_metadata(db, media, payload)
-    db.commit()
-    _enqueue_prepared_html_children(db, queued_children, owner_user_id, request_id)
 
     result: dict[str, object] = {
         "status": "success",
         "source_type": source_types.BROWSER_ARTICLE_CAPTURE,
-        "post_success_index": "web_article",
         "fragment_id": str(fragment_id),
         "metadata_enrichment": True,
     }
@@ -2742,10 +3045,11 @@ def _run_browser_article_capture(
 
 
 def _run_email_message(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
     """Run the email_message source attempt via the shared HTML pipeline.
 
@@ -2753,14 +3057,6 @@ def _run_email_message(
     means no child media are created (D-9). Sender credit was written at accept
     time — ``_persist_browser_article_metadata`` is not called.
     """
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind != MediaKind.web_article.value:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Email message must target web_article media.",
-        )
     payload = dict(attempt.source_payload or {})
     if not payload.get("has_content"):
         # No text content was available at accept time; mark failed at extract.
@@ -2769,47 +3065,70 @@ def _run_email_message(
             "Email has no readable text content.",
         )
 
-    _canonical_text, fragment_id, owner_user_id, queued_children = _run_prepared_html_article(
-        db,
+    fragment_id, _observation = _run_prepared_html_article(
+        session_factory,
         media_id,
         attempt,
         source_storage_path=None,
         extract_embeds=False,
         request_id=request_id,
+        fence=fence,
     )
-    db.commit()
-    _enqueue_prepared_html_children(db, queued_children, owner_user_id, request_id)
-
     return {
         "status": "success",
         "source_type": source_types.EMAIL_MESSAGE,
-        "post_success_index": "web_article",
         "fragment_id": str(fragment_id),
         "metadata_enrichment": False,
     }
 
 
 def _run_remote_file(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt: MediaSourceAttempt,
     request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    kind = str(media.kind)
-    if kind not in REMOTE_FILE_CONTENT_TYPES:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Remote URL must be a PDF or EPUB.")
     requested_url = attempt.requested_url
     if not requested_url:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing remote file URL.")
 
-    begin_extraction(db, media)
-    db.commit()
+    def begin_remote_file_extraction(db: Session, _attempt: MediaSourceAttempt) -> str:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        kind = str(media.kind)
+        if kind not in REMOTE_FILE_CONTENT_TYPES:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Remote URL must be a PDF or EPUB.",
+            )
+        begin_extraction(db, media)
+        return kind
 
-    storage_path = build_storage_path(media.id, get_file_extension(kind))
+    kind = run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_remote_file_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_remote_file_extraction,
+    )
+
+    storage_path = build_source_artifact_storage_path(
+        media_id,
+        attempt.id,
+        f"original-{get_file_extension(kind)}",
+    )
     storage_client = get_storage_client()
+    reservation_db = session_factory()
+    try:
+        reserve_storage_object_write(
+            reservation_db,
+            media_id=media_id,
+            storage_path=storage_path,
+        )
+    finally:
+        reservation_db.close()
     fetched = fetch_to_storage(
         url=requested_url,
         kind=kind,
@@ -2819,62 +3138,106 @@ def _run_remote_file(
     validate_file_ingest_request(kind, fetched.content_type, fetched.size_bytes)
     source_package, source_package_diagnostics, source_package_storage_path = (
         _try_fetch_arxiv_source_package(
-            media_id=media.id,
+            session_factory=session_factory,
+            media_id=media_id,
             attempt_id=attempt.id,
             requested_url=requested_url,
             kind=kind,
             storage_client=storage_client,
         )
     )
-
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        _delete_storage_object(storage_client, storage_path)
-        if source_package_storage_path:
-            _delete_storage_object(storage_client, source_package_storage_path)
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    media.canonical_source_url = normalize_url_for_display(fetched.final_url)
-    media.updated_at = func.now()
-    media_file = db.get(MediaFile, media_id)
-    if media_file is None:
-        db.add(
-            MediaFile(
-                media_id=media_id,
-                storage_path=storage_path,
-                content_type=fetched.content_type,
-                size_bytes=fetched.size_bytes,
-            )
-        )
-    else:
-        media_file.storage_path = storage_path
-        media_file.content_type = fetched.content_type
-        media_file.size_bytes = fetched.size_bytes
-    attempt = db.get(MediaSourceAttempt, attempt.id)
-    if attempt is not None and (source_package is not None or source_package_diagnostics):
-        source_payload = dict(attempt.source_payload or {})
-        source_payload["arxiv_source_package"] = source_package_diagnostics or {
-            "status": "fetched",
-            "source_url": source_package.source_url,
-            "storage_path": source_package.storage_path,
-            "content_type": source_package.content_type,
-            "size_bytes": source_package.size_bytes,
-            "sha256_hex": source_package.sha256_hex,
-        }
-        attempt.source_payload = source_payload
-    db.commit()
-
-    return _materialize_existing_file_source(
-        db,
+    prepared = _prepare_existing_file_source(
+        session_factory,
         media_id,
         kind,
-        request_id,
+        attempt_id=attempt.id,
+        storage_path=storage_path,
+        source_size_bytes=fetched.size_bytes,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
     )
 
+    def publish_remote_file(
+        db: Session, locked_attempt: MediaSourceAttempt
+    ) -> tuple[str | None, dict[str, object], list[str]]:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        media.canonical_source_url = normalize_url_for_display(fetched.final_url)
+        media.updated_at = func.now()
+        media_file = db.get(MediaFile, media_id)
+        previous_path = str(media_file.storage_path) if media_file is not None else None
+        if media_file is None:
+            db.add(
+                MediaFile(
+                    media_id=media_id,
+                    storage_path=storage_path,
+                    content_type=fetched.content_type,
+                    size_bytes=fetched.size_bytes,
+                )
+            )
+        else:
+            media_file.storage_path = storage_path
+            media_file.content_type = fetched.content_type
+            media_file.size_bytes = fetched.size_bytes
+        if source_package is not None or source_package_diagnostics:
+            source_payload = dict(locked_attempt.source_payload or {})
+            source_payload["arxiv_source_package"] = source_package_diagnostics or {
+                "status": "fetched",
+                "source_url": source_package.source_url,
+                "storage_path": source_package.storage_path,
+                "content_type": source_package.content_type,
+                "size_bytes": source_package.size_bytes,
+                "sha256_hex": source_package.sha256_hex,
+            }
+            locked_attempt.source_payload = source_payload
+        response, old_asset_paths = _publish_prepared_file_source(
+            db,
+            media_id=media_id,
+            kind=kind,
+            prepared=prepared,
+        )
+        return previous_path, response, old_asset_paths
+
+    previous_storage_path, response, old_asset_paths = run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_remote_file_reference",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=publish_remote_file,
+    )
+    finalize_db = session_factory()
+    try:
+        finalize_storage_object_write(
+            finalize_db,
+            media_id=media_id,
+            storage_path=storage_path,
+            storage_client=storage_client,
+        )
+        if source_package_storage_path:
+            finalize_storage_object_write(
+                finalize_db,
+                media_id=media_id,
+                storage_path=source_package_storage_path,
+                storage_client=storage_client,
+            )
+    finally:
+        finalize_db.close()
+    if previous_storage_path and previous_storage_path != storage_path:
+        delete_document_storage_objects([previous_storage_path], storage_client)
+    _finalize_prepared_file_source(
+        session_factory,
+        media_id=media_id,
+        kind=kind,
+        prepared=prepared,
+        old_storage_paths=old_asset_paths,
+    )
+    return response
+
 
 def _try_fetch_arxiv_source_package(
     *,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
     requested_url: str,
@@ -2888,6 +3251,15 @@ def _try_fetch_arxiv_source_package(
         return None, None, None
 
     storage_path = build_source_artifact_storage_path(media_id, attempt_id, "tar")
+    reservation_db = session_factory()
+    try:
+        reserve_storage_object_write(
+            reservation_db,
+            media_id=media_id,
+            storage_path=storage_path,
+        )
+    finally:
+        reservation_db.close()
     try:
         fetched = fetch_binary_to_storage(
             url=arxiv_source.source_url,
@@ -2939,48 +3311,179 @@ def _try_fetch_arxiv_source_package(
 
 
 def _run_existing_file(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
-    request_id: str | None,
+    fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    media = db.execute(select(Media).where(Media.id == media_id).with_for_update()).scalar()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.kind not in {MediaKind.pdf.value, MediaKind.epub.value}:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
-    if media.media_file is None:
-        raise InvalidRequestError(ApiErrorCode.E_STORAGE_MISSING, "Source file metadata missing.")
+    def begin_file_extraction(db: Session, _attempt: MediaSourceAttempt) -> tuple[str, str, int]:
+        media = db.get(Media, media_id)
+        if media is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if media.kind not in {MediaKind.pdf.value, MediaKind.epub.value}:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND,
+                "Source file must be PDF or EPUB.",
+            )
+        media_file = db.get(MediaFile, media_id)
+        if media_file is None:
+            raise InvalidRequestError(
+                ApiErrorCode.E_STORAGE_MISSING,
+                "Source file metadata missing.",
+            )
+        begin_extraction(db, media)
+        return (
+            str(media.kind),
+            str(media_file.storage_path),
+            int(media_file.size_bytes),
+        )
 
-    begin_extraction(db, media)
-    db.commit()
-
-    return _materialize_existing_file_source(db, media_id, str(media.kind), request_id)
+    kind, storage_path, source_size_bytes = run_source_publication_phase(
+        session_factory=session_factory,
+        label="begin_existing_file_extraction",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=begin_file_extraction,
+    )
+    return _materialize_existing_file_source(
+        session_factory,
+        media_id,
+        kind,
+        attempt_id=fence.attempt_id,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        fence=fence,
+    )
 
 
 def _materialize_existing_file_source(
-    db: Session,
+    session_factory: sessionmaker[Session],
     media_id: UUID,
     kind: str,
-    request_id: str | None,
     *,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    fence: SourcePublicationFence,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    if kind == MediaKind.pdf.value:
-        from nexus.services.pdf_lifecycle import materialize_pdf_source
-
-        return materialize_pdf_source(
+    prepared = _prepare_existing_file_source(
+        session_factory,
+        media_id,
+        kind,
+        attempt_id=attempt_id,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
+    response, old_storage_paths = run_source_publication_phase(
+        session_factory=session_factory,
+        label=f"publish_{kind}_source_artifacts",
+        fence=fence,
+        media_ids=(media_id,),
+        mutate=lambda db, _attempt: _publish_prepared_file_source(
             db,
             media_id=media_id,
-            request_id=request_id,
+            kind=kind,
+            prepared=prepared,
+        ),
+    )
+    _finalize_prepared_file_source(
+        session_factory,
+        media_id=media_id,
+        kind=kind,
+        prepared=prepared,
+        old_storage_paths=old_storage_paths,
+    )
+    return response
+
+
+def _prepare_existing_file_source(
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    kind: str,
+    *,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    source_package: PdfSourcePackageArtifact | None = None,
+    source_package_diagnostics: dict[str, object] | None = None,
+) -> object:
+    if kind == MediaKind.pdf.value:
+        from nexus.services.pdf_lifecycle import prepare_pdf_source
+
+        return prepare_pdf_source(
+            media_id=media_id,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
             source_package=source_package,
             source_package_diagnostics=source_package_diagnostics,
         )
     if kind == MediaKind.epub.value:
-        from nexus.services.epub_lifecycle import materialize_epub_source
+        from nexus.services.epub_lifecycle import prepare_epub_source
 
-        return materialize_epub_source(db, media_id=media_id)
+        return prepare_epub_source(
+            session_factory=session_factory,
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+        )
     raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
+
+
+def _publish_prepared_file_source(
+    db: Session,
+    *,
+    media_id: UUID,
+    kind: str,
+    prepared: object,
+) -> tuple[dict[str, object], list[str]]:
+    if kind == MediaKind.pdf.value:
+        from nexus.services.pdf_ingest import PdfExtractionPlan
+        from nexus.services.pdf_lifecycle import publish_pdf_source
+
+        if not isinstance(prepared, PdfExtractionPlan):
+            raise AssertionError("PDF source plan has the wrong type")
+        return publish_pdf_source(db, media_id=media_id, plan=prepared), []
+    if kind == MediaKind.epub.value:
+        from nexus.services.epub_ingest import EpubExtractionPlan
+        from nexus.services.epub_lifecycle import publish_epub_source
+
+        if not isinstance(prepared, EpubExtractionPlan):
+            raise AssertionError("EPUB source plan has the wrong type")
+        return publish_epub_source(db, media_id=media_id, plan=prepared)
+    raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
+
+
+def _finalize_prepared_file_source(
+    session_factory: sessionmaker[Session],
+    *,
+    media_id: UUID,
+    kind: str,
+    prepared: object,
+    old_storage_paths: list[str],
+) -> None:
+    storage_client = get_storage_client()
+    if kind == MediaKind.epub.value:
+        from nexus.services.epub_ingest import EpubExtractionPlan
+
+        if not isinstance(prepared, EpubExtractionPlan):
+            raise AssertionError("EPUB source plan has the wrong type")
+        storage_client = get_storage_client()
+        finalize_db = session_factory()
+        try:
+            for asset_storage_path in prepared.asset_storage_paths.values():
+                finalize_storage_object_write(
+                    finalize_db,
+                    media_id=media_id,
+                    storage_path=asset_storage_path,
+                    storage_client=storage_client,
+                )
+        finally:
+            finalize_db.close()
+    delete_document_storage_objects(old_storage_paths, storage_client)
 
 
 def _persist_browser_article_metadata(
@@ -3039,6 +3542,34 @@ def _finish_failed_attempt(
         exc=exc,
         stage=_source_attempt_failure_stage(attempt),
     )
+    if attempt is not None and attempt.source_type == source_types.PODCAST_EPISODE_TRANSCRIPT:
+        from nexus.services.podcasts.transcription import (
+            mark_podcast_transcription_failure,
+        )
+
+        error_code, error_message = _source_error_fields(exc)
+        mark_podcast_transcription_failure(
+            db,
+            media_id=media_id,
+            error_code=error_code,
+            error_message=error_message,
+            now=datetime.now(UTC),
+            mark_media_failed=False,
+        )
+    elif attempt is not None and attempt.source_type in source_types.TRANSCRIPT_SOURCE_TYPES:
+        from nexus.services.transcripts.current import set_media_transcript_state
+
+        error_code, _error_message = _source_error_fields(exc)
+        set_media_transcript_state(
+            db,
+            media_id=media_id,
+            transcript_state="unavailable",
+            transcript_coverage="none",
+            semantic_status="failed",
+            last_request_reason=None,
+            last_error_code=error_code,
+            now=datetime.now(UTC),
+        )
 
 
 def _run_post_success_source_actions(
@@ -3048,74 +3579,9 @@ def _run_post_success_source_actions(
     result: dict[str, object],
     request_id: str | None,
 ) -> None:
-    if result.get("warning_error_code") == "E_PDF_TEXT_UNAVAILABLE":
-        media = db.get(Media, media_id)
-        if media is not None:
-            mark_stage_warning(
-                db,
-                media,
-                stage="extract",
-                error_code="E_PDF_TEXT_UNAVAILABLE",
-                error_message="PDF text is unavailable; OCR is required.",
-            )
-            db.commit()
-
-    if result.get("post_success_index") == "pdf":
-        index_pdf_evidence(db, media_id, request_id, None)
-
-    if result.get("post_success_index") == "web_article":
-        fragment_id_value = result.get("fragment_id")
-        fragment_id = None
-        if isinstance(fragment_id_value, str) and fragment_id_value:
-            try:
-                fragment_id = UUID(fragment_id_value)
-            except ValueError:
-                fragment_id = None
-        fragments = list(
-            db.execute(
-                select(Fragment)
-                .where(Fragment.media_id == media_id)
-                .order_by(Fragment.idx.asc(), Fragment.id.asc())
-            ).scalars()
-        )
-        first_fragment = next(
-            (
-                fragment
-                for fragment in fragments
-                if fragment_id is None or fragment.id == fragment_id
-            ),
-            None,
-        )
-        if first_fragment is not None:
-            media = db.get(Media, media_id)
-            web_article_indexing.index_web_article_evidence(
-                db,
-                media_id=media_id,
-                fragment_id=first_fragment.id,
-                fragments=fragments,
-                reason="web_article_ingest",
-                language=media.language if media is not None else None,
-                request_id=request_id,
-            )
-
     if bool(result.get("metadata_enrichment")):
         if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
             db.commit()
-
-
-def _fail_latest_attempt_for_media(db: Session, media_id: UUID, exc: Exception) -> None:
-    attempt = _latest_source_attempt(db, media_id)
-    if attempt is None or attempt.status == _ATTEMPT_FAILED:
-        return
-    error_code = exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
-    error_message = exc.message if isinstance(exc, ApiError) else str(exc)
-    attempt.status = _ATTEMPT_FAILED
-    attempt.error_code = error_code
-    attempt.error_message = error_message[:1000]
-    attempt.retry_after_seconds = _source_retry_after_seconds(exc)
-    attempt.finished_at = func.now()
-    attempt.updated_at = func.now()
-    db.commit()
 
 
 def _fail_latest_attempt_and_media(
@@ -3163,13 +3629,6 @@ def _source_error_fields(exc: Exception) -> tuple[str, str]:
     return ApiErrorCode.E_INGEST_FAILED.value, str(exc)
 
 
-def _coerce_api_error_code(value: str, *, fallback: ApiErrorCode) -> ApiErrorCode:
-    try:
-        return ApiErrorCode(value)
-    except ValueError:
-        return fallback
-
-
 def _source_retry_after_seconds(exc: Exception) -> int | None:
     retry_after = getattr(exc, "retry_after_seconds", None)
     if retry_after is None:
@@ -3182,7 +3641,27 @@ def _source_retry_after_seconds(exc: Exception) -> int | None:
 
 
 def _is_post_acceptance_source_failure(exc: Exception) -> bool:
-    return not isinstance(exc, (NotFoundError, ForbiddenError, ConflictError))
+    if not isinstance(exc, ApiError):
+        return False
+    return exc.code in {
+        ApiErrorCode.E_SOURCE_ACCESS_DENIED,
+        ApiErrorCode.E_SOURCE_TOO_LARGE,
+        ApiErrorCode.E_SOURCE_NOT_READABLE,
+        ApiErrorCode.E_SSRF_BLOCKED,
+        ApiErrorCode.E_INVALID_FILE_TYPE,
+        ApiErrorCode.E_INVALID_CONTENT_TYPE,
+        ApiErrorCode.E_FILE_TOO_LARGE,
+        ApiErrorCode.E_CAPTURE_TOO_LARGE,
+        ApiErrorCode.E_ARCHIVE_UNSAFE,
+        ApiErrorCode.E_INVALID_REQUEST,
+        ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
+        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
+        ApiErrorCode.E_X_POST_UNAVAILABLE,
+        ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
+        ApiErrorCode.E_X_PROVIDER_AUTH_REJECTED,
+        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+        ApiErrorCode.E_BILLING_REQUIRED,
+    }
 
 
 def _find_idempotent_attempt(

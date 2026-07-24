@@ -77,11 +77,7 @@ class _TimeoutSession(Session):
 
 
 def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
-    """Fetch transcript segments for a YouTube video ID.
-
-    This boundary is intentionally tolerant: provider failures map to stable
-    error outcomes and never raise raw provider exceptions into ingest flows.
-    """
+    """Fetch one closed transcript result; unexpected dependency faults raise."""
     video_id = str(provider_video_id or "").strip()
     if not video_id:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
@@ -93,11 +89,8 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
 
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-    except ImportError:
-        logger.info("youtube_transcript_dependency_missing")
-        return _failure(
-            ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription provider unavailable"
-        )
+    except ImportError as exc:
+        raise RuntimeError("YouTube transcript dependency is unavailable") from exc
 
     settings = get_settings()
     try:
@@ -114,23 +107,16 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
             "TranscriptsDisabled",
             "NoTranscriptFound",
             "VideoUnavailable",
-            "CouldNotRetrieveTranscript",
-            "RequestBlocked",
-            "IpBlocked",
-            "PoTokenRequired",
             "InvalidVideoId",
             "VideoUnplayable",
         }:
             return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-        if "Timeout" in class_name or "TimedOut" in class_name:
-            return _failure(ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value, "Transcription timed out")
-
         logger.warning(
             "youtube_transcript_provider_error",
             provider_video_id=video_id,
             error_class=class_name,
         )
-        return _failure(ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription failed")
+        raise
 
     segments: list[dict[str, Any]] = []
     for row in raw_segments:
@@ -156,6 +142,10 @@ def fetch_youtube_transcript(provider_video_id: str) -> dict[str, Any]:
             }
         )
 
+    if raw_segments and not segments:
+        # justify-defect: a non-empty owned provider response with no valid
+        # rows is malformed protocol, not confirmed transcript absence.
+        raise RuntimeError("YouTube transcript provider returned malformed segments")
     if not segments:
         return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
     segments.sort(key=lambda segment: int(segment["t_start_ms"]))

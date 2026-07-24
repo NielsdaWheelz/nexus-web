@@ -38,26 +38,6 @@ class JobDefinition:
     never_prune_dead: bool = False
 
 
-# Non-periodic kinds whose work a user directly observes (ingest progress, chat/
-# oracle/Dossier output, search indexing, subscription sync, shared-library
-# backfill). Every kind here must be claimable by the production worker.
-# test_config.py asserts this tuple is a subset of the default allowlist and that
-# the default allowlist contains only registered kinds.
-USER_FACING_JOB_KINDS = (
-    "ingest_media_source",
-    "enrich_metadata",
-    "chat_run",
-    "dossier_build",
-    "media_unit_build",
-    "note_reindex_job",
-    "podcast_sync_subscription_job",
-    "podcast_reindex_semantic_job",
-    "oracle_reading_generate",
-    "synapse_scan",
-    "atlas_project_job",
-)
-
-
 def get_default_registry() -> dict[str, JobDefinition]:
     """Return the canonical runtime registry for all durable job kinds."""
     return _build_default_registry()
@@ -106,8 +86,17 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             kind="ingest_media_source",
             handler=_run_ingest_media_source,
             max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
+            retry_delays_seconds=(60, 300),
             lease_seconds=300,
+            never_prune_dead=True,
+        ),
+        "media_content_reindex_job": JobDefinition(
+            kind="media_content_reindex_job",
+            handler=_run_media_content_reindex,
+            max_attempts=3,
+            retry_delays_seconds=(60, 300),
+            lease_seconds=900,
+            never_prune_dead=True,
         ),
         "enrich_metadata": JobDefinition(
             kind="enrich_metadata",
@@ -153,8 +142,9 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             kind="podcast_reindex_semantic_job",
             handler=_run_podcast_reindex_semantic,
             max_attempts=3,
-            retry_delays_seconds=(60, 300, 900),
-            lease_seconds=900,
+            retry_delays_seconds=(60, 300),
+            lease_seconds=300,
+            never_prune_dead=True,
         ),
         "note_reindex_job": JobDefinition(
             kind="note_reindex_job",
@@ -316,7 +306,16 @@ def _run_ingest_media_source(
         attempt_id=str(payload["attempt_id"]),
         actor_user_id=str(payload["actor_user_id"]),
         request_id=_optional_str(payload.get("request_id")),
+        context=context,
     )
+
+
+def _run_media_content_reindex(
+    *, payload: Mapping[str, Any], context: JobExecutionContext
+) -> Mapping[str, Any] | None:
+    from nexus.tasks.media_content_reindex import media_content_reindex_job
+
+    return media_content_reindex_job(payload=payload, context=context)
 
 
 def _run_enrich_metadata(
@@ -380,6 +379,7 @@ def _run_podcast_reindex_semantic(
         requested_by_user_id=_optional_str(payload.get("requested_by_user_id")),
         request_reason=str(payload.get("request_reason", "operator_requeue")),
         request_id=_optional_str(payload.get("request_id")),
+        context=context,
     )
 
 

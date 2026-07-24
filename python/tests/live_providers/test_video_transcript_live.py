@@ -6,7 +6,6 @@ import os
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
 
 from nexus.config import get_settings
 from tests.helpers import auth_headers, create_test_user_id
@@ -20,6 +19,7 @@ from tests.real_media.conftest import (
     register_media_cleanup,
     write_trace,
 )
+from tests.support.source_jobs import run_queued_source_attempt
 
 pytestmark = [
     pytest.mark.integration,
@@ -30,34 +30,11 @@ pytestmark = [
 
 
 def _run_source_attempt_for_media(direct_db, media_id: UUID) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
-
     with direct_db.session() as session:
-        row = (
-            session.execute(
-                text(
-                    """
-                    SELECT payload
-                    FROM background_jobs
-                    WHERE kind = 'ingest_media_source'
-                      AND payload->>'media_id' = :media_id
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": str(media_id)},
-            )
-            .mappings()
-            .one()
-        )
-    payload = row["payload"]
-    with direct_db.session() as session:
-        return run_source_attempt(
-            db=session,
-            media_id=UUID(payload["media_id"]),
-            attempt_id=UUID(payload["attempt_id"]),
-            actor_user_id=UUID(payload["actor_user_id"]),
-            request_id=payload.get("request_id"),
+        return run_queued_source_attempt(
+            session,
+            media_id=media_id,
+            request_id="live-provider-video-source",
         )
 
 

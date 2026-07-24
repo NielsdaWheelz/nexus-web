@@ -22,7 +22,7 @@ def _clear_registry_between_tests(monkeypatch: pytest.MonkeyPatch):
     _clear_registry_cache()
 
 
-def test_registry_disables_periodic_jobs_by_default(monkeypatch: pytest.MonkeyPatch):
+def test_registry_uses_production_periodic_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS", raising=False)
     monkeypatch.delenv("INGEST_RECONCILE_SCHEDULE_SECONDS", raising=False)
     monkeypatch.delenv("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", raising=False)
@@ -38,18 +38,16 @@ def test_registry_disables_periodic_jobs_by_default(monkeypatch: pytest.MonkeyPa
         for kind, definition in registry.items()
         if definition.periodic_interval_seconds is not None
     }
-    # purge_expired_auth_handoff_codes, dawn_write_job, and storage_orphan_sweep
-    # are unconditionally periodic — the first is a security-critical cleanup for
-    # single-use auth codes; the second defaults to hourly
-    # (DAWN_WRITE_SCHEDULE_SECONDS=3600) always-on ambient generation; the third
-    # reclaims R2 objects orphaned by completed media teardowns and is always-on
-    # so teardown-based deletion cannot leak storage (spec §3.1 / Lectern).
+    # Reconciliation, Dawn, and storage orphan cleanup are production background
+    # schedules. Auth handoff purge remains registered but is maintenance-only,
+    # so neither deployed lane can schedule it.
     assert set(periodic_jobs.keys()) == {
+        "reconcile_stale_ingest_media_job",
         "purge_expired_auth_handoff_codes",
         "dawn_write_job",
         "storage_orphan_sweep",
     }, (
-        "Expected production-safe defaults to disable opt-in periodic jobs. "
+        "Expected production defaults plus registered maintenance schedules. "
         f"Periodic jobs={sorted(periodic_jobs)}"
     )
 
@@ -110,6 +108,7 @@ def test_task_contract_version_is_not_schedule_env_dependent(monkeypatch: pytest
 
 def test_worker_import_registers_all_required_tasks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
+    monkeypatch.setenv("WORKER_LANE", "interactive")
     _clear_registry_cache()
 
     from apps.worker.main import create_worker
@@ -124,53 +123,65 @@ def test_worker_import_registers_all_required_tasks(monkeypatch: pytest.MonkeyPa
         f"Worker={sorted(worker_kinds)}, Registry={sorted(registry_kinds)}"
     )
     assert "reconcile_stale_ingest_media_job" not in set(worker.allowed_kinds or ()), (
-        "Default worker profile must not claim maintenance jobs."
+        "Interactive worker must not claim background jobs."
     )
 
 
-def test_worker_default_allowlist_does_not_auto_allow_scheduled_maintenance(
+def test_worker_rejects_missing_lane(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("WORKER_LANE", raising=False)
+    monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
+    _clear_registry_cache()
+
+    from apps.worker.main import create_worker
+
+    with pytest.raises(RuntimeError, match="WORKER_LANE must be"):
+        create_worker()
+
+
+def test_reconciliation_is_claimable_only_by_background_lane(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("INGEST_RECONCILE_SCHEDULE_SECONDS", "3600")
     monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
+    monkeypatch.setenv("WORKER_LANE", "interactive")
     _clear_registry_cache()
 
     from apps.worker.main import create_worker
 
     worker = create_worker()
     assert "reconcile_stale_ingest_media_job" not in set(worker.allowed_kinds or ()), (
-        "Positive maintenance schedules must not make the default worker claim maintenance jobs."
+        "Interactive worker must not claim reconciliation."
     )
+
+    monkeypatch.setenv("WORKER_LANE", "background")
+    _clear_registry_cache()
+    worker = create_worker()
+    assert "reconcile_stale_ingest_media_job" in set(worker.allowed_kinds or ())
 
 
 def test_worker_allows_only_explicit_maintenance_job_kinds(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("WORKER_ALLOWED_JOB_KINDS", "ingest_media_source")
+    monkeypatch.setenv("WORKER_LANE", "maintenance")
+    monkeypatch.setenv("NEXUS_ALLOW_WORKER_MAINTENANCE", "1")
+    monkeypatch.setenv("WORKER_ALLOWED_JOB_KINDS", "prune_background_jobs_job")
     _clear_registry_cache()
 
     from apps.worker.main import create_worker
 
     worker = create_worker()
     allowed_kinds = set(worker.allowed_kinds or ())
-    assert allowed_kinds == {"ingest_media_source"}
-
-    monkeypatch.setenv(
-        "WORKER_ALLOWED_JOB_KINDS",
-        "ingest_media_source,reconcile_stale_ingest_media_job",
-    )
-    _clear_registry_cache()
-
-    worker = create_worker()
-    allowed_kinds = set(worker.allowed_kinds or ())
-    assert allowed_kinds == {"ingest_media_source", "reconcile_stale_ingest_media_job"}
+    assert allowed_kinds == {"prune_background_jobs_job"}
 
 
-def test_create_worker_installs_db_backed_rate_limiter():
+def test_create_worker_installs_db_backed_rate_limiter(monkeypatch: pytest.MonkeyPatch):
     """The first job of any kind on a fresh worker (e.g. oracle) needs a working
     rate limiter, so startup must install it rather than individual task kinds."""
     from apps.worker.main import create_worker
 
     from nexus.services.rate_limit import RateLimiter, get_rate_limiter, set_rate_limiter
 
+    monkeypatch.setenv("WORKER_LANE", "interactive")
+    monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
+    _clear_registry_cache()
     set_rate_limiter(RateLimiter(session_factory=None))  # fresh-process limiter state
 
     create_worker()

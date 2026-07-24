@@ -13,12 +13,13 @@ from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
 from nexus.services.media_author_observation_seam import attach_author_observation
-from nexus.services.pdf_indexing import index_pdf_evidence
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
+    PdfExtractionPlan,
     PdfExtractionResult,
     PdfSourcePackageArtifact,
-    extract_pdf_artifacts,
+    build_pdf_extraction_plan,
+    publish_pdf_extraction_plan,
 )
 from nexus.services.pdf_metadata import build_pdf_author_observation, persist_pdf_metadata
 from nexus.storage.client import get_storage_client
@@ -65,15 +66,38 @@ def retry_pdf_ingest_for_viewer(
     )
 
 
-def materialize_pdf_source(
+def prepare_pdf_source(
+    *,
+    media_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    source_package: PdfSourcePackageArtifact | None = None,
+    source_package_diagnostics: dict[str, object] | None = None,
+) -> PdfExtractionPlan:
+    """Acquire and parse one immutable PDF source outside a DB transaction."""
+    plan = build_pdf_extraction_plan(
+        media_id=media_id,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        storage_client=get_storage_client(),
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
+    if isinstance(plan, PdfExtractionError):
+        raise ApiError(
+            _source_api_error_code(plan.error_code),
+            (plan.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN],
+        )
+    return plan
+
+
+def publish_pdf_source(
     db: Session,
     *,
     media_id: UUID,
-    request_id: str | None = None,
-    source_package: PdfSourcePackageArtifact | None = None,
-    source_package_diagnostics: dict[str, object] | None = None,
+    plan: PdfExtractionPlan,
 ) -> dict[str, object]:
-    """Persist PDF extraction artifacts without owning source lifecycle state."""
+    """Publish one prepared PDF plan in the caller's fenced transaction."""
     media = db.get(Media, media_id)
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -82,28 +106,10 @@ def materialize_pdf_source(
     if media.processing_status != ProcessingStatus.extracting:
         return {"status": "skipped", "reason": "not_extracting"}
 
-    result = extract_pdf_artifacts(
-        db,
-        media_id,
-        get_storage_client(),
-        source_package=source_package,
-        source_package_diagnostics=source_package_diagnostics,
-    )
-    media = db.get(Media, media_id)
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.processing_status != ProcessingStatus.extracting:
-        return {"status": "skipped", "reason": "state_changed"}
-    if isinstance(result, PdfExtractionError):
-        raise ApiError(
-            _source_api_error_code(result.error_code),
-            (result.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN],
-        )
-
+    result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
     assert isinstance(result, PdfExtractionResult)
     persist_pdf_metadata(db, media, result)
     db.flush()
-    index_pdf_evidence(db, media_id, request_id, result)
     response: dict[str, object] = {
         "status": "success",
         "page_count": result.page_count,

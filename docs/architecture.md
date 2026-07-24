@@ -94,13 +94,13 @@ scaffolding.
                            ┌──────────────┐            push events to /stream/*
                            │  PostgreSQL  │◀───────────────────────────┐
                            │  + pgvector  │   claims background_jobs    │
-                           └──────┬───────┘            ┌────────────────┴───┐
-                                  │                    │  Worker (apps/worker)│
-                                  │ object refs        │  ingest, transcribe, │
-                                  ▼                    │  chat runs, oracle,  │
-                           ┌──────────────┐            │  podcast sync, ...   │
-                           │ R2 / MinIO   │◀───────────└──────────────────────┘
-                           │ object store │
+                           └──────┬───────┘          ┌───────────────────────┐
+                                  │                  │ Workers (two lanes)   │
+                                  │ object refs      │ interactive: ingest,  │
+                                  ▼                  │ chat, oracle          │
+                           ┌──────────────┐          │ background: index,    │
+                           │ R2 / MinIO   │◀─────────│ repair, teardown      │
+                           │ object store │          └───────────────────────┘
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
@@ -127,14 +127,15 @@ the BFF. See [`rules/layers.md`](rules/layers.md) and
 
 ## 3. Runtime topology & deployment
 
-There are **four runtime processes** plus managed dependencies.
+There are **five runtime processes** plus managed dependencies.
 
-| Process                | Code                                                  | Hosted                           | Role                                   |
-| ---------------------- | ----------------------------------------------------- | -------------------------------- | -------------------------------------- |
-| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (Git-triggered)       | React UI + `/api/*` proxy to FastAPI   |
-| FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming             |
-| Worker                 | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | background jobs from `background_jobs` |
-| PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth             |
+| Process                | Code                                                  | Hosted                           | Role                                      |
+| ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
+| Next.js frontend + BFF | `apps/web`                                            | **Vercel** (Git-triggered)       | React UI + `/api/*` proxy to FastAPI      |
+| FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
+| Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
+| Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
+| PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
@@ -149,9 +150,8 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 - Production is a **hard cutover**: there is no Supabase DB/Storage fallback. The
   env-sync scripts (`deploy/*/sync-env.sh`) actively reject legacy Supabase
   service-role keys, `STORAGE_*`, and a Supabase-pointed `DATABASE_URL`.
-- The **worker container relaxes DB timeouts to `0`** (env-only) so long
-  ingest/transcription/LLM jobs aren't killed; the API keeps tight role-scoped
-  timeouts.
+- Both worker lanes use a bounded 300-second database statement timeout. The
+  API keeps its tighter role-scoped timeout.
 - `NEXUS_INTERNAL_SECRET` must be **identical** on Vercel and the VPS — it is the
   shared secret the BFF attaches as `X-Nexus-Internal` so FastAPI knows a request
   came through the trusted proxy.
@@ -518,7 +518,7 @@ discipline (this is the single most important backend invariant):
   on top except where genuinely required (e.g. PDF advisory locks).
 - **Role-scoped PG timeouts** are injected at connect time from env
   (`statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`).
-  The API is tight (30s/10s/60s); the worker sets them to `0`.
+  The API is tight (30s/10s/60s); both worker lanes bound statements at 300s.
 
 ### 7.2 LISTEN/NOTIFY → SSE streaming
 
@@ -542,8 +542,8 @@ keepalive, never drops it.
 
 A durable Postgres-backed queue (`python/nexus/jobs/`). Jobs are enqueued by
 inserting a `background_jobs` row + `pg_notify` **in the caller's transaction**
-(atomic with domain writes). The single-process worker (`apps/worker/main.py`)
-runs two loops:
+(atomic with domain writes). Two single-process, single-replica workers run the
+same entrypoint with fixed `interactive` and `background` lanes:
 
 - **Job loop**: `claim_next_job` atomically picks one due row with
   `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
@@ -553,23 +553,23 @@ runs two loops:
   dead-letters the row. Two kinds register a dead-letter finalizer: `chat_run`
   writes an errored assistant message, and `note_reindex_job` marks the note's
   content index `failed`.
-- **Scheduler loop**: enqueues periodic jobs into fixed time slots with
-  deterministic dedupe keys, so exactly one job per slot survives across workers.
+- **Scheduler loop**: the background lane enqueues production periodic jobs
+  into fixed time slots with deterministic dedupe keys. The interactive lane
+  has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
-handler + policy. Claim is atomic, so the worker scales horizontally even though a
-single instance is single-concurrency. `get_task_contract_version()` fingerprints
-the registry's per-kind attempt/lease policy for `/health` deploy checks. The
-`WORKER_ALLOWED_JOB_KINDS` allowlist gates which kinds the production worker
-claims; tests assert the default allowlist has no unknown registry kinds and
-that `USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS`, so a typo stops
-startup in CI and a user-facing kind can never be stranded unallowlisted (the
-`note_reindex_job` incident class). See [modules/jobs.md](modules/jobs.md).
+handler + policy. `config.py` owns the disjoint/exhaustive 17-kind production
+topology and separate four-kind maintenance declaration. The entrypoint rejects
+missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
+`get_task_contract_version()` fingerprints the registry's per-kind
+attempt/lease policy for `/health` deploy checks. See
+[modules/jobs.md](modules/jobs.md).
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
 `oracle_reading_generate`, `dossier_build`,
-`media_unit_build`, `note_reindex_job`, `podcast_sync_subscription_job`,
+`media_content_reindex_job`, `media_unit_build`, `note_reindex_job`,
+`podcast_sync_subscription_job`,
 `podcast_reindex_semantic_job`, `podcast_active_subscription_poll_job`
 (periodic), `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
@@ -1383,7 +1383,8 @@ pipeline.
 The `Makefile` is the single entrypoint; `make help` is canonical. Targets group as:
 
 - **Setup / dev loop**: `make setup`, `make dev` (Docker Compose Postgres + MinIO +
-  Supabase-local Auth), then `make api`, `make web`, `make worker` in separate
+  Supabase-local Auth), then `make api`, `make web`,
+  `make worker-interactive`, and `make worker-background` in separate
   terminals. Ports are written to `.dev-ports`.
 - **Quality gates**: `make check` (ruff + pyright + eslint/tsc + workflow lint),
   `make audit`, `make format`.
@@ -1394,9 +1395,9 @@ The `Makefile` is the single entrypoint; `make help` is canonical. Targets group
 
 **Deploy** (`deployment.md`, `deploy/`): the frontend deploys to **Vercel on push
 to `main`** (Git integration). The backend deploys via `deploy/hetzner/deploy.sh`:
-sync env → rsync repo to the VPS → `compose build` → stop worker+api → **run
+sync env → rsync repo to the VPS → `compose build` → stop both workers + API → **run
 `alembic upgrade head`** via API-image one-off `compose run` commands → run
-Oracle preconditions via `compose run --rm --no-deps worker`:
+Oracle preconditions via the background worker image:
 `python /app/scripts/ensure_oracle_seed_objects.py` →
 `python /app/scripts/oracle/seed_corpus_library.py --owner-user $NEXUS_ORACLE_CORPUS_OWNER_USER_ID --drain` →
 `python /app/scripts/oracle/check_corpus_readiness.py` → `compose up -d
@@ -1416,7 +1417,8 @@ linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: a dedica
 `.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
 Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
 flags + rate limits, Brave web search, streaming (token signing key + base URL +
-CORS), podcasts, browse providers, worker job allowlist + schedules, Stripe.
+CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
+Compose-owned rather than stored in the merged production env.
 E2E local Supabase is owned by `scripts/with_supabase_services.sh` plus
 `e2e/supabase-env.cjs`: the wrapper starts a per-run Auth stack with a temporary
 Supabase workdir and dynamically allocated ports, the resolver reads

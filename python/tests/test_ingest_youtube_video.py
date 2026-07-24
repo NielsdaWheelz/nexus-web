@@ -1,13 +1,16 @@
 """Integration tests for YouTube video transcript ingestion."""
 
 import importlib
-from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.source_jobs import (
+    run_queued_source_attempt,
+    run_queued_transcript_semantic_reindex,
+)
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -48,26 +51,10 @@ def _register_youtube_media_cleanup(
 def _run_latest_source_attempt(
     direct_db: DirectSessionManager, media_id: UUID
 ) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
-
     with direct_db.session() as session:
-        row = session.execute(
-            text(
-                """
-                SELECT id, created_by_user_id
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                ORDER BY attempt_no DESC, created_at DESC
-                LIMIT 1
-                """
-            ),
-            {"media_id": media_id},
-        ).one()
-        return run_source_attempt(
-            db=session,
+        return run_queued_source_attempt(
+            session,
             media_id=media_id,
-            attempt_id=row[0],
-            actor_user_id=row[1],
             request_id="test-youtube-source-attempt",
         )
 
@@ -111,12 +98,20 @@ class TestIngestYoutubeVideo:
             },
         )
 
-        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-
         with direct_db.session() as session:
-            result = run_youtube_video_ingest(session, media_id, user_id)
+            result = run_queued_source_attempt(
+                session,
+                media_id=media_id,
+                actor_user_id=user_id,
+            )
+        with direct_db.session() as session:
+            semantic_result = run_queued_transcript_semantic_reindex(
+                session,
+                media_id=media_id,
+            )
 
         assert result["status"] == "success"
+        assert semantic_result["status"] == "completed"
 
         fragments_response = auth_client.get(
             f"/media/{media_id}/fragments", headers=auth_headers(user_id)
@@ -248,10 +243,7 @@ class TestIngestYoutubeVideo:
             },
         )
 
-        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-
-        with direct_db.session() as session:
-            result = run_youtube_video_ingest(session, media_id, user_id)
+        result = _run_latest_source_attempt(direct_db, media_id)
 
         assert result["status"] == "success"
 
@@ -329,15 +321,16 @@ class TestIngestYoutubeVideo:
             _fake_transcript,
         )
 
-        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-
-        with direct_db.session() as session:
-            first = run_youtube_video_ingest(session, media_id, user_id)
-            second = run_youtube_video_ingest(session, media_id, user_id)
+        first = _run_latest_source_attempt(direct_db, media_id)
+        duplicate_response = auth_client.post(
+            "/media/from_url",
+            json={"url": "https://www.youtube.com/shorts/dQw4w9WgXcQ"},
+            headers=auth_headers(user_id),
+        )
 
         assert first["status"] == "success"
-        assert second["status"] == "skipped"
-        assert second["reason"] == "already_ready"
+        assert duplicate_response.status_code == 202
+        assert UUID(duplicate_response.json()["data"]["media_id"]) == media_id
         assert calls["count"] == 1, f"expected one transcript fetch, got {calls['count']}"
 
     def test_reingest_replace_strategy_preserves_highlight_and_replaces_fragments(
@@ -383,10 +376,7 @@ class TestIngestYoutubeVideo:
             lambda _provider_id: {"status": "completed", "segments": first_segments},
         )
 
-        from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-
-        with direct_db.session() as session:
-            first = run_youtube_video_ingest(session, media_id, user_id)
+        first = _run_latest_source_attempt(direct_db, media_id)
         assert first["status"] == "success"
 
         # Seed a highlight anchored to one of the first transcript's fragments. The
@@ -412,22 +402,6 @@ class TestIngestYoutubeVideo:
         highlight_id = UUID(highlight_response.json()["data"]["id"])
         direct_db.register_cleanup("highlights", "fragment_anchor_fragment_id", first_fragment_id)
 
-        # A YouTube source refresh resets the media back to active processing,
-        # which defeats the already_ready skip guard so the second run
-        # re-transcribes through write_current_transcript.
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE media
-                    SET processing_status = 'pending', updated_at = :now
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id, "now": datetime.now(UTC)},
-            )
-            session.commit()
-
         second_segments = [
             {
                 "t_start_ms": 5000,
@@ -448,8 +422,12 @@ class TestIngestYoutubeVideo:
             lambda _provider_id: {"status": "completed", "segments": second_segments},
         )
 
-        with direct_db.session() as session:
-            second = run_youtube_video_ingest(session, media_id, user_id)
+        refresh_response = auth_client.post(
+            f"/media/{media_id}/refresh",
+            headers=auth_headers(user_id),
+        )
+        assert refresh_response.status_code == 202, refresh_response.text
+        second = _run_latest_source_attempt(direct_db, media_id)
         assert second["status"] == "success"
 
         # The pre-existing highlight SURVIVES the fragment replacement.

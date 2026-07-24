@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import UUID
@@ -23,6 +22,7 @@ from nexus.storage.paths import (
     get_file_extension,
 )
 from tests.real_media.assertions import assert_fragment_content_contains
+from tests.support.source_jobs import run_queued_source_attempt
 from tests.utils.db import DirectSessionManager
 
 REAL_MEDIA_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "real_media"
@@ -199,34 +199,11 @@ def run_source_attempt_for_media(
     direct_db: DirectSessionManager,
     media_id: UUID,
 ) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
-
     with direct_db.session() as session:
-        row = (
-            session.execute(
-                text(
-                    """
-                    SELECT payload
-                    FROM background_jobs
-                    WHERE kind = 'ingest_media_source'
-                      AND payload->>'media_id' = :media_id
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": str(media_id)},
-            )
-            .mappings()
-            .one()
-        )
-    payload = row["payload"]
-    with direct_db.session() as session:
-        return run_source_attempt(
-            db=session,
-            media_id=UUID(payload["media_id"]),
-            attempt_id=UUID(payload["attempt_id"]),
-            actor_user_id=UUID(payload["actor_user_id"]),
-            request_id=payload.get("request_id"),
+        return run_queued_source_attempt(
+            session,
+            media_id=media_id,
+            request_id="real-media-source-attempt",
         )
 
 
@@ -381,27 +358,19 @@ def create_nasa_podcast_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
     with direct_db.session() as session:
-        transcription_result = run_podcast_transcription_now(
+        transcription_result = run_queued_source_attempt(
             session,
             media_id=media_id,
-            requested_by_user_id=user_id,
+            actor_user_id=user_id,
             request_id="real-media-podcast-transcript-fixture",
         )
-        session.commit()
-    if transcription_result.status == "skipped":
-        assert transcription_result.reason == "not_pending", transcription_result
-        assert transcription_result.job_status == "completed", transcription_result
-    else:
-        assert transcription_result.status == "completed", transcription_result
-        assert (transcription_result.segment_count or 0) > 0, transcription_result
+    assert transcription_result["status"] == "success", transcription_result
 
     assert_fragment_content_contains(direct_db, media_id, "International Space Station")
     register_media_cleanup(direct_db, media_id)
     register_background_job_cleanup(direct_db, media_id)
-    return media_id, podcast_id, asdict(transcription_result)
+    return media_id, podcast_id, transcription_result
 
 
 def upload_file_media(

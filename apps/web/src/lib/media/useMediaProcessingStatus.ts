@@ -6,7 +6,7 @@ import { optionalString } from "@/lib/api/sse/guards";
 import {
   isDocumentProcessingTerminal,
   requireDocumentProcessingStatus,
-  type DocumentProcessingStatus,
+  type MediaProcessingProjectionStatus,
 } from "@/lib/media/documentReadiness";
 import { isRecord } from "@/lib/validation";
 import type {
@@ -15,9 +15,11 @@ import type {
 } from "@/lib/media/transcriptView";
 
 export interface MediaProcessingSnapshot {
-  processing_status: DocumentProcessingStatus;
+  processing_status: MediaProcessingProjectionStatus;
   last_error_code?: string | null;
   failure_stage?: string | null;
+  retrieval_status: string | null;
+  retrieval_status_reason: string | null;
   capabilities?: {
     can_read: boolean;
     can_highlight: boolean;
@@ -154,6 +156,8 @@ function parseMediaProcessingSnapshot(
   const updatedAt = value.updated_at;
   const lastErrorCode = optionalString(value.last_error_code);
   const failureStage = optionalString(value.failure_stage);
+  const retrievalStatus = optionalString(value.retrieval_status);
+  const retrievalStatusReason = optionalString(value.retrieval_status_reason);
   const capabilities = parseCapabilities(value.capabilities);
   const transcriptState = optionalTranscriptState(value.transcript_state);
   const transcriptCoverage = optionalTranscriptCoverage(
@@ -164,6 +168,8 @@ function parseMediaProcessingSnapshot(
     typeof updatedAt !== "string" ||
     lastErrorCode === undefined ||
     failureStage === undefined ||
+    retrievalStatus === undefined ||
+    retrievalStatusReason === undefined ||
     (capabilities === undefined && "capabilities" in value) ||
     (transcriptState === undefined && "transcript_state" in value) ||
     (transcriptCoverage === undefined && "transcript_coverage" in value)
@@ -171,9 +177,14 @@ function parseMediaProcessingSnapshot(
     return null;
   }
   return {
-    processing_status: requireDocumentProcessingStatus(processingStatus),
+    processing_status:
+      processingStatus === "suspended"
+        ? processingStatus
+        : requireDocumentProcessingStatus(processingStatus),
     last_error_code: lastErrorCode,
     failure_stage: failureStage,
+    retrieval_status: retrievalStatus,
+    retrieval_status_reason: retrievalStatusReason,
     ...(capabilities !== undefined ? { capabilities } : {}),
     ...(transcriptState !== undefined
       ? { transcript_state: transcriptState }

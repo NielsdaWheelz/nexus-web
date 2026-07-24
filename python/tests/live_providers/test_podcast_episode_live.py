@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
 from uuid import UUID
 
 import pytest
@@ -170,18 +169,17 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
     )
     assert transcript_request.status_code in {200, 202}, transcript_request.text
 
-    from nexus.services.podcasts.transcription import run_podcast_transcription_now
+    from tests.support.source_jobs import run_queued_source_attempt
 
     with direct_db.session() as session:
-        transcription_result = run_podcast_transcription_now(
+        transcription_result = run_queued_source_attempt(
             session,
             media_id=media_id,
-            requested_by_user_id=user_id,
+            actor_user_id=user_id,
             request_id="live-provider-podcast-transcribe",
         )
-        session.commit()
 
-    assert transcription_result.status == "completed", transcription_result
+    assert transcription_result["status"] == "success", transcription_result
     register_background_job_cleanup(direct_db, media_id)
     media_trace = assert_media_ready(auth_client, headers, media_id)
     evidence_trace = assert_complete_evidence_trace(direct_db, media_id, "transcript", "transcript")
@@ -199,6 +197,6 @@ def test_live_podcast_episode_transcribes_and_indexes_real_episode(
             "evidence": evidence_trace,
             "search": search_trace,
             "search_query": search_query,
-            "transcription": asdict(transcription_result),
+            "transcription": transcription_result,
         },
     )

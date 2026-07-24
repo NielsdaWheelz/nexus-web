@@ -22,7 +22,7 @@ const FIXTURE_WORKER_ENV = {
     "../../python/tests/fixtures/real_media",
   ),
   REAL_MEDIA_FIXTURE_STREAM_DELAY_MS: "700",
-  WORKER_ALLOWED_JOB_KINDS: "chat_run",
+  WORKER_LANE: "interactive",
 };
 
 async function createConversation(page: Page): Promise<string> {

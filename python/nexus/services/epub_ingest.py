@@ -25,10 +25,9 @@ from uuid import UUID
 from xml.etree import ElementTree as ET
 
 from lxml.etree import LxmlError
-from lxml.html import HtmlElement, document_fromstring, tostring
+from lxml.html import HtmlElement, tostring
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus import web_paths
 from nexus.config import get_settings
@@ -38,13 +37,11 @@ from nexus.db.models import (
     EpubResource,
     EpubTocNode,
     Fragment,
-    Media,
 )
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiErrorCode
 from nexus.services.canonicalize import generate_canonical_text
-from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
-from nexus.services.html_tree import remove_element, unwrap_element
+from nexus.services.html_tree import parse_html_document, remove_element, unwrap_element
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
     collect_html_apparatus_targets,
@@ -53,7 +50,7 @@ from nexus.services.reader_apparatus import (
     source_fingerprint,
 )
 from nexus.storage.client import StorageError
-from nexus.storage.paths import build_epub_asset_storage_path
+from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
 
 if TYPE_CHECKING:
@@ -418,6 +415,28 @@ class _ArchiveSafetyConfig:
     max_parse_time_ms: int
 
 
+@dataclass(frozen=True)
+class EpubExtractionPlan:
+    result: EpubExtractionResult
+    now: datetime
+    storage_path: str
+    source_size_bytes: int
+    fragment_specs: tuple[
+        tuple[
+            Fragment,
+            _ChapterSpec,
+            list[dict[str, object]],
+            list[dict[str, object]],
+        ],
+        ...,
+    ]
+    all_block_specs: tuple[list, ...]
+    toc_nodes: tuple[_TocNodeSpec, ...]
+    nav_locations: tuple[_NavLocationSpec, ...]
+    asset_entries: tuple[_AssetEntry, ...]
+    asset_storage_paths: dict[str, str]
+
+
 class _EpubExtractionFailure(Exception):
     """Modeled failure caused by the EPUB payload, not service infrastructure."""
 
@@ -427,17 +446,17 @@ class _EpubExtractionFailure(Exception):
 # ---------------------------------------------------------------------------
 
 
-def extract_epub_artifacts(
-    db: Session,
-    media_id: UUID,
-    storage_client: StorageClientBase,
+def build_epub_extraction_plan(
     *,
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    storage_client: StorageClientBase,
     now: datetime | None = None,
-) -> EpubExtractionResult | EpubExtractionError:
-    """Deterministic EPUB extraction.  Single-transaction artifact write.
-
-    Does NOT mutate media.processing_status; callers own lifecycle state changes.
-    """
+) -> EpubExtractionPlan | EpubExtractionError:
+    """Acquire, parse, and stage immutable attempt-owned EPUB assets."""
     if now is None:
         now = datetime.now(UTC)
 
@@ -450,28 +469,11 @@ def extract_epub_artifacts(
         max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
     )
 
-    media = db.get(Media, media_id)
-    if media is None:
-        return EpubExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
-            error_message="Media row not found",
-        )
-
-    media_file = media.media_file
-    if media_file is None:
-        return EpubExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
-            error_message="No media_file record for EPUB",
-        )
-
     # ---- read bytes from storage -------------------------------------------
     try:
-        epub_bytes = b"".join(storage_client.stream_object(media_file.storage_path))
+        epub_bytes = b"".join(storage_client.stream_object(storage_path))
     except StorageError as exc:
-        return EpubExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
-            error_message=f"Failed to read EPUB from storage: {exc}",
-        )
+        raise StorageError(exc.message, exc.code) from exc
 
     # ---- archive safety gate -----------------------------------------------
     safety_err = check_archive_safety(epub_bytes, safety_cfg)
@@ -485,7 +487,7 @@ def extract_epub_artifacts(
         zf = zipfile.ZipFile(io.BytesIO(epub_bytes))
     except zipfile.BadZipFile as exc:
         return EpubExtractionError(
-            error_code=ApiErrorCode.E_INGEST_FAILED.value,
+            error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
             error_message=f"Invalid ZIP: {exc}",
         )
 
@@ -493,7 +495,7 @@ def extract_epub_artifacts(
         opf_path = _find_opf_path(zf)
         if opf_path is None:
             return EpubExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
                 error_message="Cannot locate OPF rootfile",
             )
 
@@ -501,7 +503,7 @@ def extract_epub_artifacts(
         opf_tree = _parse_xml_entry(zf, opf_path)
         if opf_tree is None:
             return EpubExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
                 error_message="Failed to parse OPF",
             )
 
@@ -509,7 +511,7 @@ def extract_epub_artifacts(
         spine_items = _parse_spine(opf_tree)
 
         # ---- title resolution ----------------------------------------------
-        title = _resolve_title(opf_tree, media_file.storage_path)
+        title = _resolve_title(opf_tree, storage_path)
 
         # ---- OPF metadata extraction --------------------------------------
         opf_meta = _extract_opf_metadata(opf_tree)
@@ -518,7 +520,7 @@ def extract_epub_artifacts(
         chapter_specs = _collect_readable_chapters(zf, manifest, spine_items)
         if not chapter_specs:
             return EpubExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
                 error_message="Zero renderable XHTML spine items after extraction",
             )
 
@@ -599,7 +601,7 @@ def extract_epub_artifacts(
 
         if not fragment_specs:
             return EpubExtractionError(
-                error_code=ApiErrorCode.E_INGEST_FAILED.value,
+                error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
                 error_message="Zero renderable chapters after sanitization",
             )
 
@@ -620,226 +622,247 @@ def extract_epub_artifacts(
                 terminal=True,
             )
 
+        asset_storage_paths: dict[str, str] = {}
         for ae in asset_entries:
-            asset_storage_key = build_epub_asset_storage_path(media_id, ae.asset_key)
-            # Reserve the durable final-sweep before each bounded asset write (spec §3.1).
-            # The EpubResource owner rows are persisted below in the same call, so the
-            # Armed deadline (not an immediate post-write recheck) records Retained once
-            # they commit, or DeleteRequired if extraction rolls back.
-            reserve_storage_object_write(db, media_id=media_id, storage_path=asset_storage_key)
+            asset_storage_key = build_epub_attempt_asset_storage_path(
+                media_id,
+                attempt_id,
+                ae.asset_key,
+            )
+            reservation_db = session_factory()
+            try:
+                reserve_storage_object_write(
+                    reservation_db,
+                    media_id=media_id,
+                    storage_path=asset_storage_key,
+                )
+            finally:
+                reservation_db.close()
             try:
                 storage_client.put_object(asset_storage_key, ae.content, ae.content_type)
                 uploaded_asset_paths.append(asset_storage_key)
+                asset_storage_paths[ae.asset_key] = asset_storage_key
             except StorageError as exc:
-                for path in [*uploaded_asset_paths, asset_storage_key]:
-                    try:
-                        storage_client.delete_object(path)
-                    except StorageError as cleanup_exc:
-                        # justify-ignore-error: asset cleanup is secondary to the
-                        # primary ingest failure returned below.
-                        logger.warning(
-                            "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
-                            media_id,
-                            path,
-                            cleanup_exc.message,
-                        )
-                db.rollback()
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_INGEST_FAILED.value,
-                    error_message=f"Failed to store EPUB asset {ae.epub_path}: {exc}",
-                )
+                raise StorageError(exc.message, exc.code) from exc
 
-        # ---- atomic DB persistence -----------------------------------------
-        # Public readers hold Media FOR SHARE while resolving one complete
-        # projection. Serialize publication of all new EPUB rows against that
-        # boundary after expensive parsing/storage work, immediately before the
-        # first public source row is written.
-        locked_media_id = db.execute(
-            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-            {"media_id": media_id},
-        ).scalar()
-        if locked_media_id is None:
-            return EpubExtractionError(
-                error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value,
-                error_message="Media row not found before EPUB publication",
-            )
-        for frag in fragments:
-            db.add(frag)
-        db.flush()
-
-        for frag in fragments:
-            if 0 <= frag.idx < len(all_block_specs):
-                insert_fragment_blocks(db, frag.id, all_block_specs[frag.idx])
-
-        for frag, ch, _apparatus_items, _apparatus_edges in fragment_specs:
-            db.add(
-                EpubFragmentSource(
-                    media_id=media_id,
-                    fragment_id=frag.id,
-                    package_href=ch.href,
-                    manifest_item_id=ch.manifest_id,
-                    spine_itemref_id=ch.itemref_id,
-                    media_type=ch.media_type,
-                    linear=ch.linear,
-                    reading_order=ch.spine_idx,
-                    created_at=now,
-                )
-            )
-
-        for tn in toc_nodes:
-            db.add(
-                EpubTocNode(
-                    media_id=media_id,
-                    node_id=tn.node_id,
-                    nav_type=tn.nav_type,
-                    parent_node_id=tn.parent_node_id,
-                    label=tn.label,
-                    href=tn.href,
-                    fragment_idx=tn.fragment_idx,
-                    depth=tn.depth,
-                    order_key=tn.order_key,
-                    created_at=now,
-                )
-            )
-
-        for ae in asset_entries:
-            storage_path = build_epub_asset_storage_path(media_id, ae.asset_key)
-            db.add(
-                EpubResource(
-                    media_id=media_id,
-                    manifest_item_id=ae.manifest_id,
-                    package_href=ae.epub_path,
-                    asset_key=ae.asset_key,
-                    storage_path=storage_path,
-                    content_type=ae.content_type,
-                    size_bytes=len(ae.content),
-                    fallback_item_id=ae.fallback_id,
-                    properties=ae.properties,
-                    created_at=now,
-                )
-            )
-
-        db.flush()
-
-        for nav in nav_locations:
-            db.add(
-                EpubNavLocation(
-                    media_id=media_id,
-                    location_id=nav.location_id,
-                    ordinal=nav.ordinal,
-                    source_node_id=nav.source_node_id,
-                    label=nav.label,
-                    fragment_idx=nav.fragment_idx,
-                    href_path=nav.href_path,
-                    href_fragment=nav.href_fragment,
-                    source=nav.source,
-                    created_at=now,
-                )
-            )
-
-        db.flush()
-
-        rebuild_fragment_content_index(
-            db,
-            media_id=media_id,
-            source_kind="epub",
-            fragments=fragments,
-            reason="epub_ingest",
-            language=media.language,
+        result = EpubExtractionResult(
+            chapter_count=len(fragments),
+            toc_node_count=len(toc_nodes),
+            asset_count=len(asset_entries),
+            title=title,
+            creators=opf_meta.get("creators", []),
+            publisher=opf_meta.get("publisher"),
+            language=opf_meta.get("language"),
+            description=opf_meta.get("description"),
+            published_date=opf_meta.get("published_date"),
         )
-        apparatus_items: list[dict[str, object]] = []
-        apparatus_edges: list[dict[str, object]] = []
-        for frag, _ch, fragment_items, fragment_edges in fragment_specs:
-            apparatus_items.extend(
-                attach_fragment_locators(
-                    media_id=media_id,
-                    fragment_id=frag.id,
-                    media_kind="epub",
-                    canonical_text=frag.canonical_text,
-                    items=fragment_items,
-                    html_sanitized=frag.html_sanitized,
-                )
-            )
-            apparatus_edges.extend(fragment_edges)
-
-        replace_media_apparatus(
-            db,
-            media_id=media_id,
-            media_kind="epub",
-            source_fingerprint_value=source_fingerprint(
-                "epub",
-                media_file.storage_path,
-                media_file.size_bytes,
-                [
-                    {
-                        "package_href": ch.href,
-                        "manifest_id": ch.manifest_id,
-                        "spine_index": ch.spine_idx,
-                        "spine_itemref_id": ch.itemref_id,
-                        "xhtml_sha256": hashlib.sha256(ch.raw_html.encode("utf-8")).hexdigest(),
-                    }
-                    for _frag, ch, _items, _edges in fragment_specs
-                ],
-                len(fragments),
-                len(toc_nodes),
-                "\n".join(frag.canonical_text for frag in fragments),
-            ),
-            items=apparatus_items,
-            edges=apparatus_edges,
-            status="ready" if apparatus_items else "empty",
+        return EpubExtractionPlan(
+            result=result,
+            now=now,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+            fragment_specs=tuple(fragment_specs),
+            all_block_specs=tuple(all_block_specs),
+            toc_nodes=tuple(toc_nodes),
+            nav_locations=tuple(nav_locations),
+            asset_entries=tuple(asset_entries),
+            asset_storage_paths=asset_storage_paths,
         )
 
-    except (_EpubExtractionFailure, ApiError) as exc:
-        db.rollback()
-        for path in uploaded_asset_paths:
-            try:
-                storage_client.delete_object(path)
-            except StorageError as cleanup_exc:
-                # justify-ignore-error: asset cleanup is secondary to the
-                # primary ingest failure returned below.
-                logger.warning(
-                    "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
-                    media_id,
-                    path,
-                    cleanup_exc.message,
-                )
-        error_code = (
-            exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INGEST_FAILED.value
-        )
+    except _EpubExtractionFailure as exc:
+        error_code = ApiErrorCode.E_INVALID_FILE_TYPE.value
         return EpubExtractionError(
             error_code=error_code,
             error_message=f"Extraction failed: {exc}",
         )
-    except SQLAlchemyError:
-        db.rollback()
-        for path in uploaded_asset_paths:
-            try:
-                storage_client.delete_object(path)
-            except StorageError as cleanup_exc:
-                # justify-ignore-error: asset cleanup is secondary to the
-                # primary persistence failure being re-raised below.
-                logger.warning(
-                    "epub_asset_cleanup_failed media_id=%s storage_path=%s error=%s",
-                    media_id,
-                    path,
-                    cleanup_exc.message,
-                )
-        logger.exception("epub_artifact_persistence_failed media_id=%s", media_id)
-        raise
     finally:
         zf.close()
 
-    return EpubExtractionResult(
-        chapter_count=len(fragments),
-        toc_node_count=len(toc_nodes),
-        asset_count=len(asset_entries),
-        title=title,
-        creators=opf_meta.get("creators", []),
-        publisher=opf_meta.get("publisher"),
-        language=opf_meta.get("language"),
-        description=opf_meta.get("description"),
-        published_date=opf_meta.get("published_date"),
+
+def publish_epub_extraction_plan(
+    db: Session,
+    *,
+    media_id: UUID,
+    plan: EpubExtractionPlan,
+) -> tuple[EpubExtractionResult, list[str]]:
+    """Atomically replace all EPUB rows from an immutable prepared plan."""
+    old_storage_paths = [
+        str(value)
+        for value in db.scalars(
+            text(
+                """
+                SELECT storage_path
+                FROM epub_resources
+                WHERE media_id = :media_id
+                ORDER BY storage_path
+                """
+            ),
+            {"media_id": media_id},
+        ).all()
+    ]
+    db.execute(
+        text("DELETE FROM epub_resources WHERE media_id = :media_id"),
+        {"media_id": media_id},
     )
+    db.execute(
+        text("DELETE FROM epub_fragment_sources WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_nav_locations WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM epub_toc_nodes WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text(
+            """
+            DELETE FROM fragment_blocks
+            WHERE fragment_id IN (
+                SELECT id FROM fragments WHERE media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM fragments WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+    fragments: list[Fragment] = []
+    for template, _chapter, _items, _edges in plan.fragment_specs:
+        fragment = Fragment(
+            media_id=media_id,
+            idx=template.idx,
+            html_sanitized=template.html_sanitized,
+            canonical_text=template.canonical_text,
+            created_at=plan.now,
+        )
+        fragments.append(fragment)
+        db.add(fragment)
+    db.flush()
+    for fragment in fragments:
+        if 0 <= fragment.idx < len(plan.all_block_specs):
+            insert_fragment_blocks(
+                db,
+                fragment.id,
+                plan.all_block_specs[fragment.idx],
+            )
+
+    for fragment, (_template, chapter, _items, _edges) in zip(
+        fragments,
+        plan.fragment_specs,
+        strict=True,
+    ):
+        db.add(
+            EpubFragmentSource(
+                media_id=media_id,
+                fragment_id=fragment.id,
+                package_href=chapter.href,
+                manifest_item_id=chapter.manifest_id,
+                spine_itemref_id=chapter.itemref_id,
+                media_type=chapter.media_type,
+                linear=chapter.linear,
+                reading_order=chapter.spine_idx,
+                created_at=plan.now,
+            )
+        )
+    for node in plan.toc_nodes:
+        db.add(
+            EpubTocNode(
+                media_id=media_id,
+                node_id=node.node_id,
+                nav_type=node.nav_type,
+                parent_node_id=node.parent_node_id,
+                label=node.label,
+                href=node.href,
+                fragment_idx=node.fragment_idx,
+                depth=node.depth,
+                order_key=node.order_key,
+                created_at=plan.now,
+            )
+        )
+    for asset in plan.asset_entries:
+        db.add(
+            EpubResource(
+                media_id=media_id,
+                manifest_item_id=asset.manifest_id,
+                package_href=asset.epub_path,
+                asset_key=asset.asset_key,
+                storage_path=plan.asset_storage_paths[asset.asset_key],
+                content_type=asset.content_type,
+                size_bytes=len(asset.content),
+                fallback_item_id=asset.fallback_id,
+                properties=asset.properties,
+                created_at=plan.now,
+            )
+        )
+    db.flush()
+    for nav in plan.nav_locations:
+        db.add(
+            EpubNavLocation(
+                media_id=media_id,
+                location_id=nav.location_id,
+                ordinal=nav.ordinal,
+                source_node_id=nav.source_node_id,
+                label=nav.label,
+                fragment_idx=nav.fragment_idx,
+                href_path=nav.href_path,
+                href_fragment=nav.href_fragment,
+                source=nav.source,
+                created_at=plan.now,
+            )
+        )
+    db.flush()
+
+    apparatus_items: list[dict[str, object]] = []
+    apparatus_edges: list[dict[str, object]] = []
+    for fragment, (_template, _chapter, fragment_items, fragment_edges) in zip(
+        fragments,
+        plan.fragment_specs,
+        strict=True,
+    ):
+        apparatus_items.extend(
+            attach_fragment_locators(
+                media_id=media_id,
+                fragment_id=fragment.id,
+                media_kind="epub",
+                canonical_text=fragment.canonical_text,
+                items=fragment_items,
+                html_sanitized=fragment.html_sanitized,
+            )
+        )
+        apparatus_edges.extend(fragment_edges)
+    replace_media_apparatus(
+        db,
+        media_id=media_id,
+        media_kind="epub",
+        source_fingerprint_value=source_fingerprint(
+            "epub",
+            plan.storage_path,
+            plan.source_size_bytes,
+            [
+                {
+                    "package_href": chapter.href,
+                    "manifest_id": chapter.manifest_id,
+                    "spine_index": chapter.spine_idx,
+                    "spine_itemref_id": chapter.itemref_id,
+                    "xhtml_sha256": hashlib.sha256(chapter.raw_html.encode("utf-8")).hexdigest(),
+                }
+                for _fragment, chapter, _items, _edges in plan.fragment_specs
+            ],
+            len(fragments),
+            len(plan.toc_nodes),
+            "\n".join(fragment.canonical_text for fragment in fragments),
+        ),
+        items=apparatus_items,
+        edges=apparatus_edges,
+        status="ready" if apparatus_items else "empty",
+    )
+    return plan.result, old_storage_paths
 
 
 # ---------------------------------------------------------------------------
@@ -1207,7 +1230,7 @@ def _rewrite_chapter_resources(
     """Rewrite local resource links in parsed chapter HTML."""
     chapter_dir = posixpath.dirname(chapter_href)
     try:
-        doc = _parse_epub_html_document(html)
+        doc = parse_html_document(html)
     except LxmlError as exc:
         raise _EpubExtractionFailure(
             f"Failed to parse EPUB chapter resources: {chapter_href}"
@@ -1380,11 +1403,6 @@ def _document_body_inner_html(doc: HtmlElement) -> str:
     return "".join(chunks)
 
 
-def _parse_epub_html_document(html: str) -> HtmlElement:
-    html = re.sub(r"^\ufeff?\s*<\?xml[^>]*\?>", "", html, count=1, flags=re.IGNORECASE)
-    return document_fromstring(html)
-
-
 def _ensure_asset_entry(
     epub_path: str,
     zf: zipfile.ZipFile,
@@ -1523,7 +1541,7 @@ def _epub_sanitize(html: str) -> str:
         return ""
 
     try:
-        doc = _parse_epub_html_document(html)
+        doc = parse_html_document(html)
     except LxmlError as exc:
         raise ValueError(f"Failed to parse EPUB HTML: {exc}") from exc
 

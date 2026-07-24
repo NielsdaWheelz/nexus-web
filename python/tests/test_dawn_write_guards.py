@@ -12,7 +12,6 @@ pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[2]
 NEXUS = ROOT / "python" / "nexus"
-DEPLOY = ROOT / "deploy"
 
 
 def _read(*parts: str) -> str:
@@ -55,20 +54,8 @@ def test_dawn_write_task_uses_correct_owner_kind() -> None:
     )
 
 
-def test_deploy_allowlist_triple_consistency() -> None:
-    """Guard 4: dawn_write_job appears in all three deploy allowlist locations."""
-    config_src = (NEXUS / "config.py").read_text()
-    worker_example = (DEPLOY / "env" / "env-prod-worker.example").read_text()
-    sync_env = (DEPLOY / "hetzner" / "sync-env.sh").read_text()
+def test_dawn_write_runs_in_background_lane() -> None:
+    """Guard 4: the topology owner assigns Dawn to the production background lane."""
+    from nexus.config import BACKGROUND_WORKER_JOB_KINDS
 
-    assert "dawn_write_job" in config_src, (
-        "DEFAULT_WORKER_ALLOWED_JOB_KINDS in config.py does not include 'dawn_write_job'."
-    )
-    assert "dawn_write_job" in worker_example, (
-        "WORKER_ALLOWED_JOB_KINDS in deploy/env/env-prod-worker.example does not include "
-        "'dawn_write_job'."
-    )
-    assert "dawn_write_job" in sync_env, (
-        "SAFE_WORKER_ALLOWED_JOB_KINDS in deploy/hetzner/sync-env.sh does not include "
-        "'dawn_write_job'."
-    )
+    assert "dawn_write_job" in BACKGROUND_WORKER_JOB_KINDS

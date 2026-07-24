@@ -7,7 +7,13 @@ import signal
 import socket
 import threading
 
-from nexus.config import get_settings
+from nexus.config import (
+    BACKGROUND_WORKER_JOB_KINDS,
+    INTERACTIVE_WORKER_JOB_KINDS,
+    MAINTENANCE_JOB_KINDS,
+    PRODUCTION_ENABLED_JOB_KINDS,
+    get_settings,
+)
 from nexus.db.session import get_session_factory
 from nexus.jobs.registry import get_default_registry, get_task_contract_version
 from nexus.jobs.worker import JobWorker
@@ -33,13 +39,36 @@ def _register_signal_handlers(stop_event: threading.Event) -> None:
 def create_worker() -> JobWorker:
     settings = get_settings()
     registry = get_default_registry()
-    allowed_kinds = {
-        value.strip() for value in settings.worker_allowed_job_kinds.split(",") if value.strip()
-    }
+    if settings.worker_lane == "interactive":
+        allowed_kinds = INTERACTIVE_WORKER_JOB_KINDS
+    elif settings.worker_lane == "background":
+        allowed_kinds = BACKGROUND_WORKER_JOB_KINDS
+    elif settings.worker_lane == "maintenance":
+        allowed_kinds = tuple(
+            value.strip()
+            for value in (settings.worker_allowed_job_kinds or "").split(",")
+            if value.strip()
+        )
+    else:
+        raise RuntimeError(
+            "WORKER_LANE must be interactive, background, or an explicitly gated maintenance."
+        )
 
-    unknown_kinds = allowed_kinds - set(registry)
+    registered_kinds = set(registry)
+    declared_kinds = set(PRODUCTION_ENABLED_JOB_KINDS) | set(MAINTENANCE_JOB_KINDS)
+    if registered_kinds != declared_kinds:
+        missing = declared_kinds - registered_kinds
+        undeclared = registered_kinds - declared_kinds
+        raise RuntimeError(
+            "Worker topology must cover the registry exactly; "
+            f"missing={sorted(missing)}, undeclared={sorted(undeclared)}"
+        )
+
+    unknown_kinds = set(allowed_kinds) - registered_kinds
     if unknown_kinds:
-        raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
+        raise RuntimeError(
+            f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}"
+        )
 
     session_factory = get_session_factory()
     # Install the process-global rate limiter at startup (same construction as
@@ -76,6 +105,7 @@ def main() -> None:
     logger.info(
         "postgres_worker_started",
         worker_id=worker.worker_id,
+        lane=get_settings().worker_lane,
         task_contract_version=get_task_contract_version(),
         allowed_job_kinds=list(worker.allowed_kinds or ()),
     )

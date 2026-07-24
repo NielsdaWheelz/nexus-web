@@ -10,7 +10,7 @@ from urllib.parse import unquote
 from uuid import UUID
 
 from lxml.etree import ParserError
-from lxml.html import HtmlElement, document_fromstring, tostring
+from lxml.html import HtmlElement, tostring
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from nexus.schemas.reader_apparatus import (
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.capabilities import is_document_status_ready
+from nexus.services.html_tree import parse_html_document
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.text import normalize_whitespace
@@ -58,7 +59,7 @@ def extract_html_apparatus(
     if not html.strip():
         return _html_string(html), [], []
     try:
-        doc = document_fromstring(html)
+        doc = parse_html_document(html)
     except ParserError:
         return _html_string(html), [], []
     body = doc.body
@@ -274,7 +275,7 @@ def collect_html_apparatus_targets(
     if not html.strip():
         return {}
     try:
-        doc = document_fromstring(html)
+        doc = parse_html_document(html)
     except ParserError:
         return {}
     body = doc.body
@@ -1455,7 +1456,7 @@ def _apparatus_locator_span_by_key(
     if not html_sanitized or not html_sanitized.strip() or not canonical_text:
         return locator_spans
     try:
-        root = document_fromstring(f"<div>{html_sanitized}</div>")
+        root = parse_html_document(f"<div>{html_sanitized}</div>")
     except ParserError:
         return locator_spans
 
@@ -1551,7 +1552,7 @@ def _apparatus_locator_texts_in_order(html_sanitized: str | None) -> list[tuple[
     if not html_sanitized or not html_sanitized.strip():
         return []
     try:
-        root = document_fromstring(f"<div>{html_sanitized}</div>")
+        root = parse_html_document(f"<div>{html_sanitized}</div>")
     except ParserError:
         return []
     locator_texts: list[tuple[str, str]] = []

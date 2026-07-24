@@ -4,6 +4,10 @@ export type DocumentProcessingStatus =
   | "ready_for_reading"
   | "failed";
 
+export type MediaProcessingProjectionStatus =
+  | DocumentProcessingStatus
+  | "suspended";
+
 export function requireDocumentProcessingStatus(
   status: string,
 ): DocumentProcessingStatus {
@@ -19,7 +23,11 @@ export function requireDocumentProcessingStatus(
 }
 
 export function isDocumentProcessingTerminal(status: string): boolean {
-  return status === "ready_for_reading" || status === "failed";
+  return (
+    status === "ready_for_reading" ||
+    status === "failed" ||
+    status === "suspended"
+  );
 }
 
 export function canReadMediaDocument(media: {

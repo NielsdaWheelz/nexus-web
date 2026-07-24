@@ -179,7 +179,7 @@ describe("MediaPaneBody AC-4 hydration hit", () => {
     // Seed consumed: the pane left the loading state and rendered the seeded
     // media's terminal-status panel (proves resource.data.media drove render).
     expect(
-      await screen.findByText("This media cannot be opened right now."),
+      await screen.findByText("Import failed."),
     ).toBeInTheDocument();
 
     // Seed surfaced: the pane label is published from the seeded media title.

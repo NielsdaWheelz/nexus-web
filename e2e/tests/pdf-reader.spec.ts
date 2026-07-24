@@ -138,7 +138,7 @@ async function waitForPdfMediaReady(
     const workerResult = runE2eWorkerOnce({
       mediaId,
       extraEnv: {
-        WORKER_ALLOWED_JOB_KINDS: "ingest_media_source",
+        WORKER_LANE: "interactive",
       },
     });
     workerIterations += workerResult.processed ? 1 : 0;

@@ -13,7 +13,6 @@ SSH_TARGET="${NEXUS_SSH_TARGET:-${DEPLOY_USER}@${HOST}}"
 SHARED_ENV="${NEXUS_SHARED_ENV:-${ROOT_DIR}/deploy/env/env-prod}"
 BACKEND_ENV="${NEXUS_BACKEND_ENV:-${ROOT_DIR}/deploy/env/env-prod-backend}"
 WORKER_ENV="${NEXUS_WORKER_ENV:-${ROOT_DIR}/deploy/env/env-prod-worker}"
-SAFE_WORKER_ALLOWED_JOB_KINDS="ingest_media_source,enrich_metadata,chat_run,dossier_build,media_unit_build,note_reindex_job,podcast_sync_subscription_job,podcast_reindex_semantic_job,oracle_reading_generate,synapse_scan,dawn_write_job,atlas_project_job,media_teardown,storage_object_cleanup,storage_orphan_sweep"
 
 REQUIRED_HETZNER_ENV_KEYS="
 NEXUS_ENV
@@ -256,21 +255,23 @@ reject_removed_llm_env_keys() {
   done
 }
 
-require_safe_worker_defaults() {
+require_worker_defaults() {
   local file="$1"
   local key value
 
-  if is_true "${NEXUS_ALLOW_WORKER_MAINTENANCE:-false}"; then
-    return
-  fi
-
-  value="$(normalize_env_value "$(env_value "WORKER_ALLOWED_JOB_KINDS" "$file" || true)")"
-  [ "$value" = "$SAFE_WORKER_ALLOWED_JOB_KINDS" ] || die "WORKER_ALLOWED_JOB_KINDS is not the safe production allowlist; set NEXUS_ALLOW_WORKER_MAINTENANCE=1 for a bounded maintenance sync"
-
-  for key in PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS INGEST_RECONCILE_SCHEDULE_SECONDS SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
-    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
-    [ "$value" = "0" ] || die "${key} must be 0 for safe worker sync; set NEXUS_ALLOW_WORKER_MAINTENANCE=1 for a bounded maintenance sync"
+  for key in WORKER_LANE WORKER_ALLOWED_JOB_KINDS NEXUS_ALLOW_WORKER_MAINTENANCE; do
+    if value="$(env_value "$key" "$file")" && ! is_blank "$(normalize_env_value "$value")"; then
+      die "${key} is invocation-owned and must not be stored in production runtime env"
+    fi
   done
+
+  for key in PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
+    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
+    [ "$value" = "0" ] || die "${key} must be 0 in the normal production worker env"
+  done
+
+  value="$(normalize_env_value "$(env_value "INGEST_RECONCILE_SCHEDULE_SECONDS" "$file" || true)")"
+  [ "$value" = "600" ] || die "INGEST_RECONCILE_SCHEDULE_SECONDS must be 600"
 }
 
 case "$ENV_TARGET" in
@@ -314,7 +315,7 @@ require_cloudflare_r2_s3_api_origin "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"
 reject_removed_x_env_keys "$tmp_file"
 reject_removed_llm_env_keys "$tmp_file"
-require_safe_worker_defaults "$tmp_file"
+require_worker_defaults "$tmp_file"
 
 scp "$tmp_file" "${SSH_TARGET}:${remote_tmp}"
 # shellcheck disable=SC2029

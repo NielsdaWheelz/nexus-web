@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
     EpubFragmentSource,
@@ -17,11 +17,12 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.logging import get_logger
-from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.epub_ingest import (
     EpubExtractionError,
+    EpubExtractionPlan,
     EpubExtractionResult,
-    extract_epub_artifacts,
+    build_epub_extraction_plan,
+    publish_epub_extraction_plan,
 )
 from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
 from nexus.services.media_author_observation_seam import attach_author_observation
@@ -69,32 +70,51 @@ def retry_epub_ingest_for_viewer(
     )
 
 
-def materialize_epub_source(
+def prepare_epub_source(
+    *,
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+) -> EpubExtractionPlan:
+    """Acquire and parse one EPUB into an immutable publication plan."""
+    plan = build_epub_extraction_plan(
+        session_factory=session_factory,
+        media_id=media_id,
+        attempt_id=attempt_id,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        storage_client=get_storage_client(),
+    )
+    if isinstance(plan, EpubExtractionError):
+        raise ApiError(
+            _source_api_error_code(plan.error_code),
+            (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN],
+        )
+    return plan
+
+
+def publish_epub_source(
     db: Session,
     *,
     media_id: UUID,
-) -> dict[str, object]:
-    """Persist EPUB extraction artifacts without owning source lifecycle state."""
+    plan: EpubExtractionPlan,
+) -> tuple[dict[str, object], list[str]]:
+    """Publish a prepared EPUB plan in the caller's fenced transaction."""
     media = db.get(Media, media_id)
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.kind != "epub":
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be EPUB.")
     if media.processing_status != ProcessingStatus.extracting:
-        return {"status": "skipped", "reason": "not_extracting"}
+        return {"status": "skipped", "reason": "not_extracting"}, []
 
-    result = extract_epub_artifacts(db, media_id, get_storage_client())
-    media = db.get(Media, media_id)
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if media.processing_status != ProcessingStatus.extracting:
-        return {"status": "skipped", "reason": "state_changed"}
-    if isinstance(result, EpubExtractionError):
-        raise ApiError(
-            _source_api_error_code(result.error_code),
-            (result.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN],
-        )
-
+    result, old_storage_paths = publish_epub_extraction_plan(
+        db,
+        media_id=media_id,
+        plan=plan,
+    )
     assert isinstance(result, EpubExtractionResult)
     persist_epub_metadata(db, media, result)
     db.flush()
@@ -110,7 +130,7 @@ def materialize_epub_source(
     if truncated:
         logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
     attach_author_observation(response, observation=observation, source=_EPUB_AUTHOR_SOURCE)
-    return response
+    return response, old_storage_paths
 
 
 def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
@@ -118,7 +138,6 @@ def delete_extraction_artifacts(db: Session, media_id: UUID) -> list[str]:
 
     Apparatus remains until extraction reconciles it by stable key.
     """
-    delete_content_index(db, owner=IndexOwner("media", media_id))
     storage_paths = (
         db.execute(select(EpubResource.storage_path).where(EpubResource.media_id == media_id))
         .scalars()

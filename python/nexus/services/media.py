@@ -55,7 +55,51 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.kind",
     "m.title",
     "m.canonical_source_url",
-    "m.processing_status",
+    "m.processing_status AS persisted_processing_status",
+    """EXISTS(
+        SELECT 1
+        FROM media_source_attempts suspended_attempt
+        JOIN background_jobs suspended_job
+          ON suspended_job.id = suspended_attempt.job_id
+         AND suspended_job.kind = 'ingest_media_source'
+         AND suspended_job.status = 'dead'
+         AND suspended_job.payload @> jsonb_build_object(
+             'media_id', m.id::text,
+             'attempt_id', suspended_attempt.id::text
+         )
+        WHERE suspended_attempt.media_id = m.id
+          AND suspended_attempt.id = (
+              SELECT latest.id
+              FROM media_source_attempts latest
+              WHERE latest.media_id = m.id
+              ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+              LIMIT 1
+          )
+    ) AS source_job_suspended""",
+    """CASE
+        WHEN EXISTS(
+            SELECT 1
+            FROM media_source_attempts suspended_attempt
+            JOIN background_jobs suspended_job
+              ON suspended_job.id = suspended_attempt.job_id
+             AND suspended_job.kind = 'ingest_media_source'
+             AND suspended_job.status = 'dead'
+             AND suspended_job.payload @> jsonb_build_object(
+                 'media_id', m.id::text,
+                 'attempt_id', suspended_attempt.id::text
+             )
+            WHERE suspended_attempt.media_id = m.id
+              AND suspended_attempt.id = (
+                  SELECT latest.id
+                  FROM media_source_attempts latest
+                  WHERE latest.media_id = m.id
+                  ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+                  LIMIT 1
+              )
+        )
+        THEN 'suspended'
+        ELSE m.processing_status::text
+    END AS processing_status""",
     "m.failure_stage",
     "m.last_error_code",
     "m.external_playback_url",
@@ -97,8 +141,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
               AND m.last_error_code IN (
                   'E_SIGN_UPLOAD_FAILED',
                   'E_STORAGE_MISSING',
-                  'E_STORAGE_ERROR',
-                  'E_INVALID_FILE_TYPE'
+                  'E_STORAGE_ERROR'
               )
           )
           AND msa.id = (
@@ -139,8 +182,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
               AND m.last_error_code IN (
                   'E_SIGN_UPLOAD_FAILED',
                   'E_STORAGE_MISSING',
-                  'E_STORAGE_ERROR',
-                  'E_INVALID_FILE_TYPE'
+                  'E_STORAGE_ERROR'
               )
           )
           AND msa.id = (
@@ -161,7 +203,20 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "pe.description_text AS podcast_description_text",
     "mts.transcript_state",
     "mts.transcript_coverage",
-    "COALESCE(mcis.status, 'pending') AS retrieval_status",
+    """CASE
+        WHEN EXISTS(
+            SELECT 1
+            FROM background_jobs suspended_job
+            WHERE suspended_job.kind = 'media_content_reindex_job'
+              AND suspended_job.status = 'dead'
+              AND suspended_job.payload @> jsonb_build_object(
+                  'media_id', m.id::text,
+                  'revision', mcis.revision
+              )
+        )
+        THEN 'suspended'
+        ELSE COALESCE(mcis.status, 'pending')
+    END AS retrieval_status""",
     "mcis.status_reason AS retrieval_status_reason",
     f"""(
         {non_system_media_ref_exists_sql("m.id")}
@@ -509,9 +564,11 @@ def _media_out_from_row(
     is_admin: bool = False,
 ) -> MediaOut:
     processing_status = _status_to_str(row["processing_status"])
+    persisted_processing_status = _status_to_str(row["persisted_processing_status"])
+    source_job_suspended = bool(row["source_job_suspended"])
     capabilities = derive_capabilities(
         kind=row["kind"],
-        processing_status=processing_status,
+        processing_status=persisted_processing_status,
         last_error_code=row["last_error_code"],
         media_file_exists=bool(row["has_file"]),
         external_playback_url_exists=row["external_playback_url"] is not None,
@@ -528,6 +585,7 @@ def _media_out_from_row(
         ),
         source_retry_available=bool(row.get("source_retry_available")),
         source_refresh_available=bool(row.get("source_refresh_available")),
+        source_suspended=source_job_suspended,
     )
     playback_source = derive_playback_source(
         kind=row["kind"],
@@ -918,6 +976,8 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
         "processing_status": media.processing_status,
         "last_error_code": media.last_error_code,
         "failure_stage": media.failure_stage,
+        "retrieval_status": media.retrieval_status,
+        "retrieval_status_reason": media.retrieval_status_reason,
         "capabilities": media.capabilities.model_dump(mode="json"),
         "transcript_state": media.transcript_state,
         "transcript_coverage": media.transcript_coverage,
@@ -925,5 +985,5 @@ def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> Medi
     }
     return MediaEventSnapshot(
         payload=payload,
-        terminal=media.processing_status in ("ready_for_reading", "failed"),
+        terminal=media.processing_status in ("ready_for_reading", "failed", "suspended"),
     )

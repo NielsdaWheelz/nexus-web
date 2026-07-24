@@ -1351,8 +1351,7 @@ def test_every_profile_offers_its_default_reasoning():
 
 
 # =============================================================================
-# AC-6 — DEFAULT_WORKER_ALLOWED_JOB_KINDS has no unknown kinds and covers
-# USER_FACING_JOB_KINDS
+# AC-6 — worker lanes partition production and cover the complete registry
 #
 # The authoritative guard already lives in test_config.py
 # (test_default_worker_allowlist_matches_registry_and_user_facing_jobs). It is
@@ -1361,15 +1360,24 @@ def test_every_profile_offers_its_default_reasoning():
 # =============================================================================
 
 
-def test_worker_allowlist_kinds_match_registry_and_user_facing_jobs():
-    from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS
-    from nexus.jobs.registry import USER_FACING_JOB_KINDS, get_default_registry
+def test_worker_lane_kinds_match_registry():
+    from nexus.config import (
+        BACKGROUND_WORKER_JOB_KINDS,
+        INTERACTIVE_WORKER_JOB_KINDS,
+        MAINTENANCE_JOB_KINDS,
+        PRODUCTION_ENABLED_JOB_KINDS,
+    )
+    from nexus.jobs.registry import get_default_registry
 
-    allowed = {kind.strip() for kind in DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(",") if kind.strip()}
-    unknown = allowed - set(get_default_registry())
-    missing = set(USER_FACING_JOB_KINDS) - allowed
-    assert not unknown, f"worker allowlist kinds not in the registry: {sorted(unknown)}"
-    assert not missing, f"user-facing job kinds not in the worker allowlist: {sorted(missing)}"
+    interactive = set(INTERACTIVE_WORKER_JOB_KINDS)
+    background = set(BACKGROUND_WORKER_JOB_KINDS)
+    production = set(PRODUCTION_ENABLED_JOB_KINDS)
+    maintenance = set(MAINTENANCE_JOB_KINDS)
+
+    assert not interactive & background
+    assert interactive | background == production
+    assert not production & maintenance
+    assert production | maintenance == set(get_default_registry())
 
 
 # =============================================================================

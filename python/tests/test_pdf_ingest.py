@@ -26,11 +26,11 @@ from nexus.services.pdf_ingest import (
     _extract_pdf_legal_footnote_apparatus,
     _extract_pdf_native_link_apparatus,
     _pdf_reference_block_for_destination,
-    extract_pdf_artifacts,
+    build_pdf_extraction_plan,
     normalize_pdf_text,
+    publish_pdf_extraction_plan,
     validate_page_spans,
 )
-from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 from tests.support.storage import FakeStorageClient
 
 
@@ -239,6 +239,41 @@ def _create_pdf_media(db: Session, storage: FakeStorageClient, pdf_bytes: bytes)
     return db.get(Media, media_id)
 
 
+def _extract_pdf_artifacts(
+    db: Session,
+    media_id,
+    storage: FakeStorageClient,
+    *,
+    source_package: PdfSourcePackageArtifact | None = None,
+    source_package_diagnostics: dict[str, object] | None = None,
+) -> PdfExtractionResult | PdfExtractionError:
+    """Exercise the production prepare/publish split without a legacy service."""
+    storage_path, size_bytes = db.execute(
+        text(
+            """
+            SELECT storage_path, size_bytes
+            FROM media_file
+            WHERE media_id = :media_id
+            """
+        ),
+        {"media_id": media_id},
+    ).one()
+    db.commit()
+    plan = build_pdf_extraction_plan(
+        media_id=media_id,
+        storage_path=str(storage_path),
+        source_size_bytes=int(size_bytes),
+        storage_client=storage,
+        source_package=source_package,
+        source_package_diagnostics=source_package_diagnostics,
+    )
+    if isinstance(plan, PdfExtractionError):
+        return plan
+    result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
+    db.commit()
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Normalization unit tests
 # ---------------------------------------------------------------------------
@@ -325,7 +360,7 @@ class TestPdfExtractionArtifacts:
         pdf_bytes = _make_simple_pdf("Hello World", num_pages=3)
         media = _create_pdf_media(db_session, storage, pdf_bytes)
 
-        result = extract_pdf_artifacts(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionResult)
         assert result.page_count == 3
@@ -367,7 +402,7 @@ class TestPdfExtractionArtifacts:
         pdf_bytes = _make_simple_pdf("Test  Content")
         media = _create_pdf_media(db_session, storage, pdf_bytes)
 
-        result = extract_pdf_artifacts(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionResult)
         assert "\r" not in result.plain_text
@@ -387,7 +422,7 @@ class TestPdfExtractionArtifacts:
         source_path = f"media/{media.id}/source/source-package.tar"
         storage.put_object(source_path, source_bytes, "application/x-tar")
 
-        result = extract_pdf_artifacts(
+        result = _extract_pdf_artifacts(
             db_session,
             media.id,
             storage,
@@ -456,7 +491,7 @@ class TestPdfExtractionArtifacts:
         source_path = f"media/{media.id}/source/source-package.tar"
         storage.put_object(source_path, source_bytes, "application/x-tar")
 
-        result = extract_pdf_artifacts(
+        result = _extract_pdf_artifacts(
             db_session,
             media.id,
             storage,
@@ -512,7 +547,7 @@ class TestPdfExtractionArtifacts:
         pdf_bytes = _make_image_only_pdf()
         media = _create_pdf_media(db_session, storage, pdf_bytes)
 
-        result = extract_pdf_artifacts(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionResult)
         assert result.page_count >= 1
@@ -536,7 +571,7 @@ class TestPdfExtractionArtifacts:
         pdf_bytes = _make_password_pdf()
         media = _create_pdf_media(db_session, storage, pdf_bytes)
 
-        result = extract_pdf_artifacts(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionError)
         assert result.error_code == ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value
@@ -548,20 +583,20 @@ class TestPdfExtractionArtifacts:
         storage = FakeStorageClient()
         media = _create_pdf_media(db_session, storage, b"not a real pdf at all")
 
-        result = extract_pdf_artifacts(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionError)
         assert result.error_code in (
-            ApiErrorCode.E_INGEST_FAILED.value,
+            ApiErrorCode.E_INVALID_FILE_TYPE.value,
             ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
         )
 
-    def test_run_pdf_ingest_sync_returns_pdf_extraction_result(self, db_session: Session):
+    def test_extract_pdf_artifacts_returns_pdf_extraction_result(self, db_session: Session):
         storage = FakeStorageClient()
         pdf_bytes = _make_simple_pdf("Sync test")
         media = _create_pdf_media(db_session, storage, pdf_bytes)
 
-        result = run_pdf_ingest_sync(db_session, media.id, storage)
+        result = _extract_pdf_artifacts(db_session, media.id, storage)
 
         assert isinstance(result, PdfExtractionResult)
         assert result.has_text is True

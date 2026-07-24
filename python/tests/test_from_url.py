@@ -34,16 +34,27 @@ import respx
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
-from nexus.errors import ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.media_source_ingest import accept_url_source
 from nexus.storage.client import StorageError
-from nexus.storage.paths import build_source_artifact_storage_path, build_storage_path
+from nexus.storage.paths import build_source_artifact_storage_path
 from tests.factories import add_media_to_library as seed_media_in_library
 from tests.helpers import auth_headers, create_test_user_id
+from tests.reader_apparatus_corpus import (
+    expected_counts,
+    fixture_case_ids,
+    fixture_cases_by_real_media_contract,
+    fixture_text,
+)
+from tests.support.source_jobs import run_queued_source_attempt
 from tests.support.storage import FakeStorageClient
 from tests.support.teardown import drive_media_teardown, install_fake_storage_for_teardown
-from tests.utils.db import DirectSessionManager
+from tests.utils.db import DirectSessionManager, task_session_factory
 
 pytestmark = pytest.mark.integration
+
+WEB_GENERIC_URL_APPARATUS_CASES = fixture_cases_by_real_media_contract("web_article_capture_api")
 
 
 @pytest.fixture(autouse=True)
@@ -180,8 +191,6 @@ def _patch_remote_storage(monkeypatch, storage_client) -> None:
     monkeypatch.setattr("nexus.services.pdf_lifecycle.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.services.epub_lifecycle.get_storage_client", lambda: storage_client)
     monkeypatch.setattr("nexus.services.upload.get_storage_client", lambda: storage_client)
-    monkeypatch.setattr("nexus.tasks.ingest_epub.get_storage_client", lambda: storage_client)
-    monkeypatch.setattr("nexus.tasks.ingest_pdf.get_storage_client", lambda: storage_client)
 
 
 def _expect_remote_file(
@@ -330,36 +339,24 @@ def _run_source_attempt_for_media(
     direct_db: DirectSessionManager,
     media_id: UUID,
 ) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
-
-    with direct_db.session() as session:
-        row = (
-            session.execute(
+    try:
+        with direct_db.session() as session:
+            return run_queued_source_attempt(session, media_id=media_id)
+    finally:
+        with direct_db.session() as session:
+            job_id = session.execute(
                 text(
                     """
-                    SELECT id, payload
-                    FROM background_jobs
-                    WHERE kind = 'ingest_media_source'
-                      AND payload->>'media_id' = :media_id
-                    ORDER BY created_at DESC
+                    SELECT job_id
+                    FROM media_source_attempts
+                    WHERE media_id = :media_id
+                    ORDER BY attempt_no DESC, created_at DESC, id DESC
                     LIMIT 1
                     """
                 ),
-                {"media_id": str(media_id)},
-            )
-            .mappings()
-            .one()
-        )
-    direct_db.register_cleanup("background_jobs", "id", row["id"])
-    payload = row["payload"]
-    with direct_db.session() as session:
-        return run_source_attempt(
-            db=session,
-            media_id=UUID(payload["media_id"]),
-            attempt_id=UUID(payload["attempt_id"]),
-            actor_user_id=UUID(payload["actor_user_id"]),
-            request_id=payload.get("request_id"),
-        )
+                {"media_id": media_id},
+            ).scalar_one()
+        direct_db.register_cleanup("background_jobs", "id", job_id)
 
 
 def _register_background_jobs_for_media(
@@ -405,25 +402,22 @@ def _patch_file_extractors_success(
     monkeypatch,
     direct_db: DirectSessionManager,
 ) -> None:
-    def _materialize_pdf_success(
-        _db,
-        *,
-        media_id: UUID,
-        request_id: str | None = None,
-        **_kwargs,
-    ) -> dict[str, object]:
-        return {"status": "success", "media_id": str(media_id)}
-
-    def _materialize_epub_success(_db, *, media_id: UUID) -> dict[str, object]:
-        return {"status": "success", "media_id": str(media_id)}
+    del direct_db
 
     monkeypatch.setattr(
-        "nexus.services.pdf_lifecycle.materialize_pdf_source",
-        _materialize_pdf_success,
+        "nexus.services.media_source_ingest._prepare_existing_file_source",
+        lambda *_args, **_kwargs: object(),
     )
     monkeypatch.setattr(
-        "nexus.services.epub_lifecycle.materialize_epub_source",
-        _materialize_epub_success,
+        "nexus.services.media_source_ingest._publish_prepared_file_source",
+        lambda _db, *, media_id, **_kwargs: (
+            {"status": "success", "media_id": str(media_id)},
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        "nexus.services.media_source_ingest._finalize_prepared_file_source",
+        lambda *_args, **_kwargs: None,
     )
 
 
@@ -522,11 +516,34 @@ def _accept_remote_source_and_expect_worker_error(
         url,
         expected_source_type=expected_source_type,
     )
+    if expected_code in {
+        ApiErrorCode.E_INGEST_FAILED,
+        ApiErrorCode.E_INGEST_TIMEOUT,
+        ApiErrorCode.E_SOURCE_FETCH_FAILED,
+        ApiErrorCode.E_STORAGE_ERROR,
+    }:
+        with pytest.raises(ApiError) as raised:
+            _run_source_attempt_for_media(direct_db, media_id)
+        assert raised.value.code == expected_code
+        return media_id
     result = _run_source_attempt_for_media(direct_db, media_id)
     assert result["status"] == "failed"
     assert result["error_code"] == expected_code.value
     _assert_latest_source_failure(direct_db, media_id, expected_code)
     return media_id
+
+
+def _media_file_storage_path(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+) -> str:
+    with direct_db.session() as session:
+        return str(
+            session.execute(
+                text("SELECT storage_path FROM media_file WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).scalar_one()
+        )
 
 
 def _install_background_job_insert_failure(direct_db: DirectSessionManager) -> None:
@@ -1377,8 +1394,6 @@ class TestFromUrlXPost:
     def test_x_post_source_attempt_materializes_single_post_without_thread_search(
         self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
-        from nexus.services.media_source_ingest import run_source_attempt
-
         _patch_x_api_settings(monkeypatch)
         user_id = create_test_user_id()
         default_library_id = UUID(
@@ -1446,15 +1461,14 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
         with direct_db.session() as session:
-            result = run_source_attempt(
-                db=session,
+            result = run_queued_source_attempt(
+                session,
                 media_id=media_id,
-                attempt_id=source_attempt_id,
                 actor_user_id=user_id,
                 request_id="test-x-post",
             )
 
-        assert result["media_id"] == str(media_id)
+        assert "superseded_by_media_id" not in result
         assert result["processing_status"] == "ready_for_reading"
         assert root_route.call_count == 1
         assert search_route.call_count == 0
@@ -1555,7 +1569,7 @@ class TestFromUrlXPost:
         result = _run_source_attempt_for_media(direct_db, media_id)
         _register_x_provider_event_cleanup(direct_db, "author-thread:10:1234567890")
 
-        assert result["media_id"] == str(media_id)
+        assert "superseded_by_media_id" not in result
         assert result["processing_status"] == "ready_for_reading"
         assert root_route.call_count == 1
         assert search_route.call_count == 1
@@ -1694,7 +1708,7 @@ class TestFromUrlXPost:
 
         first_result = _run_source_attempt_for_media(direct_db, media_id)
         _register_x_provider_event_cleanup(direct_db, "author-thread:10:2222222222")
-        assert first_result["media_id"] == str(media_id)
+        assert "superseded_by_media_id" not in first_result
         with direct_db.session() as session:
             quoted_media = session.execute(
                 text("""
@@ -2017,7 +2031,7 @@ class TestFromUrlXPost:
         assert retry_data["ingest_enqueued"] is True
 
         retry_result = _run_source_attempt_for_media(direct_db, media_id)
-        assert retry_result["media_id"] == str(media_id)
+        assert "superseded_by_media_id" not in retry_result
         assert retry_result["processing_status"] == "ready_for_reading"
         assert root_route.call_count == 2
         assert search_route.call_count == 1
@@ -2108,9 +2122,9 @@ class TestFromUrlXPost:
             _assert_provider_boundary,
         )
 
-        result = _run_source_attempt_for_media(direct_db, media_id)
-        assert result["status"] == "failed"
-        assert result["error_code"] == ApiErrorCode.E_X_PROVIDER_UNAVAILABLE.value
+        with pytest.raises(ApiError) as raised:
+            _run_source_attempt_for_media(direct_db, media_id)
+        assert raised.value.code is ApiErrorCode.E_X_PROVIDER_UNAVAILABLE
         _register_x_provider_event_cleanup(direct_db, "6666666666")
 
         assert observed["media"] == ("extracting", 1, None)
@@ -2152,9 +2166,9 @@ class TestFromUrlXPost:
             _rate_limited,
         )
 
-        result = _run_source_attempt_for_media(direct_db, media_id)
-        assert result["status"] == "failed"
-        assert result["error_code"] == ApiErrorCode.E_X_PROVIDER_RATE_LIMITED.value
+        with pytest.raises(ApiError) as raised:
+            _run_source_attempt_for_media(direct_db, media_id)
+        assert raised.value.code is ApiErrorCode.E_X_PROVIDER_RATE_LIMITED
 
         with direct_db.session() as session:
             attempt = session.execute(
@@ -2176,10 +2190,10 @@ class TestFromUrlXPost:
                 """)
             ).one()
         direct_db.register_cleanup("external_provider_events", "id", provider_event[0])
-        assert tuple(attempt) == ("failed", "E_X_PROVIDER_RATE_LIMITED", 7)
+        assert tuple(attempt) == ("running", None, None)
         assert provider_event[1] == 7
 
-    def test_x_timeout_creates_failed_retryable_source_item(
+    def test_x_timeout_is_owned_by_the_queue_retry_budget(
         self, auth_client, direct_db: DirectSessionManager, monkeypatch
     ):
         from nexus.services.x_types import XProviderError, XProviderErrorCode
@@ -2213,16 +2227,16 @@ class TestFromUrlXPost:
             _timed_out,
         )
 
-        result = _run_source_attempt_for_media(direct_db, media_id)
-        assert result["status"] == "failed"
-        assert result["error_code"] == ApiErrorCode.E_X_PROVIDER_TIMEOUT.value
+        with pytest.raises(ApiError) as raised:
+            _run_source_attempt_for_media(direct_db, media_id)
+        assert raised.value.code is ApiErrorCode.E_X_PROVIDER_TIMEOUT
 
         media_response = auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id))
         assert media_response.status_code == 200
         media_data = media_response.json()["data"]
-        assert media_data["processing_status"] == "failed"
-        assert media_data["last_error_code"] == ApiErrorCode.E_X_PROVIDER_TIMEOUT.value
-        assert media_data["capabilities"]["can_retry"] is True
+        assert media_data["processing_status"] == "extracting"
+        assert media_data["last_error_code"] is None
+        assert media_data["capabilities"]["can_retry"] is False
 
         with direct_db.session() as session:
             attempt = session.execute(
@@ -2245,7 +2259,7 @@ class TestFromUrlXPost:
             ).one()
 
         direct_db.register_cleanup("external_provider_events", "id", provider_event[0])
-        assert tuple(attempt) == ("failed", ApiErrorCode.E_X_PROVIDER_TIMEOUT.value)
+        assert tuple(attempt) == ("running", None)
         assert provider_event[1:] == (
             ApiErrorCode.E_X_PROVIDER_TIMEOUT.value,
             "8888888888",
@@ -2528,11 +2542,8 @@ class TestFromUrlXPost:
     def test_x_quoted_post_author_converges_after_author_step_crash(
         self, auth_client, direct_db: DirectSessionManager, remote_http, monkeypatch
     ):
-        """AC 9 for the quoted-post sub-media: it commits (and crosses ready) with
-        the source transaction, BEFORE the author ops. A crash in that window must
-        not lose the quoted author forever — the retry reuses the quoted media
-        (quote_created=False) and must still re-observe its author (spec 2.4)."""
-        import nexus.services.x_ingest as x_ingest_module
+        """Exact queue replay repairs a crash after source artifact publication."""
+        import nexus.services.media_source_ingest as source_ingest_module
 
         _patch_x_api_settings(monkeypatch)
         user_id = create_test_user_id()
@@ -2552,16 +2563,18 @@ class TestFromUrlXPost:
         direct_db.register_cleanup("media_source_attempts", "id", source_attempt_id)
         direct_db.register_cleanup("library_entries", "media_id", media_id)
 
-        real_apply = x_ingest_module._apply_x_author_observations
+        real_apply = source_ingest_module.replace_source_observed_role_slices
 
-        def _crash_before_author_ops(observations) -> None:
+        def _crash_before_author_ops(*_args, **_kwargs) -> None:
             raise RuntimeError("simulated crash before the author step")
 
         monkeypatch.setattr(
-            x_ingest_module, "_apply_x_author_observations", _crash_before_author_ops
+            source_ingest_module,
+            "replace_source_observed_role_slices",
+            _crash_before_author_ops,
         )
-        first_result = _run_source_attempt_for_media(direct_db, media_id)
-        assert first_result["status"] == "failed"
+        with pytest.raises(RuntimeError, match="simulated crash before the author step"):
+            _run_source_attempt_for_media(direct_db, media_id)
 
         with direct_db.session() as session:
             quoted = session.execute(
@@ -2582,15 +2595,27 @@ class TestFromUrlXPost:
             ).scalar_one()
         assert quoted_credits == 0, "the crash window leaves the quoted media author-less"
 
-        monkeypatch.setattr(x_ingest_module, "_apply_x_author_observations", real_apply)
-        retry_response = auth_client.post(
-            f"/media/{media_id}/retry",
-            json={"from_stage": "source"},
-            headers=auth_headers(user_id),
+        monkeypatch.setattr(
+            source_ingest_module,
+            "replace_source_observed_role_slices",
+            real_apply,
         )
-        assert retry_response.status_code == 202
-        retry_attempt_id = UUID(retry_response.json()["data"]["source_attempt_id"])
-        direct_db.register_cleanup("media_source_attempts", "id", retry_attempt_id)
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE background_jobs
+                    SET available_at = now()
+                    WHERE id = (
+                        SELECT job_id
+                        FROM media_source_attempts
+                        WHERE id = :source_attempt_id
+                    )
+                    """
+                ),
+                {"source_attempt_id": source_attempt_id},
+            )
+            session.commit()
 
         retry_result = _run_source_attempt_for_media(direct_db, media_id)
         assert retry_result["processing_status"] == "ready_for_reading"
@@ -2802,7 +2827,7 @@ class TestFromUrlRemoteFiles:
         assert row[5] == "application/pdf"
         assert row[6] == len(PDF_CONTENT)
         assert row[7] == "succeeded"
-        assert storage.get_object(build_storage_path(media_id, "pdf")) == PDF_CONTENT
+        assert storage.get_object(_media_file_storage_path(direct_db, media_id)) == PDF_CONTENT
 
     def test_arxiv_pdf_endpoint_is_remote_pdf_not_generic_web_article(
         self,
@@ -2879,7 +2904,7 @@ class TestFromUrlRemoteFiles:
         assert source_package["content_type"] == "application/x-tar"
         assert source_package["size_bytes"] == len(source_bytes)
         assert source_package["sha256_hex"] == hashlib.sha256(source_bytes).hexdigest()
-        assert storage.get_object(build_storage_path(media_id, "pdf")) == PDF_CONTENT
+        assert storage.get_object(_media_file_storage_path(direct_db, media_id)) == PDF_CONTENT
         assert storage.get_object(source_package["storage_path"]) == source_bytes
 
     def test_arxiv_pdf_hard_delete_removes_pdf_and_source_package_storage(
@@ -2925,6 +2950,7 @@ class TestFromUrlRemoteFiles:
         result = _run_source_attempt_for_media(direct_db, media_id)
         assert result["status"] == "success"
 
+        media_file_path = _media_file_storage_path(direct_db, media_id)
         with direct_db.session() as session:
             source_package_path = session.execute(
                 text("""
@@ -2944,10 +2970,10 @@ class TestFromUrlRemoteFiles:
         # deletion + the storage sweep.
         assert delete_response.json()["data"] == {"kind": "Deleting"}
         assert drive_media_teardown(direct_db.session, media_id) == "succeeded"
-        assert storage.get_object(build_storage_path(media_id, "pdf")) is None
+        assert storage.get_object(media_file_path) is None
         assert storage.get_object(source_package_path) is None
         assert {
-            build_storage_path(media_id, "pdf"),
+            media_file_path,
             source_package_path,
         } <= set(storage.deleted_paths)
         with direct_db.session() as session:
@@ -3147,7 +3173,7 @@ class TestFromUrlRemoteFiles:
         assert {target["activation"]["kind"] for target in targets} == {"none"}
         assert data["markers"] == []
         assert data["diagnostics"] == {"omitted_item_counts": {}}
-        assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
+        assert storage.get_object(_media_file_storage_path(direct_db, media_id)) == pdf_bytes
 
     def test_arxiv_pdf_from_url_rejects_unsafe_source_package_but_completes_pdf_ingest(
         self,
@@ -3203,7 +3229,7 @@ class TestFromUrlRemoteFiles:
             ).fetchone()
         assert row is not None
         assert row[0:2] == ("ready_for_reading", "succeeded")
-        assert storage.get_object(build_storage_path(media_id, "pdf")) == pdf_bytes
+        assert storage.get_object(_media_file_storage_path(direct_db, media_id)) == pdf_bytes
 
         response = auth_client.get(
             f"/media/{media_id}/document-map",
@@ -3281,7 +3307,7 @@ class TestFromUrlRemoteFiles:
         assert row[3] == "application/epub+zip"
         assert row[4] == len(EPUB_CONTENT)
         assert row[5] == "succeeded"
-        assert storage.get_object(build_storage_path(media_id, "epub")) == EPUB_CONTENT
+        assert storage.get_object(_media_file_storage_path(direct_db, media_id)) == EPUB_CONTENT
 
     def test_remote_pdf_redirect_is_followed_to_final_bytes(
         self,
@@ -3564,7 +3590,9 @@ class TestFromUrlRemoteFiles:
             expected_source_type="remote_pdf_url",
             expected_code=ApiErrorCode.E_STORAGE_ERROR,
         )
-        assert storage.put_paths == [build_storage_path(media_id, "pdf")]
+        assert len(storage.put_paths) == 1
+        assert storage.put_paths[0].startswith(f"media/{media_id}/source/")
+        assert storage.put_paths[0].endswith(".original-pdf")
 
     def test_remote_epub_not_found_marks_source_failed(
         self,
@@ -3673,7 +3701,9 @@ class TestFromUrlRemoteFiles:
             expected_source_type="remote_epub_url",
             expected_code=ApiErrorCode.E_STORAGE_ERROR,
         )
-        assert storage.put_paths == [build_storage_path(media_id, "epub")]
+        assert len(storage.put_paths) == 1
+        assert storage.put_paths[0].startswith(f"media/{media_id}/source/")
+        assert storage.put_paths[0].endswith(".original-epub")
 
     def test_remote_file_db_failure_before_acceptance_does_not_fetch_or_store(
         self,
@@ -3747,7 +3777,7 @@ class TestFromUrlRemoteFiles:
         )
         first_result = _run_source_attempt_for_media(direct_db, media_id)
         assert first_result["status"] == "success"
-        first_final_path = build_storage_path(media_id, "pdf")
+        first_final_path = _media_file_storage_path(direct_db, media_id)
 
         second_data, second_media_id = _accept_source_url(
             auth_client,
@@ -3762,8 +3792,8 @@ class TestFromUrlRemoteFiles:
 
         second_result = _run_source_attempt_for_media(direct_db, second_media_id)
         assert second_result["status"] == "success"
-        assert second_result["media_id"] == str(second_media_id)
-        second_final_path = build_storage_path(second_media_id, "pdf")
+        assert "superseded_by_media_id" not in second_result
+        second_final_path = _media_file_storage_path(direct_db, second_media_id)
 
         with direct_db.session() as session:
             count = session.execute(
@@ -4070,3 +4100,72 @@ class TestFromUrlProvenance:
                 {"dl": dl[0], "m": media_id},
             ).fetchone()
             assert lm is not None
+
+
+@pytest.mark.parametrize(
+    "case",
+    WEB_GENERIC_URL_APPARATUS_CASES,
+    ids=fixture_case_ids(WEB_GENERIC_URL_APPARATUS_CASES),
+)
+def test_generic_url_source_extracts_apparatus_from_source_html(
+    db_session,
+    httpserver,
+    monkeypatch,
+    case: dict[str, object],
+):
+    """The canonical source job preserves apparatus from fetched source HTML."""
+    monkeypatch.setattr(
+        "nexus.services.contributors.get_session_factory",
+        lambda: task_session_factory(db_session),
+    )
+    user_id = create_test_user_id()
+    ensure_user_and_default_library(db_session, user_id)
+    route = f"/apparatus/{case['id']}"
+    httpserver.expect_request(route).respond_with_data(
+        fixture_text(case),
+        content_type="text/html; charset=utf-8",
+    )
+    accepted = accept_url_source(
+        db=db_session,
+        viewer_id=user_id,
+        url=httpserver.url_for(route),
+        library_ids=[],
+    )
+    result = run_queued_source_attempt(
+        db_session,
+        media_id=accepted.media_id,
+        actor_user_id=user_id,
+        request_id=f"apparatus:{case['id']}",
+    )
+    assert result["status"] == "success", result
+
+    item_counts = dict(
+        db_session.execute(
+            text(
+                """
+                SELECT i.kind, COUNT(*)
+                FROM reader_apparatus_states s
+                JOIN reader_apparatus_items i ON i.state_id = s.id
+                WHERE s.media_id = :media_id
+                GROUP BY i.kind
+                """
+            ),
+            {"media_id": accepted.media_id},
+        ).fetchall()
+    )
+    edge_counts = dict(
+        db_session.execute(
+            text(
+                """
+                SELECT e.relation, COUNT(*)
+                FROM reader_apparatus_states s
+                JOIN reader_apparatus_edges e ON e.state_id = s.id
+                WHERE s.media_id = :media_id
+                GROUP BY e.relation
+                """
+            ),
+            {"media_id": accepted.media_id},
+        ).fetchall()
+    )
+    assert item_counts == expected_counts(case, "item_kinds")
+    assert edge_counts == expected_counts(case, "edge_relations")

@@ -28,6 +28,8 @@ from uuid import UUID
 
 import httpx
 
+from nexus.config import ORACLE_SEED_WORKER_JOB_KINDS
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError
 from nexus.jobs.worker import JobWorker
@@ -43,12 +45,19 @@ PLATE_FETCH_MAX_ATTEMPTS = 6
 PLATE_FETCH_RETRY_BASE_SECONDS = 10.0
 PLATE_FETCH_RETRY_MAX_SECONDS = 60.0
 PLATE_FETCH_SUCCESS_DELAY_SECONDS = 2.0
-_RETRYABLE_PLATE_FETCH_STATUSES = ("status 429", "status 502", "status 503", "status 504")
+_RETRYABLE_PLATE_FETCH_STATUSES = (
+    "status 429",
+    "status 502",
+    "status 503",
+    "status 504",
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed the Oracle Corpus library.")
-    parser.add_argument("--owner-user", required=True, type=UUID, help="bootstrap/owner user id")
+    parser.add_argument(
+        "--owner-user", required=True, type=UUID, help="bootstrap/owner user id"
+    )
     parser.add_argument(
         "--drain",
         action="store_true",
@@ -68,13 +77,21 @@ def main() -> int:
     storage_client = get_storage_client()
 
     with session_factory() as db:
-        library_id = oracle_corpus.ensure_oracle_corpus_library(db, owner_user_id=args.owner_user)
+        library_id = oracle_corpus.ensure_oracle_corpus_library(
+            db, owner_user_id=args.owner_user
+        )
         db.commit()
         for work in works:
-            result = oracle_corpus.ensure_oracle_corpus_media(
-                db, owner_user_id=args.owner_user, library_id=library_id, work=work
+            result = retry_serializable(
+                db,
+                "oracle_corpus_seed_work",
+                lambda work=work: _ensure_corpus_work(
+                    db,
+                    owner_user_id=args.owner_user,
+                    library_id=library_id,
+                    work=work,
+                ),
             )
-            db.commit()
             print(
                 f"  work {result.work_key}: media {result.media_id} "
                 f"({'created' if result.created_media else 'reused'}), "
@@ -82,7 +99,9 @@ def main() -> int:
             )
 
     if plates:
-        with httpx.Client(timeout=30.0, headers={"User-Agent": "nexus-oracle-seed"}) as client:
+        with httpx.Client(
+            timeout=30.0, headers={"User-Agent": "nexus-oracle-seed"}
+        ) as client:
             with session_factory() as db:
                 _seed_plates(db, client, storage_client, plates)
                 db.commit()
@@ -92,7 +111,7 @@ def main() -> int:
         worker = JobWorker(
             session_factory=session_factory,
             worker_id="oracle-seed-drain",
-            allowed_kinds=("ingest_media_source",),
+            allowed_kinds=ORACLE_SEED_WORKER_JOB_KINDS,
         )
         while worker.run_once():
             pass
@@ -115,8 +134,28 @@ def main() -> int:
     return 0 if readiness.status == "ready" and plate_storage.ready else 1
 
 
+def _ensure_corpus_work(
+    db: Any,
+    *,
+    owner_user_id: UUID,
+    library_id: UUID,
+    work: oracle_corpus.OracleCorpusManifestWork,
+) -> oracle_corpus.OracleCorpusSeedResult:
+    result = oracle_corpus.ensure_oracle_corpus_media(
+        db,
+        owner_user_id=owner_user_id,
+        library_id=library_id,
+        work=work,
+    )
+    db.commit()
+    return result
+
+
 def _seed_plates(
-    db: Any, client: httpx.Client, storage: StorageClientBase, manifest: list[dict[str, Any]]
+    db: Any,
+    client: httpx.Client,
+    storage: StorageClientBase,
+    manifest: list[dict[str, Any]],
 ) -> None:
     """Download, validate, upload, and upsert each plate (no embeddings)."""
     _preflight_plate_manifest(manifest)
@@ -170,7 +209,8 @@ def _preflight_plate_manifest(manifest: list[dict[str, Any]]) -> None:
     duplicate_slugs = _duplicates(slugs)
     if duplicate_slugs:
         raise RuntimeError(
-            "Oracle plate manifest contains duplicate storage slugs: " + ", ".join(duplicate_slugs)
+            "Oracle plate manifest contains duplicate storage slugs: "
+            + ", ".join(duplicate_slugs)
         )
 
 
@@ -189,7 +229,10 @@ def _fetch_plate_image(resolved_source_url: str, client: httpx.Client):
         try:
             return fetch_validated_image(resolved_source_url, client)
         except ApiError as exc:
-            if not _is_retryable_plate_fetch_error(exc) or attempt >= PLATE_FETCH_MAX_ATTEMPTS:
+            if (
+                not _is_retryable_plate_fetch_error(exc)
+                or attempt >= PLATE_FETCH_MAX_ATTEMPTS
+            ):
                 raise
             delay = _plate_fetch_retry_delay(exc, attempt=attempt)
             print(
@@ -224,7 +267,9 @@ def _plate_storage_slug(entry: dict[str, Any]) -> str:
     stem = source_name.rsplit(".", 1)[0] or str(entry["work_title"])
     slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")
     if not slug:
-        raise RuntimeError(f"Could not derive Oracle plate storage key for {entry['source_url']}")
+        raise RuntimeError(
+            f"Could not derive Oracle plate storage key for {entry['source_url']}"
+        )
     return slug
 
 

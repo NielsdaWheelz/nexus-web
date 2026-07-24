@@ -384,7 +384,7 @@ export function startE2eWorkerUntilMediaReady({
     // the full config
     // allowlist the newest refresh/re-ingest row sits behind dozens of those
     // older jobs and is never reached before the drain budget expires.
-    WORKER_ALLOWED_JOB_KINDS: "ingest_media_source",
+    WORKER_LANE: "interactive",
     ...extraEnv,
     NEXUS_E2E_WORKER_MEDIA_ID: mediaId,
     NEXUS_E2E_WORKER_DEADLINE_SECONDS: String(deadline),

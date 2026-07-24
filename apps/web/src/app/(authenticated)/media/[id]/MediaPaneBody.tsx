@@ -71,7 +71,6 @@ import {
 } from "@/lib/panes/paneResourceLoaders";
 import {
   FeedbackNotice,
-  PDF_PASSWORD_PROTECTED_MESSAGE,
   toFeedback,
   useFeedback,
   type FeedbackContent,
@@ -83,6 +82,7 @@ import {
   useMediaProcessingStatus,
   type MediaProcessingSnapshot,
 } from "@/lib/media/useMediaProcessingStatus";
+import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
 import {
   applyHighlightsToHtml,
   type HighlightInput,
@@ -299,8 +299,8 @@ export interface Media extends MediaProcessingSnapshot {
   podcast_title?: string | null;
   podcast_image_url?: string | null;
   canonical_source_url: string | null;
-  retrieval_status?: string | null;
-  retrieval_status_reason?: string | null;
+  retrieval_status: string | null;
+  retrieval_status_reason: string | null;
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
@@ -1511,17 +1511,30 @@ export default function MediaPaneBody() {
         case "pending":
         case "extracting":
           return { kind: "Processing", source: "media" };
-        case "failed":
+        case "suspended":
+        case "failed": {
+          const presentation = mediaErrorMessage({
+            kind: "Source",
+            processingStatus: media.processing_status,
+            lastErrorCode: media.last_error_code,
+            capabilities: {
+              can_retry: media.capabilities?.can_retry === true,
+              can_refresh_source:
+                media.capabilities?.can_refresh_source === true,
+            },
+            sourceUrl: media.canonical_source_url,
+          });
           return {
             kind: "IngestFailed",
             feedback: {
               severity: "error",
-              title: "Media processing failed.",
-              ...(media.last_error_code
-                ? { message: `Error: ${media.last_error_code}` }
+              title: presentation?.title ?? "Import failed.",
+              ...(presentation
+                ? { message: presentation.explanation }
                 : {}),
             },
           };
+        }
         case "ready_for_reading":
           return { kind: "Empty" };
         default: {
@@ -5960,7 +5973,8 @@ export default function MediaPaneBody() {
     isEpub &&
     epubError === "processing" &&
     !canRead &&
-    media.processing_status !== "failed"
+    (media.processing_status === "pending" ||
+      media.processing_status === "extracting")
   ) {
     return (
       <div className={`${styles.content} ${styles.mobileDocumentState}`}>
@@ -5972,6 +5986,20 @@ export default function MediaPaneBody() {
     );
   }
 
+  const sourceError = mediaErrorMessage({
+    kind: "Source",
+    processingStatus: media.processing_status,
+    lastErrorCode: media.last_error_code,
+    capabilities: {
+      can_retry: media.capabilities?.can_retry === true,
+      can_refresh_source: media.capabilities?.can_refresh_source === true,
+    },
+    sourceUrl: media.canonical_source_url,
+  });
+  const retrievalError = mediaErrorMessage({
+    kind: "Retrieval",
+    retrievalStatus: media.retrieval_status,
+  });
   const readerBanners = (
     <>
       {!isPdf && isMismatchDisabled ? (
@@ -5984,23 +6012,28 @@ export default function MediaPaneBody() {
           <Pill tone="info">Focus mode enabled: highlights pane hidden.</Pill>
         </div>
       ) : null}
-      {media.retrieval_status &&
-      media.retrieval_status !== "ready" &&
-      canRead ? (
+      {sourceError && canRead ? (
+        <div
+          className={styles.retrievalBanner}
+          data-testid="source-readiness"
+        >
+          <Pill tone={sourceError.severity === "error" ? "danger" : "warning"}>
+            {sourceError.title}
+          </Pill>
+          <span>{sourceError.explanation}</span>
+        </div>
+      ) : null}
+      {retrievalError && canRead ? (
         <div
           className={styles.retrievalBanner}
           data-testid="retrieval-readiness"
         >
           <Pill
-            tone={
-              media.retrieval_status === "failed" ? "danger" : "warning"
-            }
+            tone={retrievalError.severity === "error" ? "danger" : "warning"}
           >
-            Search index: {media.retrieval_status.replaceAll("_", " ")}
+            {retrievalError.title}
           </Pill>
-          {media.retrieval_status_reason ? (
-            <span>{media.retrieval_status_reason}</span>
-          ) : null}
+          <span>{retrievalError.explanation}</span>
         </div>
       ) : null}
     </>
@@ -6162,18 +6195,11 @@ export default function MediaPaneBody() {
             <div className={styles.mobileDocumentState}>
               {readerBanners}
               <div className={styles.notReady}>
-                {media.processing_status === "failed" ? (
+                {sourceError ? (
                   <>
-                    {isPdf &&
-                    media.last_error_code === "E_PDF_PASSWORD_REQUIRED" ? (
-                      <p>{PDF_PASSWORD_PROTECTED_MESSAGE}</p>
-                    ) : (
-                      <p>This media cannot be opened right now.</p>
-                    )}
-                    {media.last_error_code && (
-                      <p>Error: {media.last_error_code}</p>
-                    )}
-                    {media.capabilities?.can_retry ? (
+                    <p>{sourceError.title}</p>
+                    <p>{sourceError.explanation}</p>
+                    {sourceError.action.kind === "Retry" ? (
                       <Button
                         variant="primary"
                         size="md"
@@ -6186,6 +6212,16 @@ export default function MediaPaneBody() {
                         {retryProcessingBusy
                           ? "Retrying..."
                           : "Retry processing"}
+                      </Button>
+                    ) : sourceError.action.kind === "OpenSource" ? (
+                      <Button asChild variant="secondary" size="md">
+                        <a
+                          href={sourceError.action.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open source
+                        </a>
                       </Button>
                     ) : null}
                   </>

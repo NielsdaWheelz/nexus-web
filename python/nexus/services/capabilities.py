@@ -36,7 +36,7 @@ _REFRESHABLE_PROCESSING_STATUSES = {
     ProcessingStatus.ready_for_reading.value,
     ProcessingStatus.failed.value,
 }
-_VALID_PROCESSING_STATUSES = {status.value for status in ProcessingStatus}
+_VALID_PROCESSING_STATUSES = {status.value for status in ProcessingStatus} | {"suspended"}
 _DOCUMENT_MEDIA_KINDS = {
     MediaKind.epub.value,
     MediaKind.web_article.value,
@@ -69,6 +69,16 @@ _READABLE_TRANSCRIPT_COVERAGES = {
     TranscriptCoverage.partial.value,
     TranscriptCoverage.full.value,
 }
+_SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
+    {
+        "E_ARCHIVE_UNSAFE",
+        "E_INVALID_FILE_TYPE",
+        "E_PDF_PASSWORD_REQUIRED",
+        "E_SOURCE_ACCESS_DENIED",
+        "E_SOURCE_NOT_READABLE",
+        "E_SOURCE_TOO_LARGE",
+    }
+)
 
 
 def _processing_status_value(processing_status: str | ProcessingStatus) -> str:
@@ -99,6 +109,11 @@ def _validate_transcript_coverage(transcript_coverage: str | None) -> None:
 def is_document_status_ready(processing_status: str | ProcessingStatus) -> bool:
     processing_status = _validate_processing_status(processing_status)
     return processing_status in READABLE_PROCESSING_STATUSES
+
+
+def is_same_source_terminal_error(error_code: str | None) -> bool:
+    """Return whether retrying or refreshing the exact source cannot change the result."""
+    return error_code in _SAME_SOURCE_TERMINAL_ERROR_CODES
 
 
 def is_transcript_readable(transcript_state: str | None, transcript_coverage: str | None) -> bool:
@@ -141,6 +156,7 @@ def derive_capabilities(
     requested_url_exists: bool = False,
     source_retry_available: bool = False,
     source_refresh_available: bool = False,
+    source_suspended: bool = False,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state."""
     processing_status = _validate_processing_status(processing_status)
@@ -197,21 +213,22 @@ def derive_capabilities(
     )
     can_search = can_quote and retrieval_ready
 
-    terminal_retry_error = (
-        kind == MediaKind.pdf.value and last_error_code == "E_PDF_PASSWORD_REQUIRED"
-    ) or (kind == MediaKind.epub.value and last_error_code == "E_ARCHIVE_UNSAFE")
+    same_source_terminal = is_same_source_terminal_error(last_error_code)
     can_retry = (
         is_creator
         and kind in _RETRYABLE_SOURCE_MEDIA_KINDS
         and processing_status == ProcessingStatus.failed.value
         and source_retry_available
-        and not terminal_retry_error
+        and not same_source_terminal
+        and not source_suspended
     )
     can_refresh_source = (
         is_creator
         and kind in _SOURCE_REFRESH_MEDIA_KINDS
         and source_refresh_available
         and processing_status in _REFRESHABLE_PROCESSING_STATUSES
+        and not same_source_terminal
+        and not source_suspended
     )
     can_retry_metadata = is_creator and processing_status in READABLE_PROCESSING_STATUSES
     # Spec §6 canReadMedia is the ACCESS predicate (auth/permissions.can_read_media

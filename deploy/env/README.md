@@ -52,12 +52,18 @@ Production is a hard cutover:
   X API credits are provider account state, not env; validate depleted credits
   with a provider probe or the gated live-provider test after adding credits.
 
-Worker production defaults are intentionally conservative: the allowlist contains
-only explicit user/domain job kinds, schedule values use `0` as disabled, and
-maintenance jobs require a temporary allowlist edit for the specific job kind
-being run. `deploy/hetzner/sync-env.sh` rejects maintenance allowlists or
-positive maintenance schedules unless `NEXUS_ALLOW_WORKER_MAINTENANCE=1` is set
-for that bounded sync.
+Worker topology is invocation-owned. Hetzner Compose assigns the fixed
+`interactive` and `background` lanes; `env-prod-worker` contains no lane or raw
+allowlist. Reconciliation runs every 600 seconds in the background lane.
+Maintenance-only schedules remain zero in the normal production env.
+`deploy/hetzner/sync-env.sh` rejects stored lane, maintenance-gate, or raw
+allowlist values.
+
+A bounded maintenance process must set `WORKER_LANE=maintenance`,
+`NEXUS_ALLOW_WORKER_MAINTENANCE=1`, and a non-empty
+`WORKER_ALLOWED_JOB_KINDS` subset of the four declared maintenance kinds on the
+one-off invocation itself. There is no continuously deployed maintenance
+service.
 
 Cutover checks before syncing env:
 
@@ -71,7 +77,8 @@ Cutover checks before syncing env:
   entry has an exact `/auth/callback` redirect URL, and production redirect URLs
   contain no wildcards.
 - `NEXUS_INTERNAL_SECRET` matches between Vercel and the VPS.
-- Old backend writers and workers are stopped before the Hetzner worker starts.
+- Old backend writers and workers are stopped before the two Hetzner worker
+  lanes start.
 
 Rollback means restoring the last known-good Hetzner Postgres backup/snapshot and
 R2 object state, then redeploying the previous app revision with matching env.

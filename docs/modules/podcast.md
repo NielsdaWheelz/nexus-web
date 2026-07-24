@@ -71,8 +71,10 @@ it claims each due active subscription (`sync_status -> 'pending'`) and enqueues
 performs no feed I/O. Manual refresh enqueues the same job. The per-subscription job claims
 `pending -> running` (`_claim_subscription_sync_pending`), so exactly one sync runs per claim
 — a second poll tick or a concurrent manual refresh can never double-write transcript
-state. The poll is off by default (gated by `PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS` and
-`WORKER_ALLOWED_JOB_KINDS`).
+state. The poll is off by default. A bounded operator run requires the
+`maintenance` worker lane, its explicit authorization gate, the exact
+`podcast_active_subscription_poll_job` allowlist, and a positive
+`PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS`.
 
 ## Transcription
 

@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 from nexus.db.models import ExtensionSession, Fragment, Media
 from nexus.services.url_normalize import normalize_url_for_display
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.source_jobs import run_queued_source_attempt
 from tests.support.storage import FakeStorageClient
 from tests.utils.db import DirectSessionManager
 
@@ -19,25 +20,10 @@ PDF_CONTENT = b"%PDF-1.4\ncaptured pdf bytes"
 def _run_latest_source_attempt(
     direct_db: DirectSessionManager, media_id: UUID, actor_user_id: UUID
 ) -> None:
-    from nexus.services.media_source_ingest import run_source_attempt
-
     with direct_db.session() as db:
-        row = db.execute(
-            text(
-                """
-                SELECT id
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                ORDER BY attempt_no DESC, created_at DESC, id DESC
-                LIMIT 1
-                """
-            ),
-            {"media_id": media_id},
-        ).one()
-        result = run_source_attempt(
-            db=db,
+        result = run_queued_source_attempt(
+            db,
             media_id=media_id,
-            attempt_id=row[0],
             actor_user_id=actor_user_id,
             request_id="test-extension-source-attempt",
         )
@@ -502,25 +488,10 @@ def _run_attempt_result(
     direct_db: DirectSessionManager, media_id: UUID, actor_user_id: UUID
 ) -> dict[str, object]:
     """Run the latest source attempt and return the raw result (no status assert)."""
-    from nexus.services.media_source_ingest import run_source_attempt
-
     with direct_db.session() as db:
-        row = db.execute(
-            text(
-                """
-                SELECT id
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                ORDER BY attempt_no DESC, created_at DESC, id DESC
-                LIMIT 1
-                """
-            ),
-            {"media_id": media_id},
-        ).one()
-        return run_source_attempt(
-            db=db,
+        return run_queued_source_attempt(
+            db,
             media_id=media_id,
-            attempt_id=row[0],
             actor_user_id=actor_user_id,
             request_id="test-author-step-ordering",
         )

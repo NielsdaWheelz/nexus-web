@@ -88,37 +88,56 @@ for i in $(seq 1 30); do
   fi
   sleep 2
 done
-compose stop worker api
+compose stop worker-interactive worker-background api
 compose run -T --rm api sh -c 'cd /app/migrations && /app/.venv/bin/alembic upgrade head' </dev/null
-compose run -T --rm --no-deps worker /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
+compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/ensure_oracle_seed_objects.py </dev/null
 ORACLE_CORPUS_OWNER_USER_ID="$(
-  compose run -T --rm --no-deps worker /app/.venv/bin/python -c 'import os; print(os.environ.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", "").strip())' </dev/null
+  compose run -T --rm --no-deps worker-background /app/.venv/bin/python -c 'import os; print(os.environ.get("NEXUS_ORACLE_CORPUS_OWNER_USER_ID", "").strip())' </dev/null
 )"
 if [ -z "$ORACLE_CORPUS_OWNER_USER_ID" ]; then
   echo "error: set NEXUS_ORACLE_CORPUS_OWNER_USER_ID in ${ENV_FILE} for Oracle Corpus seeding" >&2
   exit 1
 fi
-compose run -T --rm --no-deps worker /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$ORACLE_CORPUS_OWNER_USER_ID" --drain </dev/null
-compose run -T --rm --no-deps worker /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py </dev/null
-compose up -d --remove-orphans --force-recreate
+compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/oracle/seed_corpus_library.py --owner-user "$ORACLE_CORPUS_OWNER_USER_ID" --drain </dev/null
+compose run -T --rm --no-deps worker-background /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py </dev/null
+compose up -d --remove-orphans --force-recreate --wait --wait-timeout 180
 compose ps
 
 API_HEALTH="$(compose exec -T api /app/.venv/bin/python -c \
   'import json, urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5))["data"]["cutover_sha"])')"
-WORKER_REVISION="$(compose exec -T worker /app/.venv/bin/python -c \
-  'import os; print(os.environ.get("CUTOVER_SHA", ""))')"
+INTERACTIVE_WORKER_CONTRACT="$(compose exec -T worker-interactive /app/.venv/bin/python -c \
+  'import os; from apps.worker.main import create_worker; from nexus.config import INTERACTIVE_WORKER_JOB_KINDS, get_settings; worker = create_worker(); assert worker.allowed_kinds == tuple(sorted(INTERACTIVE_WORKER_JOB_KINDS)); print("|".join((os.environ.get("CUTOVER_SHA", ""), str(get_settings().worker_lane), ",".join(worker.allowed_kinds))))')"
+BACKGROUND_WORKER_CONTRACT="$(compose exec -T worker-background /app/.venv/bin/python -c \
+  'import os; from apps.worker.main import create_worker; from nexus.config import BACKGROUND_WORKER_JOB_KINDS, get_settings; worker = create_worker(); assert worker.allowed_kinds == tuple(sorted(BACKGROUND_WORKER_JOB_KINDS)); print("|".join((os.environ.get("CUTOVER_SHA", ""), str(get_settings().worker_lane), ",".join(worker.allowed_kinds))))')"
+IFS='|' read -r INTERACTIVE_WORKER_REVISION INTERACTIVE_WORKER_LANE INTERACTIVE_WORKER_KINDS <<<"$INTERACTIVE_WORKER_CONTRACT"
+IFS='|' read -r BACKGROUND_WORKER_REVISION BACKGROUND_WORKER_LANE BACKGROUND_WORKER_KINDS <<<"$BACKGROUND_WORKER_CONTRACT"
 [ "$API_HEALTH" = "$CUTOVER_SHA" ] || {
   echo "error: API reports ${API_HEALTH}, expected ${CUTOVER_SHA}" >&2
   exit 1
 }
-[ "$WORKER_REVISION" = "$CUTOVER_SHA" ] || {
-  echo "error: worker reports ${WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
+[ "$INTERACTIVE_WORKER_REVISION" = "$CUTOVER_SHA" ] || {
+  echo "error: interactive worker reports ${INTERACTIVE_WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
+  exit 1
+}
+[ "$BACKGROUND_WORKER_REVISION" = "$CUTOVER_SHA" ] || {
+  echo "error: background worker reports ${BACKGROUND_WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
+  exit 1
+}
+[ "$INTERACTIVE_WORKER_LANE" = "interactive" ] || {
+  echo "error: interactive worker reports lane ${INTERACTIVE_WORKER_LANE}" >&2
+  exit 1
+}
+[ "$BACKGROUND_WORKER_LANE" = "background" ] || {
+  echo "error: background worker reports lane ${BACKGROUND_WORKER_LANE}" >&2
   exit 1
 }
 MIGRATION_HEAD="$(compose exec -T api sh -c \
   'cd /app/migrations && /app/.venv/bin/alembic current')"
 echo "cutover_sha=${CUTOVER_SHA}"
 echo "api_revision=${API_HEALTH}"
-echo "worker_revision=${WORKER_REVISION}"
+echo "worker_interactive_revision=${INTERACTIVE_WORKER_REVISION}"
+echo "worker_interactive_kinds=${INTERACTIVE_WORKER_KINDS}"
+echo "worker_background_revision=${BACKGROUND_WORKER_REVISION}"
+echo "worker_background_kinds=${BACKGROUND_WORKER_KINDS}"
 echo "migration_head=${MIGRATION_HEAD}"
 REMOTE

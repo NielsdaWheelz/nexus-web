@@ -42,8 +42,9 @@ make api
 # terminal 3
 make web
 
-# terminal 4 (optional)
-make worker
+# terminals 4 and 5 (optional)
+make worker-interactive
+make worker-background
 ```
 
 Open `http://localhost:3000`.

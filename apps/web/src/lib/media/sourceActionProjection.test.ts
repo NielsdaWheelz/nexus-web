@@ -81,4 +81,25 @@ describe("projectSourceActionResult", () => {
       },
     });
   });
+
+  it("does not describe a terminal source failure as retryable", () => {
+    expect(
+      projectSourceActionResult(
+        result({
+          sourceAttemptStatus: "failed",
+          processingStatus: "failed",
+          ingestEnqueued: false,
+          capabilities: extractingCapabilities,
+        }),
+        {
+          action: "retry",
+          successTitle: "Processing retry started.",
+        },
+      ).feedback,
+    ).toEqual({
+      severity: "warning",
+      title:
+        "Source could not be imported. Open the media for source-specific guidance.",
+    });
+  });
 });

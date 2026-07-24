@@ -27,17 +27,39 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
-DEFAULT_WORKER_ALLOWED_JOB_KINDS = (
-    "ingest_media_source,enrich_metadata,chat_run,"
-    "dossier_build,media_unit_build,note_reindex_job,"
-    "podcast_sync_subscription_job,podcast_reindex_semantic_job,"
-    "oracle_reading_generate,synapse_scan,"
-    "dawn_write_job,"
-    "atlas_project_job,"
-    # Media teardown + its durable storage sweeps (spec §3.1). The default worker
-    # must claim these so a user delete actually physically deletes, the Armed
-    # write-reservation deadlines fire, and the recurring orphan sweep is scheduled.
-    "media_teardown,storage_object_cleanup,storage_orphan_sweep"
+INTERACTIVE_WORKER_JOB_KINDS: tuple[str, ...] = (
+    "ingest_media_source",
+    "chat_run",
+    "dossier_build",
+    "podcast_sync_subscription_job",
+    "oracle_reading_generate",
+)
+BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
+    "media_content_reindex_job",
+    "enrich_metadata",
+    "media_unit_build",
+    "note_reindex_job",
+    "podcast_reindex_semantic_job",
+    "synapse_scan",
+    "dawn_write_job",
+    "atlas_project_job",
+    "media_teardown",
+    "storage_object_cleanup",
+    "storage_orphan_sweep",
+    "reconcile_stale_ingest_media_job",
+)
+PRODUCTION_ENABLED_JOB_KINDS: tuple[str, ...] = (
+    INTERACTIVE_WORKER_JOB_KINDS + BACKGROUND_WORKER_JOB_KINDS
+)
+MAINTENANCE_JOB_KINDS: tuple[str, ...] = (
+    "podcast_active_subscription_poll_job",
+    "sync_gutenberg_catalog_job",
+    "prune_background_jobs_job",
+    "purge_expired_auth_handoff_codes",
+)
+ORACLE_SEED_WORKER_JOB_KINDS: tuple[str, ...] = (
+    "ingest_media_source",
+    "media_content_reindex_job",
 )
 
 
@@ -273,7 +295,7 @@ class Settings(BaseSettings):
 
     # Ingest recovery guardrails
     ingest_reconcile_schedule_seconds: int = Field(
-        default=0, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
+        default=600, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
     )
     ingest_stale_extracting_seconds: int = Field(
         default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS"
@@ -282,17 +304,25 @@ class Settings(BaseSettings):
         default=3, alias="INGEST_STALE_REQUEUE_MAX_ATTEMPTS"
     )
     ingest_semantic_repair_batch_limit: int = Field(
-        default=50, alias="INGEST_SEMANTIC_REPAIR_BATCH_LIMIT"
+        default=25, alias="INGEST_SEMANTIC_REPAIR_BATCH_LIMIT"
     )
     ingest_semantic_failed_retry_seconds: int = Field(
         default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
     )
 
-    # Worker runtime. Production defaults are safe for a small VPS Postgres:
-    # explicit domain jobs only, no maintenance jobs, and bounded idle/backoff loops.
-    worker_allowed_job_kinds: str = Field(
-        default=DEFAULT_WORKER_ALLOWED_JOB_KINDS,
+    # Worker runtime. Normal workers use one fixed lane. A raw allowlist is
+    # accepted only for a gated, bounded maintenance invocation.
+    worker_lane: Literal["interactive", "background", "maintenance"] | None = Field(
+        default=None,
+        alias="WORKER_LANE",
+    )
+    worker_allowed_job_kinds: str | None = Field(
+        default=None,
         alias="WORKER_ALLOWED_JOB_KINDS",
+    )
+    nexus_allow_worker_maintenance: bool = Field(
+        default=False,
+        alias="NEXUS_ALLOW_WORKER_MAINTENANCE",
     )
     worker_poll_interval_seconds: float = Field(default=5.0, alias="WORKER_POLL_INTERVAL_SECONDS")
     worker_idle_backoff_max_seconds: float = Field(
@@ -776,8 +806,41 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
-        if not any(value.strip() for value in self.worker_allowed_job_kinds.split(",")):
-            raise ValueError("WORKER_ALLOWED_JOB_KINDS must contain at least one job kind.")
+        if self.worker_lane == "maintenance":
+            if not self.nexus_allow_worker_maintenance:
+                raise ValueError(
+                    "WORKER_LANE=maintenance requires NEXUS_ALLOW_WORKER_MAINTENANCE=1."
+                )
+            allowed_kinds = tuple(
+                value.strip()
+                for value in (self.worker_allowed_job_kinds or "").split(",")
+                if value.strip()
+            )
+            if not allowed_kinds:
+                raise ValueError("WORKER_LANE=maintenance requires WORKER_ALLOWED_JOB_KINDS.")
+            if len(set(allowed_kinds)) != len(allowed_kinds):
+                raise ValueError("WORKER_ALLOWED_JOB_KINDS must not contain duplicates.")
+            unknown_maintenance_kinds = set(allowed_kinds) - set(MAINTENANCE_JOB_KINDS)
+            if unknown_maintenance_kinds:
+                raise ValueError(
+                    "WORKER_ALLOWED_JOB_KINDS must be a subset of MAINTENANCE_JOB_KINDS; "
+                    f"invalid kinds: {', '.join(sorted(unknown_maintenance_kinds))}."
+                )
+        else:
+            if self.worker_allowed_job_kinds is not None:
+                raise ValueError(
+                    "WORKER_ALLOWED_JOB_KINDS is valid only with WORKER_LANE=maintenance."
+                )
+            if self.nexus_allow_worker_maintenance:
+                raise ValueError(
+                    "NEXUS_ALLOW_WORKER_MAINTENANCE is valid only with WORKER_LANE=maintenance."
+                )
+        if (
+            self.worker_lane is not None
+            and self.nexus_env in (Environment.STAGING, Environment.PROD)
+            and self.database_statement_timeout_ms == 0
+        ):
+            raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
         if self.worker_poll_interval_seconds <= 0:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS must be > 0.")
         if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:

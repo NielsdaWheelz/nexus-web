@@ -4,7 +4,7 @@ Nexus production is intended to run with:
 
 - Vercel for the Next.js frontend/BFF.
 - Supabase Auth only.
-- One Hetzner Cloud VPS for Postgres, the FastAPI API, and the worker.
+- One Hetzner Cloud VPS for Postgres, the FastAPI API, and two worker lanes.
 - Cloudflare R2 for object storage.
 - Caddy on the VPS for HTTPS at the API domain.
 
@@ -30,16 +30,18 @@ On the Hetzner VPS:
   volume.
 - `caddy`: public HTTPS reverse proxy.
 - `api`: FastAPI service built from `docker/Dockerfile.api`.
-- `worker`: background worker built from `docker/Dockerfile.worker`.
+- `worker-interactive`: user-waiting jobs from `docker/Dockerfile.worker`.
+- `worker-background`: indexing, repair, teardown, and periodic jobs from the
+  same image.
 
-The worker has no public port. Browser requests go through Vercel except direct
-SSE streaming, which uses the public API domain.
+The workers have no public ports. Browser requests go through Vercel except
+direct SSE streaming, which uses the public API domain.
 
-The API is always-on. The worker is safe to leave running only with the explicit
-production allowlist in `WORKER_ALLOWED_JOB_KINDS`. Maintenance jobs are not in
-that allowlist, and `*_SCHEDULE_SECONDS=0` means no autonomous polling, broad
-repair scans, catalog syncs, or prune sweeps. Run maintenance only for a bounded
-operator window after Hetzner Postgres and R2 are healthy.
+The API and both fixed production lanes are always on. The interactive and
+background sets are declared once in `python/nexus/config.py`; normal workers
+do not accept raw allowlists. Reconciliation runs every 600 seconds in the
+background lane. The four maintenance kinds are absent from both services and
+run only in a gated one-off process.
 
 Supabase is only an identity provider in production. Use it for hosted Auth,
 JWKS, OAuth providers, and browser anon-key auth flows. Do not configure
@@ -76,8 +78,8 @@ or still contain placeholders.
 Use Hetzner Postgres for production data. `deploy/hetzner/sync-env.sh`
 validates that `DATABASE_URL` points at the private Compose service
 `postgres:5432` and matches `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
-`POSTGRES_DB`, then the Compose `env_file` supplies that value to API, worker,
-and one-off commands.
+`POSTGRES_DB`, then the Compose `env_file` supplies that value to API, both
+workers, and one-off commands.
 
 The backend DB pool is bounded by `DATABASE_POOL_SIZE`,
 `DATABASE_MAX_OVERFLOW`, and `DATABASE_POOL_TIMEOUT_SECONDS`. Keep the default
@@ -135,7 +137,7 @@ Upload the merged VPS env:
 ./deploy/hetzner/sync-env.sh
 ```
 
-Deploy API and worker:
+Deploy API and both workers:
 
 ```bash
 ./deploy/hetzner/deploy.sh
@@ -149,19 +151,17 @@ remote env was already verified for the same deploy:
 NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
 
-`sync-env.sh` pins the safe production worker allowlist and dies on mismatch.
-When a release changes the safe allowlist (for example adding a new job kind),
-update `WORKER_ALLOWED_JOB_KINDS` in the local `deploy/env/env-prod-worker` to
-the new value before running it.
+`sync-env.sh` rejects stored `WORKER_LANE`, `WORKER_ALLOWED_JOB_KINDS`, or
+`NEXUS_ALLOW_WORKER_MAINTENANCE` values. It also requires reconciliation at 600
+seconds and maintenance-only schedules at zero.
 
 The Hetzner scripts default to the current production IPv4 listed above. Set
 `NEXUS_HOST` to target another host, or `NEXUS_SSH_TARGET` to override the full
 SSH target. The deploy script syncs the repo to `/opt/nexus-web`, builds Docker
 images on the VPS, runs Alembic migrations, and starts the Compose stack.
 
-Deploy may recreate/start the worker. Keep the safe worker env in place during
-normal deploys; use `NEXUS_ALLOW_WORKER_MAINTENANCE=1` only for a bounded
-maintenance window.
+Deploy recreates both fixed lanes. Maintenance authorization belongs only on
+the bounded one-off invocation; never sync it into production runtime env.
 
 ## Frontend Env
 
@@ -238,7 +238,7 @@ Hetzner do not deploy atomically. Do not run these steps out of order.
 
    ```bash
    ssh nexus@5.78.194.235 \
-     'cd /opt/nexus-web && NEXUS_ENV_FILE=/etc/nexus/nexus.env docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker api'
+     'cd /opt/nexus-web && NEXUS_ENV_FILE=/etc/nexus/nexus.env docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker-interactive worker-background api'
    ```
 
 2. Push the hard-cut branch and wait until the corresponding Vercel production
@@ -247,7 +247,7 @@ Hetzner do not deploy atomically. Do not run these steps out of order.
    the production BFF. It must return HTTP `400` with
    `E_INVALID_WORKSPACE_STATE`; this response is produced before proxying.
 4. Run `./deploy/hetzner/deploy.sh`. Its migration phase runs with API and
-   worker stopped, purges `workspace_sessions`, and restarts services only
+   workers stopped, purges `workspace_sessions`, and restarts services only
    after the purge succeeds.
 5. Smoke the production BFF: an absent session creates fresh visit-shaped
    state; exact visit-shaped PUT then GET round-trips; malformed PUT still
@@ -264,6 +264,7 @@ SSH into the VPS:
 ```bash
 ssh nexus@5.78.194.235
 cd /opt/nexus-web
+export CUTOVER_SHA="$(git rev-parse HEAD)"
 ```
 
 Check services:
@@ -276,7 +277,8 @@ Tail logs:
 
 ```bash
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f api
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-interactive
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f worker-background
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs -f caddy
 ```
 
@@ -288,7 +290,8 @@ the stable container-name tag; this is also the manual check that retention
 works — after a deploy, pre-deploy lines must still appear:
 
 ```bash
-journalctl CONTAINER_TAG=nexus-worker-1 --since "24 hours ago"
+journalctl CONTAINER_TAG=nexus-worker-interactive-1 --since "24 hours ago"
+journalctl CONTAINER_TAG=nexus-worker-background-1 --since "24 hours ago"
 ```
 
 One-time step for a VPS provisioned before the journald cutover (new servers
@@ -303,23 +306,24 @@ sudo systemctl restart systemd-journald
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --force-recreate
 ```
 
-Stop only the worker:
+Stop both workers:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker-interactive worker-background
 ```
 
-Recreate the worker after env changes. `docker compose restart` does not reload
+Recreate the workers after env changes. `docker compose restart` does not reload
 `env_file` values:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --no-deps --force-recreate worker
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml up -d --no-deps --force-recreate worker-interactive worker-background
 ```
 
 Check non-secret worker safety env:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker env | sort | rg 'WORKER_|PODCAST_ACTIVE|INGEST_RECONCILE|GUTENBERG|BACKGROUND_JOB_PRUNE'
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-interactive env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT'
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec worker-background env | sort | rg 'WORKER_|DATABASE_STATEMENT_TIMEOUT|PODCAST_ACTIVE|INGEST_RECONCILE|GUTENBERG|BACKGROUND_JOB_PRUNE'
 ```
 
 Health check:
@@ -382,7 +386,7 @@ Production logs are useful for run ids, request ids, and lifecycle events; any
 structured provider error summary lives in `llm_calls.provider_attempts`:
 
 ```bash
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs --since=2h api worker \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs --since=2h api worker-interactive worker-background \
   | grep -E 'llm\.request\.(failed|finished)|chat_run\.|resend|retry'
 ```
 
@@ -396,7 +400,7 @@ Before switching production traffic:
    Apply the CORS policy as code with
    `CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... R2_BUCKET=... ./deploy/cloudflare/apply-r2-cors.sh`.
 3. Stop or disable old backend writers and workers before starting the Hetzner
-   worker.
+   workers.
 4. Use a fresh cutover by default: run migrations on empty Hetzner Postgres and
    start with an empty R2 bucket. If preserving old data, export/import it
    offline before traffic moves; do not configure Supabase as a live fallback.
@@ -404,9 +408,10 @@ Before switching production traffic:
 6. Deploy backend and run migrations.
 7. Verify Supabase hosted Auth redirect config:
    `SUPABASE_MANAGEMENT_ACCESS_TOKEN=... ./deploy/supabase/verify-auth-redirects.sh`.
-8. Confirm `/health`, Supabase Auth login, object upload/download, and a worker
-   job against Hetzner Postgres/R2.
-9. Switch frontend/API traffic and keep maintenance schedules at `0`.
+8. Confirm `/health`, Supabase Auth login, object upload/download, and one job
+   in each worker lane against Hetzner Postgres/R2.
+9. Switch frontend/API traffic, keep maintenance schedules at `0`, and verify
+   reconciliation remains at 600 seconds.
 10. Run the auth smoke checks (see Smoke Checks) against the live URLs.
 
 After cutover, treat Supabase Database and Supabase Storage as legacy data
@@ -443,7 +448,7 @@ worker deploy, SSH to the host and run read-only checks from `/opt/nexus-web`:
 
 ```bash
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml ps
-docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs worker \
+docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml logs worker-interactive \
   | grep -E "ingest_media_source|source_attempt|x_provider|provider_event" \
   | tail -100
 docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml exec -T postgres \
@@ -473,7 +478,7 @@ ORDER BY provider, capability, status, api_error_code;
 SQL
 ```
 
-These checks prove the deployed worker is using the single
+These checks prove the deployed interactive lane is using the single
 `ingest_media_source` job kind, source attempts are durable and queryable, and X
 provider failures are recorded in the provider ledger. Mutating production
 canaries for forced X failures or forced remote-file failures are allowed only
@@ -528,12 +533,12 @@ STORAGE_BUCKET=media
 
 Rollback is revision plus data restore, not provider fallback:
 
-1. Stop `worker`.
+1. Stop `worker-interactive` and `worker-background`.
 2. Restore the last known-good Hetzner Postgres backup or server snapshot.
 3. Restore or reconcile the matching R2 object state.
 4. Redeploy the previous app revision with the matching env.
-5. Force-recreate `api`, confirm health/login/read paths, then recreate
-   `worker`.
+5. Force-recreate `api`, confirm health/login/read paths, then recreate both
+   workers.
 
 Do not point production back to Supabase Database or Supabase Storage. If the
 legacy data needs to be consulted, export from it offline and import into
@@ -541,21 +546,22 @@ Hetzner Postgres/R2.
 
 ## Failure Recovery
 
-- Supabase Auth failure: keep Postgres/R2 unchanged, stop worker only if jobs
+- Supabase Auth failure: keep Postgres/R2 unchanged, stop workers only if jobs
   are repeatedly failing on auth-dependent work, and wait for Auth/JWKS recovery
   or rotate Supabase Auth keys if compromised.
-- Hetzner Postgres failure: stop `worker`, keep `caddy` up, restore from the
+- Hetzner Postgres failure: stop both workers, keep `caddy` up, restore from the
   latest verified database backup/snapshot, run migrations for the deployed
-  revision, then force-recreate `api` and `worker`.
+  revision, then force-recreate `api`, `worker-interactive`, and
+  `worker-background`.
 - R2 failure: stop write-heavy jobs, verify Cloudflare status/credentials, retry
   failed object operations after recovery, and reconcile DB object metadata
   against R2 inventory if writes partially completed.
 - Bad deploy/env: redeploy the previous revision with the previous env, recreate
   services, and verify `/health`, auth, DB query, object read/write, and worker
   logs.
-- Worker runaway: stop `worker`, restore the safe allowlist/schedules, sync env,
-  force-recreate `worker`, and watch DB/R2 metrics before any maintenance
-  window.
+- Worker runaway: stop the affected lane, restore the declared schedules, sync
+  env, force-recreate that lane, and watch DB/R2 metrics before any
+  maintenance window.
 
 ## Maintenance Windows
 
@@ -563,17 +569,31 @@ Maintenance is opt-in per job kind:
 
 ```text
 podcast_active_subscription_poll_job -> PODCAST_ACTIVE_POLL_SCHEDULE_SECONDS
-reconcile_stale_ingest_media_job -> INGEST_RECONCILE_SCHEDULE_SECONDS
 sync_gutenberg_catalog_job -> SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS
 prune_background_jobs_job -> BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS
+purge_expired_auth_handoff_codes -> registry-owned hourly schedule
 ```
 
-To run a repair window, append only the required maintenance job kind to
-`WORKER_ALLOWED_JOB_KINDS`, set only its schedule above `0`, sync env with
-`NEXUS_ALLOW_WORKER_MAINTENANCE=1`, force-recreate the worker, and watch
-Postgres and R2 metrics. When the window is done, remove the maintenance kind,
-restore its schedule to `0`, sync env again without
-`NEXUS_ALLOW_WORKER_MAINTENANCE`, and force-recreate the worker again.
+Run maintenance as a one-off worker-image process. Pass the maintenance lane,
+authorization gate, and exact non-empty maintenance-only allowlist on that
+invocation. For scheduler-driven kinds, pass only that kind's positive schedule.
+For example:
+
+```bash
+CUTOVER_SHA="$(git rev-parse HEAD)" timeout --foreground 15m docker compose \
+  --env-file /etc/nexus/nexus.env \
+  -f deploy/hetzner/docker-compose.yml \
+  run -T --rm --no-deps \
+  -e WORKER_LANE=maintenance \
+  -e NEXUS_ALLOW_WORKER_MAINTENANCE=1 \
+  -e WORKER_ALLOWED_JOB_KINDS=prune_background_jobs_job \
+  -e BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=3600 \
+  worker-background
+```
+
+Observe the exact job to terminal state and stop the process. Do not edit or
+sync the normal production env, and do not create a continuously running
+maintenance service.
 
 ## Files To Remember
 

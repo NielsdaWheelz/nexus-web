@@ -16,10 +16,10 @@ import re
 from urllib.parse import quote, urljoin, urlparse
 
 from lxml.etree import ParserError
-from lxml.html import HtmlElement, document_fromstring, tostring
+from lxml.html import HtmlElement, tostring
 
 from nexus import web_paths
-from nexus.services.html_tree import remove_element, unwrap_element
+from nexus.services.html_tree import parse_html_document, remove_element, unwrap_element
 
 ALLOWED_TAGS = frozenset(
     {
@@ -137,7 +137,7 @@ def sanitize_html(
 
     try:
         # Parse HTML - lxml handles malformed HTML gracefully
-        doc = document_fromstring(html)
+        doc = parse_html_document(html)
     except ParserError as e:
         raise ValueError(f"Failed to parse HTML: {e}") from e
 

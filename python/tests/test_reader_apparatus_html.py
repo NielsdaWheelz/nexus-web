@@ -512,6 +512,20 @@ def test_epub_noteref_extracts_before_sanitization():
     assert 'data-reader-apparatus-kind="footnote"' in annotated
 
 
+def test_unicode_xml_encoding_declaration_uses_shared_parser():
+    annotated, items, edges = extract_html_apparatus(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<html><body><p>Claim <a role="doc-noteref" href="#fn1">1</a></p>'
+        '<aside id="fn1" role="doc-footnote">Source note.</aside></body></html>',
+        source_kind="web:0",
+        source_ref={"format": "html"},
+    )
+
+    assert 'data-reader-apparatus-kind="footnote_ref"' in annotated
+    assert [item["kind"] for item in items] == ["footnote", "footnote_ref"]
+    assert len(edges) == 1
+
+
 def test_epub_cross_fragment_noteref_resolves_external_endnote_target():
     chapter_html = """
     <section>

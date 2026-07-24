@@ -9,7 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from nexus.services.content_indexing import repair_ready_media_content_index_now
+from nexus.services.content_indexing import (
+    IndexOwner,
+    build_pdf_indexable_blocks,
+    rebuild_content_index,
+)
 from tests.factories import (
     add_context_edge,
     add_media_to_library,
@@ -100,12 +104,21 @@ def _setup_pdf_media(
             status=status,
         )
         if status == "ready_for_reading":
-            index_result = repair_ready_media_content_index_now(
+            spans = page_spans or PDF_PAGE_SPANS[:page_count]
+            rebuild_content_index(
                 session,
-                media_id=media_id,
+                owner=IndexOwner("media", media_id),
+                source_kind="pdf",
+                blocks=build_pdf_indexable_blocks(
+                    media_id=media_id,
+                    plain_text=plain_text,
+                    page_spans=[
+                        (page_number, start, end, None, None, None, None)
+                        for page_number, (start, end) in enumerate(spans, start=1)
+                    ],
+                ),
                 reason="test_pdf_highlight_fixture",
             )
-            assert index_result is not None
             session.commit()
     direct_db.register_cleanup("media", "id", media_id)
     direct_db.register_cleanup("library_entries", "media_id", media_id)

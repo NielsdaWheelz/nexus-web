@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal, cast
@@ -13,9 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
-from nexus.config import get_settings
 from nexus.db.errors import integrity_constraint_name
-from nexus.db.session import create_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -34,25 +31,20 @@ from nexus.schemas.media import (
 )
 from nexus.services.billing import get_transcription_usage
 from nexus.services.billing_entitlements import get_effective_entitlements
-from nexus.services.content_indexing import (
-    IndexOwner,
-    mark_content_index_failed,
-    rebuild_transcript_content_index,
-)
-from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
-from nexus.services.transcript_segments import (
-    TranscriptSegmentInput,
-    normalize_transcript_segments,
+from nexus.services.source_publication import (
+    SourcePublicationFence,
+    run_source_publication_phase,
 )
+from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import (
     TranscriptRequestReason,
     ensure_media_transcript_state_row,
+    publish_source_transcript,
     set_media_transcript_state,
-    write_current_transcript,
 )
 
 from .deepgram_adapter import (
@@ -82,16 +74,6 @@ class TranscriptionRunResult:
     error_code: str | None = None
     segment_count: int | None = None
     provider_fixture: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class SemanticRepairResult:
-    """Worker result for a podcast transcript semantic-index repair run."""
-
-    status: Literal["skipped", "failed", "completed"]
-    reason: str | None = None
-    error_code: str | None = None
-    chunk_count: int | None = None
 
 
 def _semantic_index_requires_repair(
@@ -648,11 +630,11 @@ def request_podcast_transcripts_batch_for_viewer(
 def _batch_transcript_status_from_admission(
     admission: TranscriptRequestResponse,
 ) -> Literal["queued", "already_ready", "already_queued", "rejected_invalid"]:
-    if admission.request_enqueued:
-        return "queued"
     transcript_state = admission.transcript_state.strip().lower()
     if transcript_state in {"ready", "partial"}:
         return "already_ready"
+    if admission.request_enqueued:
+        return "queued"
     if transcript_state in {"queued", "running"}:
         return "already_queued"
     return "rejected_invalid"
@@ -957,281 +939,68 @@ def mark_podcast_transcription_failure(
     )
 
 
-def _transcription_heartbeat_interval_seconds(*, stale_extracting_seconds: int) -> float:
-    # Keep lease heartbeats comfortably below stale reclaim cutoff.
-    return max(1.0, min(30.0, float(stale_extracting_seconds) / 2.0))
-
-
-def _run_transcription_job_heartbeat(
-    session_factory: sessionmaker[Session],
-    *,
-    stop_event: threading.Event,
-    media_id: UUID,
-    interval_seconds: float,
-) -> None:
-    while not stop_event.wait(interval_seconds):
-        try:
-            with session_factory() as heartbeat_db:
-                heartbeat_db.execute(
-                    text(
-                        """
-                        UPDATE podcast_transcription_jobs
-                        SET updated_at = now()
-                        WHERE media_id = :media_id
-                          AND status = 'running'
-                        """
-                    ),
-                    {"media_id": media_id},
-                )
-                heartbeat_db.execute(
-                    text(
-                        """
-                        UPDATE media
-                        SET updated_at = now()
-                        WHERE id = :media_id
-                          AND processing_status = 'extracting'
-                        """
-                    ),
-                    {"media_id": media_id},
-                )
-                heartbeat_db.commit()
-        except SQLAlchemyError:
-            logger.warning(
-                "podcast_transcription_heartbeat_failed",
-                media_id=str(media_id),
-            )
-
-
-def _start_transcription_job_heartbeat(
-    db: Session,
-    *,
-    media_id: UUID,
-    stale_extracting_seconds: int,
-) -> tuple[threading.Event, threading.Thread]:
-    bind = db.get_bind()
-    engine = getattr(bind, "engine", bind)
-    session_factory = create_session_factory(engine)
-    stop_event = threading.Event()
-    interval_seconds = _transcription_heartbeat_interval_seconds(
-        stale_extracting_seconds=stale_extracting_seconds
-    )
-    heartbeat_thread = threading.Thread(
-        target=_run_transcription_job_heartbeat,
-        kwargs={
-            "session_factory": session_factory,
-            "stop_event": stop_event,
-            "media_id": media_id,
-            "interval_seconds": interval_seconds,
-        },
-        daemon=True,
-        name=f"podcast-transcription-heartbeat-{media_id}",
-    )
-    heartbeat_thread.start()
-    return stop_event, heartbeat_thread
-
-
-def _stop_transcription_job_heartbeat(
-    heartbeat: tuple[threading.Event, threading.Thread] | None,
-) -> None:
-    if heartbeat is None:
-        return
-    stop_event, heartbeat_thread = heartbeat
-    stop_event.set()
-    heartbeat_thread.join(timeout=2.0)
-
-
 def run_podcast_transcription_now(
-    db: Session,
+    session_factory: sessionmaker[Session],
     *,
     media_id: UUID,
     requested_by_user_id: UUID | None,
     request_id: str | None = None,
-    mark_media_ready: bool = True,
-    mark_media_failed: bool = True,
-    dispatch_metadata_enrichment: bool = True,
+    publication_fence: SourcePublicationFence,
 ) -> TranscriptionRunResult:
-    stale_extracting_seconds = get_settings().ingest_stale_extracting_seconds
-    claimed = db.execute(
-        text(
-            """
-            UPDATE podcast_transcription_jobs
-            SET
-                status = 'running',
-                error_code = NULL,
-                attempts = attempts + 1,
-                started_at = now(),
-                completed_at = NULL,
-                updated_at = now()
-            WHERE media_id = :media_id
-              AND (
-                    status IN ('pending', 'failed')
-                    OR (
-                        status = 'running'
-                        AND COALESCE(updated_at, started_at) < (
-                            now() - (
-                                CAST(:stale_extracting_seconds AS integer)
-                                * interval '1 second'
-                            )
-                        )
-                    )
-              )
-            RETURNING request_reason, updated_at
-            """
-        ),
-        {
-            "media_id": media_id,
-            "stale_extracting_seconds": stale_extracting_seconds,
-        },
-    ).fetchone()
-
-    if claimed is None:
-        snapshot = db.execute(
+    def publish_running_state(db: Session, _attempt: object) -> tuple[str, str | None]:
+        media_row = db.execute(
             text(
                 """
-                SELECT status, error_code
-                FROM podcast_transcription_jobs
-                WHERE media_id = :media_id
+                SELECT kind, external_playback_url
+                FROM media
+                WHERE id = :media_id
                 """
             ),
             {"media_id": media_id},
         ).fetchone()
-        if snapshot is None:
-            return TranscriptionRunResult(status="skipped", reason="job_not_found")
-        return TranscriptionRunResult(
-            status="skipped",
-            reason="not_pending",
-            job_status=str(snapshot[0]),
-            error_code=snapshot[1],
-        )
-
-    request_reason = str(claimed[0] or "episode_open")
-    claim_now = claimed[1]
-    set_media_transcript_state(
-        db,
-        media_id=media_id,
-        transcript_state="running",
-        transcript_coverage="none",
-        semantic_status="none",
-        last_request_reason=request_reason,
-        last_error_code=None,
-        now=claim_now,
-    )
-    db.commit()
-
-    media_row = db.execute(
-        text(
-            """
-            SELECT kind, external_playback_url
-            FROM media
-            WHERE id = :media_id
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchone()
-    if media_row is None:
-        db.execute(
+        if media_row is None:
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        if str(media_row[0]) != "podcast_episode":
+            raise AssertionError("podcast transcript source media kind changed")
+        ledger = db.execute(
             text(
                 """
                 UPDATE podcast_transcription_jobs
-                SET status = 'failed', error_code = :error_code, completed_at = :now, updated_at = :now
+                SET status = 'running',
+                    error_code = NULL,
+                    attempts = attempts + 1,
+                    started_at = now(),
+                    completed_at = NULL,
+                    updated_at = now()
                 WHERE media_id = :media_id
+                RETURNING request_reason
                 """
             ),
-            {
-                "media_id": media_id,
-                "error_code": ApiErrorCode.E_MEDIA_NOT_FOUND.value,
-                "now": claim_now,
-            },
-        )
-        db.commit()
-        return TranscriptionRunResult(
-            status="failed", error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value
-        )
-
-    if str(media_row[0]) != "podcast_episode":
-        mark_podcast_transcription_failure(
+            {"media_id": media_id},
+        ).fetchone()
+        if ledger is None:
+            raise AssertionError("podcast source attempt is missing its quota ledger")
+        request_reason = str(ledger[0] or "episode_open")
+        set_media_transcript_state(
             db,
             media_id=media_id,
-            error_code=ApiErrorCode.E_INVALID_KIND.value,
-            error_message="Invalid media kind for podcast transcription",
-            now=claim_now,
-            mark_media_failed=mark_media_failed,
+            transcript_state="running",
+            transcript_coverage="none",
+            semantic_status="none",
+            last_request_reason=request_reason,
+            last_error_code=None,
+            now=datetime.now(UTC),
         )
-        db.commit()
-        return TranscriptionRunResult(status="failed", error_code=ApiErrorCode.E_INVALID_KIND.value)
+        return request_reason, str(media_row[1] or "").strip() or None
 
-    if mark_media_ready or mark_media_failed:
-        db.execute(
-            text(
-                """
-                UPDATE media
-                SET
-                    processing_status = 'extracting',
-                    failure_stage = NULL,
-                    last_error_code = NULL,
-                    last_error_message = NULL,
-                    processing_started_at = :now,
-                    processing_completed_at = NULL,
-                    failed_at = NULL,
-                    updated_at = :now
-                WHERE id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "now": claim_now,
-            },
-        )
-    set_media_transcript_state(
-        db,
-        media_id=media_id,
-        transcript_state="running",
-        transcript_coverage="none",
-        semantic_status="none",
-        last_request_reason=request_reason,
-        last_error_code=None,
-        now=claim_now,
+    request_reason, audio_url = run_source_publication_phase(
+        session_factory=session_factory,
+        label="publish_podcast_transcription_running",
+        fence=publication_fence,
+        media_ids=(media_id,),
+        mutate=publish_running_state,
     )
-    db.commit()
-
-    audio_url = str(media_row[1] or "").strip() or None
-    heartbeat: tuple[threading.Event, threading.Thread] | None = None
-    try:
-        heartbeat = _start_transcription_job_heartbeat(
-            db,
-            media_id=media_id,
-            stale_extracting_seconds=stale_extracting_seconds,
-        )
-    except (RuntimeError, SQLAlchemyError):
-        logger.warning(
-            "podcast_transcription_heartbeat_start_failed",
-            media_id=str(media_id),
-        )
-    try:
-        transcription_result = get_deepgram_client().transcribe(audio_url)
-    except (
-        Exception
-    ) as exc:  # justify-ignore-error: provider boundary; recover into failed-status terminal record
-        now = datetime.now(UTC)
-        logger.exception(
-            "podcast_transcription_unhandled_error",
-            media_id=str(media_id),
-            error=str(exc),
-        )
-        mark_podcast_transcription_failure(
-            db,
-            media_id=media_id,
-            error_code=ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-            error_message="Transcription failed",
-            now=now,
-            mark_media_failed=mark_media_failed,
-        )
-        db.commit()
-        return TranscriptionRunResult(
-            status="failed", error_code=ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-        )
-    finally:
-        _stop_transcription_job_heartbeat(heartbeat)
+    transcription_result = get_deepgram_client().transcribe(audio_url)
     transcription_status = transcription_result.status
     transcript_segments = normalize_transcript_segments(transcription_result.segments)
     transcription_error_code = transcription_result.error_code
@@ -1239,235 +1008,68 @@ def run_podcast_transcription_now(
     diagnostic_error_code = transcription_result.diagnostic_error_code
     now = datetime.now(UTC)
 
-    if transcription_status == "completed" and not transcript_segments:
-        transcription_status = "failed"
-        transcription_error_code = ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value
-        transcription_error_message = "Transcript unavailable"
-        diagnostic_error_code = None
-
     if transcription_status == "completed" and transcript_segments:
-        write_current_transcript(
-            db,
-            media_id=media_id,
-            request_reason=cast(TranscriptRequestReason, request_reason),
-            transcript_coverage="full",
-            transcript_segments=transcript_segments,
-            mark_media_ready=mark_media_ready,
-            now=now,
+
+        def publish_transcript(db: Session, _attempt: object) -> None:
+            publish_source_transcript(
+                db,
+                media_id=media_id,
+                request_reason=cast(TranscriptRequestReason, request_reason),
+                transcript_coverage="full",
+                transcript_segments=transcript_segments,
+                now=now,
+            )
+            db.execute(
+                text(
+                    """
+                    UPDATE podcast_transcription_jobs
+                    SET status = 'completed',
+                        error_code = :error_code,
+                        completed_at = :now,
+                        updated_at = :now
+                    WHERE media_id = :media_id
+                    """
+                ),
+                {
+                    "media_id": media_id,
+                    "error_code": diagnostic_error_code,
+                    "now": now,
+                },
+            )
+            _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
+
+        run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_podcast_transcript_artifacts",
+            fence=publication_fence,
+            media_ids=(media_id,),
+            mutate=publish_transcript,
         )
-        db.execute(
-            text(
-                """
-                UPDATE podcast_transcription_jobs
-                SET
-                    status = 'completed',
-                    error_code = :error_code,
-                    completed_at = :now,
-                    updated_at = :now
-                WHERE media_id = :media_id
-                """
-            ),
-            {
-                "media_id": media_id,
-                "error_code": diagnostic_error_code,
-                "now": now,
-            },
-        )
-        _commit_reserved_usage_for_media(db, media_id=media_id, now=now)
-        db.commit()
-        if dispatch_metadata_enrichment:
-            if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
-                db.commit()
         return TranscriptionRunResult(
             status="completed",
             segment_count=len(transcript_segments),
             provider_fixture=transcription_result.provider_fixture,
         )
 
-    terminal_error_code = transcription_error_code or ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-    terminal_error_message = transcription_error_message or "Transcription failed"
-    mark_podcast_transcription_failure(
-        db,
-        media_id=media_id,
-        error_code=terminal_error_code,
-        error_message=terminal_error_message,
-        now=now,
-        mark_media_failed=mark_media_failed,
+    if transcription_status == "completed":
+        raise RuntimeError("podcast transcription completed without valid segments")
+    if transcription_error_code in {
+        ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
+    }:
+        raise ApiError(
+            ApiErrorCode(transcription_error_code),
+            transcription_error_message or "Transcription provider failed",
+        )
+    if transcription_error_code != ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
+        raise RuntimeError(
+            "podcast transcription provider returned unexpected failure "
+            f"code: {transcription_error_code!r}"
+        )
+    raise ApiError(
+        ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
+        transcription_error_message or "Transcript unavailable",
     )
-    db.commit()
-    if dispatch_metadata_enrichment:
-        if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
-            db.commit()
-    return TranscriptionRunResult(status="failed", error_code=terminal_error_code)
-
-
-def repair_podcast_transcript_semantic_index_now(
-    db: Session,
-    *,
-    media_id: UUID,
-    request_reason: str = "operator_requeue",
-    request_id: str | None = None,
-) -> SemanticRepairResult:
-    now = datetime.now(UTC)
-    normalized_reason = (
-        request_reason
-        if request_reason in PODCAST_TRANSCRIPT_REQUEST_REASONS
-        else "operator_requeue"
-    )
-
-    lock_acquired = db.execute(
-        text("SELECT pg_try_advisory_xact_lock(hashtext(:lock_key))"),
-        {"lock_key": f"podcast-semantic-repair:{media_id}"},
-    ).scalar()
-    if not bool(lock_acquired):
-        return SemanticRepairResult(status="skipped", reason="locked")
-
-    embedding_model = current_transcript_embedding_model()
-    embedding_provider = current_transcript_embedding_provider()
-
-    claim_row = db.execute(
-        text(
-            """
-            UPDATE media_transcript_states AS mts
-            SET
-                semantic_status = 'pending',
-                last_request_reason = :request_reason,
-                last_error_code = NULL,
-                updated_at = :now
-            WHERE mts.media_id = :media_id
-              AND mts.transcript_state IN ('ready', 'partial')
-              AND mts.transcript_coverage IN ('partial', 'full')
-              AND EXISTS (
-                  SELECT 1
-                  FROM podcast_transcript_segments pts
-                  WHERE pts.media_id = mts.media_id
-              )
-              AND (
-                  mts.semantic_status IN ('pending', 'failed')
-                  OR (
-                      mts.semantic_status = 'ready'
-                      AND (
-                          NOT EXISTS (
-                              SELECT 1
-                              FROM content_index_states mcis
-                              WHERE mcis.owner_kind = 'media' AND mcis.owner_id = mts.media_id
-                                AND mcis.status = 'ready'
-                                AND mcis.active_embedding_provider = :embedding_provider
-                                AND mcis.active_embedding_model = :embedding_model
-                          )
-                      )
-                  )
-              )
-            RETURNING mts.transcript_state, mts.transcript_coverage
-            """
-        ),
-        {
-            "media_id": media_id,
-            "request_reason": normalized_reason,
-            "embedding_provider": embedding_provider,
-            "embedding_model": embedding_model,
-            "now": now,
-        },
-    ).fetchone()
-    if claim_row is None:
-        return SemanticRepairResult(status="skipped", reason="not_repairable")
-
-    transcript_state = str(claim_row[0] or "ready")
-    transcript_coverage = str(claim_row[1] or "full")
-    segment_rows = db.execute(
-        text(
-            """
-            SELECT canonical_text, t_start_ms, t_end_ms, speaker_label
-            FROM podcast_transcript_segments
-            WHERE media_id = :media_id
-            ORDER BY segment_idx ASC
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-
-    # Rows arrive ordered by segment_idx ASC; enumerate over the kept rows restores
-    # the contiguous 0..N-1 index the dataclass contract carries.
-    transcript_segments: list[TranscriptSegmentInput] = []
-    for row in segment_rows:
-        canonical_text = str(row[0] or "").strip()
-        t_start_ms = row[1]
-        t_end_ms = row[2]
-        if not canonical_text or t_start_ms is None or t_end_ms is None:
-            continue
-        transcript_segments.append(
-            TranscriptSegmentInput(
-                segment_idx=len(transcript_segments),
-                t_start_ms=int(t_start_ms),
-                t_end_ms=int(t_end_ms),
-                canonical_text=canonical_text,
-                speaker_label=row[3],
-            )
-        )
-
-    if not transcript_segments:
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-            semantic_status="failed",
-            last_request_reason=normalized_reason,
-            last_error_code=ApiErrorCode.E_INTERNAL.value,
-            now=now,
-        )
-        return SemanticRepairResult(
-            status="failed",
-            error_code=ApiErrorCode.E_INTERNAL.value,
-            reason="segments_missing",
-        )
-
-    try:
-        rebuild_transcript_content_index(
-            db,
-            media_id=media_id,
-            transcript_segments=transcript_segments,
-            reason=normalized_reason,
-        )
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-            semantic_status="ready",
-            last_request_reason=normalized_reason,
-            last_error_code=None,
-            now=now,
-        )
-        return SemanticRepairResult(
-            status="completed",
-            chunk_count=len(transcript_segments),
-        )
-    except Exception as exc:  # justify-ignore-error: semantic repair boundary; mark content index failure and surface in state
-        logger.exception(
-            "podcast_semantic_repair_failed",
-            media_id=str(media_id),
-            request_id=request_id,
-            error=str(exc),
-        )
-        error_code = exc.code.value if isinstance(exc, ApiError) else ApiErrorCode.E_INTERNAL.value
-        mark_content_index_failed(
-            db,
-            owner=IndexOwner("media", media_id),
-            failure_code=error_code,
-            failure_message=str(exc),
-        )
-        set_media_transcript_state(
-            db,
-            media_id=media_id,
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-            semantic_status="failed",
-            last_request_reason=normalized_reason,
-            last_error_code=error_code,
-            now=now,
-        )
-        return SemanticRepairResult(status="failed", error_code=error_code)
 
 
 def _reset_podcast_transcription_job_for_source_attempt(

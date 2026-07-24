@@ -2754,7 +2754,7 @@
     "web_article_generic_url_contract": {
         "schema_version": 1,
         "contract": "web_article_generic_url_source_html_api",
-        "test_selector": "tests/test_ingest_web_article.py::TestFragmentPersistence::test_generic_url_ingest_extracts_apparatus_from_source_html",
+        "test_selector": "tests/test_from_url.py::test_generic_url_source_extracts_apparatus_from_source_html",
         "fixture_contract_source": "web_article_capture_api",
         "apparatus_source": "fetched_source_html",
         "reader_fragment_source": "readability_content_html",

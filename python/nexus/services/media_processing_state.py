@@ -22,7 +22,7 @@ def mark_failed(
     error_code: str,
     error_message: str,
 ) -> None:
-    """Transition media to the terminal failed state and commit."""
+    """Transition media to terminal failed; the owning transaction commits."""
     media.processing_status = ProcessingStatus.failed
     media.failure_stage = FailureStage(stage)
     media.last_error_code = error_code
@@ -30,7 +30,7 @@ def mark_failed(
     media.processing_completed_at = None
     media.failed_at = func.now()
     media.updated_at = func.now()
-    db.commit()
+    db.flush()
 
 
 def begin_extraction(db: Session, media: Media) -> None:

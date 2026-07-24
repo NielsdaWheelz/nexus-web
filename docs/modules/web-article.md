@@ -7,7 +7,7 @@ by provenance.
 - `media_source_ingest.py`: durable accepted source attempts for generic web
   URLs, X/Twitter URLs, and browser article captures. It creates the media row
   and `media_source_attempts` row before provider fetch, browser-capture
-  sanitization, or indexing work starts.
+  sanitization, or retrieval work starts.
 - `x_identity.py`: X/Twitter URL classification and username normalization.
 - `x_client.py`: official X API calls, same-author full-archive search,
   provider timeout budgeting, and typed provider failures.
@@ -17,13 +17,13 @@ by provenance.
 - `media.py`: catalog/hydration and fragment listing only for web articles.
 - `web_article_structure.py`: sanitization, canonical text, and fragment block
   preparation.
-- `web_article_indexing.py`: content-index rebuild and failure marking for web
-  article fragments.
+- `content_indexing.py` + `media_content_reindex_job`: durable, revision-fenced
+  retrieval indexing after readable source artifacts commit.
 - `node/ingest/ingest.mjs`: generic web fetch and extraction. Mozilla
   Readability is the default extractor, with a source-shape-specific
   pre-extraction for Wikisource proofread pages (`.mw-parser-output >
   .prp-pages-output`) so page-body text wins over reference sections before the
-  normal Python sanitization/indexing path consumes it.
+  normal Python source-normalization path consumes it.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. X author-thread media
@@ -34,8 +34,10 @@ with `source_attempt_id` correlation.
 
 Browser article capture persists the raw captured HTML as a private source
 artifact at acceptance time, then queues `ingest_media_source`. Sanitization,
-no-readable-text, indexing, and metadata failures update the accepted media row
-and latest source attempt instead of dropping the capture.
+no-readable-text, and metadata failures update the accepted media row and latest
+source attempt instead of dropping the capture. Retrieval failure never rewrites
+successful source truth; its current durable job is pending, running, or visibly
+suspended.
 
 ## Reader Apparatus
 

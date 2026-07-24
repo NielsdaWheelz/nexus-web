@@ -264,3 +264,11 @@ class TestEmptyAndMalformed:
         # Should not raise
         result = sanitize_html(html, "https://example.com")
         assert "Unclosed paragraph" in result
+
+    def test_unicode_xml_encoding_declaration_uses_shared_parser(self):
+        result = sanitize_html(
+            '<?xml version="1.0" encoding="UTF-8"?><html><body><p>Readable</p></body></html>',
+            "https://example.com",
+        )
+
+        assert result == "<p>Readable</p>"

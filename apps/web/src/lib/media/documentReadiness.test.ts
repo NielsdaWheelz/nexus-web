@@ -27,6 +27,7 @@ describe("isDocumentProcessingTerminal", () => {
   it("accepts only terminal media document processing statuses", () => {
     expect(isDocumentProcessingTerminal("ready_for_reading")).toBe(true);
     expect(isDocumentProcessingTerminal("failed")).toBe(true);
+    expect(isDocumentProcessingTerminal("suspended")).toBe(true);
     expect(isDocumentProcessingTerminal("pending")).toBe(false);
     expect(isDocumentProcessingTerminal("extracting")).toBe(false);
     expect(isDocumentProcessingTerminal("embedding")).toBe(false);

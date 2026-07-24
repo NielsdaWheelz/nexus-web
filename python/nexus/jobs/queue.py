@@ -365,6 +365,68 @@ def claim_next_job(
     return _row_to_job(claimed)
 
 
+def claim_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    lease_seconds: int,
+    allowed_kinds: Sequence[str] | None = None,
+) -> JobRow | None:
+    """Claim one exact due operation through the canonical queue transition.
+
+    Normal workers use :func:`claim_next_job`; exact-operation drivers such as
+    deterministic seed/test drainers use this doorway so unrelated due work is
+    never claimed as a side effect.
+    """
+    if allowed_kinds is not None and len(allowed_kinds) == 0:
+        return None
+    kind_predicate = "AND kind = ANY(:allowed_kinds)" if allowed_kinds is not None else ""
+    params: dict[str, object] = {
+        "job_id": job_id,
+        "worker_id": worker_id,
+        "lease_seconds": max(int(lease_seconds), 1),
+    }
+    if allowed_kinds is not None:
+        params["allowed_kinds"] = list(allowed_kinds)
+    row = (
+        db.execute(
+            text(
+                f"""
+                UPDATE background_jobs
+                SET
+                    status = 'running',
+                    attempts = attempts + 1,
+                    claimed_by = :worker_id,
+                    started_at = COALESCE(started_at, now()),
+                    lease_expires_at =
+                        now() + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    updated_at = now()
+                WHERE id = :job_id
+                  {kind_predicate}
+                  AND (
+                      (
+                          status IN ('pending', 'failed')
+                          AND available_at <= now()
+                      )
+                      OR (
+                          status = 'running'
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at <= now()
+                          AND attempts < max_attempts
+                      )
+                  )
+                RETURNING *
+                """
+            ),
+            params,
+        )
+        .mappings()
+        .first()
+    )
+    return _row_to_job(row) if row is not None else None
+
+
 def dead_letter_expired_job(
     db: Session,
     *,
@@ -473,6 +535,19 @@ def get_job(db: Session, job_id: UUID) -> JobRow | None:
     return _row_to_job(row) if row is not None else None
 
 
+def lock_job(db: Session, job_id: UUID) -> JobRow | None:
+    """Lock one queue row for a composing domain mutation."""
+    row = (
+        db.execute(
+            text("SELECT * FROM background_jobs WHERE id = :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        )
+        .mappings()
+        .first()
+    )
+    return _row_to_job(row) if row is not None else None
+
+
 def heartbeat_job(
     db: Session,
     *,
@@ -502,6 +577,49 @@ def heartbeat_job(
         },
     ).first()
     return updated is not None
+
+
+def lock_and_renew_running_job_claim(
+    db: Session,
+    *,
+    context: JobExecutionContext,
+    lease_seconds: int,
+) -> JobRow | None:
+    """Lock and renew the exact current worker attempt.
+
+    The returned row stays locked through the caller's transaction. Callers
+    must perform every authoritative mutation only after this succeeds and
+    commit before the renewed lease expires.
+    """
+    row = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    lease_expires_at =
+                        clock_timestamp()
+                        + (CAST(:lease_seconds AS integer) * interval '1 second'),
+                    updated_at = clock_timestamp()
+                WHERE id = :job_id
+                  AND status = 'running'
+                  AND claimed_by = :worker_id
+                  AND attempts = :attempt_no
+                  AND lease_expires_at > clock_timestamp()
+                RETURNING *
+                """
+            ),
+            {
+                "job_id": context.job_id,
+                "worker_id": context.worker_id,
+                "attempt_no": int(context.attempt_no),
+                "lease_seconds": max(int(lease_seconds), 1),
+            },
+        )
+        .mappings()
+        .first()
+    )
+    return _row_to_job(row) if row is not None else None
 
 
 def update_running_job_payload(
@@ -591,10 +709,7 @@ def revoke_jobs_by_dedupe_keys(
     if not dedupe_keys:
         return
     db.execute(
-        text(
-            "DELETE FROM background_jobs "
-            "WHERE kind = :kind AND dedupe_key = ANY(:dedupe_keys)"
-        ),
+        text("DELETE FROM background_jobs WHERE kind = :kind AND dedupe_key = ANY(:dedupe_keys)"),
         {"kind": kind, "dedupe_keys": list(dedupe_keys)},
     )
 
@@ -780,6 +895,248 @@ def find_nonterminal_jobs_for_payload(
         .all()
     )
     return [_row_to_job(row) for row in rows]
+
+
+def lock_jobs_for_payload(
+    db: Session,
+    *,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+) -> list[JobRow]:
+    """Lock every queue row for one domain identity in stable order."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE kind = :kind
+                  AND payload @> CAST(:expected_payload_match AS jsonb)
+                ORDER BY id ASC
+                FOR UPDATE
+                """
+            ),
+            {
+                "kind": kind,
+                "expected_payload_match": json.dumps(dict(expected_payload_match)),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [_row_to_job(row) for row in rows]
+
+
+def reset_unclaimed_job_for_new_intent(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+    payload: Mapping[str, Any],
+    max_attempts: int,
+) -> JobRow:
+    """Replace one waiting job with a genuinely new intent and retry budget."""
+    row = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    payload = CAST(:payload AS jsonb),
+                    status = 'pending',
+                    attempts = 0,
+                    max_attempts = :max_attempts,
+                    available_at = now(),
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    error_code = NULL,
+                    last_error = NULL,
+                    result = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND kind = :kind
+                  AND status IN ('pending', 'failed')
+                  AND claimed_by IS NULL
+                RETURNING *
+                """
+            ),
+            {
+                "job_id": job_id,
+                "kind": kind,
+                "payload": json.dumps(dict(payload)),
+                "max_attempts": max(int(max_attempts), 1),
+            },
+        )
+        .mappings()
+        .one()
+    )
+    db.execute(text("SELECT pg_notify('nexus_background_jobs', :kind)"), {"kind": kind})
+    return _row_to_job(row)
+
+
+def supersede_unclaimed_job(
+    db: Session,
+    *,
+    job_id: UUID,
+    kind: str,
+) -> JobRow:
+    """Complete one obsolete waiting operation without touching running/dead history."""
+    row = (
+        db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET
+                    status = 'succeeded',
+                    result = '{"status":"superseded"}'::jsonb,
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE id = :job_id
+                  AND kind = :kind
+                  AND status IN ('pending', 'failed')
+                  AND claimed_by IS NULL
+                RETURNING *
+                """
+            ),
+            {"job_id": job_id, "kind": kind},
+        )
+        .mappings()
+        .one()
+    )
+    return _row_to_job(row)
+
+
+def current_dead_job_for_payload(
+    db: Session,
+    *,
+    kind: str,
+    expected_payload_match: Mapping[str, Any],
+) -> JobRow | None:
+    """Lock and return the exact dead job for a current domain identity."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT *
+                FROM background_jobs
+                WHERE kind = :kind
+                  AND status = 'dead'
+                  AND payload @> CAST(:expected_payload_match AS jsonb)
+                ORDER BY id ASC
+                FOR UPDATE
+                """
+            ),
+            {
+                "kind": kind,
+                "expected_payload_match": json.dumps(dict(expected_payload_match)),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    if len(rows) > 1:
+        # justify-defect: one domain intent cannot own multiple dead executions.
+        raise AssertionError(f"multiple dead {kind} jobs match one domain intent")
+    return _row_to_job(rows[0]) if rows else None
+
+
+def ingest_operation_health(
+    db: Session,
+    *,
+    interactive_kinds: Sequence[str],
+    background_kinds: Sequence[str],
+) -> dict[str, Any]:
+    """Return queue-owned ingest suspension, due-age, and reconciler facts."""
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    (
+                        SELECT count(*)
+                        FROM media_source_attempts msa
+                        JOIN background_jobs j ON j.id = msa.job_id
+                        WHERE j.kind = 'ingest_media_source'
+                          AND j.status = 'dead'
+                          AND msa.id = (
+                              SELECT latest.id
+                              FROM media_source_attempts latest
+                              WHERE latest.media_id = msa.media_id
+                              ORDER BY
+                                  latest.attempt_no DESC,
+                                  latest.created_at DESC,
+                                  latest.id DESC
+                              LIMIT 1
+                          )
+                    ) AS dead_source_count,
+                    (
+                        SELECT count(*)
+                        FROM content_index_states cis
+                        JOIN background_jobs j
+                          ON j.kind = 'media_content_reindex_job'
+                         AND j.status = 'dead'
+                         AND j.payload->>'media_id' = cis.owner_id::text
+                         AND (j.payload->>'revision')::bigint = cis.revision
+                        WHERE cis.owner_kind = 'media'
+                    ) AS dead_index_count,
+                    (
+                        SELECT extract(epoch FROM now() - min(j.available_at))
+                        FROM background_jobs j
+                        WHERE j.kind = ANY(:interactive_kinds)
+                          AND j.status IN ('pending', 'failed')
+                          AND j.available_at <= now()
+                    ) AS oldest_due_interactive_age,
+                    (
+                        SELECT extract(epoch FROM now() - min(j.available_at))
+                        FROM background_jobs j
+                        WHERE j.kind = ANY(:background_kinds)
+                          AND j.status IN ('pending', 'failed')
+                          AND j.available_at <= now()
+                    ) AS oldest_due_background_age
+                """
+            ),
+            {
+                "interactive_kinds": list(interactive_kinds),
+                "background_kinds": list(background_kinds),
+            },
+        )
+        .mappings()
+        .one()
+    )
+    latest = (
+        db.execute(
+            text(
+                """
+                SELECT status, result, finished_at, created_at
+                FROM background_jobs
+                WHERE kind = 'reconcile_stale_ingest_media_job'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    return {
+        "dead_source_count": int(row["dead_source_count"] or 0),
+        "dead_index_count": int(row["dead_index_count"] or 0),
+        "oldest_due_interactive_age_seconds": (
+            int(row["oldest_due_interactive_age"])
+            if row["oldest_due_interactive_age"] is not None
+            else None
+        ),
+        "oldest_due_background_age_seconds": (
+            int(row["oldest_due_background_age"])
+            if row["oldest_due_background_age"] is not None
+            else None
+        ),
+        "latest_reconciler": dict(latest) if latest is not None else None,
+    }
 
 
 def complete_job(

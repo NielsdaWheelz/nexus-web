@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeGuard
@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.jobs.queue import JobExecutionContext
 from nexus.services import media_intelligence
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -32,6 +33,16 @@ from nexus.services.web_article_structure import (
 
 CHUNK_MAX_TOKENS = 420
 CHUNK_OVERLAP_TOKENS = 60
+MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
+MEDIA_CONTENT_REINDEX_REASONS = frozenset(
+    {
+        "source_success",
+        "reconciliation",
+        "operator_repair",
+        "oracle_corpus_seed",
+    }
+)
+DocumentSourceKind = Literal["web_article", "epub", "pdf"]
 
 
 @dataclass(frozen=True)
@@ -65,14 +76,49 @@ class ContentIndexResult:
     chunk_count: int
 
 
-def rebuild_content_index(
-    db: Session,
+@dataclass(frozen=True)
+class MediaContentReindexIntent:
+    revision: int
+    background_job_id: UUID
+    suspended: bool
+    enqueued: bool
+
+
+@dataclass(frozen=True)
+class MediaContentReindexWork:
+    media_id: UUID
+    revision: int
+    source_kind: DocumentSourceKind
+    reason: str
+    blocks: tuple[IndexableBlock, ...]
+
+
+@dataclass(frozen=True)
+class PlannedContentChunk:
+    parts: tuple[tuple[IndexableBlock, int, int, int], ...]
+    text: str
+    locator: dict[str, object]
+    embedding: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class ContentIndexPlan:
+    owner: IndexOwner
+    source_kind: str
+    blocks: tuple[IndexableBlock, ...]
+    chunks: tuple[PlannedContentChunk, ...]
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimensions: int
+
+
+def plan_content_index(
     *,
     owner: IndexOwner,
     source_kind: str,
     blocks: list[IndexableBlock],
-    reason: str,
-) -> ContentIndexResult:
+) -> ContentIndexPlan:
+    """Build and embed one complete materialization with no database access."""
     _validate_blocks(owner=owner, source_kind=source_kind, blocks=blocks)
 
     embedding_model = current_transcript_embedding_model()
@@ -127,18 +173,43 @@ def rebuild_content_index(
             if len(embedding) != embedding_dimensions:
                 raise ValueError("Embedding dimensions do not match configured dimensions")
 
+    return ContentIndexPlan(
+        owner=owner,
+        source_kind=source_kind,
+        blocks=tuple(blocks),
+        chunks=tuple(
+            PlannedContentChunk(
+                parts=tuple(chunk_parts),
+                text=chunk_text,
+                locator=chunk_locator,
+                embedding=tuple(embedding),
+            )
+            for chunk_parts, chunk_text, chunk_locator, embedding in zip(
+                chunks,
+                chunk_texts,
+                chunk_locators,
+                embeddings,
+                strict=True,
+            )
+        ),
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        embedding_dimensions=embedding_dimensions,
+    )
+
+
+def publish_content_index(
+    db: Session,
+    *,
+    plan: ContentIndexPlan,
+    reason: str,
+) -> ContentIndexResult:
+    """Replace one complete materialization inside the caller's transaction."""
     now = datetime.now(UTC)
-    # Per-media single-writer via row lock; resource-item reindex jobs are
-    # serialized by their in-flight dedupe indexes.
-    if owner.kind == "media":
-        db.execute(
-            text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
-            {"owner_id": owner.id},
-        ).scalar_one()
-    delete_content_index(db, owner=owner)
+    replace_content_index_materialization(db, owner=plan.owner)
     _set_index_state(
         db,
-        owner=owner,
+        owner=plan.owner,
         status="indexing",
         status_reason=reason,
         embedding_provider=None,
@@ -147,7 +218,7 @@ def rebuild_content_index(
     )
 
     block_ids_by_idx: dict[int, UUID] = {}
-    for expected_idx, block in enumerate(blocks):
+    for expected_idx, block in enumerate(plan.blocks):
         block_id = db.execute(
             text(
                 """
@@ -187,8 +258,8 @@ def rebuild_content_index(
                 """
             ),
             {
-                "owner_kind": owner.kind,
-                "owner_id": owner.id,
+                "owner_kind": plan.owner.kind,
+                "owner_id": plan.owner.id,
                 "block_idx": block.block_idx,
                 "block_kind": block.block_kind,
                 "canonical_text": block.canonical_text,
@@ -204,21 +275,22 @@ def rebuild_content_index(
         ).scalar_one()
         block_ids_by_idx[expected_idx] = block_id
 
-    if not text_blocks:
+    if not plan.chunks:
         _set_index_state(
             db,
-            owner=owner,
+            owner=plan.owner,
             status="no_text",
             status_reason="no_text",
             embedding_provider=None,
             embedding_model=None,
             now=now,
         )
-        return ContentIndexResult(owner=owner, status="no_text", chunk_count=0)
+        return ContentIndexResult(owner=plan.owner, status="no_text", chunk_count=0)
 
-    for chunk_idx, (chunk_parts, chunk_text, summary_locator, embedding) in enumerate(
-        zip(chunks, chunk_texts, chunk_locators, embeddings, strict=True)
-    ):
+    for chunk_idx, chunk in enumerate(plan.chunks):
+        chunk_parts = chunk.parts
+        chunk_text = chunk.text
+        summary_locator = chunk.locator
         first_block, first_start, _, _ = chunk_parts[0]
         last_block, _, last_end, _ = chunk_parts[-1]
         first_block_id = block_ids_by_idx[first_block.block_idx]
@@ -257,8 +329,8 @@ def rebuild_content_index(
                 """
             ),
             {
-                "owner_kind": owner.kind,
-                "owner_id": owner.id,
+                "owner_kind": plan.owner.kind,
+                "owner_id": plan.owner.id,
                 "start_block_id": first_block_id,
                 "end_block_id": last_block_id,
                 "start_block_offset": first_start,
@@ -266,7 +338,7 @@ def rebuild_content_index(
                 "span_text": chunk_text,
                 "selector": json.dumps(summary_locator),
                 "citation_label": citation_label,
-                "resolver_kind": _resolver_kind(source_kind),
+                "resolver_kind": _resolver_kind(plan.source_kind),
                 "now": now,
             },
         ).scalar_one()
@@ -302,11 +374,11 @@ def rebuild_content_index(
                 """
             ),
             {
-                "owner_kind": owner.kind,
-                "owner_id": owner.id,
+                "owner_kind": plan.owner.kind,
+                "owner_id": plan.owner.id,
                 "evidence_span_id": evidence_span_id,
                 "chunk_idx": chunk_idx,
-                "source_kind": source_kind,
+                "source_kind": plan.source_kind,
                 "chunk_text": chunk_text,
                 "token_count": sum(int(part[3]) for part in chunk_parts),
                 "heading_path": json.dumps(list(first_block.heading_path)),
@@ -382,28 +454,28 @@ def rebuild_content_index(
                     :embedding_provider,
                     :embedding_model,
                     :embedding_dimensions,
-                    CAST(:embedding_vector AS vector({embedding_dimensions})),
+                    CAST(:embedding_vector AS vector({plan.embedding_dimensions})),
                     :now
                 )
                 """
             ),
             {
                 "chunk_id": chunk_id,
-                "embedding_provider": embedding_provider,
-                "embedding_model": embedding_model,
-                "embedding_dimensions": embedding_dimensions,
-                "embedding_vector": to_pgvector_literal(embedding),
+                "embedding_provider": plan.embedding_provider,
+                "embedding_model": plan.embedding_model,
+                "embedding_dimensions": plan.embedding_dimensions,
+                "embedding_vector": to_pgvector_literal(list(chunk.embedding)),
                 "now": now,
             },
         )
 
     _set_index_state(
         db,
-        owner=owner,
+        owner=plan.owner,
         status="ready",
         status_reason=reason,
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
+        embedding_provider=plan.embedding_provider,
+        embedding_model=plan.embedding_model,
         now=now,
     )
     # Single owner of the per-media unit trigger: every text-bearing media source
@@ -411,9 +483,34 @@ def rebuild_content_index(
     # here once rather than at each ingest call site. Participates in the caller's
     # transaction so the enqueue commits atomically with the content-index write.
     # Page indexes carry no media unit, so this is gated to media owners only.
+    if plan.owner.kind == "media":
+        media_intelligence.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
+    return ContentIndexResult(
+        owner=plan.owner,
+        status="ready",
+        chunk_count=len(plan.chunks),
+    )
+
+
+def rebuild_content_index(
+    db: Session,
+    *,
+    owner: IndexOwner,
+    source_kind: str,
+    blocks: list[IndexableBlock],
+    reason: str,
+) -> ContentIndexResult:
+    """Synchronous note/transcript doorway; document sources use the durable job."""
     if owner.kind == "media":
-        media_intelligence.ensure_media_unit_in_tx(db, media_id=owner.id)
-    return ContentIndexResult(owner=owner, status="ready", chunk_count=len(chunks))
+        db.execute(
+            text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
+            {"owner_id": owner.id},
+        ).scalar_one()
+    return publish_content_index(
+        db,
+        plan=plan_content_index(owner=owner, source_kind=source_kind, blocks=blocks),
+        reason=reason,
+    )
 
 
 def rebuild_fragment_content_index(
@@ -457,42 +554,87 @@ def rebuild_fragment_content_index(
                 "label": row[4],
             }
 
+    fragment_blocks_by_id: dict[UUID, list[Any]] = {}
+    if source_kind == "epub":
+        fragment_ids = [fragment.id for fragment in fragments]
+        if fragment_ids:
+            for row in db.execute(
+                text(
+                    """
+                    SELECT fragment_id, block_idx, start_offset, end_offset
+                    FROM fragment_blocks
+                    WHERE fragment_id = ANY(:fragment_ids)
+                    ORDER BY fragment_id ASC, block_idx ASC
+                    """
+                ),
+                {"fragment_ids": fragment_ids},
+            ).fetchall():
+                fragment_blocks_by_id.setdefault(row[0], []).append(row)
+
+    blocks = build_fragment_indexable_blocks(
+        media_id=media_id,
+        source_kind=source_kind,
+        fragments=fragments,
+        media_title=media_title,
+        nav_by_fragment_idx=nav_by_fragment_idx,
+        fragment_blocks_by_id=fragment_blocks_by_id,
+    )
+    return rebuild_content_index(
+        db,
+        owner=IndexOwner("media", media_id),
+        source_kind=source_kind,
+        blocks=blocks,
+        reason=reason,
+    )
+
+
+def build_fragment_indexable_blocks(
+    *,
+    media_id: UUID,
+    source_kind: str,
+    fragments: Sequence[Any],
+    media_title: str | None,
+    nav_by_fragment_idx: dict[int, dict[str, object]],
+    fragment_blocks_by_id: dict[UUID, list[Any]],
+) -> list[IndexableBlock]:
+    """Build fragment blocks from an immutable source snapshot."""
+    if not _is_document_source_kind(source_kind):
+        # justify-defect: fragment document indexing has a closed source-kind contract.
+        raise AssertionError("fragment content-index source kind is ineligible")
     blocks: list[IndexableBlock] = []
     source_offset = 0
-    for fragment in sorted(fragments, key=lambda item: int(item.idx)):
-        fragment_text = str(fragment.canonical_text or "")
+    for fragment in sorted(
+        fragments,
+        key=lambda item: int(str(_field(item, "idx", -1))),
+    ):
+        fragment_id = UUID(str(_field(fragment, "id", "")))
+        fragment_idx = int(str(_field(fragment, "idx", -1)))
+        fragment_text = str(_field(fragment, "canonical_text", "") or "")
         source_base = source_offset
         if source_kind == "web_article":
-            html_sanitized = add_heading_anchors(
-                str(fragment.html_sanitized or ""),
-                fragment_idx=int(fragment.idx),
-            )
-            if html_sanitized != str(fragment.html_sanitized or ""):
-                db.execute(
-                    text(
-                        """
-                        UPDATE fragments
-                        SET html_sanitized = :html_sanitized
-                        WHERE id = :fragment_id
-                        """
-                    ),
-                    {
-                        "fragment_id": fragment.id,
-                        "html_sanitized": html_sanitized,
-                    },
+            html_sanitized = str(_field(fragment, "html_sanitized", "") or "")
+            if (
+                add_heading_anchors(
+                    html_sanitized,
+                    fragment_idx=fragment_idx,
                 )
+                != html_sanitized
+            ):
+                # justify-defect: source success owns deterministic heading
+                # normalization before it requests an index revision.
+                raise AssertionError("web source fragment is missing Nexus heading anchors")
             for spec in build_web_article_index_blocks(
                 html_sanitized=html_sanitized,
                 canonical_text=fragment_text,
-                fragment_idx=int(fragment.idx),
+                fragment_idx=fragment_idx,
                 media_title=media_title,
             ):
                 block_text = fragment_text[spec.start_offset : spec.end_offset]
                 locator: dict[str, object] = {
                     "type": "web_text_offsets",
                     "kind": "web_text",
-                    "fragment_id": str(fragment.id),
-                    "fragment_idx": int(fragment.idx),
+                    "fragment_id": str(fragment_id),
+                    "fragment_idx": fragment_idx,
                     "start_offset": spec.start_offset,
                     "end_offset": spec.end_offset,
                     "text_quote": _text_quote(
@@ -534,29 +676,19 @@ def rebuild_fragment_content_index(
             source_offset += len(fragment_text) + 2
             continue
 
-        block_rows = db.execute(
-            text(
-                """
-                SELECT block_idx, start_offset, end_offset
-                FROM fragment_blocks
-                WHERE fragment_id = :fragment_id
-                ORDER BY block_idx ASC
-                """
-            ),
-            {"fragment_id": fragment.id},
-        ).fetchall()
+        block_rows = fragment_blocks_by_id.get(fragment_id, [])
         if not block_rows:
             block_rows = [(0, 0, len(fragment_text))]
         for row in block_rows:
-            start_offset = int(row[1])
-            end_offset = int(row[2])
+            start_offset = int(row[-2])
+            end_offset = int(row[-1])
             block_text = fragment_text[start_offset:end_offset]
-            nav = nav_by_fragment_idx.get(int(fragment.idx), {})
+            nav = nav_by_fragment_idx.get(fragment_idx, {})
             locator_kind = "epub_text" if source_kind == "epub" else "web_text"
             locator: dict[str, object] = {
                 "kind": locator_kind,
-                "fragment_id": str(fragment.id),
-                "fragment_idx": int(fragment.idx),
+                "fragment_id": str(fragment_id),
+                "fragment_idx": fragment_idx,
                 "start_offset": start_offset,
                 "end_offset": end_offset,
                 "text_quote": _text_quote(fragment_text, start_offset, end_offset),
@@ -582,13 +714,7 @@ def rebuild_fragment_content_index(
             )
         source_offset += len(fragment_text) + 2
 
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind=source_kind,
-        blocks=blocks,
-        reason=reason,
-    )
+    return blocks
 
 
 def rebuild_transcript_content_index(
@@ -598,6 +724,24 @@ def rebuild_transcript_content_index(
     transcript_segments: Sequence[TranscriptSegmentInput],
     reason: str,
 ) -> ContentIndexResult:
+    return rebuild_content_index(
+        db,
+        owner=IndexOwner("media", media_id),
+        source_kind="transcript",
+        blocks=build_transcript_indexable_blocks(
+            media_id=media_id,
+            transcript_segments=transcript_segments,
+        ),
+        reason=reason,
+    )
+
+
+def build_transcript_indexable_blocks(
+    *,
+    media_id: UUID,
+    transcript_segments: Sequence[TranscriptSegmentInput],
+) -> list[IndexableBlock]:
+    """Build an immutable transcript plan input without provider or DB work."""
     blocks: list[IndexableBlock] = []
     source_offset = 0
     for segment in transcript_segments:
@@ -638,186 +782,7 @@ def rebuild_transcript_content_index(
         )
         source_offset += len(text_value)
 
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind="transcript",
-        blocks=blocks,
-        reason=reason,
-    )
-
-
-def repair_ready_media_content_index_now(
-    db: Session,
-    *,
-    media_id: UUID,
-    reason: str,
-) -> ContentIndexResult | None:
-    row = db.execute(
-        text(
-            """
-            SELECT m.kind,
-                   m.language,
-                   m.plain_text,
-                   m.page_count,
-                   mf.storage_path
-            FROM media m
-            LEFT JOIN media_file mf ON mf.media_id = m.id
-            LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-            WHERE m.id = :media_id
-              AND m.kind IN ('web_article', 'epub', 'pdf', 'podcast_episode', 'video')
-              AND (
-                  (
-                      m.kind IN ('web_article', 'epub', 'pdf')
-                      AND m.processing_status = 'ready_for_reading'
-                  )
-                  OR (
-                      m.kind IN ('podcast_episode', 'video')
-                      AND mts.transcript_state IN ('ready', 'partial')
-                      AND mts.transcript_coverage IN ('partial', 'full')
-                  )
-              )
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchone()
-    if row is None:
-        return None
-
-    source_kind = str(row[0])
-    if source_kind in {"web_article", "epub"}:
-        fragments = db.execute(
-            text(
-                """
-                SELECT id, idx, canonical_text, html_sanitized
-                FROM fragments
-                WHERE media_id = :media_id
-                ORDER BY idx ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall()
-        return rebuild_fragment_content_index(
-            db,
-            media_id=media_id,
-            source_kind=source_kind,
-            fragments=list(fragments),
-            reason=reason,
-            language=row[1],
-        )
-
-    if source_kind in {"podcast_episode", "video"}:
-        return _repair_ready_transcript_content_index(db, media_id=media_id, reason=reason)
-
-    return _repair_ready_pdf_content_index(
-        db,
-        media_id=media_id,
-        plain_text=str(row[2] or ""),
-        page_count=int(row[3] or 0),
-        reason=reason,
-    )
-
-
-def _repair_ready_transcript_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    reason: str,
-) -> ContentIndexResult | None:
-    has_transcript = db.execute(
-        text(
-            """
-            SELECT 1
-            FROM media_transcript_states mts
-            WHERE mts.media_id = :media_id
-              AND mts.transcript_state IN ('ready', 'partial')
-              AND mts.transcript_coverage IN ('partial', 'full')
-              AND EXISTS (
-                  SELECT 1
-                  FROM podcast_transcript_segments pts
-                  WHERE pts.media_id = mts.media_id
-              )
-            LIMIT 1
-            """
-        ),
-        {"media_id": media_id},
-    ).scalar()
-    if has_transcript is None:
-        return None
-
-    rows = db.execute(
-        text(
-            """
-            SELECT canonical_text, t_start_ms, t_end_ms, speaker_label
-            FROM podcast_transcript_segments
-            WHERE media_id = :media_id
-            ORDER BY segment_idx ASC
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-    # Rows arrive ordered by segment_idx ASC; enumerate restores the contiguous
-    # 0..N-1 index the dataclass contract carries.
-    segments = [
-        TranscriptSegmentInput(
-            segment_idx=position,
-            t_start_ms=int(row[1]),
-            t_end_ms=int(row[2]),
-            canonical_text=str(row[0] or ""),
-            speaker_label=row[3],
-        )
-        for position, row in enumerate(rows)
-    ]
-    return rebuild_transcript_content_index(
-        db,
-        media_id=media_id,
-        transcript_segments=segments,
-        reason=reason,
-    )
-
-
-def _repair_ready_pdf_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    plain_text: str,
-    page_count: int,
-    reason: str,
-) -> ContentIndexResult:
-    page_rows = db.execute(
-        text(
-            """
-            SELECT
-                page_number,
-                start_offset,
-                end_offset,
-                page_label,
-                page_width,
-                page_height,
-                page_rotation_degrees
-            FROM pdf_page_text_spans
-            WHERE media_id = :media_id
-            ORDER BY page_number ASC
-            """
-        ),
-        {"media_id": media_id},
-    ).fetchall()
-    if not page_rows and plain_text:
-        page_rows = [(1, 0, len(plain_text), None, None, None, None)]
-
-    blocks = build_pdf_indexable_blocks(
-        media_id=media_id,
-        plain_text=plain_text,
-        page_spans=page_rows,
-    )
-
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind="pdf",
-        blocks=blocks,
-        reason=reason,
-    )
+    return blocks
 
 
 def build_pdf_indexable_blocks(
@@ -904,6 +869,546 @@ def build_pdf_indexable_blocks(
     return blocks
 
 
+def prepare_media_content_reindex(
+    db: Session,
+    *,
+    media_id: UUID,
+    revision: int,
+    reason: str,
+    context: JobExecutionContext,
+    lease_seconds: int,
+) -> MediaContentReindexWork | None:
+    """Fence, snapshot, and mark one current document revision indexing."""
+    _validate_media_reindex_reason(reason)
+    media = (
+        db.execute(
+            text(
+                """
+                SELECT id, kind, processing_status, title, language, plain_text
+                FROM media
+                WHERE id = :media_id
+                FOR UPDATE
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if media is None:
+        return None
+    source_kind = media["kind"]
+    if not _is_document_source_kind(source_kind):
+        # justify-defect: the durable payload accepts only document media.
+        raise AssertionError("media content-reindex owner kind is ineligible")
+
+    state = _lock_media_index_state(db, media_id)
+    if state is None or _validated_media_revision(state["revision"]) != revision:
+        return None
+
+    from nexus.jobs.queue import lock_and_renew_running_job_claim
+
+    job = lock_and_renew_running_job_claim(
+        db,
+        context=context,
+        lease_seconds=lease_seconds,
+    )
+    if job is None:
+        return None
+    if (
+        job.kind != MEDIA_CONTENT_REINDEX_JOB_KIND
+        or str(job.payload.get("media_id")) != str(media_id)
+        or _job_revision(job.payload) != revision
+    ):
+        # justify-defect: the worker context must name this exact closed payload.
+        raise AssertionError("media content-reindex job identity is malformed")
+    if media["processing_status"] != "ready_for_reading":
+        # justify-defect: only source success may request a document index revision.
+        raise AssertionError("media content-reindex owner is not readable")
+
+    blocks = _snapshot_media_indexable_blocks(
+        db,
+        media_id=media_id,
+        source_kind=source_kind,
+        media_title=str(media["title"] or ""),
+        plain_text=str(media["plain_text"] or ""),
+    )
+    db.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET
+                status = 'indexing',
+                status_reason = :reason,
+                active_embedding_provider = NULL,
+                active_embedding_model = NULL,
+                updated_at = now()
+            WHERE owner_kind = 'media'
+              AND owner_id = :media_id
+              AND revision = :revision
+            """
+        ),
+        {"media_id": media_id, "revision": revision, "reason": reason},
+    )
+    return MediaContentReindexWork(
+        media_id=media_id,
+        revision=revision,
+        source_kind=source_kind,
+        reason=reason,
+        blocks=tuple(blocks),
+    )
+
+
+def publish_media_content_reindex(
+    db: Session,
+    *,
+    work: MediaContentReindexWork,
+    plan: ContentIndexPlan,
+    context: JobExecutionContext,
+    lease_seconds: int,
+) -> ContentIndexResult | None:
+    """Fence and atomically publish one complete current document revision."""
+    media = (
+        db.execute(
+            text("SELECT id, kind FROM media WHERE id = :media_id FOR UPDATE"),
+            {"media_id": work.media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if media is None:
+        return None
+    if str(media["kind"]) != work.source_kind:
+        # justify-defect: a media row cannot change document kind.
+        raise AssertionError("media kind changed during content reindex")
+    state = _lock_media_index_state(db, work.media_id)
+    if state is None or _validated_media_revision(state["revision"]) != work.revision:
+        return None
+
+    from nexus.jobs.queue import lock_and_renew_running_job_claim
+
+    job = lock_and_renew_running_job_claim(
+        db,
+        context=context,
+        lease_seconds=lease_seconds,
+    )
+    if job is None:
+        return None
+    if (
+        job.kind != MEDIA_CONTENT_REINDEX_JOB_KIND
+        or str(job.payload.get("media_id")) != str(work.media_id)
+        or _job_revision(job.payload) != work.revision
+    ):
+        # justify-defect: publication is authorized only by this exact payload.
+        raise AssertionError("media content-reindex publication identity is malformed")
+    if plan.owner != IndexOwner("media", work.media_id) or plan.source_kind != work.source_kind:
+        # justify-defect: the immutable plan must belong to the prepared snapshot.
+        raise AssertionError("media content-index plan identity is malformed")
+
+    result = publish_content_index(db, plan=plan, reason=work.reason)
+    if work.source_kind == "pdf" and not plan.chunks:
+        db.execute(
+            text(
+                """
+                UPDATE content_index_states
+                SET
+                    status = 'ocr_required',
+                    status_reason = 'ocr_required',
+                    active_embedding_provider = NULL,
+                    active_embedding_model = NULL,
+                    updated_at = now()
+                WHERE owner_kind = 'media'
+                  AND owner_id = :media_id
+                  AND revision = :revision
+                """
+            ),
+            {"media_id": work.media_id, "revision": work.revision},
+        )
+        return ContentIndexResult(result.owner, "ocr_required", 0)
+    return result
+
+
+def _snapshot_media_indexable_blocks(
+    db: Session,
+    *,
+    media_id: UUID,
+    source_kind: str,
+    media_title: str,
+    plain_text: str,
+) -> list[IndexableBlock]:
+    if source_kind == "pdf":
+        page_rows = db.execute(
+            text(
+                """
+                SELECT
+                    page_number,
+                    start_offset,
+                    end_offset,
+                    page_label,
+                    page_width,
+                    page_height,
+                    page_rotation_degrees
+                FROM pdf_page_text_spans
+                WHERE media_id = :media_id
+                ORDER BY page_number ASC
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchall()
+        if not page_rows and plain_text:
+            page_rows = [(1, 0, len(plain_text), None, None, None, None)]
+        return build_pdf_indexable_blocks(
+            media_id=media_id,
+            plain_text=plain_text,
+            page_spans=page_rows,
+        )
+
+    fragments = (
+        db.execute(
+            text(
+                """
+                SELECT id, idx, canonical_text, html_sanitized
+                FROM fragments
+                WHERE media_id = :media_id
+                ORDER BY idx ASC, id ASC
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .all()
+    )
+    nav_by_fragment_idx: dict[int, dict[str, object]] = {}
+    if source_kind == "epub":
+        for row in db.execute(
+            text(
+                """
+                SELECT DISTINCT ON (fragment_idx)
+                    fragment_idx,
+                    location_id,
+                    href_path,
+                    href_fragment,
+                    label
+                FROM epub_nav_locations
+                WHERE media_id = :media_id
+                ORDER BY fragment_idx ASC, ordinal ASC
+                """
+            ),
+            {"media_id": media_id},
+        ).fetchall():
+            nav_by_fragment_idx[int(row[0])] = {
+                "section_id": row[1],
+                "href_path": row[2],
+                "anchor_id": row[3],
+                "label": row[4],
+            }
+
+    fragment_blocks_by_id: dict[UUID, list[Any]] = {}
+    fragment_ids = [UUID(str(fragment["id"])) for fragment in fragments]
+    if fragment_ids:
+        for row in db.execute(
+            text(
+                """
+                SELECT fragment_id, block_idx, start_offset, end_offset
+                FROM fragment_blocks
+                WHERE fragment_id = ANY(:fragment_ids)
+                ORDER BY fragment_id ASC, block_idx ASC
+                """
+            ),
+            {"fragment_ids": fragment_ids},
+        ).fetchall():
+            fragment_blocks_by_id.setdefault(row[0], []).append(row)
+    return build_fragment_indexable_blocks(
+        media_id=media_id,
+        source_kind=source_kind,
+        fragments=fragments,
+        media_title=media_title if source_kind == "web_article" else None,
+        nav_by_fragment_idx=nav_by_fragment_idx,
+        fragment_blocks_by_id=fragment_blocks_by_id,
+    )
+
+
+def request_media_content_reindex(
+    db: Session,
+    *,
+    media_id: UUID,
+    reason: str,
+    request_id: str | None,
+) -> MediaContentReindexIntent:
+    """Create a new media index intent inside the caller's transaction."""
+    _validate_media_reindex_reason(reason)
+    _lock_media_for_reindex(db, media_id)
+    state = _lock_media_index_state(db, media_id)
+    if state is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO content_index_states (
+                    owner_kind,
+                    owner_id,
+                    status,
+                    status_reason,
+                    active_embedding_provider,
+                    active_embedding_model,
+                    revision,
+                    updated_at,
+                    created_at
+                )
+                VALUES (
+                    'media',
+                    :media_id,
+                    'pending',
+                    :reason,
+                    NULL,
+                    NULL,
+                    0,
+                    now(),
+                    now()
+                )
+                """
+            ),
+            {"media_id": media_id, "reason": reason},
+        )
+        state = _lock_media_index_state(db, media_id)
+        if state is None:
+            # justify-defect: the locked media row protects first state creation.
+            raise AssertionError("media content-index state insert was not visible")
+
+    revision = _validated_media_revision(state["revision"]) + 1
+    db.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET
+                revision = :revision,
+                status = 'pending',
+                status_reason = :reason,
+                active_embedding_provider = NULL,
+                active_embedding_model = NULL,
+                updated_at = now()
+            WHERE owner_kind = 'media'
+              AND owner_id = :media_id
+            """
+        ),
+        {"media_id": media_id, "revision": revision, "reason": reason},
+    )
+
+    from nexus.jobs.queue import (
+        enqueue_job,
+        lock_jobs_for_payload,
+        reset_unclaimed_job_for_new_intent,
+        supersede_unclaimed_job,
+    )
+    from nexus.jobs.registry import get_default_registry
+
+    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
+    payload = _media_reindex_payload(
+        media_id=media_id,
+        revision=revision,
+        reason=reason,
+        request_id=request_id,
+    )
+    jobs = lock_jobs_for_payload(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    waiting = [
+        job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None
+    ]
+    if waiting:
+        selected = reset_unclaimed_job_for_new_intent(
+            db,
+            job_id=waiting[0].id,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            payload=payload,
+            max_attempts=definition.max_attempts,
+        )
+        for obsolete in waiting[1:]:
+            supersede_unclaimed_job(
+                db,
+                job_id=obsolete.id,
+                kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            )
+    else:
+        selected = enqueue_job(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            payload=payload,
+            max_attempts=definition.max_attempts,
+        )
+
+    _assert_media_reindex_waiting_postcondition(
+        db,
+        media_id=media_id,
+        revision=revision,
+    )
+    return MediaContentReindexIntent(
+        revision=revision,
+        background_job_id=selected.id,
+        suspended=False,
+        enqueued=not waiting,
+    )
+
+
+def ensure_media_content_reindex_job(
+    db: Session,
+    *,
+    media_id: UUID,
+    reason: str,
+    request_id: str | None,
+) -> MediaContentReindexIntent:
+    """Ensure the current pending/indexing revision has an owned queue row."""
+    _validate_media_reindex_reason(reason)
+    _lock_media_for_reindex(db, media_id)
+    state = _lock_media_index_state(db, media_id)
+    if state is None:
+        # justify-defect: reconciliation selects an existing media index state.
+        raise AssertionError("cannot ensure a job without a media content-index state")
+    revision = _validated_media_revision(state["revision"])
+
+    from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
+    from nexus.jobs.registry import get_default_registry
+
+    jobs = lock_jobs_for_payload(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    current = [job for job in jobs if _job_revision(job.payload) == revision]
+    waiting = [
+        job for job in current if job.status in {"pending", "failed"} and job.claimed_by is None
+    ]
+    if len(waiting) > 1:
+        # justify-defect: the media/state lock serializes every canonical enqueue.
+        raise AssertionError("multiple waiting jobs exist for one media index revision")
+    running = [job for job in current if job.status == "running"]
+    dead = [job for job in current if job.status == "dead"]
+    if len(running) > 1 or len(dead) > 1:
+        # justify-defect: one revision has one execution identity.
+        raise AssertionError("multiple owned jobs exist for one media index revision")
+    if waiting:
+        return MediaContentReindexIntent(revision, waiting[0].id, False, False)
+    if running:
+        return MediaContentReindexIntent(revision, running[0].id, False, False)
+    if dead:
+        return MediaContentReindexIntent(revision, dead[0].id, True, False)
+
+    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
+    inserted = enqueue_job(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        payload=_media_reindex_payload(
+            media_id=media_id,
+            revision=revision,
+            reason=reason,
+            request_id=request_id,
+        ),
+        max_attempts=definition.max_attempts,
+    )
+    _assert_media_reindex_waiting_postcondition(
+        db,
+        media_id=media_id,
+        revision=revision,
+    )
+    return MediaContentReindexIntent(revision, inserted.id, False, True)
+
+
+def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:
+    if (
+        db.execute(
+            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+            {"media_id": media_id},
+        ).scalar_one_or_none()
+        is None
+    ):
+        # justify-defect: source success and reconciliation carry a durable media id.
+        raise AssertionError("media content-index owner does not exist")
+
+
+def _lock_media_index_state(db: Session, media_id: UUID) -> Mapping[str, object] | None:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT id, status, revision
+                FROM content_index_states
+                WHERE owner_kind = 'media'
+                  AND owner_id = :media_id
+                FOR UPDATE
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "revision": row["revision"],
+    }
+
+
+def _validated_media_revision(value: object) -> int:
+    if not _is_int(value) or value < 0:
+        # justify-defect: trusted media revision storage must be non-negative.
+        raise AssertionError("media content-index revision is malformed")
+    return value
+
+
+def _validate_media_reindex_reason(reason: str) -> None:
+    if reason not in MEDIA_CONTENT_REINDEX_REASONS:
+        # justify-defect: all callers use the closed same-system reason contract.
+        raise AssertionError(f"unsupported media content-reindex reason: {reason}")
+
+
+def _media_reindex_payload(
+    *,
+    media_id: UUID,
+    revision: int,
+    reason: str,
+    request_id: str | None,
+) -> dict[str, object]:
+    return {
+        "media_id": str(media_id),
+        "revision": revision,
+        "reason": reason,
+        "request_id": (
+            {"kind": "Absent"} if request_id is None else {"kind": "Present", "value": request_id}
+        ),
+    }
+
+
+def _job_revision(payload: Mapping[str, object]) -> int:
+    return _validated_media_revision(payload.get("revision"))
+
+
+def _assert_media_reindex_waiting_postcondition(
+    db: Session,
+    *,
+    media_id: UUID,
+    revision: int,
+) -> None:
+    from nexus.jobs.queue import lock_jobs_for_payload
+
+    jobs = lock_jobs_for_payload(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    waiting = [
+        job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None
+    ]
+    current = [job for job in waiting if _job_revision(job.payload) == revision]
+    obsolete = [job for job in waiting if _job_revision(job.payload) < revision]
+    if len(current) != 1 or obsolete:
+        # justify-defect: the locked owner row and queue rows define coalescing.
+        raise AssertionError("media content-reindex waiting-job postcondition failed")
+
+
 def mark_content_index_failed(
     db: Session,
     *,
@@ -939,7 +1444,11 @@ def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -
 
 def deactivate_content_index(db: Session, *, owner: IndexOwner, reason: str) -> None:
     now = datetime.now(UTC)
-    delete_content_index(db, owner=owner)
+    # A replacement invalidates the current materialization, not the durable
+    # identity of the owner's indexing intent.  Retaining the state row is what
+    # makes `revision` monotonic across source refreshes; deleting it would let
+    # an obsolete worker publish again after the revision restarted at zero.
+    replace_content_index_materialization(db, owner=owner)
     _set_index_state(
         db,
         owner=owner,
@@ -952,6 +1461,19 @@ def deactivate_content_index(db: Session, *, owner: IndexOwner, reason: str) -> 
 
 
 def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
+    """Delete the complete index owner, including its state row."""
+    replace_content_index_materialization(db, owner=owner)
+    db.execute(
+        text(
+            "DELETE FROM content_index_states "
+            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+        ),
+        {"owner_kind": owner.kind, "owner_id": owner.id},
+    )
+
+
+def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> None:
+    """Delete replaceable index rows while retaining the owner's state identity."""
     params = {"owner_kind": owner.kind, "owner_id": owner.id}
     # The per-media unit's claims reference this media's evidence_spans with a
     # non-cascading FK; clear them through their sole owner before the spans go.
@@ -968,13 +1490,6 @@ def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
               AND es.owner_kind = :owner_kind
               AND es.owner_id = :owner_id
             """
-        ),
-        params,
-    )
-    db.execute(
-        text(
-            "DELETE FROM content_index_states "
-            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
         ),
         params,
     )
@@ -1351,6 +1866,10 @@ def _is_int(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_document_source_kind(value: object) -> TypeGuard[DocumentSourceKind]:
+    return isinstance(value, str) and value in {"web_article", "epub", "pdf"}
+
+
 def _is_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -1514,7 +2033,7 @@ def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str
 
 
 def _field(value: Any, name: str, default: object) -> object:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return value.get(name, default)
     if hasattr(value, name):
         return getattr(value, name)

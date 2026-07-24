@@ -15,7 +15,13 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 
-MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed"]
+MediaProcessingStatus = Literal[
+    "pending",
+    "extracting",
+    "ready_for_reading",
+    "failed",
+    "suspended",
+]
 
 MediaSourceAttemptStatus = Literal[
     "accepted",

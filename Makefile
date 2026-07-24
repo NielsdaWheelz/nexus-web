@@ -1,7 +1,7 @@
 # Nexus Development Makefile
 # Run `make help` for available commands.
 
-.PHONY: help setup dev down logs clean api api-e2e web web-e2e reader-profile-upstream-proxy-e2e worker migrate migrate-test migrate-down seed seed-real-media-e2e \
+.PHONY: help setup dev down logs clean api api-e2e web web-e2e reader-profile-upstream-proxy-e2e worker-interactive worker-background migrate migrate-test migrate-down seed seed-real-media-e2e \
 	check check-back type-back check-front check-android check-workflows format format-back fix-front build build-android build-android-release build-icons check-bundle audit \
 	test-unit test test-back-unit test-back-integration test-front-unit test-front-browser \
 	test-android test-migrations test-supabase test-e2e-env test-real-media test-provider-runtime test-live-providers test-e2e test-e2e-ui test-csp \
@@ -62,7 +62,8 @@ help:
 	@echo "  make web                - Start Next.js on WEB_PORT (default 3000)"
 	@echo "  make web-e2e            - Build and start Next.js for Playwright E2E"
 	@echo "  make reader-profile-upstream-proxy-e2e - Start the AC-1 recovery E2E fault-injector proxy"
-	@echo "  make worker             - Start the Postgres queue worker"
+	@echo "  make worker-interactive - Start the interactive Postgres queue lane"
+	@echo "  make worker-background  - Start the background Postgres queue lane"
 	@echo ""
 	@echo "Routine gates:"
 	@echo "  make check              - Static checks only"
@@ -250,8 +251,15 @@ reader-profile-upstream-proxy-e2e:
 		API_PORT=$(API_PORT) \
 		bunx tsx reader-profile-upstream-proxy.ts
 
-worker:
+worker-interactive:
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
+		WORKER_LANE=interactive DATABASE_STATEMENT_TIMEOUT_MS=300000 \
+		SUPABASE_AUTH_ADMIN_KEY= \
+		uv run python -m apps.worker.main
+
+worker-background:
+	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
+		WORKER_LANE=background DATABASE_STATEMENT_TIMEOUT_MS=300000 \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		uv run python -m apps.worker.main
 

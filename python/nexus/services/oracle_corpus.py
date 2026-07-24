@@ -30,7 +30,7 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.services import library_entries, library_governance
-from nexus.services.content_indexing import repair_ready_media_content_index_now
+from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.image_validation import MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION
 from nexus.services.media_source_ingest import (
     accept_system_url_source,
@@ -302,10 +302,11 @@ def _repair_reused_corpus_media(
     request_id = f"oracle-corpus-seed:{source.work_key}"
     if media.processing_status == ProcessingStatus.ready_for_reading:
         if not _has_ready_active_content_index(db, media_id=media.id):
-            repair_ready_media_content_index_now(
+            request_media_content_reindex(
                 db,
                 media_id=media.id,
                 reason="oracle_corpus_seed",
+                request_id=request_id,
             )
         return
     repair_source_for_system_media(

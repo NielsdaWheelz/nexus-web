@@ -39,7 +39,11 @@ export function projectSourceActionResult(
     capabilityPatch: result.capabilities,
     feedback: {
       severity: sourceFailed ? "warning" : "success",
-      title: sourceFailed ? failedTitle : successTitle,
+      title: sourceFailed
+        ? result.capabilities.can_retry
+          ? failedTitle
+          : "Source could not be imported. Open the media for source-specific guidance."
+        : successTitle,
     },
   };
 }

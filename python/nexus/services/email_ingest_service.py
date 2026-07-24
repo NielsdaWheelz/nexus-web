@@ -442,6 +442,7 @@ def accept_email_message(
                 error_code=ApiErrorCode.E_STORAGE_ERROR.value,
                 error_message=str(exc),
             )
+            db.commit()
         return EmailAcceptance(media_id=media.id, outcome="accepted")
 
     # Enqueue ingest job (public spine wrapper; failure_stage='extract').

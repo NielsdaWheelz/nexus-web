@@ -13,7 +13,8 @@ private resource assets.
 
 `ingest_media_source` is the only worker job kind that starts source processing.
 It calls the EPUB extraction task after the accepted source bytes are durable.
-Routes and UI clients do not enqueue `ingest_epub` directly.
+Source success atomically requests `media_content_reindex_job`; routes and UI
+clients do not enqueue source-specific or retrieval jobs directly.
 
 ## Asset Lane
 

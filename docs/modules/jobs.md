@@ -4,10 +4,10 @@
 
 This module owns the durable background-job substrate: the Postgres-backed queue,
 the single-process worker's claim/lease/heartbeat envelope, the registry of job
-kinds and their policies, dead-lettering, and the production allowlist. The queue
+kinds and their policies, dead-lettering, and the production lane topology. The queue
 mechanics and channel wiring are described in
 [architecture.md §7.3](../architecture.md#73-background-jobs--the-worker); this
-doc owns the registry contract, the allowlist invariant, and how the LLM
+doc owns the registry contract, the lane invariant, and how the LLM
 generation harness composes with the worker. It does not restate the queue
 internals.
 
@@ -19,8 +19,8 @@ the thin task wrappers under `python/nexus/tasks/`, and
 
 ## The worker envelope
 
-The single-process worker (`apps/worker/main.py` → `jobs/worker.py`) runs a job
-loop and a scheduler loop. Each claimed job is leased, dispatched to its
+Each single-process worker lane (`apps/worker/main.py` → `jobs/worker.py`) runs
+a job loop and a scheduler loop. Each claimed job is leased, dispatched to its
 registered handler under a heartbeat thread that renews the lease, and committed
 with a terminal/retry transition. Claim is atomic (`FOR UPDATE SKIP LOCKED`), so
 the worker is horizontally scalable even though one instance is
@@ -37,7 +37,8 @@ kind is a frozen `JobDefinition`:
   service.
 - `max_attempts`, `retry_delays_seconds`, `lease_seconds` — the per-kind retry
   and lease policy.
-- `periodic_interval_seconds` — set only for scheduler-driven maintenance kinds.
+- `periodic_interval_seconds` — set only for scheduler-driven background or
+  maintenance kinds.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_handler` — the finalizer run once retries are exhausted.
 
@@ -79,22 +80,33 @@ stale reconciler plus manual API retry, not queue-level retries. This is
 deliberate: a handler that completed its work and recorded a domain failure has
 not crashed, so re-running it would be wasteful.
 
-## The allowlist invariant (`note_reindex_job` incident class)
+## Worker lanes
 
-The production worker only claims kinds in `WORKER_ALLOWED_JOB_KINDS`. A kind
-that is registered (with a dead-letter handler, even) but absent from the
-allowlist strands every job of that kind forever — the bug that left prod
-note edits unsearchable.
+`config.py` declares one complete topology:
 
-`USER_FACING_JOB_KINDS` (in `registry.py`) is the tuple of every non-periodic
-kind whose work a user directly observes. Tests assert the default allowlist is a
-subset of the runtime registry and that
-`USER_FACING_JOB_KINDS ⊆ DEFAULT_WORKER_ALLOWED_JOB_KINDS`, so the class of bug
-becomes unrepresentable: adding a user-facing kind without allowlisting it fails
-CI, and a typo in the default allowlist fails before a worker can start. The
-allowlist literal still lives in runtime/env owners (`config.py`,
-`deploy/env/env-prod-worker*`, and `sync-env.sh`); tests read those owners rather
-than copy the literal again.
+- `INTERACTIVE_WORKER_JOB_KINDS`: ingest, chat, Dossier, subscription sync, and
+  Oracle generation;
+- `BACKGROUND_WORKER_JOB_KINDS`: content indexing, enrichment, derived units,
+  semantic indexing, ambient generation, teardown, storage cleanup, and
+  reconciliation;
+- `MAINTENANCE_JOB_KINDS`: podcast polling, Gutenberg catalog sync, queue
+  pruning, and expired auth-handoff purge.
+
+The two production lanes are non-empty, disjoint, and together equal the
+17-kind `PRODUCTION_ENABLED_JOB_KINDS`. Production plus the four maintenance
+kinds equals the complete registry. The worker entrypoint defects on drift.
+Only the background lane can claim or schedule production periodic work.
+
+Normal workers require `WORKER_LANE=interactive|background`; they never accept
+a raw allowlist. A bounded maintenance process requires
+`WORKER_LANE=maintenance`, `NEXUS_ALLOW_WORKER_MAINTENANCE=1`, and an exact
+non-empty `WORKER_ALLOWED_JOB_KINDS` subset of the maintenance declaration.
+There is no deployed maintenance service.
+
+The Oracle corpus seed drainer is a bounded shared-image invocation, not a
+third lane. Its `ORACLE_SEED_WORKER_JOB_KINDS` contract contains exactly
+`ingest_media_source` and `media_content_reindex_job`, so source success cannot
+strand the reindex successor before the readiness assertion.
 
 There is no `contributor_reconciliation` job (or any other author-dedupe job):
 author identity is resolved inline, synchronously, inside the ingest/enrichment

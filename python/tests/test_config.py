@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from nexus.config import DEFAULT_WORKER_ALLOWED_JOB_KINDS, Settings
+from nexus.config import (
+    BACKGROUND_WORKER_JOB_KINDS,
+    INTERACTIVE_WORKER_JOB_KINDS,
+    MAINTENANCE_JOB_KINDS,
+    PRODUCTION_ENABLED_JOB_KINDS,
+    Settings,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -186,57 +192,43 @@ class TestDatabasePoolConfiguration:
 
 
 class TestWorkerMaintenanceConfiguration:
-    def test_periodic_maintenance_schedules_default_disabled(self):
+    def test_production_and_maintenance_schedule_defaults(self):
         settings = _make_settings()
         assert settings.podcast_active_poll_schedule_seconds == 0
-        assert settings.ingest_reconcile_schedule_seconds == 0
+        assert settings.ingest_reconcile_schedule_seconds == 600
         assert settings.sync_gutenberg_catalog_schedule_seconds == 0
         assert settings.background_job_prune_schedule_seconds == 0
-        assert settings.worker_allowed_job_kinds == DEFAULT_WORKER_ALLOWED_JOB_KINDS
+        assert settings.worker_lane is None
+        assert settings.worker_allowed_job_kinds is None
 
-    def test_default_worker_allowlist_matches_registry_and_user_facing_jobs(self):
-        """A registered user-facing kind missing from the default allowlist would
-        sit queued forever in production (the note_reindex_job incident class).
+    def test_worker_lane_topology_is_disjoint_and_exhaustive_for_registry(self):
+        from nexus.jobs.registry import get_default_registry
 
-        An allowlisted kind missing from the registry is just as bad: the worker
-        refuses to start instead of claiming any production jobs.
-        """
-        from nexus.jobs.registry import USER_FACING_JOB_KINDS, get_default_registry
-
-        allowed = {
-            kind.strip() for kind in DEFAULT_WORKER_ALLOWED_JOB_KINDS.split(",") if kind.strip()
-        }
         registered = set(get_default_registry())
-        unknown = allowed - registered
-        missing = set(USER_FACING_JOB_KINDS) - allowed
-        assert not unknown, (
-            "DEFAULT_WORKER_ALLOWED_JOB_KINDS contains kinds absent from the registry; "
-            f"production workers would fail startup: {sorted(unknown)}"
+        interactive = set(INTERACTIVE_WORKER_JOB_KINDS)
+        background = set(BACKGROUND_WORKER_JOB_KINDS)
+        production = set(PRODUCTION_ENABLED_JOB_KINDS)
+        maintenance = set(MAINTENANCE_JOB_KINDS)
+
+        assert interactive
+        assert background
+        assert not interactive & background, (
+            f"production worker lanes overlap: {sorted(interactive & background)}"
         )
-        assert not missing, (
-            "User-facing job kinds missing from DEFAULT_WORKER_ALLOWED_JOB_KINDS; "
-            f"production workers would never claim them: {sorted(missing)}"
+        assert interactive | background == production
+        assert len(production) == 17
+        assert len(maintenance) == 4
+        assert not production & maintenance, (
+            f"production and maintenance job sets overlap: {sorted(production & maintenance)}"
+        )
+        assert production | maintenance == registered, (
+            "worker topology must cover the registry exactly; "
+            f"undeclared={sorted(registered - production - maintenance)}, "
+            f"unregistered={sorted(production | maintenance - registered)}"
         )
 
-    def test_dawn_write_job_in_all_allowlists(self):
-        """Guard 4 (§13): dawn_write_job must be in all three deploy allowlist locations
-        to avoid the known deploy incident class (allowlist mismatch)."""
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[2]
-        config_src = (root / "python" / "nexus" / "config.py").read_text()
-        worker_example = (root / "deploy" / "env" / "env-prod-worker.example").read_text()
-        sync_env = (root / "deploy" / "hetzner" / "sync-env.sh").read_text()
-
-        assert "dawn_write_job" in config_src, (
-            "DEFAULT_WORKER_ALLOWED_JOB_KINDS in config.py is missing 'dawn_write_job'"
-        )
-        assert "dawn_write_job" in worker_example, (
-            "env-prod-worker.example WORKER_ALLOWED_JOB_KINDS is missing 'dawn_write_job'"
-        )
-        assert "dawn_write_job" in sync_env, (
-            "sync-env.sh SAFE_WORKER_ALLOWED_JOB_KINDS is missing 'dawn_write_job'"
-        )
+    def test_dawn_write_is_background_work(self):
+        assert "dawn_write_job" in BACKGROUND_WORKER_JOB_KINDS
 
     def test_zero_schedule_values_are_valid_disabled_state(self):
         settings = _make_settings(
@@ -269,6 +261,46 @@ class TestWorkerMaintenanceConfiguration:
             _make_settings(
                 WORKER_DB_FAILURE_BACKOFF_SECONDS=60,
                 WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS=30,
+            )
+
+    def test_normal_worker_lanes_reject_raw_allowlist(self):
+        with pytest.raises(ValidationError, match="valid only with WORKER_LANE=maintenance"):
+            _make_settings(
+                WORKER_LANE="interactive",
+                WORKER_ALLOWED_JOB_KINDS="ingest_media_source",
+            )
+
+    def test_maintenance_lane_requires_gate_and_declared_subset(self):
+        with pytest.raises(
+            ValidationError,
+            match="requires NEXUS_ALLOW_WORKER_MAINTENANCE=1",
+        ):
+            _make_settings(
+                WORKER_LANE="maintenance",
+                WORKER_ALLOWED_JOB_KINDS="prune_background_jobs_job",
+            )
+        with pytest.raises(ValidationError, match="subset of MAINTENANCE_JOB_KINDS"):
+            _make_settings(
+                WORKER_LANE="maintenance",
+                NEXUS_ALLOW_WORKER_MAINTENANCE=True,
+                WORKER_ALLOWED_JOB_KINDS="ingest_media_source",
+            )
+
+        settings = _make_settings(
+            WORKER_LANE="maintenance",
+            NEXUS_ALLOW_WORKER_MAINTENANCE=True,
+            WORKER_ALLOWED_JOB_KINDS="prune_background_jobs_job",
+        )
+        assert settings.worker_allowed_job_kinds == "prune_background_jobs_job"
+
+    def test_deployed_worker_rejects_unbounded_statement_timeout(self):
+        with pytest.raises(
+            ValidationError,
+            match="DATABASE_STATEMENT_TIMEOUT_MS must be bounded",
+        ):
+            _make_deploy_settings(
+                WORKER_LANE="background",
+                DATABASE_STATEMENT_TIMEOUT_MS=0,
             )
 
     @pytest.mark.parametrize(

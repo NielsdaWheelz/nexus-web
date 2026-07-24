@@ -1,10 +1,11 @@
 # Docker Compose for running the Postgres queue worker locally.
 #
 # Usage:
-#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml up -d worker
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml \
+#     up -d worker-interactive worker-background
 
 services:
-  worker:
+  worker-interactive:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
@@ -19,6 +20,8 @@ services:
       - R2_BUCKET=${R2_BUCKET:-media}
       - R2_REGION=${R2_REGION:-us-east-1}
       - NEXUS_ENV=${NEXUS_ENV:-local}
+      - WORKER_LANE=interactive
+      - DATABASE_STATEMENT_TIMEOUT_MS=300000
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,3 +36,46 @@ services:
           memory: 2G
         reservations:
           memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker-background:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      - DATABASE_URL=${WORKER_DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/postgres}
+      - SUPABASE_JWKS_URL=${WORKER_SUPABASE_JWKS_URL:-http://host.docker.internal:54321/auth/v1/.well-known/jwks.json}
+      - SUPABASE_ISSUER=${SUPABASE_ISSUER:-http://127.0.0.1:54321/auth/v1}
+      - SUPABASE_AUDIENCES=${SUPABASE_AUDIENCES:-authenticated}
+      - R2_S3_API_ORIGIN=${WORKER_R2_S3_API_ORIGIN:-http://minio:9000}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-nexus-local-access-key}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-nexus-local-secret-key}
+      - R2_BUCKET=${R2_BUCKET:-media}
+      - R2_REGION=${R2_REGION:-us-east-1}
+      - NEXUS_ENV=${NEXUS_ENV:-local}
+      - WORKER_LANE=background
+      - DATABASE_STATEMENT_TIMEOUT_MS=300000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

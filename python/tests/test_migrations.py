@@ -4522,8 +4522,9 @@ class TestS2HighlightsNotesConstraints:
 class TestWorkerRuntime:
     """Tests for worker runtime import and initialization."""
 
-    def test_worker_app_initializes(self):
+    def test_worker_app_initializes(self, monkeypatch):
         """Worker app can be imported and constructed without error."""
+        monkeypatch.setenv("WORKER_LANE", "interactive")
         from apps.worker.main import create_worker
 
         worker = create_worker()
@@ -24046,9 +24047,9 @@ class TestMigration0192PaneVisitWorkspaceSessionPurge:
             result = run_alembic_command("downgrade 0191")
             assert result.returncode != 0, "0192 downgrade must be blocked"
             combined = (result.stdout or "") + (result.stderr or "")
-            assert (
-                "hard cutover migration and has no downgrade path" in combined
-            ), f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            assert "hard cutover migration and has no downgrade path" in combined, (
+                f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
@@ -24144,3 +24145,399 @@ class TestUniversalResourceSharingMigration:
                 )
             )
             assert checks == 0
+
+
+class TestMigration0193MediaPipelineReliability:
+    INDEXES = (
+        (
+            "ix_content_blocks_parent_block_id",
+            "content_blocks",
+            "parent_block_id",
+        ),
+        (
+            "ix_content_chunk_parts_block_id",
+            "content_chunk_parts",
+            "block_id",
+        ),
+        (
+            "ix_evidence_spans_start_block_id",
+            "evidence_spans",
+            "start_block_id",
+        ),
+        (
+            "ix_evidence_spans_end_block_id",
+            "evidence_spans",
+            "end_block_id",
+        ),
+        (
+            "ix_content_chunks_primary_evidence_span_id",
+            "content_chunks",
+            "primary_evidence_span_id",
+        ),
+        (
+            "ix_content_embeddings_chunk_id",
+            "content_embeddings",
+            "chunk_id",
+        ),
+        (
+            "ix_media_claims_evidence_span_id",
+            "media_claims",
+            "evidence_span_id",
+        ),
+    )
+
+    @staticmethod
+    def _assert_contract(engine) -> None:
+        with engine.connect() as connection:
+            column = connection.execute(
+                text(
+                    """
+                    SELECT
+                        a.atttypid = 'pg_catalog.int8'::regtype AS is_bigint,
+                        a.atttypmod,
+                        a.attnotnull,
+                        pg_get_expr(d.adbin, d.adrelid) AS default_expression
+                    FROM pg_attribute a
+                    JOIN pg_class table_relation ON table_relation.oid = a.attrelid
+                    JOIN pg_namespace table_namespace
+                      ON table_namespace.oid = table_relation.relnamespace
+                    LEFT JOIN pg_attrdef d
+                      ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                    WHERE table_namespace.nspname = 'public'
+                      AND table_relation.relname = 'content_index_states'
+                      AND a.attname = 'revision'
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped
+                    """
+                )
+            ).one()
+            assert column == (True, -1, True, "0")
+
+            indexes = connection.execute(
+                text(
+                    """
+                    SELECT
+                        index_relation.relname,
+                        index_metadata.indisvalid,
+                        pg_get_indexdef(index_metadata.indexrelid)
+                    FROM pg_class index_relation
+                    JOIN pg_namespace index_namespace
+                      ON index_namespace.oid = index_relation.relnamespace
+                    JOIN pg_index index_metadata
+                      ON index_metadata.indexrelid = index_relation.oid
+                    WHERE index_namespace.nspname = 'public'
+                      AND index_relation.relname = ANY(CAST(:names AS text[]))
+                    ORDER BY index_relation.relname
+                    """
+                ),
+                {
+                    "names": [
+                        name for name, _, _ in TestMigration0193MediaPipelineReliability.INDEXES
+                    ]
+                },
+            ).all()
+            expected = sorted(
+                (
+                    name,
+                    True,
+                    f"CREATE INDEX {name} ON public.{table} USING btree ({column_name})",
+                )
+                for name, table, column_name in TestMigration0193MediaPipelineReliability.INDEXES
+            )
+            assert indexes == expected
+
+            revision_checks = connection.scalar(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM pg_constraint
+                    WHERE conrelid = 'content_index_states'::regclass
+                      AND contype = 'c'
+                      AND pg_get_constraintdef(oid) LIKE '%revision%'
+                    """
+                )
+            )
+            assert revision_checks == 0
+
+    @staticmethod
+    def _assert_absent(engine) -> None:
+        with engine.connect() as connection:
+            revision_exists = connection.scalar(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'content_index_states'
+                          AND column_name = 'revision'
+                    )
+                    """
+                )
+            )
+            indexes = set(
+                connection.execute(
+                    text(
+                        """
+                        SELECT indexname
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = ANY(CAST(:names AS text[]))
+                        """
+                    ),
+                    {
+                        "names": [
+                            name for name, _, _ in TestMigration0193MediaPipelineReliability.INDEXES
+                        ]
+                    },
+                ).scalars()
+            )
+            assert revision_exists is False
+            assert indexes == set()
+
+    def test_0193_upgrade_downgrade_upgrade_contract(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0192").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                connection.execute(text("DROP INDEX ix_media_claims_evidence_span_id"))
+
+            result = run_alembic_command("downgrade 0192")
+            assert result.returncode == 0, result.stderr
+            self._assert_absent(engine)
+
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    @pytest.mark.parametrize("index_prefix_length", range(8))
+    def test_0193_upgrade_resumes_every_committed_valid_prefix(self, index_prefix_length):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0192").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                connection.execute(
+                    text(
+                        """
+                        ALTER TABLE content_index_states
+                        ADD COLUMN revision BIGINT NOT NULL DEFAULT 0
+                        """
+                    )
+                )
+                for name, table, column_name in self.INDEXES[:index_prefix_length]:
+                    connection.execute(text(f"CREATE INDEX {name} ON {table} ({column_name})"))
+
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0193_upgrade_recreates_exact_invalid_indexes(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0193").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE pg_index
+                        SET indisvalid = false
+                        WHERE indexrelid IN (
+                            SELECT index_relation.oid
+                            FROM pg_class index_relation
+                            JOIN pg_namespace index_namespace
+                              ON index_namespace.oid = index_relation.relnamespace
+                            WHERE index_namespace.nspname = 'public'
+                              AND index_relation.relname = ANY(CAST(:names AS text[]))
+                        )
+                        """
+                    ),
+                    {"names": [name for name, _, _ in self.INDEXES]},
+                )
+                connection.execute(text("UPDATE alembic_version SET version_num = '0192'"))
+
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0193_upgrade_defects_without_touching_a_wrong_named_index(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0192").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                connection.execute(
+                    text(
+                        """
+                        CREATE INDEX ix_content_blocks_parent_block_id
+                        ON content_blocks (id)
+                        """
+                    )
+                )
+
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode != 0
+
+            with engine.connect() as connection:
+                version = connection.scalar(text("SELECT version_num FROM alembic_version"))
+                revision_exists = connection.scalar(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'content_index_states'
+                              AND column_name = 'revision'
+                        )
+                        """
+                    )
+                )
+                definition = connection.scalar(
+                    text(
+                        """
+                        SELECT indexdef
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = 'ix_content_blocks_parent_block_id'
+                        """
+                    )
+                )
+                expected_siblings = connection.scalar(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = ANY(CAST(:names AS text[]))
+                        """
+                    ),
+                    {"names": [name for name, _, _ in self.INDEXES]},
+                )
+                assert version == "0192"
+                assert revision_exists is False
+                assert definition.endswith("USING btree (id)")
+                assert expected_siblings == 1
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0193_upgrade_defects_on_wrong_revision_storage_shape(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0192").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        ALTER TABLE content_index_states
+                        ADD COLUMN revision INTEGER NULL DEFAULT 1
+                        """
+                    )
+                )
+
+            result = run_alembic_command("upgrade 0193")
+            assert result.returncode != 0
+
+            with engine.connect() as connection:
+                column = connection.execute(
+                    text(
+                        """
+                        SELECT data_type, is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'content_index_states'
+                          AND column_name = 'revision'
+                        """
+                    )
+                ).one()
+                indexes = connection.scalar(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = ANY(CAST(:names AS text[]))
+                        """
+                    ),
+                    {"names": [name for name, _, _ in self.INDEXES]},
+                )
+                assert column == ("integer", "YES", "1")
+                assert indexes == 0
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    def test_0193_downgrade_defects_before_touching_a_wrong_named_index(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0193").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+                connection.execute(text("DROP INDEX ix_content_blocks_parent_block_id"))
+                connection.execute(
+                    text(
+                        """
+                        CREATE INDEX ix_content_blocks_parent_block_id
+                        ON content_blocks (id)
+                        """
+                    )
+                )
+
+            result = run_alembic_command("downgrade 0192")
+            assert result.returncode != 0
+
+            with engine.connect() as connection:
+                version = connection.scalar(text("SELECT version_num FROM alembic_version"))
+                indexes = connection.scalar(
+                    text(
+                        """
+                        SELECT count(*)
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = ANY(CAST(:names AS text[]))
+                        """
+                    ),
+                    {"names": [name for name, _, _ in self.INDEXES]},
+                )
+                revision_exists = connection.scalar(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name = 'content_index_states'
+                              AND column_name = 'revision'
+                        )
+                        """
+                    )
+                )
+                assert version == "0193"
+                assert indexes == 7
+                assert revision_exists is True
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

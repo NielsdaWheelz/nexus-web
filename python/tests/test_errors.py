@@ -101,6 +101,8 @@ class TestErrorCodeToStatus:
             (ApiErrorCode.E_INTERNAL, 500),
             (ApiErrorCode.E_INGEST_FAILED, 502),
             (ApiErrorCode.E_INGEST_TIMEOUT, 504),
+            (ApiErrorCode.E_SOURCE_ACCESS_DENIED, 422),
+            (ApiErrorCode.E_SOURCE_NOT_READABLE, 422),
             (ApiErrorCode.E_SANITIZATION_FAILED, 500),
             (ApiErrorCode.E_HIGHLIGHT_INVALID_RANGE, 400),
             (ApiErrorCode.E_HIGHLIGHT_CONFLICT, 409),

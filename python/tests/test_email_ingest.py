@@ -67,16 +67,6 @@ def fake_storage(monkeypatch) -> FakeStorageClient:
     return storage
 
 
-def _latest_attempt_id(db: Session, media_id: UUID) -> UUID:
-    return db.execute(
-        text(
-            "SELECT id FROM media_source_attempts WHERE media_id = :mid "
-            "ORDER BY attempt_no DESC, created_at DESC, id DESC LIMIT 1"
-        ),
-        {"mid": media_id},
-    ).scalar_one()
-
-
 # ---------------------------------------------------------------------------
 # direct_db helpers: accept_email_message runs the author op in its own fresh
 # session and commits, so credit-asserting tests need committed data across
@@ -386,7 +376,7 @@ class TestEmailIngestPipeline:
         """AC-1: a real Substack .eml runs the shared HTML pipeline to a readable
         web_article with a sanitised fragment."""
         from nexus.db.models import Fragment, Media, ProcessingStatus
-        from nexus.services.media_source_ingest import run_source_attempt
+        from tests.support.source_jobs import run_queued_source_attempt
 
         result = accept_email_message(
             db=db_session,
@@ -396,10 +386,9 @@ class TestEmailIngestPipeline:
         )
         assert result.outcome == "accepted"
 
-        run_result = run_source_attempt(
-            db=db_session,
+        run_result = run_queued_source_attempt(
+            db_session,
             media_id=result.media_id,
-            attempt_id=_latest_attempt_id(db_session, result.media_id),
             actor_user_id=owner_user_id,
             request_id=None,
         )
@@ -426,7 +415,7 @@ class TestEmailIngestPipeline:
     ):
         """AC-8: authenticated mail with no extractable text becomes a failed Media
         at failure_stage='extract' (visible in the failed-media surface)."""
-        from nexus.services.media_source_ingest import run_source_attempt
+        from tests.support.source_jobs import run_queued_source_attempt
 
         result = accept_email_message(
             db=db_session,
@@ -436,10 +425,9 @@ class TestEmailIngestPipeline:
         )
         assert result.outcome == "accepted"
 
-        run_result = run_source_attempt(
-            db=db_session,
+        run_result = run_queued_source_attempt(
+            db_session,
             media_id=result.media_id,
-            attempt_id=_latest_attempt_id(db_session, result.media_id),
             actor_user_id=owner_user_id,
             request_id=None,
         )
@@ -459,7 +447,7 @@ class TestEmailIngestPipeline:
         """D-5: a plain-text-only message is wrapped and runs the same pipeline to a
         readable fragment (no second HTML path)."""
         from nexus.db.models import Fragment, Media, ProcessingStatus
-        from nexus.services.media_source_ingest import run_source_attempt
+        from tests.support.source_jobs import run_queued_source_attempt
 
         result = accept_email_message(
             db=db_session,
@@ -467,10 +455,9 @@ class TestEmailIngestPipeline:
             owner_user_id=owner_user_id,
             request_id=None,
         )
-        run_result = run_source_attempt(
-            db=db_session,
+        run_result = run_queued_source_attempt(
+            db_session,
             media_id=result.media_id,
-            attempt_id=_latest_attempt_id(db_session, result.media_id),
             actor_user_id=owner_user_id,
             request_id=None,
         )

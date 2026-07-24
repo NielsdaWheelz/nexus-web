@@ -63,7 +63,13 @@ const testState = vi.hoisted(() => ({
     | "pending"
     | "extracting"
     | "ready_for_reading"
-    | "failed",
+    | "failed"
+    | "suspended",
+  retrievalStatus: "ready",
+  lastErrorCode: null as string | null,
+  sourceUrl: null as string | null,
+  canRetry: false,
+  canRefreshSource: false,
   contributors: [] as ContributorCredit[],
   canEditAuthors: false,
   initialMediaFailureStatus: null as number | null,
@@ -489,9 +495,10 @@ function mediaResponse() {
     id: "media-1",
     kind: testState.mediaKind,
     title: "Reader fixture",
-    canonical_source_url: null,
+    canonical_source_url: testState.sourceUrl,
     processing_status: testState.processingStatus,
-    retrieval_status: "ready",
+    retrieval_status: testState.retrievalStatus,
+    last_error_code: testState.lastErrorCode,
     contributors: testState.contributors,
     author_mode: "automatic" as const,
     created_at: "2026-01-01T00:00:00Z",
@@ -503,6 +510,8 @@ function mediaResponse() {
       can_search: true,
       can_play: testState.canPlay,
       can_download_file: false,
+      can_retry: testState.canRetry,
+      can_refresh_source: testState.canRefreshSource,
       can_read_embeds: testState.mediaKind === "web_article",
       can_edit_authors: testState.canEditAuthors,
     },
@@ -877,6 +886,11 @@ describe("MediaPaneBody pane sizing", () => {
     testState.canRead = true;
     testState.canPlay = false;
     testState.processingStatus = "ready_for_reading";
+    testState.retrievalStatus = "ready";
+    testState.lastErrorCode = null;
+    testState.sourceUrl = null;
+    testState.canRetry = false;
+    testState.canRefreshSource = false;
     testState.contributors = [];
     testState.canEditAuthors = false;
     testState.initialMediaFailureStatus = null;
@@ -1150,6 +1164,46 @@ describe("MediaPaneBody pane sizing", () => {
         label: "Reader fixture",
       });
     });
+  });
+
+  it("shows source-specific access guidance without an impossible Capture action", async () => {
+    testState.mediaKind = "web_article";
+    testState.canRead = false;
+    testState.processingStatus = "failed";
+    testState.lastErrorCode = "E_SOURCE_ACCESS_DENIED";
+    testState.sourceUrl = "https://example.com/article";
+    renderMediaPane();
+
+    expect(
+      await screen.findByText("This page blocked the import."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Open the original page in your browser and use Nexus Capture there.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "https://example.com/article",
+    );
+    expect(
+      screen.queryByRole("button", { name: /capture/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /retry/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps readable media open while retrieval is suspended", async () => {
+    testState.mediaKind = "web_article";
+    testState.retrievalStatus = "suspended";
+    renderMediaPane();
+
+    expect(
+      await screen.findByText("Search and AI stopped and need repair."),
+    ).toBeVisible();
+    expect(screen.getByTestId("document-viewport")).toBeVisible();
+    expect(screen.queryByText("Import failed.")).not.toBeInTheDocument();
   });
 
   it("moves ready identity to unavailable after a canonical media-not-found refetch", async () => {

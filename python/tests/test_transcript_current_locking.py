@@ -36,11 +36,7 @@ def test_current_transcript_locks_publication_boundary_before_advisory_lock(
     db = _RecordingDb(media_id)
     monkeypatch.setattr(current, "insert_transcript_fragments", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(current, "deactivate_content_index", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        current,
-        "rebuild_transcript_content_index",
-        lambda *_args, **_kwargs: None,
-    )
+    monkeypatch.setattr(current, "enqueue_job", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(current, "mark_ready_for_reading_by_id", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(current, "set_media_transcript_state", lambda *_args, **_kwargs: None)
 

@@ -11,6 +11,7 @@ These tests call run_node_ingest() directly with pytest-httpserver fixtures.
 No database required.
 """
 
+import json
 import time
 from pathlib import Path
 
@@ -19,7 +20,12 @@ from werkzeug import Request, Response
 
 from nexus.errors import ApiErrorCode
 from nexus.services import node_ingest
-from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
+from nexus.services.node_ingest import (
+    IngestError,
+    IngestResult,
+    NodeIngestProtocolDefect,
+    run_node_ingest,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -206,9 +212,22 @@ class TestNodeIngestFetch:
         assert isinstance(result, IngestError), (
             f"Expected IngestError for 404 response, got {type(result).__name__}: {result}"
         )
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED, (
-            f"Expected error_code E_INGEST_FAILED for 404, got {result.error_code}"
+        assert result.error_code == ApiErrorCode.E_SOURCE_FETCH_FAILED, (
+            f"Expected error_code E_SOURCE_FETCH_FAILED for 404, got {result.error_code}"
         )
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_access_denied_returns_terminal_ingest_error(self, httpserver, status):
+        httpserver.expect_request("/denied").respond_with_data(
+            "Denied",
+            status=status,
+            content_type="text/plain",
+        )
+
+        result = run_node_ingest(httpserver.url_for("/denied"))
+
+        assert isinstance(result, IngestError)
+        assert result.error_code == ApiErrorCode.E_SOURCE_ACCESS_DENIED
 
     def test_http_500_returns_ingest_error(self, httpserver):
         httpserver.expect_request("/error").respond_with_data(
@@ -223,22 +242,13 @@ class TestNodeIngestFetch:
         assert isinstance(result, IngestError), (
             f"Expected IngestError for 500 response, got {type(result).__name__}: {result}"
         )
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED, (
-            f"Expected error_code E_INGEST_FAILED for 500, got {result.error_code}"
+        assert result.error_code == ApiErrorCode.E_SOURCE_FETCH_FAILED, (
+            f"Expected error_code E_SOURCE_FETCH_FAILED for 500, got {result.error_code}"
         )
 
-    def test_invalid_url_scheme_returns_ingest_error(self):
-        result = run_node_ingest("file:///etc/hosts")
-
-        assert isinstance(result, IngestError), (
-            f"Expected IngestError for unsupported URL scheme, got {type(result).__name__}: {result}"
-        )
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED, (
-            f"Expected E_INGEST_FAILED for unsupported URL scheme, got {result.error_code}"
-        )
-        assert "Unsupported URL scheme" in result.message, (
-            f"Expected unsupported scheme message, got: {result.message}"
-        )
+    def test_invalid_owned_url_input_raises_protocol_defect(self):
+        with pytest.raises(NodeIngestProtocolDefect, match="Unsupported URL scheme"):
+            run_node_ingest("file:///etc/hosts")
 
     def test_response_too_large_returns_ingest_error(self, httpserver):
         oversized_article = (
@@ -255,8 +265,8 @@ class TestNodeIngestFetch:
         assert isinstance(result, IngestError), (
             f"Expected IngestError for oversized response, got {type(result).__name__}: {result}"
         )
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED, (
-            f"Expected E_INGEST_FAILED for oversized response, got {result.error_code}"
+        assert result.error_code == ApiErrorCode.E_SOURCE_TOO_LARGE, (
+            f"Expected E_SOURCE_TOO_LARGE for oversized response, got {result.error_code}"
         )
         assert "Response too large" in result.message, (
             f"Expected response-size error message, got: {result.message}"
@@ -419,8 +429,8 @@ class TestNodeIngestReadability:
         assert isinstance(result, IngestError), (
             f"Expected IngestError for empty page, got {type(result).__name__}: {result}"
         )
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED, (
-            f"Expected error_code E_INGEST_FAILED for readability failure, got {result.error_code}"
+        assert result.error_code == ApiErrorCode.E_SOURCE_NOT_READABLE, (
+            f"Expected E_SOURCE_NOT_READABLE for readability failure, got {result.error_code}"
         )
 
 
@@ -621,44 +631,94 @@ class TestNodeIngestEncoding:
 # ---------------------------------------------------------------------------
 
 
-class _FailedNodeProcess:
+class _NodeProcess:
     pid = 12345
-    returncode = node_ingest.EXIT_FETCH_FAILED
 
-    def __init__(self, stderr: bytes):
+    def __init__(self, *, returncode: int = 0, stdout: bytes = b"", stderr: bytes = b""):
+        self.returncode = returncode
+        self._stdout = stdout
         self._stderr = stderr
 
     def communicate(self, input: bytes, timeout: int):
-        return b"", self._stderr
+        return self._stdout, self._stderr
 
 
-def _install_failed_node_process(monkeypatch: pytest.MonkeyPatch, stderr: bytes) -> None:
+def _install_node_process(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    returncode: int = 0,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> None:
     monkeypatch.setattr(node_ingest, "NODE_INGEST_SCRIPT", Path(__file__))
     monkeypatch.setattr(
         node_ingest.subprocess,
         "Popen",
-        lambda *args, **kwargs: _FailedNodeProcess(stderr),
+        lambda *args, **kwargs: _NodeProcess(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+        ),
     )
 
 
-class TestNodeIngestSubprocessErrors:
-    def test_malformed_json_stderr_falls_back_to_raw_message(self, monkeypatch):
-        _install_failed_node_process(monkeypatch, b"plain fetch failure")
+class TestNodeIngestProtocol:
+    @pytest.mark.parametrize(
+        ("failure", "expected"),
+        [
+            ({"tag": "Http", "status": 404}, ApiErrorCode.E_SOURCE_FETCH_FAILED),
+            ({"tag": "Http", "status": 403}, ApiErrorCode.E_SOURCE_ACCESS_DENIED),
+            ({"tag": "Timeout"}, ApiErrorCode.E_INGEST_TIMEOUT),
+            ({"tag": "Network"}, ApiErrorCode.E_SOURCE_FETCH_FAILED),
+            ({"tag": "TooLarge"}, ApiErrorCode.E_SOURCE_TOO_LARGE),
+            ({"tag": "Readability"}, ApiErrorCode.E_SOURCE_NOT_READABLE),
+        ],
+    )
+    def test_failure_union_maps_exhaustively(self, monkeypatch, failure, expected):
+        _install_node_process(
+            monkeypatch,
+            stdout=json.dumps(
+                {
+                    "version": 1,
+                    "tag": "Failure",
+                    "failure": failure,
+                    "message": "modeled failure",
+                }
+            ).encode(),
+        )
 
         result = run_node_ingest("https://example.com/article")
 
         assert isinstance(result, IngestError)
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED
-        assert result.message == "plain fetch failure"
+        assert result.error_code == expected
+        assert result.message == "modeled failure"
 
-    def test_invalid_json_error_shape_falls_back_to_raw_message(self, monkeypatch):
-        _install_failed_node_process(monkeypatch, b'{"error": 503}')
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"not json",
+            b'{"version":2,"tag":"Failure","failure":{"tag":"Network"},"message":"bad"}',
+            b'{"version":1,"tag":"Unknown"}',
+            b'{"version":1,"tag":"Failure","failure":{"tag":"Unknown"},"message":"bad"}',
+            b'{"version":1,"tag":"Failure","failure":{"tag":"Http","status":200},"message":"bad"}',
+            b'{"version":1,"tag":"Success","final_url":"https://example.com"}',
+        ],
+    )
+    def test_malformed_owned_protocol_raises(self, monkeypatch, payload):
+        _install_node_process(monkeypatch, stdout=payload)
 
-        result = run_node_ingest("https://example.com/article")
+        with pytest.raises(NodeIngestProtocolDefect):
+            run_node_ingest("https://example.com/article")
 
-        assert isinstance(result, IngestError)
-        assert result.error_code == ApiErrorCode.E_INGEST_FAILED
-        assert result.message == '{"error": 503}'
+    def test_nonzero_exit_raises(self, monkeypatch):
+        _install_node_process(
+            monkeypatch,
+            returncode=1,
+            stderr=b'{"error":"owned script defect"}',
+        )
+
+        with pytest.raises(NodeIngestProtocolDefect, match="owned script defect"):
+            run_node_ingest("https://example.com/article")
 
 
 # ---------------------------------------------------------------------------

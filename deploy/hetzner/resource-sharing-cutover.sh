@@ -204,7 +204,7 @@ compose() {
   CUTOVER_SHA="$cutover_sha" NEXUS_ENV_FILE="$env_file" \
     docker compose --env-file "$env_file" -f deploy/hetzner/docker-compose.yml "$@"
 }
-for service in api worker; do
+for service in api worker-interactive worker-background; do
   [ -z "$(compose ps -q "$service")" ] || {
     echo "${service} restarted after cutover preparation" >&2
     exit 1
@@ -279,8 +279,8 @@ set -euo pipefail
 cd "$1"
 CUTOVER_SHA="$3" NEXUS_ENV_FILE="$2" \
   docker compose --env-file "$2" -f deploy/hetzner/docker-compose.yml \
-  stop worker api
-for service in worker api; do
+  stop worker-interactive worker-background api
+for service in worker-interactive worker-background api; do
   [ -z "$(
     CUTOVER_SHA="$3" NEXUS_ENV_FILE="$2" \
       docker compose --env-file "$2" -f deploy/hetzner/docker-compose.yml \
@@ -427,9 +427,9 @@ release_failure_cleanup() {
         echo "error: failed to revoke the active smoke fixture" >&2
     fi
     if [ "$DEPLOYED_NEW_RUNTIME" = "1" ]; then
-      echo "release failed after deploy; stopping the new api and worker" >&2
+      echo "release failed after deploy; stopping the new api and workers" >&2
       stop_deployed_writers >/dev/null 2>&1 || \
-        echo "error: failed to stop the deployed api and worker" >&2
+        echo "error: failed to stop the deployed api and workers" >&2
     fi
     if [ -f "$NEXUS_CUTOVER_STATE_FILE" ]; then
       if jq -e '.rollback.git_sha and .rollback.vercel_deployment_id' \
@@ -500,11 +500,13 @@ compose() {
     -f deploy/hetzner/docker-compose.yml "$@"
 }
 
-compose stop worker api
-[ -z "$(compose ps -q worker)" ] || {
-  echo "worker remained running after stop" >&2
-  exit 1
-}
+compose stop worker-interactive worker-background api
+for service in worker-interactive worker-background; do
+  [ -z "$(compose ps -q "$service")" ] || {
+    echo "${service} remained running after stop" >&2
+    exit 1
+  }
+done
 [ -z "$(compose ps -q api)" ] || {
   echo "api remained running after stop" >&2
   exit 1
@@ -742,7 +744,7 @@ compose() {
   NEXUS_ENV_FILE="$2" \
     docker compose --env-file "$2" -f deploy/hetzner/docker-compose.yml "$@"
 }
-for service in api worker; do
+for service in api worker-interactive worker-background; do
   [ -n "$(compose ps -q "$service")" ] || {
     echo "rolled-back ${service} is not running" >&2
     exit 1

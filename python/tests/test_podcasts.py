@@ -3,7 +3,6 @@
 import json
 import os
 import threading
-import time
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -25,6 +24,10 @@ from nexus.services.podcasts.transcription import TranscriptionRunResult
 from nexus.services.transcript_segments import TranscriptSegmentInput
 from tests.factories import add_media_to_library as seed_media_in_library
 from tests.helpers import auth_headers, create_test_user_id
+from tests.support.source_jobs import (
+    run_queued_source_attempt,
+    run_queued_transcript_semantic_reindex,
+)
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
@@ -33,10 +36,8 @@ pytestmark = pytest.mark.integration
 def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_model(
     db_session,
 ):
+    from nexus.jobs.queue import enqueue_job
     from nexus.services.content_indexing import rebuild_transcript_content_index
-    from nexus.services.podcasts.transcription import (
-        repair_podcast_transcript_semantic_index_now,
-    )
 
     user_id = uuid4()
     media_id = uuid4()
@@ -121,13 +122,21 @@ def test_direct_semantic_repair_rebuilds_ready_transcript_with_stale_embedding_m
         {"media_id": media_id},
     )
 
-    result = repair_podcast_transcript_semantic_index_now(
+    enqueue_job(
         db_session,
-        media_id=media_id,
-        request_reason="operator_requeue",
+        kind="podcast_reindex_semantic_job",
+        payload={
+            "media_id": str(media_id),
+            "requested_by_user_id": str(user_id),
+            "request_reason": "operator_requeue",
+            "request_id": None,
+        },
+        max_attempts=3,
     )
+    db_session.commit()
+    result = run_queued_transcript_semantic_reindex(db_session, media_id=media_id)
 
-    assert result.status == "completed", (
+    assert result["status"] == "completed", (
         "direct semantic repair must rebuild ready transcript rows with stale "
         f"embedding model, got: {result}"
     )
@@ -258,7 +267,12 @@ class TestPodcastUxHardening:
             _podcast_payload(provider_podcast_id, "Episode Offset Show"),
         )
         podcast_id = UUID(subscribe_data["podcast_id"])
-        _run_subscription_sync(direct_db, user_id, podcast_id)
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            podcast_id,
+            run_transcription_jobs=False,
+        )
 
         first_page = auth_client.get(
             f"/podcasts/{podcast_id}/episodes?limit=2&offset=0",
@@ -533,34 +547,82 @@ def _subscribe(auth_client, user_id: UUID, payload: dict) -> dict:
     return response.json()["data"]
 
 
+def _run_queued_podcast_source(
+    direct_db: DirectSessionManager,
+    media_id: UUID,
+    user_id: UUID,
+    *,
+    request_id: str = "test-podcast-source-attempt",
+) -> TranscriptionRunResult:
+    """Drive the current podcast source operation through the production worker."""
+    from nexus.services.media_source_ingest import refresh_source_for_viewer
+
+    with direct_db.session() as session:
+        latest_status = session.execute(
+            text(
+                """
+                SELECT j.status
+                FROM media_source_attempts msa
+                LEFT JOIN background_jobs j ON j.id = msa.job_id
+                WHERE msa.media_id = :media_id
+                ORDER BY msa.attempt_no DESC, msa.created_at DESC, msa.id DESC
+                LIMIT 1
+                """
+            ),
+            {"media_id": media_id},
+        ).scalar_one_or_none()
+        if latest_status not in {"pending", "failed", "running"}:
+            refresh_source_for_viewer(
+                db=session,
+                viewer_id=user_id,
+                media_id=media_id,
+                request_id=request_id,
+            )
+        session.commit()
+
+    with direct_db.session() as session:
+        result = run_queued_source_attempt(
+            session,
+            media_id=media_id,
+            actor_user_id=user_id,
+            request_id=request_id,
+        )
+    return TranscriptionRunResult(
+        status=result["status"],
+        reason=result.get("reason"),
+        job_status=result.get("job_status"),
+        error_code=result.get("error_code"),
+        segment_count=result.get("segment_count"),
+        provider_fixture=result.get("provider_fixture"),
+    )
+
+
 def _run_latest_source_attempt_for_media(
     direct_db: DirectSessionManager,
     media_id: UUID,
     *,
     request_id: str = "test-podcast-source-attempt",
 ) -> dict[str, object]:
-    from nexus.services.media_source_ingest import run_source_attempt
+    result = _run_queued_podcast_source(
+        direct_db,
+        media_id,
+        _media_creator_id(direct_db, media_id),
+        request_id=request_id,
+    )
+    return {
+        "status": result.status,
+        "reason": result.reason,
+        "error_code": result.error_code,
+        "segment_count": result.segment_count,
+    }
 
+
+def _media_creator_id(direct_db: DirectSessionManager, media_id: UUID) -> UUID:
     with direct_db.session() as session:
-        attempt_row = session.execute(
-            text(
-                """
-                SELECT id, created_by_user_id
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-                ORDER BY attempt_no DESC, created_at DESC, id DESC
-                LIMIT 1
-                """
-            ),
+        return session.execute(
+            text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
             {"media_id": media_id},
-        ).one()
-        return run_source_attempt(
-            db=session,
-            media_id=media_id,
-            attempt_id=attempt_row[0],
-            actor_user_id=attempt_row[1],
-            request_id=request_id,
-        )
+        ).scalar_one()
 
 
 def _run_subscription_sync(
@@ -572,12 +634,10 @@ def _run_subscription_sync(
 ) -> dict:
     from dataclasses import asdict
 
-    from nexus.services.media_source_ingest import run_source_attempt
     from nexus.services.podcasts import transcription as podcast_transcript_service
     from nexus.services.podcasts.poll import run_podcast_subscription_sync_now
 
-    # The transcript-request loop runs the real source enqueue path: source attempts
-    # and background_jobs rows are then driven through run_source_attempt.
+    episode_media_ids: list[UUID] = []
     with direct_db.session() as session:
         result = run_podcast_subscription_sync_now(
             session,
@@ -588,49 +648,35 @@ def _run_subscription_sync(
             "complete",
             "source_limited",
         }:
-            episode_media_ids = session.execute(
-                text(
-                    """
+            candidate_media_ids = list(
+                session.execute(
+                    text(
+                        """
                     SELECT pe.media_id
                     FROM podcast_episodes pe
                     WHERE pe.podcast_id = :podcast_id
                     ORDER BY pe.media_id ASC
                     """
-                ),
-                {"podcast_id": podcast_id},
-            ).fetchall()
-            for row in episode_media_ids:
-                podcast_transcript_service.request_podcast_transcript_for_viewer(
+                    ),
+                    {"podcast_id": podcast_id},
+                ).scalars()
+            )
+            for media_id in candidate_media_ids:
+                admission = podcast_transcript_service.request_podcast_transcript_for_viewer(
                     session,
                     viewer_id=user_id,
-                    media_id=row[0],
+                    media_id=media_id,
                     reason="episode_open",
                     dry_run=False,
                 )
-
-            pending_source_attempts = session.execute(
-                text(
-                    """
-                    SELECT msa.media_id, msa.id, msa.created_by_user_id
-                    FROM media_source_attempts msa
-                    JOIN podcast_episodes pe ON pe.media_id = msa.media_id
-                    WHERE pe.podcast_id = :podcast_id
-                      AND msa.source_type = 'podcast_episode_transcript'
-                      AND msa.status = 'queued'
-                    ORDER BY msa.media_id ASC
-                    """
-                ),
-                {"podcast_id": podcast_id},
-            ).fetchall()
-            for row in pending_source_attempts:
-                run_source_attempt(
-                    db=session,
-                    media_id=row[0],
-                    attempt_id=row[1],
-                    actor_user_id=row[2],
-                    request_id="test-podcast-source-attempt",
-                )
+                if admission.request_enqueued and admission.transcript_state in {
+                    "queued",
+                    "running",
+                }:
+                    episode_media_ids.append(media_id)
         session.commit()
+    for media_id in episode_media_ids:
+        _run_queued_podcast_source(direct_db, media_id, user_id)
     return asdict(result)
 
 
@@ -1698,7 +1744,12 @@ class TestPodcastSubscribeIngest:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
 
         assert observed["limit"] == 7, (
             "expected subscribe ingest prefetch limit to come from config, "
@@ -1807,7 +1858,12 @@ class TestPodcastSubscribeIngest:
         monkeypatch.setattr("nexus.services.podcasts.feed.safe_get", fake_safe_get)
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
 
         with direct_db.session() as session:
             rows = session.execute(
@@ -1946,9 +2002,19 @@ class TestPodcastSubscribeIngest:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
 
         with direct_db.session() as session:
             count = session.execute(
@@ -2016,9 +2082,19 @@ class TestPodcastSubscribeIngest:
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        _run_subscription_sync(
+            direct_db,
+            user_id,
+            UUID(subscribe_data["podcast_id"]),
+            run_transcription_jobs=False,
+        )
 
         with direct_db.session() as session:
             count = session.execute(
@@ -3161,15 +3237,7 @@ class TestPodcastTranscriptRequestAdmission:
                 ],
             ),
         )
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
+        result = _run_queued_podcast_source(direct_db, media_id, user_id)
         assert result.status == "completed"
 
         with direct_db.session() as session:
@@ -3680,8 +3748,8 @@ class TestPodcastTranscriptRequestAdmission:
             "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
             lambda self, _audio_url: TranscriptionResult(
                 status="failed",
-                error_code="E_TRANSCRIPTION_FAILED",
-                error_message="simulated provider failure",
+                error_code="E_TRANSCRIPT_UNAVAILABLE",
+                error_message="simulated unavailable transcript",
             ),
         )
         result = _run_latest_source_attempt_for_media(direct_db, media_id)
@@ -4121,11 +4189,11 @@ class TestPodcastTranscriptPersistence:
         assert job_row[1] == "E_DIARIZATION_FAILED"
 
     @pytest.mark.parametrize(
-        "terminal_error_code",
+        "provider_error_code",
         ["E_TRANSCRIPTION_FAILED", "E_TRANSCRIPTION_TIMEOUT"],
     )
-    def test_transcription_failures_map_to_explicit_terminal_error_codes(
-        self, auth_client, monkeypatch, direct_db, terminal_error_code
+    def test_transcription_provider_faults_preserve_codes_for_queue_retry(
+        self, auth_client, monkeypatch, direct_db, provider_error_code
     ):
         user_id = create_test_user_id()
         _bootstrap_user(auth_client, user_id)
@@ -4138,14 +4206,14 @@ class TestPodcastTranscriptPersistence:
             initial_episode_window=1,
         )
 
-        provider_podcast_id = f"terminal-error-{terminal_error_code.lower()}-{uuid4()}"
-        payload = _podcast_payload(provider_podcast_id, "Terminal Error Podcast")
+        provider_podcast_id = f"provider-error-{provider_error_code.lower()}-{uuid4()}"
+        payload = _podcast_payload(provider_podcast_id, "Provider Error Podcast")
         episodes = [
             {
-                "provider_episode_id": f"ep-{terminal_error_code.lower()}",
-                "guid": f"guid-{terminal_error_code.lower()}",
-                "title": "Terminal Error Episode",
-                "audio_url": "https://cdn.example.com/terminal-error.mp3",
+                "provider_episode_id": f"ep-{provider_error_code.lower()}",
+                "guid": f"guid-{provider_error_code.lower()}",
+                "title": "Provider Error Episode",
+                "audio_url": "https://cdn.example.com/provider-error.mp3",
                 "published_at": "2026-03-02T08:00:00Z",
                 "duration_seconds": 90,
                 "transcript_segments": [
@@ -4166,13 +4234,15 @@ class TestPodcastTranscriptPersistence:
             "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
             lambda self, _audio_url: TranscriptionResult(
                 status="failed",
-                error_code=terminal_error_code,
-                error_message=f"simulated {terminal_error_code}",
+                error_code=provider_error_code,
+                error_message=f"simulated {provider_error_code}",
             ),
         )
 
         subscribe_data = _subscribe(auth_client, user_id, payload)
-        _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        with pytest.raises(ApiError) as raised:
+            _run_subscription_sync(direct_db, user_id, UUID(subscribe_data["podcast_id"]))
+        assert raised.value.code is ApiErrorCode(provider_error_code)
 
         with direct_db.session() as session:
             media_row = session.execute(
@@ -4199,13 +4269,27 @@ class TestPodcastTranscriptPersistence:
                 ),
                 {"media_id": media_row[0]},
             ).fetchone()
+            queue_row = session.execute(
+                text(
+                    """
+                    SELECT j.status, j.error_code
+                    FROM media_source_attempts msa
+                    JOIN background_jobs j ON j.id = msa.job_id
+                    WHERE msa.media_id = :media_id
+                    ORDER BY msa.attempt_no DESC, msa.created_at DESC, msa.id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"media_id": media_row[0]},
+            ).fetchone()
 
-        assert media_row[1] == "failed"
-        assert media_row[2] == "transcribe"
-        assert media_row[3] == terminal_error_code
+        assert media_row[1] == "extracting"
+        assert media_row[2] is None
+        assert media_row[3] is None
         assert job_row is not None
-        assert job_row[0] == "failed"
-        assert job_row[1] == terminal_error_code
+        assert job_row[0] == "running"
+        assert job_row[1] is None
+        assert queue_row == ("failed", provider_error_code)
 
     def test_transcript_segments_are_canonicalized_and_invalid_timings_are_rejected(
         self, auth_client, monkeypatch, direct_db
@@ -6317,6 +6401,12 @@ class TestPodcastApiSurface:
             ).scalar()
             assert media_id is not None
 
+            semantic_result = run_queued_transcript_semantic_reindex(
+                session,
+                media_id=media_id,
+            )
+            assert semantic_result["status"] == "completed"
+
             media_status = session.execute(
                 text("SELECT processing_status FROM media WHERE id = :media_id"),
                 {"media_id": media_id},
@@ -7903,28 +7993,7 @@ class TestPodcastTranscriptionAsyncLifecycle:
         }
 
     def _run_source_attempt_for_media(self, direct_db, media_id: UUID) -> dict[str, object]:
-        from nexus.services.media_source_ingest import run_source_attempt
-
-        with direct_db.session() as session:
-            attempt_row = session.execute(
-                text(
-                    """
-                    SELECT id, created_by_user_id
-                    FROM media_source_attempts
-                    WHERE media_id = :media_id
-                    ORDER BY attempt_no DESC, created_at DESC, id DESC
-                    LIMIT 1
-                    """
-                ),
-                {"media_id": media_id},
-            ).one()
-            return run_source_attempt(
-                db=session,
-                media_id=media_id,
-                attempt_id=attempt_row[0],
-                actor_user_id=attempt_row[1],
-                request_id="test-podcast-source-attempt",
-            )
+        return _run_latest_source_attempt_for_media(direct_db, media_id)
 
     def test_sync_creates_pending_transcription_job_without_inline_transcription(
         self, auth_client, monkeypatch, direct_db
@@ -7965,472 +8034,6 @@ class TestPodcastTranscriptionAsyncLifecycle:
         assert row[5] is None
         assert row[6] is None
 
-    def test_manual_transcription_worker_claims_pending_job_and_marks_completed(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
-            lambda self, _audio_url: TranscriptionResult(
-                status="completed",
-                segments=[
-                    {"t_start_ms": 0, "t_end_ms": 800, "text": "first"},
-                    {"t_start_ms": 900, "t_end_ms": 1700, "text": "second"},
-                ],
-            ),
-        )
-
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-
-        assert result.status == "completed"
-        assert result.segment_count == 2
-
-        with direct_db.session() as session:
-            media_row = session.execute(
-                text(
-                    """
-                    SELECT processing_status, failure_stage, last_error_code
-                    FROM media
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            job_row = session.execute(
-                text(
-                    """
-                    SELECT status, attempts, started_at, completed_at, error_code
-                    FROM podcast_transcription_jobs
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            fragment_count = session.execute(
-                text("SELECT COUNT(*) FROM fragments WHERE media_id = :media_id"),
-                {"media_id": media_id},
-            ).scalar()
-
-        assert media_row is not None
-        assert media_row[0] == "ready_for_reading"
-        assert media_row[1] is None
-        assert media_row[2] is None
-        assert job_row is not None
-        assert job_row[0] == "completed"
-        assert job_row[1] == 1
-        assert job_row[2] is not None
-        assert job_row[3] is not None
-        assert job_row[4] is None
-        assert fragment_count == 2
-
-    def test_manual_transcription_worker_reclaims_stale_running_job(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-        stale_started_at = datetime.now(UTC) - timedelta(hours=2)
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_transcription_jobs
-                    SET
-                        status = 'running',
-                        started_at = :started_at,
-                        updated_at = :started_at,
-                        completed_at = NULL
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id, "started_at": stale_started_at},
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE media
-                    SET
-                        processing_status = 'extracting',
-                        processing_started_at = :started_at,
-                        processing_completed_at = NULL,
-                        failed_at = NULL,
-                        updated_at = :started_at
-                    WHERE id = :media_id
-                    """
-                ),
-                {"media_id": media_id, "started_at": stale_started_at},
-            )
-            session.commit()
-
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
-            lambda self, _audio_url: TranscriptionResult(
-                status="completed",
-                segments=[{"t_start_ms": 0, "t_end_ms": 900, "text": "stale reclaim"}],
-            ),
-        )
-
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-
-        assert result.status == "completed", (
-            "worker should reclaim stale running transcription jobs instead of skipping forever"
-        )
-
-        with direct_db.session() as session:
-            job_row = session.execute(
-                text(
-                    """
-                    SELECT status, attempts, started_at, completed_at
-                    FROM podcast_transcription_jobs
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-        assert job_row is not None
-        assert job_row[0] == "completed"
-        assert job_row[1] == 1
-        assert job_row[2] is not None
-        assert job_row[3] is not None
-
-    def test_manual_transcription_worker_keeps_db_clock_live_running_job(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-
-        with direct_db.session() as session:
-            session.execute(
-                text(
-                    """
-                    UPDATE podcast_transcription_jobs
-                    SET
-                        status = 'running',
-                        started_at = now(),
-                        updated_at = now(),
-                        completed_at = NULL
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            )
-            session.commit()
-
-        class FutureDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):  # noqa: ANN001
-                return datetime(2099, 1, 1, tzinfo=UTC)
-
-        monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FutureDateTime)
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
-            lambda self, _audio_url: pytest.fail("live DB-clock job must not be reclaimed"),
-        )
-
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-
-        assert result.status == "skipped"
-        assert result.reason == "not_pending"
-        assert result.job_status == "running"
-
-        with direct_db.session() as session:
-            attempts = session.execute(
-                text(
-                    """
-                    SELECT attempts
-                    FROM podcast_transcription_jobs
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar()
-        assert attempts == 0
-
-    def test_manual_transcription_worker_uses_db_clock_for_claim_lifecycle_timestamps(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-
-        class FutureDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):  # noqa: ANN001
-                return datetime(2099, 1, 1, tzinfo=UTC)
-
-        transcribe_started = threading.Event()
-        release_transcribe = threading.Event()
-        worker_result: dict[str, TranscriptionRunResult] = {}
-        worker_errors: list[Exception] = []
-
-        def slow_transcribe(self, _audio_url: str) -> TranscriptionResult:
-            transcribe_started.set()
-            assert release_transcribe.wait(timeout=8), (
-                "worker should stay in-flight while claim timestamps are inspected"
-            )
-            return TranscriptionResult(
-                status="completed",
-                segments=[{"t_start_ms": 0, "t_end_ms": 900, "text": "db clock claim"}],
-            )
-
-        monkeypatch.setattr("nexus.services.podcasts.transcription.datetime", FutureDateTime)
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe", slow_transcribe
-        )
-
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        def run_worker() -> None:
-            try:
-                with direct_db.session() as session:
-                    result = run_podcast_transcription_now(
-                        session,
-                        media_id=media_id,
-                        requested_by_user_id=user_id,
-                    )
-                    session.commit()
-                worker_result["value"] = result
-            except Exception as exc:  # pragma: no cover - surfaced via assertion below
-                worker_errors.append(exc)
-
-        worker_thread = threading.Thread(target=run_worker, daemon=True)
-        try:
-            worker_thread.start()
-            assert transcribe_started.wait(timeout=3), (
-                "worker should begin provider transcription before timestamp inspection"
-            )
-
-            with direct_db.session() as session:
-                row = session.execute(
-                    text(
-                        """
-                        SELECT
-                            job.started_at,
-                            job.updated_at,
-                            media.processing_started_at,
-                            state.updated_at,
-                            now()
-                        FROM podcast_transcription_jobs job
-                        JOIN media ON media.id = job.media_id
-                        JOIN media_transcript_states state ON state.media_id = job.media_id
-                        WHERE job.media_id = :media_id
-                        """
-                    ),
-                    {"media_id": media_id},
-                ).one()
-
-            db_now = row[4]
-            for observed in row[:4]:
-                assert observed is not None
-                assert abs((observed - db_now).total_seconds()) < 10, (
-                    "running claim lifecycle timestamps must come from DB now(), "
-                    f"got observed={observed} db_now={db_now}"
-                )
-        finally:
-            release_transcribe.set()
-            worker_thread.join(timeout=8)
-
-        assert not worker_errors, f"worker failed unexpectedly: {worker_errors}"
-        assert worker_thread.is_alive() is False, "worker should finish after release"
-        assert worker_result["value"].status == "completed"
-
-    def test_manual_transcription_worker_does_not_reclaim_live_running_job_with_heartbeat(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-
-        monkeypatch.setenv("INGEST_STALE_EXTRACTING_SECONDS", "2")
-        clear_settings_cache()
-
-        transcribe_started = threading.Event()
-        release_first_transcribe = threading.Event()
-        transcribe_calls: dict[str, int] = {"count": 0}
-        first_worker_result: dict[str, TranscriptionRunResult] = {}
-        first_worker_errors: list[Exception] = []
-
-        def slow_transcribe(self, _audio_url: str) -> TranscriptionResult:
-            transcribe_calls["count"] += 1
-            transcribe_started.set()
-            if transcribe_calls["count"] == 1:
-                assert release_first_transcribe.wait(timeout=8), (
-                    "first worker should remain in-flight while stale-reclaim check runs"
-                )
-            return TranscriptionResult(
-                status="completed",
-                segments=[{"t_start_ms": 0, "t_end_ms": 1000, "text": "heartbeat guard"}],
-            )
-
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe", slow_transcribe
-        )
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        def run_first_worker() -> None:
-            try:
-                with direct_db.session() as session:
-                    result = run_podcast_transcription_now(
-                        session,
-                        media_id=media_id,
-                        requested_by_user_id=user_id,
-                    )
-                    session.commit()
-                first_worker_result["value"] = result
-            except Exception as exc:  # pragma: no cover - surfaced via assertion below
-                first_worker_errors.append(exc)
-
-        second_result: dict[str, object] | None = None
-        worker_thread = threading.Thread(target=run_first_worker, daemon=True)
-        try:
-            worker_thread.start()
-            assert transcribe_started.wait(timeout=3), (
-                "first worker should begin provider transcription before stale-reclaim check"
-            )
-
-            # Sleep beyond stale cutoff. Without heartbeat, second worker would reclaim this job.
-            time.sleep(2.2)
-            with direct_db.session() as session:
-                second_result = run_podcast_transcription_now(
-                    session,
-                    media_id=media_id,
-                    requested_by_user_id=user_id,
-                )
-                session.commit()
-        finally:
-            release_first_transcribe.set()
-            worker_thread.join(timeout=8)
-            clear_settings_cache()
-
-        assert not first_worker_errors, f"first worker failed unexpectedly: {first_worker_errors}"
-        assert worker_thread.is_alive() is False, "first worker should finish after release"
-        assert second_result is not None
-        assert second_result.status == "skipped"
-        assert second_result.reason == "not_pending"
-        assert second_result.job_status == "running"
-        assert transcribe_calls["count"] == 1, "live running job must not be double-transcribed"
-        assert first_worker_result["value"].status == "completed"
-
-        with direct_db.session() as session:
-            attempts = session.execute(
-                text(
-                    """
-                    SELECT attempts
-                    FROM podcast_transcription_jobs
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar()
-        assert attempts == 1
-
-    def test_manual_transcription_worker_is_idempotent_after_completion(
-        self, auth_client, monkeypatch, direct_db
-    ):
-        seeded = self._seed_single_episode_subscription(
-            auth_client=auth_client,
-            monkeypatch=monkeypatch,
-            direct_db=direct_db,
-            run_transcription_jobs=False,
-        )
-        media_id = seeded["media_id"]
-        user_id = seeded["user_id"]
-
-        monkeypatch.setattr(
-            "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
-            lambda self, _audio_url: TranscriptionResult(
-                status="completed",
-                segments=[{"t_start_ms": 0, "t_end_ms": 600, "text": "single"}],
-            ),
-        )
-
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            first = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            second = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-
-        assert first.status == "completed"
-        assert second.status == "skipped"
-        assert second.reason == "not_pending"
-        assert second.job_status == "completed"
-
-        with direct_db.session() as session:
-            attempts = session.execute(
-                text(
-                    """
-                    SELECT attempts
-                    FROM podcast_transcription_jobs
-                    WHERE media_id = :media_id
-                    """
-                ),
-                {"media_id": media_id},
-            ).scalar()
-        assert attempts == 1
-
     def test_retry_endpoint_requeues_failed_podcast_transcription_and_is_idempotent(
         self, auth_client, monkeypatch, direct_db
     ):
@@ -8447,8 +8050,8 @@ class TestPodcastTranscriptionAsyncLifecycle:
             "nexus.services.podcasts.deepgram_adapter.DeepgramClient.transcribe",
             lambda self, _audio_url: TranscriptionResult(
                 status="failed",
-                error_code="E_TRANSCRIPTION_FAILED",
-                error_message="simulated terminal failure",
+                error_code="E_TRANSCRIPT_UNAVAILABLE",
+                error_message="simulated unavailable transcript",
             ),
         )
 
@@ -9097,16 +8700,7 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             ),
         )
 
-        from nexus.services.podcasts.transcription import run_podcast_transcription_now
-
-        with direct_db.session() as session:
-            result = run_podcast_transcription_now(
-                session,
-                media_id=media_id,
-                requested_by_user_id=user_id,
-            )
-            session.commit()
-        return result
+        return _run_queued_podcast_source(direct_db, media_id, user_id)
 
     def test_transcript_state_tracks_not_requested_to_ready_with_active_version(
         self, auth_client, monkeypatch, direct_db
@@ -9170,6 +8764,13 @@ class TestPodcastTranscriptStateVersioningAndAudit:
             ],
         )
         assert result.status == "completed"
+
+        with direct_db.session() as session:
+            semantic_result = run_queued_transcript_semantic_reindex(
+                session,
+                media_id=media_id,
+            )
+        assert semantic_result["status"] == "completed"
 
         with direct_db.session() as session:
             final_state = session.execute(

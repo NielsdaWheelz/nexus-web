@@ -47,22 +47,19 @@ for key in (
     os.environ.pop(key, None)
 
 from nexus.db.models import FailureStage, Fragment, Media, ProcessingStatus
+from nexus.db.retries import retry_serializable
 from nexus.db.session import create_session_factory
+from nexus.jobs.queue import supersede_unclaimed_job
+from nexus.jobs.worker import JobWorker
 from nexus.schemas.highlights import CreateHighlightRequest
 from nexus.services.billing_entitlements import grant_entitlement_override
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.content_indexing import (
-    rebuild_fragment_content_index,
-)
-from nexus.services.epub_ingest import EpubExtractionError
-from nexus.services.epub_metadata import persist_epub_metadata
+from nexus.services.content_indexing import request_media_content_reindex
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.highlights import create_highlight_for_fragment
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.note_indexing import rebuild_note_content_index
 from nexus.services.notes import pm_doc_from_text, set_highlight_note_body_pm_json
-from nexus.services.pdf_indexing import index_pdf_evidence
-from nexus.services.pdf_ingest import PdfExtractionError
 from nexus.services.reader_apparatus import replace_media_apparatus, source_fingerprint
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
 from nexus.services.resource_graph.refs import ResourceRef
@@ -71,8 +68,6 @@ from nexus.services.transcripts.current import write_current_transcript
 from nexus.services.upload import confirm_ingest, init_upload
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_staging_storage_path, get_file_extension
-from nexus.tasks.ingest_epub import run_epub_ingest_sync
-from nexus.tasks.ingest_pdf import run_pdf_ingest_sync
 
 PDF_PAGE_COUNT = 80
 SEED_FILE_RELATIVE = Path("e2e/.seed/pdf-media.json")
@@ -657,16 +652,16 @@ def _accept_seed_url_source(
         request_id="e2e-seed",
         idempotency_key=f"e2e-seed:{url}",
     )
-    db.execute(
-        text(
-            """
-            DELETE FROM background_jobs
-            WHERE kind = 'ingest_media_source'
-              AND payload->>'attempt_id' = :source_attempt_id
-            """
-        ),
-        {"source_attempt_id": str(response.source_attempt_id)},
-    )
+    source_job_id = db.execute(
+        text("SELECT job_id FROM media_source_attempts WHERE id = :source_attempt_id"),
+        {"source_attempt_id": response.source_attempt_id},
+    ).scalar_one()
+    if not supersede_unclaimed_job(
+        db,
+        job_id=source_job_id,
+        kind="ingest_media_source",
+    ):
+        raise RuntimeError("E2E source seed could not supersede its unclaimed source job")
     db.execute(
         text(
             """
@@ -778,15 +773,34 @@ def _upsert_media_transcript_state(
         raise RuntimeError("media_transcript_states seed mutation affected an unexpected row count")
 
 
-def _index_seeded_fragment(db, *, media_id: UUID, fragment: Fragment, source_url: str) -> None:
+def _prepare_seeded_fragment(db, *, fragment: Fragment) -> None:
     insert_fragment_blocks(db, fragment.id, parse_fragment_blocks(fragment.canonical_text or ""))
-    rebuild_fragment_content_index(
-        db,
-        media_id=media_id,
-        source_kind="web_article",
-        fragments=[fragment],
-        reason="e2e_seed",
+
+
+def _request_and_drain_media_reindex(session_factory, *, media_id: UUID) -> None:
+    with session_factory() as db:
+
+        def request() -> None:
+            request_media_content_reindex(
+                db,
+                media_id=media_id,
+                reason="e2e_seed",
+                request_id="e2e-seed",
+            )
+            db.commit()
+
+        retry_serializable(db, "e2e_seed_media_reindex", request)
+    _drain_media_pipeline_jobs(session_factory)
+
+
+def _drain_media_pipeline_jobs(session_factory) -> None:
+    worker = JobWorker(
+        session_factory=session_factory,
+        worker_id="e2e-media-pipeline-seed",
+        allowed_kinds=("ingest_media_source", "media_content_reindex_job"),
     )
+    while worker.run_once():
+        pass
 
 
 def _set_seed_highlight_note(db, user_id: UUID, highlight_id: UUID, body: str):
@@ -838,12 +852,7 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         )
         db.add(fragment)
         db.flush()
-        _index_seeded_fragment(
-            db,
-            media_id=media_id,
-            fragment=fragment,
-            source_url=NON_PDF_SOURCE_URL,
-        )
+        _prepare_seeded_fragment(db, fragment=fragment)
         replace_media_apparatus(
             db,
             media_id=media_id,
@@ -900,6 +909,7 @@ def _seed_non_pdf_linked_items_media(session_factory, user_id: UUID) -> None:
         rebuild_note_content_index(db, note_block_id=quote_note_block.id, reason="e2e_seed")
         rebuild_note_content_index(db, note_block_id=focus_note_block.id, reason="e2e_seed")
         db.commit()
+    _request_and_drain_media_reindex(session_factory, media_id=media_id)
 
     _write_non_pdf_seed_file(
         media_id=str(media_id),
@@ -1063,28 +1073,13 @@ def _seed_epub_media(session_factory, user_id: UUID) -> None:
     epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
 
+    _drain_media_pipeline_jobs(session_factory)
     with session_factory() as db:
-        extraction_result = run_epub_ingest_sync(db, epub_media_id)
-        if isinstance(extraction_result, EpubExtractionError):
-            raise RuntimeError(
-                "Failed to seed EPUB artifacts: "
-                f"{extraction_result.error_code} {extraction_result.error_message}"
-            )
-
         media = db.execute(select(Media).where(Media.id == epub_media_id)).scalar_one_or_none()
         if media is None:
             raise RuntimeError(f"Seeded EPUB media row disappeared: {epub_media_id_str}")
-
-        persist_epub_metadata(db, media, extraction_result)
-        now = datetime.now(UTC)
-        media.processing_status = ProcessingStatus.ready_for_reading
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.processing_completed_at = now
-        media.updated_at = now
-        db.commit()
+        if media.processing_status != ProcessingStatus.ready_for_reading:
+            raise RuntimeError(f"Seeded EPUB source did not become readable: {epub_media_id_str}")
 
     _write_epub_seed_file(
         media_id=epub_media_id_str,
@@ -1149,12 +1144,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
         )
         db.add(fragment)
         db.flush()
-        _index_seeded_fragment(
-            db,
-            media_id=web_media_id,
-            fragment=fragment,
-            source_url=READER_RESUME_WEB_SOURCE_URL,
-        )
+        _prepare_seeded_fragment(db, fragment=fragment)
         replace_media_apparatus(
             db,
             media_id=web_media_id,
@@ -1165,6 +1155,7 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
             status="empty",
         )
         db.commit()
+    _request_and_drain_media_reindex(session_factory, media_id=web_media_id)
 
     # ------------------------------------------------------------------
     # EPUB (separate media id from primary EPUB seed to avoid state races)
@@ -1199,28 +1190,13 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
         )
     epub_media_id_str = confirm_result["media_id"]
     epub_media_id = UUID(epub_media_id_str)
+    _drain_media_pipeline_jobs(session_factory)
     with session_factory() as db:
-        extraction_result = run_epub_ingest_sync(db, epub_media_id)
-        if isinstance(extraction_result, EpubExtractionError):
-            raise RuntimeError(
-                "Failed to seed reader-resume EPUB artifacts: "
-                f"{extraction_result.error_code} {extraction_result.error_message}"
-            )
-
         media = db.execute(select(Media).where(Media.id == epub_media_id)).scalar_one_or_none()
         if media is None:
             raise RuntimeError(f"Reader-resume EPUB media missing: {epub_media_id_str}")
-
-        persist_epub_metadata(db, media, extraction_result)
-        now = datetime.now(UTC)
-        media.processing_status = ProcessingStatus.ready_for_reading
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.processing_completed_at = now
-        media.updated_at = now
-        db.commit()
+        if media.processing_status != ProcessingStatus.ready_for_reading:
+            raise RuntimeError(f"Reader-resume EPUB did not become readable: {epub_media_id_str}")
 
     # ------------------------------------------------------------------
     # PDF (separate media id from primary PDF seed to avoid state races)
@@ -1255,28 +1231,13 @@ def _seed_reader_resume_media(session_factory, user_id: UUID) -> None:
         )
     pdf_media_id_str = confirm_result["media_id"]
     pdf_media_id = UUID(pdf_media_id_str)
+    _drain_media_pipeline_jobs(session_factory)
     with session_factory() as db:
-        extraction_result = run_pdf_ingest_sync(db, pdf_media_id)
-        if isinstance(extraction_result, PdfExtractionError):
-            raise RuntimeError(
-                "Failed to seed reader-resume PDF artifacts: "
-                f"{extraction_result.error_code} {extraction_result.error_message}"
-            )
-
         media = db.execute(select(Media).where(Media.id == pdf_media_id)).scalar_one_or_none()
         if media is None:
             raise RuntimeError(f"Reader-resume PDF media missing: {pdf_media_id_str}")
-
-        now = datetime.now(UTC)
-        media.processing_status = ProcessingStatus.ready_for_reading
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.processing_completed_at = now
-        media.updated_at = now
-        db.commit()
-        index_pdf_evidence(db, pdf_media_id, "e2e_seed", extraction_result)
+        if media.processing_status != ProcessingStatus.ready_for_reading:
+            raise RuntimeError(f"Reader-resume PDF did not become readable: {pdf_media_id_str}")
 
     _write_reader_resume_seed_file(
         web_media_id=str(web_media_id),
@@ -1367,13 +1328,6 @@ def _seed_reader_document_map_media(session_factory, user_id: UUID) -> None:
             insert_fragment_blocks(
                 db, fragment.id, parse_fragment_blocks(fragment.canonical_text or "")
             )
-        rebuild_fragment_content_index(
-            db,
-            media_id=media_id,
-            source_kind="web_article",
-            fragments=seeded_fragments,
-            reason="e2e_seed",
-        )
         replace_media_apparatus(
             db,
             media_id=media_id,
@@ -1429,6 +1383,7 @@ def _seed_reader_document_map_media(session_factory, user_id: UUID) -> None:
         rebuild_note_content_index(db, note_block_id=near_note_block.id, reason="e2e_seed")
         rebuild_note_content_index(db, note_block_id=far_note_block.id, reason="e2e_seed")
         db.commit()
+    _request_and_drain_media_reindex(session_factory, media_id=media_id)
 
     _write_reader_document_map_seed_file(
         media_id=str(media_id),
@@ -1503,28 +1458,13 @@ def main() -> None:
     media_id_str = confirm_result["media_id"]
     media_id = UUID(media_id_str)
 
+    _drain_media_pipeline_jobs(session_factory)
     with session_factory() as db:
-        extraction_result = run_pdf_ingest_sync(db, media_id)
-        if isinstance(extraction_result, PdfExtractionError):
-            raise RuntimeError(
-                "Failed to seed quote-ready PDF artifacts: "
-                f"{extraction_result.error_code} {extraction_result.error_message}"
-            )
-
         media = db.execute(select(Media).where(Media.id == media_id)).scalar_one_or_none()
         if media is None:
             raise RuntimeError(f"Seeded media row disappeared before finalize: {media_id_str}")
-
-        now = datetime.now(UTC)
-        media.processing_status = ProcessingStatus.ready_for_reading
-        media.failure_stage = None
-        media.last_error_code = None
-        media.last_error_message = None
-        media.failed_at = None
-        media.processing_completed_at = now
-        media.updated_at = now
-        db.commit()
-        index_pdf_evidence(db, media_id, "e2e_seed", extraction_result)
+        if media.processing_status != ProcessingStatus.ready_for_reading:
+            raise RuntimeError(f"Seeded PDF source did not become readable: {media_id_str}")
 
     password_filename = f"e2e-password-seed-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.pdf"
     with session_factory() as db:
