@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -10,10 +19,14 @@ import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
   usePaneParam,
+  usePaneReturnReady,
   usePaneRuntime,
   usePaneRouter,
   usePaneSearchParams,
+  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
@@ -73,6 +86,18 @@ interface PodcastDetailLoadResult {
   podcastLibraries: PodcastLibraryMembership[];
 }
 
+interface PodcastDetailSnapshot {
+  readonly detail: PodcastDetailResponse;
+  readonly episodes: readonly PodcastEpisodeMedia[];
+  readonly hasMoreEpisodes: boolean;
+  readonly podcastLibraries: readonly PodcastLibraryMembership[];
+}
+
+const PODCAST_DETAIL_VISIT_DATA =
+  definePaneVisitDataKey<PodcastDetailSnapshot>("PodcastDetail.Episodes");
+const EMPTY_PODCAST_EPISODES: PodcastEpisodeMedia[] = [];
+const EMPTY_PODCAST_LIBRARIES: PodcastLibraryMembership[] = [];
+
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
   const paneRouter = usePaneRouter();
@@ -82,8 +107,65 @@ export default function PodcastDetailPaneBody() {
   const { account: billingAccount } = useBillingAccount();
   const player = useGlobalPlayer();
   const lectern = useLectern();
-  const [detail, setDetail] = useState<PodcastDetailResponse | null>(null);
-  const [episodes, setEpisodes] = useState<PodcastEpisodeMedia[]>([]);
+  const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
+  const reconciliationPendingRef = useRef(false);
+  const captureCommitted = useCallback(
+    () => committedSnapshotRef.current,
+    [],
+  );
+  const restored = usePaneVisitData(
+    PODCAST_DETAIL_VISIT_DATA,
+    captureCommitted,
+  );
+  const [controller, setController] =
+    useState<PodcastDetailSnapshot | null>(restored);
+  const clearAllVisitData = useClearAllPaneVisitData();
+  const detail = controller?.detail ?? null;
+  const episodes = useMemo(
+    () =>
+      controller === null
+        ? EMPTY_PODCAST_EPISODES
+        : [...controller.episodes],
+    [controller],
+  );
+  const hasMoreEpisodes = controller?.hasMoreEpisodes ?? false;
+  const podcastLibraries = useMemo(
+    () =>
+      controller === null
+        ? EMPTY_PODCAST_LIBRARIES
+        : [...controller.podcastLibraries],
+    [controller],
+  );
+  const setDetail: Dispatch<SetStateAction<PodcastDetailResponse | null>> =
+    useCallback((update) => {
+      setController((current) => {
+        if (current === null) return current;
+        const detail =
+          typeof update === "function" ? update(current.detail) : update;
+        return detail === null ? current : { ...current, detail };
+      });
+    }, []);
+  const setEpisodes: Dispatch<SetStateAction<PodcastEpisodeMedia[]>> =
+    useCallback((update) => {
+      setController((current) => {
+        if (current === null) return current;
+        const previous = [...current.episodes];
+        const episodes =
+          typeof update === "function" ? update(previous) : update;
+        return { ...current, episodes };
+      });
+    }, []);
+  const setPodcastLibraries: Dispatch<
+    SetStateAction<PodcastLibraryMembership[]>
+  > = useCallback((update) => {
+    setController((current) => {
+      if (current === null) return current;
+      const previous = [...current.podcastLibraries];
+      const podcastLibraries =
+        typeof update === "function" ? update(previous) : update;
+      return { ...current, podcastLibraries };
+    });
+  }, []);
   const [episodeStateFilter, setEpisodeStateFilter] =
     useState<EpisodeStateFilter>(() => {
       const stateParam = paneSearchParams.get("state");
@@ -113,11 +195,7 @@ export default function PodcastDetailPaneBody() {
   const [episodeSearchQuery, setEpisodeSearchQuery] = useState(
     () => paneSearchParams.get("q") ?? "",
   );
-  const [hasMoreEpisodes, setHasMoreEpisodes] = useState(false);
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [podcastLibraries, setPodcastLibraries] = useState<
-    PodcastLibraryMembership[]
-  >([]);
   const [podcastLibrariesLoading, setPodcastLibrariesLoading] = useState(false);
   const busyMediaIds = useStringIdSet();
   const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] =
@@ -128,7 +206,10 @@ export default function PodcastDetailPaneBody() {
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
   const episodeUrlSyncedRef = useRef(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(restored === null);
+  const [suppressInitialLoad, setSuppressInitialLoad] = useState(
+    restored !== null,
+  );
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [creatingDestination, setCreatingDestination] = useState(false);
@@ -165,6 +246,7 @@ export default function PodcastDetailPaneBody() {
           subscription_default_playback_speed: response.default_playback_speed,
         })),
       );
+      clearAllVisitData();
     },
   });
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
@@ -185,11 +267,17 @@ export default function PodcastDetailPaneBody() {
     } finally {
       setPodcastLibrariesLoading(false);
     }
-  }, [actions, podcastId, podcastLibraries.length, podcastLibrariesLoading]);
+  }, [
+    actions,
+    podcastId,
+    podcastLibraries.length,
+    podcastLibrariesLoading,
+    setPodcastLibraries,
+  ]);
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const closeSettingsModal = settingsModal.close;
-  const podcastDetailCacheKey = podcastId
+  const podcastDetailCacheKey = podcastId && !suppressInitialLoad
     ? [
         "podcast-detail",
         podcastId,
@@ -199,7 +287,13 @@ export default function PodcastDetailPaneBody() {
         reloadNonce,
       ].join(":")
     : null;
-  const reload = useCallback(() => setReloadNonce((nonce) => nonce + 1), []);
+  const reload = useCallback(() => {
+    reconciliationPendingRef.current = true;
+    committedSnapshotRef.current = null;
+    clearAllVisitData();
+    setSuppressInitialLoad(false);
+    setReloadNonce((nonce) => nonce + 1);
+  }, [clearAllVisitData]);
 
   const transcript = useEpisodeTranscriptController({
     episodes,
@@ -207,6 +301,7 @@ export default function PodcastDetailPaneBody() {
     transcriptionAllowed,
     setError,
     reload,
+    onMutationCommitted: clearAllVisitData,
   });
   const { resetForecasts } = transcript;
 
@@ -258,13 +353,16 @@ export default function PodcastDetailPaneBody() {
 
   const applyPodcastDetailLoad = useCallback(
     (result: PodcastDetailLoadResult) => {
-      setDetail(result.detail);
-      setEpisodes(result.episodes);
+      reconciliationPendingRef.current = false;
+      setController({
+        detail: result.detail,
+        episodes: result.episodes,
+        hasMoreEpisodes: result.episodes.length === EPISODES_PAGE_SIZE,
+        podcastLibraries: result.podcastLibraries,
+      });
       clearExpandedShowNotesMediaIds();
-      setHasMoreEpisodes(result.episodes.length === EPISODES_PAGE_SIZE);
       resetForecasts();
       closeSettingsModal();
-      setPodcastLibraries(result.podcastLibraries);
     },
     [clearExpandedShowNotesMediaIds, closeSettingsModal, resetForecasts],
   );
@@ -303,6 +401,16 @@ export default function PodcastDetailPaneBody() {
       setLoading(false);
     }
   }, [applyPodcastDetailLoad, podcastDetailResource, podcastId]);
+
+  useLayoutEffect(() => {
+    committedSnapshotRef.current = reconciliationPendingRef.current
+      ? null
+      : controller;
+  }, [controller]);
+
+  usePaneReturnReady(
+    (!loading && controller !== null) || error !== null,
+  );
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
@@ -356,8 +464,16 @@ export default function PodcastDetailPaneBody() {
       const response = await apiFetch<{ data: PodcastEpisodeMedia[] }>(
         `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
       );
-      setEpisodes((prev) => [...prev, ...response.data]);
-      setHasMoreEpisodes(response.data.length === EPISODES_PAGE_SIZE);
+      setController((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              episodes: [...current.episodes, ...response.data],
+              hasMoreEpisodes:
+                response.data.length === EPISODES_PAGE_SIZE,
+            },
+      );
     } catch (loadError) {
       if (handleUnauthenticatedApiError(loadError)) return;
       setError(
@@ -418,9 +534,10 @@ export default function PodcastDetailPaneBody() {
         setPodcastLibraries((prev) =>
           patchLibraryMembership(prev, libraryId, true),
         );
+        clearAllVisitData();
       });
     },
-    [actions, podcastId],
+    [actions, clearAllVisitData, podcastId, setPodcastLibraries],
   );
 
   const removePodcastFromLibrary = useCallback(
@@ -432,9 +549,10 @@ export default function PodcastDetailPaneBody() {
         setPodcastLibraries((prev) =>
           patchLibraryMembership(prev, libraryId, false),
         );
+        clearAllVisitData();
       });
     },
-    [actions, podcastId],
+    [actions, clearAllVisitData, podcastId, setPodcastLibraries],
   );
 
   const refreshPodcastSync = useCallback(() => {
@@ -449,7 +567,7 @@ export default function PodcastDetailPaneBody() {
       );
       reload();
     });
-  }, [actions, detail?.subscription, podcastId, reload]);
+  }, [actions, detail?.subscription, podcastId, reload, setDetail]);
 
   const unsubscribePodcast = useCallback(() => {
     if (!podcastId || !detail?.subscription) {
@@ -463,8 +581,16 @@ export default function PodcastDetailPaneBody() {
       setPodcastLibraries(retainedLibraries);
       setPodcastMembershipPanelOpen(false);
       setPodcastMembershipPanelTriggerEl(null);
+      clearAllVisitData();
     });
-  }, [actions, detail, podcastId]);
+  }, [
+    actions,
+    clearAllVisitData,
+    detail,
+    podcastId,
+    setDetail,
+    setPodcastLibraries,
+  ]);
 
   const openSettingsModal = useCallback(() => {
     if (!detail?.subscription) {
@@ -477,6 +603,7 @@ export default function PodcastDetailPaneBody() {
     async (episode: PodcastEpisodeMedia) => {
       try {
         const conversationId = await startResourceContextChat(`media:${episode.id}`);
+        clearAllVisitData();
         openInNewPane?.(`/conversations/${conversationId}`, episode.title);
       } catch (chatError) {
         if (handleUnauthenticatedApiError(chatError)) return;
@@ -485,7 +612,7 @@ export default function PodcastDetailPaneBody() {
         );
       }
     },
-    [openInNewPane],
+    [clearAllVisitData, openInNewPane],
   );
 
   const handleRetryEpisodeProcessing = useCallback(
@@ -519,6 +646,7 @@ export default function PodcastDetailPaneBody() {
           ),
         );
         setError(projection.feedback);
+        clearAllVisitData();
       } catch (retryError) {
         if (handleUnauthenticatedApiError(retryError)) return;
         setError(
@@ -530,7 +658,7 @@ export default function PodcastDetailPaneBody() {
         busyMediaIds.remove(mediaId);
       }
     },
-    [busyMediaIds],
+    [busyMediaIds, clearAllVisitData, setEpisodes],
   );
 
   const handleRefreshEpisodeSource = useCallback(
@@ -564,6 +692,7 @@ export default function PodcastDetailPaneBody() {
           ),
         );
         setError(projection.feedback);
+        clearAllVisitData();
       } catch (refreshError) {
         if (handleUnauthenticatedApiError(refreshError)) return;
         setError(
@@ -575,7 +704,7 @@ export default function PodcastDetailPaneBody() {
         busyMediaIds.remove(mediaId);
       }
     },
-    [busyMediaIds],
+    [busyMediaIds, clearAllVisitData, setEpisodes],
   );
 
   const handleDeleteEpisode = useCallback(
@@ -595,6 +724,7 @@ export default function PodcastDetailPaneBody() {
         setEpisodes((prev) =>
           prev.filter((candidate) => candidate.id !== episode.id),
         );
+        clearAllVisitData();
       } catch (deleteError) {
         if (handleUnauthenticatedApiError(deleteError)) return;
         setError(
@@ -604,7 +734,7 @@ export default function PodcastDetailPaneBody() {
         busyMediaIds.remove(episode.id);
       }
     },
-    [busyMediaIds],
+    [busyMediaIds, clearAllVisitData, setEpisodes],
   );
 
   const applyEpisodeCompletionState = useCallback(
@@ -669,6 +799,7 @@ export default function PodcastDetailPaneBody() {
         } else {
           await lectern.setUnread(assumeMediaId(mediaId));
         }
+        clearAllVisitData();
       } catch (markError) {
         setEpisodes(previousEpisodes);
         if (handleUnauthenticatedApiError(markError)) return;
@@ -685,10 +816,12 @@ export default function PodcastDetailPaneBody() {
     },
     [
       applyEpisodeCompletionState,
+      clearAllVisitData,
       episodeStateFilter,
       episodes,
       lectern,
       markingEpisodeIds,
+      setEpisodes,
     ],
   );
 
@@ -748,6 +881,7 @@ export default function PodcastDetailPaneBody() {
         mediaIds: visibleUnplayedEpisodeIds.map(assumeMediaId),
         state: "Finished",
       });
+      clearAllVisitData();
     } catch (markError) {
       setEpisodes(previousEpisodes);
       if (handleUnauthenticatedApiError(markError)) return;
@@ -761,9 +895,11 @@ export default function PodcastDetailPaneBody() {
     }
   }, [
     applyEpisodeCompletionState,
+    clearAllVisitData,
     episodeStateFilter,
     episodes,
     lectern,
+    setEpisodes,
     visibleUnplayedEpisodeIds,
   ]);
 
@@ -800,22 +936,26 @@ export default function PodcastDetailPaneBody() {
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
           : { kind: "First" };
-      void lectern.placeItems({
-        mediaIds: [assumeMediaId(mediaId)],
-        placement,
-      });
+      void lectern
+        .placeItems({
+          mediaIds: [assumeMediaId(mediaId)],
+          placement,
+        })
+        .then(clearAllVisitData);
     },
-    [lectern, player.state],
+    [clearAllVisitData, lectern, player.state],
   );
 
   const handleAddToLectern = useCallback(
     (mediaId: string) => {
-      void lectern.placeItems({
-        mediaIds: [assumeMediaId(mediaId)],
-        placement: { kind: "Last" },
-      });
+      void lectern
+        .placeItems({
+          mediaIds: [assumeMediaId(mediaId)],
+          placement: { kind: "Last" },
+        })
+        .then(clearAllVisitData);
     },
-    [lectern],
+    [clearAllVisitData, lectern],
   );
   const activeSubscription = detail?.subscription ?? null;
   const podcastMembershipBusy = actions.busyLibraryMembershipKeys.ids.size > 0;
@@ -962,7 +1102,9 @@ export default function PodcastDetailPaneBody() {
                   onCreateDestination={async (name) => {
                     setCreatingDestination(true);
                     try {
-                      return await createLibrary({ name });
+                      const library = await createLibrary({ name });
+                      clearAllVisitData();
+                      return library;
                     } finally {
                       setCreatingDestination(false);
                     }

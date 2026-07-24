@@ -11,6 +11,7 @@ import {
   startSameDocumentViewTransition,
   useClientViewTransitionsReady,
 } from "@/lib/ui/viewTransitions";
+import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import CollectionRow from "./CollectionRow";
 
 /**
@@ -19,6 +20,7 @@ import CollectionRow from "./CollectionRow";
  * own row chrome, action placement, density, or alternate views.
  */
 export default function CollectionView({
+  returnScope,
   rows,
   status,
   ariaLabel,
@@ -33,6 +35,7 @@ export default function CollectionView({
   sortable,
   surface = true,
 }: {
+  readonly returnScope: string;
   readonly rows: readonly CollectionRowView[];
   readonly status: "loading" | "error" | "ready";
   readonly ariaLabel: string;
@@ -51,6 +54,7 @@ export default function CollectionView({
   readonly surface?: boolean;
 }) {
   const transitionScopeId = useId();
+  const returnScopeRef = useRef<HTMLDivElement | null>(null);
   const viewTransitionsReady = useClientViewTransitionsReady();
   const rowOrderSignature = useMemo(
     () => rows.map((row) => row.id).join("\u001f"),
@@ -85,6 +89,13 @@ export default function CollectionView({
   }, [rowOrderSignature, rows, status]);
 
   const rowsForRender = status === "ready" ? displayRows : rows;
+  usePaneReturnDescendantReady({
+    rootRef: returnScopeRef,
+    ready:
+      status !== "loading" &&
+      (status !== "ready" ||
+        displayRowOrderSignatureRef.current === rowOrderSignature),
+  });
   const body =
     status === "loading" ? (
       <PaneLoadingState label={`Loading ${ariaLabel}…`} />
@@ -134,26 +145,30 @@ export default function CollectionView({
       </ResourceList>
     );
 
-  if (!surface) {
-    return (
-      <>
-        {opener}
-        {toolbar}
-        {notice}
-        {body}
-        {status === "ready" ? footer : null}
-      </>
-    );
-  }
-
   return (
-    <PaneSurface
-      opener={opener}
-      toolbar={toolbar}
-      state={notice}
-      footer={status === "ready" ? footer : undefined}
+    <div
+      ref={returnScopeRef}
+      data-pane-return-scope={returnScope}
+      style={{ display: "contents" }}
     >
-      {body}
-    </PaneSurface>
+      {surface ? (
+        <PaneSurface
+          opener={opener}
+          toolbar={toolbar}
+          state={notice}
+          footer={status === "ready" ? footer : undefined}
+        >
+          {body}
+        </PaneSurface>
+      ) : (
+        <>
+          {opener}
+          {toolbar}
+          {notice}
+          {body}
+          {status === "ready" ? footer : null}
+        </>
+      )}
+    </div>
   );
 }

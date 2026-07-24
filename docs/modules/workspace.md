@@ -122,13 +122,16 @@ Document Map opener.
 
 ## Pane History
 
-Each primary pane owns one Back/Forward history stack of hrefs. The workspace
-is the sole owner of `push`, `replace`, Back, and Forward mechanics.
+Each primary pane owns one current `PaneVisit` and Back/Forward stacks of
+visits. A visit is a canonical workspace href plus a unique UUID; duplicate
+visits to the same href therefore retain independent presentation. The
+workspace is the sole owner of `push`, `replace`, Back, and Forward mechanics.
 
-- `push` records the current href as a Back checkpoint, sets the new href,
-  and clears Forward.
-- `replace` changes the current href without changing either stack.
-- Back and Forward traverse the stored checkpoints.
+- `push` records the exact current visit in Back, mints the target visit, and
+  clears Forward.
+- `replace` retains the current visit id and changes its href without changing
+  either stack.
+- Back and Forward traverse visit occurrences.
 - A replace that consumes a target hash writes `pathname + search` — hash
   consumption always strips the hash from the href it stores.
 - The workspace never infers push-versus-replace from URL shape or resource
@@ -136,8 +139,17 @@ is the sole owner of `push`, `replace`, Back, and Forward mechanics.
   perform; the workspace only executes it.
 - Per-pane history is capped at 12 entries in each direction; the workspace
   holds at most 48 history entries across every pane combined. When a write
-  would exceed either budget, the oldest entry is trimmed; non-active panes'
-  history is trimmed before the active pane's own history is touched.
+  exceeds either budget, Back trims its head and Forward trims its tail;
+  non-active panes are trimmed before the active pane.
+
+For every `ShellScroll` route, `PaneShell` is the one primary vertical
+scrollport. `PaneReturnMementoProvider` keeps current-tab-only presentation
+state keyed by visit id: raw position, semantic eye-line anchor, keyboard focus
+anchor, and a bounded route-owned loaded-extent snapshot. Capture is synchronous
+before a visit is displaced. Restore waits for the successful lazy body and the
+route's committed async content, then restores semantic position before
+clamping raw pixels. Reader, Chat transcripts, and Atlas keep their separate
+scroll/location owners. Mementos and loaded extent are never persisted.
 
 ## Reader-To-Chat Launch Intent
 

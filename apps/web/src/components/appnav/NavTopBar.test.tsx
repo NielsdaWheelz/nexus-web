@@ -76,6 +76,38 @@ function PublishResourceChrome() {
   return null;
 }
 
+function PublishNavigationChrome({
+  onBack,
+  onForward,
+}: {
+  onBack: (modality: "Keyboard" | "Pointer") => void;
+  onForward: (modality: "Keyboard" | "Pointer") => void;
+}) {
+  const { setPaneChrome } = useMobileChrome();
+  useEffect(() => {
+    setPaneChrome({
+      paneId: "pane-a",
+      identityId: "pane-a-identity",
+      header: {
+        kind: "section",
+        standingHead: "Libraries",
+        folio: { kind: "none" },
+        pending: false,
+      },
+      navigation: {
+        canGoBack: true,
+        canGoForward: true,
+        onBack,
+        onForward,
+      },
+      actions: [],
+      options: [],
+    });
+    return () => setPaneChrome(null);
+  }, [onBack, onForward, setPaneChrome]);
+  return null;
+}
+
 function HideChrome() {
   const { onDocumentScroll } = useMobileChrome();
   return (
@@ -112,6 +144,29 @@ describe("NavTopBar", () => {
 
     expect(screen.getByText("Libraries")).toBeInTheDocument();
     expect(screen.getByText("37 sources")).toBeInTheDocument();
+  });
+
+  it("passes explicit pointer and keyboard modality through mobile navigation", () => {
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    render(
+      <MobileChromeProvider>
+        <PublishNavigationChrome onBack={onBack} onForward={onForward} />
+        <NavTopBar
+          onOpenSheet={() => {}}
+          onOpenCommand={() => {}}
+          onOpenAdd={() => {}}
+          paneCount={1}
+        />
+      </MobileChromeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }), {
+      detail: 1,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
+    expect(onBack).toHaveBeenCalledWith("Pointer");
+    expect(onForward).toHaveBeenCalledWith("Keyboard");
   });
 
   it("renders the active pane's resource identity from the shared model", () => {

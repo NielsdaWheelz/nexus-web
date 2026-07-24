@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cookies, headers } from "next/headers";
+import { isApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
 import { PREFETCH_OPTS } from "@/lib/api/resourceTransport";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
@@ -12,6 +13,7 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { parseReaderProfile } from "@/lib/reader/readerProfileSync";
 import type { ReaderProfile } from "@/lib/reader/types";
+import { expectExactRecord, expectString } from "@/lib/validation";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import {
   createDefaultWorkspaceState,
@@ -60,21 +62,53 @@ async function loadSession(
   if (!deviceId) {
     return null;
   }
+  let response: unknown;
   try {
-    const { data } = await callFastAPI<{
-      data: {
-        own: { state: unknown } | null;
-        most_recent_elsewhere: { state: unknown } | null;
-      };
-    }>(`/me/workspace-session?device_id=${encodeURIComponent(deviceId)}`, PREFETCH_OPTS);
-    return {
-      own: data.own?.state ?? null,
-      mostRecentElsewhere: data.most_recent_elsewhere?.state ?? null,
-    };
-  } catch {
+    response = await callFastAPI<unknown>(
+      `/me/workspace-session?device_id=${encodeURIComponent(deviceId)}`,
+      PREFETCH_OPTS,
+    );
+  } catch (error) {
+    if (
+      isApiError(error) &&
+      error.code === "E_INVALID_RESPONSE" &&
+      error.status >= 200 &&
+      error.status < 300
+    ) {
+      throw error;
+    }
     // justify-ignore-error: best-effort restore; on failure the deep-link/default stands.
     return null;
   }
+
+  // A transport failure is optional restore data. A successful response is a trusted
+  // persistence boundary: malformed envelopes or rows must defect rather than masquerade
+  // as an absent session and silently discard the user's saved workspace.
+  const envelope = expectExactRecord(
+    response,
+    ["data"],
+    "workspace session response",
+  );
+  const data = expectExactRecord(
+    envelope.data,
+    ["own", "most_recent_elsewhere"],
+    "workspace session response.data",
+  );
+  const sessionState = (raw: unknown, name: string): unknown => {
+    if (raw === null) {
+      return null;
+    }
+    const session = expectExactRecord(raw, ["state", "updated_at"], name);
+    expectString(session.updated_at, `${name}.updated_at`);
+    return session.state;
+  };
+  return {
+    own: sessionState(data.own, "workspace session response.data.own"),
+    mostRecentElsewhere: sessionState(
+      data.most_recent_elsewhere,
+      "workspace session response.data.most_recent_elsewhere",
+    ),
+  };
 }
 
 // The authenticated shell's single server data root: the initial pane href (from the
@@ -125,7 +159,7 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
   );
   const extraHrefs = getWorkspacePrimaryPanes(initialState)
     .filter((pane) => pane.visibility === "visible")
-    .map((pane) => pane.href)
+    .map((pane) => pane.currentVisit.href)
     .filter((href) => {
       const routeKey = resolvePaneRouteIdentity(href).routeKey;
       if (seededRouteKeys.has(routeKey)) {

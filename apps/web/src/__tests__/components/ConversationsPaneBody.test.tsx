@@ -1,11 +1,24 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
+import {
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import {
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -24,23 +37,26 @@ function jsonResponse(body: unknown): Response {
 function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
   const href = "/conversations";
   return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      isActive={true}
-      href={href}
-      routeId="conversations"
-      routeKey={resolvePaneRouteIdentity(href).routeKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      onNavigatePane={onNavigatePane}
-      onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
-      onSetPaneLabel={vi.fn()}
-    >
-      {node}
-    </PaneRuntimeProvider>
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive={true}
+        href={href}
+        routeId="conversations"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        onNavigatePane={onNavigatePane}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneLabel={vi.fn()}
+      >
+        {node}
+      </PaneRuntimeProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -116,7 +132,9 @@ describe("ConversationsPaneBody", () => {
       "/conversations/new",
     );
     fireEvent.click(newChat);
-    expect(onNavigatePane).toHaveBeenCalledWith("pane-1", "/conversations/new", undefined);
+    expect(onNavigatePane).toHaveBeenCalledWith("pane-1", "/conversations/new", {
+      modality: "Keyboard",
+    });
     const host = screen.getByTestId("mobile-chats-host");
     expect(host.scrollWidth).toBeLessThanOrEqual(host.clientWidth + 1);
     expect(horizontallyScrollableElements(host)).toEqual([]);
@@ -188,4 +206,103 @@ describe("ConversationsPaneBody", () => {
 
     expect(requestSignal?.aborted).toBe(true);
   });
+
+  it("restores the appended conversation extent without another page-one request or duplication", async () => {
+    const first = conversation("conversation-first", "First-page chat");
+    const second = conversation("conversation-second", "Second-page chat");
+    const replacement = conversation(
+      "conversation-replacement",
+      "Replacement first-page chat",
+    );
+    let firstPageRequestCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+          "http://localhost",
+        );
+        if (url.pathname !== "/api/conversations") {
+          throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+        }
+        if (url.searchParams.get("cursor") === "cursor-2") {
+          return jsonResponse({
+            data: [second],
+            page: { has_more: false, next_cursor: null },
+          });
+        }
+        firstPageRequestCount += 1;
+        return jsonResponse({
+          data: firstPageRequestCount === 1 ? [first] : [replacement],
+          page: {
+            has_more: firstPageRequestCount === 1,
+            next_cursor: firstPageRequestCount === 1 ? "cursor-2" : null,
+          },
+        });
+      }),
+    );
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const publishCommands = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const href = "/conversations";
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = (resourceGeneration: number) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={{}}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publishCommands}
+      >
+        <ConversationsPaneBody />
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey(0));
+
+    expect(
+      await screen.findByRole("link", { name: first.title }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Load more conversations" }),
+    );
+    expect(
+      await screen.findByRole("link", { name: second.title }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(commands).not.toBeNull());
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(1));
+
+    expect(
+      await screen.findByRole("link", { name: first.title }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: second.title }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(firstPageRequestCount).toBe(1));
+    expect(
+      screen.queryByRole("link", { name: replacement.title }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: first.title })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: second.title })).toHaveLength(1);
+  });
 });
+
+function conversation(id: string, title: string) {
+  return {
+    id,
+    title,
+    sharing: "private",
+    message_count: 2,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-05-25T12:00:00Z",
+  };
+}

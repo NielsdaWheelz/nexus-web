@@ -5,6 +5,8 @@ import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import {
   PaneRuntimeProvider,
+  type PaneNavigationCommandOptions,
+  type PaneNavigationModality,
   type PaneResourceStatus,
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
@@ -18,7 +20,6 @@ import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import { matchesKeyEvent } from "@/lib/keybindings";
 import { useKeybindings } from "@/lib/keybindingsProvider";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
-import type { SurfaceHeaderNavigation } from "@/components/ui/SurfaceHeader";
 import type { PaneBodyMode } from "@/lib/panes/paneRouteModel";
 import {
   paneRouteAllowsSecondarySurface,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/panes/paneRouteModel";
 import {
   getWorkspacePrimaryPanes,
+  type PaneVisitId,
   type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
 } from "@/lib/workspace/schema";
@@ -78,6 +80,7 @@ import styles from "./WorkspaceHost.module.css";
 
 interface WorkspaceHostPane {
   paneId: string;
+  visitId: PaneVisitId;
   href: string;
   route: ResolvedPaneRoute;
   routeKey: string;
@@ -85,7 +88,8 @@ interface WorkspaceHostPane {
   resourceStatus: PaneResourceStatus;
   label: string;
   labelState: "resolved" | "pending";
-  navigation: SurfaceHeaderNavigation;
+  canGoBack: boolean;
+  canGoForward: boolean;
   bodyMode: PaneBodyMode;
   sizing: EffectivePaneSizing;
   runtimeSecondaryPane: WorkspaceAttachedSecondaryPaneState | null;
@@ -198,6 +202,7 @@ function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
 
 const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   paneId,
+  visitId,
   isActive,
   href,
   route,
@@ -223,6 +228,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   children,
 }: {
   paneId: string;
+  visitId: PaneVisitId;
   isActive: boolean;
   href: string;
   route: ResolvedPaneRoute;
@@ -234,7 +240,12 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   navigatePane: (
     paneId: string,
     href: string,
-    options?: { replace?: boolean; activate?: boolean; labelHint?: string },
+    options?: {
+      replace?: boolean;
+      activate?: boolean;
+      labelHint?: string;
+      modality?: PaneNavigationModality;
+    },
   ) => void;
   openPane: (input: {
     href: string;
@@ -242,11 +253,12 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     activate?: boolean;
     labelHint?: string;
     secondaryActivation?: WorkspaceSecondaryActivation;
+    modality?: PaneNavigationModality;
   }) => void;
   canGoBack: boolean;
   canGoForward: boolean;
-  goBackPane: (paneId: string) => void;
-  goForwardPane: (paneId: string) => void;
+  goBackPane: (paneId: string, modality?: PaneNavigationModality) => void;
+  goForwardPane: (paneId: string, modality?: PaneNavigationModality) => void;
   publishPaneLabel: (input: {
     paneId: string;
     routeKey: string;
@@ -281,8 +293,12 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   children: React.ReactNode;
 }) {
   const handleReplacePane = useCallback(
-    (pid: string, h: string, options?: { labelHint?: string }) =>
-      navigatePane(pid, h, { replace: true, labelHint: options?.labelHint }),
+    (pid: string, h: string, options: PaneNavigationCommandOptions) =>
+      navigatePane(pid, h, {
+        replace: true,
+        labelHint: options.labelHint,
+        modality: options.modality,
+      }),
     [navigatePane]
   );
   const handleOpenInNewPane = useCallback(
@@ -290,6 +306,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
       h: string,
       labelHint?: string,
       secondaryActivation?: WorkspaceSecondaryActivation,
+      modality?: PaneNavigationModality,
     ) =>
       openPane({
         href: h,
@@ -297,6 +314,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
         activate: true,
         labelHint,
         secondaryActivation,
+        modality,
       }),
     [openPane, paneId]
   );
@@ -316,6 +334,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   return (
     <PaneRuntimeProvider
       paneId={paneId}
+      visitId={visitId}
       isActive={isActive}
       href={href}
       routeId={route.id}
@@ -354,10 +373,12 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
 
 const PaneContent = memo(function PaneContent({
   href,
+  visitId,
   route,
   routeKey,
 }: {
   href: string;
+  visitId: PaneVisitId;
   route: ResolvedPaneRoute;
   routeKey: string;
 }) {
@@ -367,9 +388,14 @@ const PaneContent = memo(function PaneContent({
     return resourceKey ? `${identity.routeId}:${resourceKey}` : routeKey;
   }, [href, routeKey]);
 
+  const contentMountKey =
+    route.definition?.returnMemento.kind === "ShellScroll"
+      ? `${visitId}:${routeKey}`
+      : routeMountKey;
+
   return (
     <div className={styles.routeShell}>
-      <ResolvedPaneRouteView key={routeMountKey} route={route} />
+      <ResolvedPaneRouteView key={contentMountKey} route={route} />
     </div>
   );
 });
@@ -538,8 +564,6 @@ function buildHostPane(input: {
   descriptor: WorkspacePaneLabelDescriptor;
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
-  goBackPane: (paneId: string) => void;
-  goForwardPane: (paneId: string) => void;
   isActive: boolean;
   runtimeLayout: PaneRuntimeLayout;
   secondaryPublication: PaneSecondaryPublication | null;
@@ -549,7 +573,8 @@ function buildHostPane(input: {
 }): WorkspaceHostPane {
   const { routeKey, route, label, labelState } = input.descriptor;
 
-  const routeWidth = route.definition ?? resolvePaneRouteWidthContract(input.pane.href);
+  const href = input.pane.currentVisit.href;
+  const routeWidth = route.definition ?? resolvePaneRouteWidthContract(href);
   const hasVisibleSecondaryGroupMismatch =
     input.secondaryPane?.visibility === "visible" &&
     input.secondaryPublication &&
@@ -583,7 +608,8 @@ function buildHostPane(input: {
 
   return {
     paneId: input.pane.id,
-    href: input.pane.href,
+    visitId: input.pane.currentVisit.id,
+    href,
     route,
     routeKey,
     resourceItem: input.resourceItem,
@@ -594,12 +620,8 @@ function buildHostPane(input: {
         : input.resourceStatus,
     label,
     labelState,
-    navigation: {
-      canGoBack: input.pane.history.back.length > 0,
-      canGoForward: input.pane.history.forward.length > 0,
-      onBack: () => input.goBackPane(input.pane.id),
-      onForward: () => input.goForwardPane(input.pane.id),
-    },
+    canGoBack: input.pane.history.back.length > 0,
+    canGoForward: input.pane.history.forward.length > 0,
     bodyMode: route.definition?.bodyMode ?? "standard",
     runtimeSecondaryPane,
     secondaryPane: visibleSecondaryPane,
@@ -622,7 +644,14 @@ function buildHostPane(input: {
     fixedChromePublication: input.isMobile ? null : input.fixedChromePublication,
     isActive: input.isActive,
     visibility: input.pane.visibility,
-    content: <PaneContent href={input.pane.href} route={route} routeKey={routeKey} />,
+    content: (
+      <PaneContent
+        href={href}
+        visitId={input.pane.currentVisit.id}
+        route={route}
+        routeKey={routeKey}
+      />
+    ),
   };
 }
 
@@ -906,8 +935,6 @@ function WorkspaceHost() {
           resourceStatus:
             resourceStatusByRouteKey.get(descriptor.routeKey) ??
             (resourceLocatorRouteKeys.has(descriptor.routeKey) ? "pending" : "none"),
-          goBackPane,
-          goForwardPane,
           isActive: pane.id === state.activePrimaryPaneId,
           runtimeLayout: getRuntimePaneLayout(
             runtimeLayoutByPaneId,
@@ -932,8 +959,6 @@ function WorkspaceHost() {
       paneDescriptors,
       state.activePrimaryPaneId,
       state.secondaryPanesById,
-      goBackPane,
-      goForwardPane,
       resourceItemByRouteKey,
       resourceLocatorRouteKeys,
       resourceStatusByRouteKey,
@@ -1343,6 +1368,7 @@ function WorkspaceHost() {
               >
                 <PaneRuntimeFrame
                   paneId={pane.paneId}
+                  visitId={pane.visitId}
                   isActive={pane.isActive}
                   href={pane.href}
                   route={pane.route}
@@ -1359,8 +1385,8 @@ function WorkspaceHost() {
                   }
                   navigatePane={navigatePane}
                   openPane={openPane}
-                  canGoBack={pane.navigation.canGoBack}
-                  canGoForward={pane.navigation.canGoForward}
+                  canGoBack={pane.canGoBack}
+                  canGoForward={pane.canGoForward}
                   goBackPane={goBackPane}
                   goForwardPane={goForwardPane}
                   publishPaneLabel={publishPaneLabel}
@@ -1382,7 +1408,10 @@ function WorkspaceHost() {
                       href={pane.href}
                       label={pane.label}
                       labelPending={pane.labelState === "pending"}
-                      navigation={pane.navigation}
+                      returnMementoEnabled={
+                        pane.route.definition.returnMemento.kind ===
+                        "ShellScroll"
+                      }
                       sizing={pane.sizing}
                       secondaryPane={pane.secondaryPane}
                       secondarySizing={pane.secondarySizing}

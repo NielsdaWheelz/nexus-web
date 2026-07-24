@@ -1,4 +1,16 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  useLayoutEffect,
+  useRef,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import {
+  act,
+  render as testingRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,7 +30,42 @@ import type {
   AcceptResult,
   ReadingSlateAccept,
 } from "@/lib/resonance/useReadingSlate";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+  usePaneResolvedBodyReady,
+  usePaneReturnMementoCommands,
+  usePaneReturnReady,
+  usePaneReturnScrollport,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
+import {
+  assumePaneVisitId,
+  type PaneVisitId,
+} from "@/lib/workspace/schema";
 import ReadingSlateSection from "./ReadingSlateSection";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000012",
+);
+const OTHER_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000013",
+);
+const TEST_ROUTE_KEY = "/test";
+
+function PaneReturnTestHarness({ children }: { children: ReactNode }) {
+  return (
+    <PaneReturnMementoProvider>
+      <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey={TEST_ROUTE_KEY}>
+        {children}
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>
+  );
+}
+
+function render(ui: ReactElement) {
+  return testingRender(ui, { wrapper: PaneReturnTestHarness });
+}
 
 const lecternSlateResponse =
   vi.fn<(signal?: AbortSignal) => Promise<SlateSnapshot>>();
@@ -108,6 +155,7 @@ function lecternNode(accept: ReadingSlateAccept, isActive = true) {
         <button data-pane-chrome-focus="true">Pane chrome</button>
       </div>
       <ReadingSlateSection
+        returnScope="Test.ReadingSlate"
         destination={{ kind: "Lectern" }}
         paneId="pane-1"
         isActive={isActive}
@@ -121,6 +169,125 @@ function renderLectern(accept: ReadingSlateAccept) {
   return render(lecternNode(accept));
 }
 
+function CommandsProbe({
+  publish,
+}: {
+  publish: (commands: PaneReturnMementoCommands) => void;
+}) {
+  const commands = usePaneReturnMementoCommands();
+  useLayoutEffect(() => publish(commands), [commands, publish]);
+  return null;
+}
+
+function RouteReady({ children }: { children: ReactNode }) {
+  usePaneReturnReady(true);
+  usePaneResolvedBodyReady();
+  return children;
+}
+
+function ReadingSlateReturnRoute({
+  visitId,
+  accept,
+}: {
+  visitId: PaneVisitId;
+  accept: ReadingSlateAccept;
+}) {
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  usePaneReturnScrollport({
+    paneId: "pane-1",
+    enabled: true,
+    scrollportRef,
+  });
+  return (
+    <section data-pane-shell data-pane-id="pane-1">
+      <button data-pane-chrome-focus="true">Pane chrome</button>
+      <div ref={scrollportRef} data-testid="slate-return-scrollport">
+        <div key={visitId}>
+          <RouteReady>
+            <h1 data-pane-return-heading tabIndex={-1}>
+              Test route
+            </h1>
+            <ReadingSlateSection
+              returnScope="Test.ReadingSlate"
+              destination={{ kind: "Lectern" }}
+              paneId="pane-1"
+              isActive
+              accept={accept}
+            />
+          </RouteReady>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReadingSlateReturnFixture({
+  visitId,
+  accept,
+  publish,
+}: {
+  visitId: PaneVisitId;
+  accept: ReadingSlateAccept;
+  publish: (commands: PaneReturnMementoCommands) => void;
+}) {
+  return (
+    <PaneReturnMementoProvider>
+      <CommandsProbe publish={publish} />
+      <PaneReturnVisitScope visitId={visitId} routeKey={TEST_ROUTE_KEY}>
+        {withRenderEnvironment(
+          <ReadingSlateReturnRoute visitId={visitId} accept={accept} />,
+        )}
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>
+  );
+}
+
+function defineSlateGeometry(
+  scrollport: HTMLElement,
+  rows: readonly HTMLElement[],
+): void {
+  let scrollTop = 0;
+  Object.defineProperties(scrollport, {
+    clientHeight: { configurable: true, value: 100 },
+    scrollHeight: { configurable: true, value: 400 },
+    scrollTop: {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    },
+  });
+  scrollport.getBoundingClientRect = () =>
+    ({
+      top: 0,
+      right: 200,
+      bottom: 100,
+      left: 0,
+      width: 200,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  rows.forEach((row, index) => {
+    row.getBoundingClientRect = () => {
+      const top = index * 80 - scrollport.scrollTop;
+      return {
+        top,
+        right: 200,
+        bottom: top + 40,
+        left: 0,
+        width: 200,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    };
+  });
+}
+
 beforeEach(() => {
   lecternSlateResponse.mockReset();
   librarySlateResponse.mockReset();
@@ -130,6 +297,79 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ReadingSlateSection", () => {
+  it("holds return restoration until a delayed initial Slate anchor commits", async () => {
+    const items = [slateItem(1), slateItem(2), slateItem(3)];
+    const delayedReturn = deferred<SlateSnapshot>();
+    lecternSlateResponse
+      .mockResolvedValueOnce({ items })
+      .mockResolvedValueOnce({ items: [] })
+      .mockImplementationOnce(() => delayedReturn.promise);
+    const accept = vi.fn<ReadingSlateAccept>();
+    let commands: PaneReturnMementoCommands | null = null;
+    const publish = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const view = testingRender(
+      <ReadingSlateReturnFixture
+        visitId={TEST_VISIT_ID}
+        accept={accept}
+        publish={publish}
+      />,
+    );
+
+    const departedLink = await screen.findByRole("link", { name: /Item 2/ });
+    const scrollport = screen.getByTestId("slate-return-scrollport");
+    defineSlateGeometry(scrollport, screen.getAllByRole("listitem"));
+    scrollport.scrollTop = 80;
+    departedLink.focus();
+    expect(departedLink).toHaveFocus();
+    expect(commands).not.toBeNull();
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-1",
+        visitId: TEST_VISIT_ID,
+        routeKey: TEST_ROUTE_KEY,
+        modality: "Keyboard",
+      });
+    });
+
+    view.rerender(
+      <ReadingSlateReturnFixture
+        visitId={OTHER_VISIT_ID}
+        accept={accept}
+        publish={publish}
+      />,
+    );
+    await waitFor(() =>
+      expect(fetchCallsForPath(fetchMock, "/api/lectern/slate")).toHaveLength(
+        2,
+      ),
+    );
+    expect(scrollport.scrollTop).toBe(0);
+
+    view.rerender(
+      <ReadingSlateReturnFixture
+        visitId={TEST_VISIT_ID}
+        accept={accept}
+        publish={publish}
+      />,
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Loading At hand suggestions",
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(scrollport.scrollTop).toBe(0);
+    expect(screen.getByRole("heading", { name: "Test route" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Pane chrome" })).not.toHaveFocus();
+
+    await act(async () => delayedReturn.resolve({ items }));
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: /Item 2/ })).toHaveFocus(),
+    );
+  });
+
   it("shows bounded Lectern loading, then a settled initial failure and Retry", async () => {
     const read = deferred<SlateSnapshot>();
     lecternSlateResponse
@@ -542,6 +782,7 @@ describe("ReadingSlateSection", () => {
     render(
       withRenderEnvironment(
         <ReadingSlateSection
+          returnScope="Test.ReadingSlate"
           destination={{ kind: "Library", id: "library-1", name: "Research" }}
           paneId="pane-1"
           isActive

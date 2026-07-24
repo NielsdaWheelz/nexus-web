@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
@@ -10,11 +14,21 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import {
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
 import AuthorPaneBody from "./AuthorPaneBody";
 
 const HANDLE = "ursula-le-guin";
 const CANONICAL = "Ursula K. Le Guin";
 const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
+const AUTHOR_HREF = `/authors/${HANDLE}`;
+const AUTHOR_ROUTE_KEY = resolvePaneRouteIdentity(AUTHOR_HREF).routeKey;
 
 describe("AuthorPaneBody", () => {
   afterEach(() => {
@@ -176,6 +190,77 @@ describe("AuthorPaneBody", () => {
     expect(screen.getByRole("link", { name: "First Page Work" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
     expect(cursors).toEqual([null, "cursor-2"]);
+  });
+
+  it("restores the captured author controller without first-page collapse or duplication", async () => {
+    const cursors: Array<string | null> = [];
+    stubFetchRouter((url) => {
+      if (url.pathname === `/api/contributors/${HANDLE}`) {
+        return detail({});
+      }
+      if (url.pathname === `/api/contributors/${HANDLE}/works`) {
+        const cursor = url.searchParams.get("cursor");
+        cursors.push(cursor);
+        return cursor === "cursor-2"
+          ? worksPage([
+              work({
+                title: "Restored Author Second",
+                href: "/media/author-second",
+              }),
+            ])
+          : worksPage(
+              [
+                work({
+                  title: "Restored Author First",
+                  href: "/media/author-first",
+                }),
+              ],
+              "cursor-2",
+            );
+      }
+      throw new Error(`unexpected path ${url.pathname}`);
+    });
+    let commands!: PaneReturnMementoCommands;
+    const publish = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    let resourceGeneration = 0;
+    const journey = () => (
+      <PaneReturnJourneyHarness
+        href={AUTHOR_HREF}
+        paneId="pane-1"
+        resources={{}}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publish}
+      >
+        <AuthorPaneBody />
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey());
+    expect(
+      await screen.findByRole("link", { name: "Restored Author First" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(
+      await screen.findByRole("link", { name: "Restored Author Second" }),
+    ).toBeVisible();
+    commands.capturePane({
+      paneId: "pane-1",
+      visitId: RETURN_JOURNEY_VISIT_ID,
+      routeKey: AUTHOR_ROUTE_KEY,
+      modality: "Programmatic",
+    });
+
+    resourceGeneration += 1;
+    view.rerender(journey());
+
+    expect(
+      screen.getAllByRole("link", { name: "Restored Author First" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Restored Author Second" }),
+    ).toHaveLength(1);
+    await waitFor(() => expect(cursors).toEqual([null, "cursor-2"]));
   });
 
   it("retains rows and offers Try again when a Load more page fails", async () => {
@@ -380,9 +465,11 @@ function authorPane({
 } = {}) {
   const href = `/authors/${HANDLE}`;
   return (
-    <FeedbackProvider>
-      <PaneRuntimeProvider
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <PaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={href}
         routeId="author"
@@ -397,10 +484,11 @@ function authorPane({
         onNavigatePane={() => {}}
         onReplacePane={() => {}}
         onOpenInNewPane={() => {}}
-      >
-        <AuthorPaneBody />
-      </PaneRuntimeProvider>
-    </FeedbackProvider>
+        >
+          <AuthorPaneBody />
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
   );
 }
 

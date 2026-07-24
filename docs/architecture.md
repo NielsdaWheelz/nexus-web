@@ -1235,12 +1235,18 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
 `*PaneBody.tsx`.
 
 - **Workspace shell** (`lib/workspace/*`, `components/workspace/*`): a tabbed,
-  multi-pane canvas. State (`WorkspaceState`: primary panes with per-pane history,
-  attached secondary tool panes, widths) lives in a React reducer+context store and
-  is persisted **per-user-per-device** to `workspace_sessions`. A pane is identified
-  by a stable pane id; its resolved `routeKey` gates route-scoped labels, layout,
-  secondary/fixed chrome, and primary-chrome publication so stale cleanup cannot
-  mutate a newer route instance.
+  multi-pane canvas. Durable state (`WorkspaceState`: primary panes with
+  visit-identified Back/Forward history, attached secondary tool panes, widths)
+  lives in a React reducer+context store and is persisted
+  **per-user-per-device** to `workspace_sessions`. Current-tab return
+  presentation is separate: `PaneReturnMementoProvider` keys semantic
+  scroll/focus mementos and bounded route-owned loaded extent by the exact
+  `PaneVisit` UUID. `PaneShell` is the sole primary vertical scroll owner for
+  ordinary routes; Reader, Chat transcripts, and Atlas retain distinct owners.
+  A pane is identified by a stable pane id; its resolved `routeKey` gates
+  route-scoped labels, layout, secondary/fixed chrome, primary-chrome
+  publication, and return data so stale cleanup cannot mutate a newer route
+  instance.
   Routes resolve via a pure model (`paneRouteModel.ts`) plus metadata table
   (`paneRouteTable.ts`) bound to React bodies (`paneRenderRegistry.tsx`). Bodies talk
   to the shell only through `paneRuntime.tsx` hooks (`usePaneRouter`, `usePaneParam`,

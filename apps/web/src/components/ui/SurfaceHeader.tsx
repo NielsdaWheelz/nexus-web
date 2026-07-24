@@ -15,8 +15,8 @@ import styles from "./SurfaceHeader.module.css";
 export interface SurfaceHeaderNavigation {
   canGoBack: boolean;
   canGoForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
+  onBack: (modality: "Keyboard" | "Pointer") => void;
+  onForward: (modality: "Keyboard" | "Pointer") => void;
 }
 
 interface SurfaceHeaderProps {
@@ -60,7 +60,9 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             <button
               type="button"
               className={styles.navigationButton}
-              onClick={navigation.onBack}
+              onClick={(event) =>
+                navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+              }
               disabled={!navigation.canGoBack}
               aria-label="Go back in this pane"
             >
@@ -69,7 +71,11 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             <button
               type="button"
               className={styles.navigationButton}
-              onClick={navigation.onForward}
+              onClick={(event) =>
+                navigation.onForward(
+                  event.detail === 0 ? "Keyboard" : "Pointer",
+                )
+              }
               disabled={!navigation.canGoForward}
               aria-label="Go forward in this pane"
             >

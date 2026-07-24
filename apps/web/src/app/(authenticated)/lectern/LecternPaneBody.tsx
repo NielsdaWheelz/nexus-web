@@ -30,7 +30,10 @@ import {
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { descriptorFromLecternItem } from "@/lib/player/playerSession";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {
+  usePaneReturnReady,
+  usePaneRuntime,
+} from "@/lib/panes/paneRuntime";
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./LecternPaneBody.module.css";
@@ -91,6 +94,7 @@ export default function LecternPaneBody() {
       : resource.status === "error"
         ? "error"
         : "loading";
+  usePaneReturnReady(queueStatus !== "loading");
 
   const handleRemove = useCallback(
     (itemId: LecternItemId, triggerEl: HTMLButtonElement | null) => {
@@ -275,6 +279,7 @@ export default function LecternPaneBody() {
         tabIndex={-1}
       >
         <CollectionView
+          returnScope="Lectern.Items"
           rows={queueRows}
           status={queueStatus}
           ariaLabel="On the lectern"
@@ -296,6 +301,7 @@ export default function LecternPaneBody() {
         />
       </PaneSection>
       <ReadingSlateSection
+        returnScope="Lectern.ReadingSlate"
         destination={{ kind: "Lectern" }}
         paneId={paneId}
         isActive={isPaneActive}

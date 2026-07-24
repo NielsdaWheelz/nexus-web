@@ -23989,3 +23989,57 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestMigration0191PaneVisitWorkspaceSessionPurge:
+    def test_0191_purges_every_session_and_blocks_downgrade(self):
+        reset_test_schema()
+        result = run_alembic_command("upgrade 0190")
+        assert result.returncode == 0, f"upgrade 0190 failed: {result.stderr}"
+        engine = create_engine(get_test_database_url())
+        user_id = uuid4()
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    text("INSERT INTO users (id) VALUES (:id)"),
+                    {"id": user_id},
+                )
+                for device_id in ("device-a", "device-b"):
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO workspace_sessions (user_id, device_id, state)
+                            VALUES (:user_id, :device_id, CAST(:state AS jsonb))
+                            """
+                        ),
+                        {
+                            "user_id": user_id,
+                            "device_id": device_id,
+                            "state": json.dumps({"legacy": True}),
+                        },
+                    )
+                session.commit()
+
+            result = run_alembic_command("upgrade 0191")
+            assert result.returncode == 0, f"upgrade 0191 failed: {result.stderr}"
+
+            with Session(engine) as session:
+                count = session.execute(
+                    text("SELECT count(*) FROM workspace_sessions")
+                ).scalar_one()
+                version = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                assert count == 0, "0191 must purge all old workspace-session JSON"
+                assert version == "0191"
+
+            result = run_alembic_command("downgrade 0190")
+            assert result.returncode != 0, "0191 downgrade must be blocked"
+            combined = (result.stdout or "") + (result.stderr or "")
+            assert (
+                "hard cutover migration and has no downgrade path" in combined
+            ), f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()

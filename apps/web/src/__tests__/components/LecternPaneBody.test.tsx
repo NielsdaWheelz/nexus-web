@@ -11,10 +11,15 @@ import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 
 const MEDIA_A = "11111111-0000-4000-8000-000000000001";
 const MEDIA_B = "22222222-0000-4000-8000-000000000002";
 const ITEM_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 interface WireItem {
   itemId: string;
@@ -133,30 +138,33 @@ function installFetch({
 function withProviders(node: ReactNode) {
   const href = "/lectern";
   return withRenderEnvironment(
-    <FeedbackProvider>
-      <LecternProvider>
-        <GlobalPlayerProvider>
-          <PaneRuntimeProvider
-            paneId="pane-1"
-            isActive
-            href={href}
-            routeId="lectern"
-            routeKey={resolvePaneRouteIdentity(href).routeKey}
-            canGoBack={false}
-            canGoForward={false}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
-            onSetPaneLabel={vi.fn()}
-          >
-            <LecternMutationNotice />
-            {node}
-          </PaneRuntimeProvider>
-        </GlobalPlayerProvider>
-      </LecternProvider>
-    </FeedbackProvider>,
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <PaneRuntimeProvider
+              paneId="pane-1"
+              visitId={TEST_VISIT_ID}
+              isActive
+              href={href}
+              routeId="lectern"
+              routeKey={resolvePaneRouteIdentity(href).routeKey}
+              canGoBack={false}
+              canGoForward={false}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+              onNavigatePane={vi.fn()}
+              onReplacePane={vi.fn()}
+              onOpenInNewPane={vi.fn()}
+              onSetPaneLabel={vi.fn()}
+            >
+              <LecternMutationNotice />
+              {node}
+            </PaneRuntimeProvider>
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
   );
 }
 

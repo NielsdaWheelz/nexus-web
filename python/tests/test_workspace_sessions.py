@@ -10,19 +10,36 @@ pytestmark = pytest.mark.integration
 
 
 def _sample_state(active_pane_id: str = "pane-1", href: str = "/libraries") -> dict:
-    """Build a representative opaque workspace state blob."""
+    """Build the exact persisted PaneVisit state transported by the opaque API."""
+    current_visit = {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "href": href,
+    }
+    back_visit = {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "href": "/lectern",
+    }
+    forward_visit = {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "href": "/notes",
+    }
     return {
-        "schemaVersion": 6,
-        "activePaneId": active_pane_id,
-        "panes": [
-            {
+        "activePrimaryPaneId": active_pane_id,
+        "primaryPaneOrder": [active_pane_id],
+        "primaryPanesById": {
+            active_pane_id: {
                 "id": active_pane_id,
-                "href": href,
-                "widthPx": 480,
+                "currentVisit": current_visit,
+                "primaryWidthPx": 480,
                 "visibility": "visible",
-                "history": {"back": [], "forward": []},
+                "history": {
+                    "back": [back_visit],
+                    "forward": [forward_visit],
+                },
+                "attachedSecondaryPaneId": None,
             }
-        ],
+        },
+        "secondaryPanesById": {},
     }
 
 

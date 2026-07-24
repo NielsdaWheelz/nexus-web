@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   activeWorkspacePane,
   gotoSinglePaneWorkspace,
+  makeWorkspaceVisit,
   workspaceE2eDeviceId,
   workspacePaneButton,
 } from "./workspace";
@@ -640,7 +641,12 @@ test.describe("reader progress continuity", () => {
       page,
       progressDeviceId(testInfo),
       `/media/${mediaId}`,
-      { history: { back: ["/libraries"], forward: [] } },
+      {
+        history: {
+          back: [makeWorkspaceVisit("/libraries")],
+          forward: [],
+        },
+      },
     );
     const activePane = activeWorkspacePane(page);
     const sectionSelect = activePane.getByLabel("Select section");

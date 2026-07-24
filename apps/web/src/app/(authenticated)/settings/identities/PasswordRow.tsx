@@ -124,6 +124,7 @@ export function PasswordRow({
   return (
     <>
       <CollectionView
+        returnScope="Settings.Identities.Password"
         rows={[row]}
         status="ready"
         ariaLabel="Password"

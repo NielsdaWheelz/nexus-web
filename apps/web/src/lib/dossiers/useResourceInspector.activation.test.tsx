@@ -17,6 +17,11 @@ import type { DossierCitationActivate } from "@/components/dossier/DossierSurfac
 import type { PaneSecondaryPublication } from "@/lib/panes/panePublications";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 const controller = vi.hoisted(() => ({
   subscribe: vi.fn(() => () => undefined),
@@ -73,6 +78,7 @@ function InspectorVisibilityHarness({
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive
       href={MEDIA_HREF}
       routeId="media"
@@ -123,6 +129,7 @@ function renderInspector(
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive
       href={MEDIA_HREF}
       routeId="media"
@@ -276,6 +283,7 @@ describe("useResourceInspector workspace activation", () => {
         surfaceId: "resource-dossier",
         revisionRef,
       },
+      "Programmatic",
     );
   });
 
@@ -350,7 +358,12 @@ describe("useResourceInspector workspace activation", () => {
       { shiftKey: true } as ReactMouseEvent,
     );
 
-    expect(onOpenInNewPane).toHaveBeenCalledWith(href, undefined, undefined);
+    expect(onOpenInNewPane).toHaveBeenCalledWith(
+      href,
+      undefined,
+      undefined,
+      "Programmatic",
+    );
     expect(onNavigatePane).not.toHaveBeenCalled();
   });
 

@@ -18,6 +18,7 @@ import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedbac
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
 import { getWorkspacePrimaryPanes, type WorkspaceState } from "@/lib/workspace/schema";
@@ -83,7 +84,7 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
       if (pane.visibility !== "visible") {
         continue;
       }
-      const { id } = resolvePaneRouteModel(pane.href);
+      const { id } = resolvePaneRouteModel(pane.currentVisit.href);
       if (id !== "unsupported") {
         ids.add(id);
       }
@@ -96,31 +97,33 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
   return (
     <>
       {probe}
-      <WorkspaceStoreProvider
-        workspacePrimaryMetrics={workspacePrimaryMetrics}
-        initialState={initialState}
-      >
-        <MobileChromeProvider>
-          {/* One Lectern owner wraps the Launcher/workspace leaves and the player
-              session (spec §3 architecture): LecternProvider -> leaves ->
-              GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
-          <LecternProvider>
-            <Launcher />
-            <div className={styles.layout} data-hydrated={hydrated || undefined}>
-              <AppNav />
-              <main className={styles.main}>
-                <GlobalPlayerProvider>
-                  <WalknoteSessionProvider>
-                    <WorkspaceHost />
-                    <LecternMutationNotice />
-                    <GlobalPlayerFooter />
-                  </WalknoteSessionProvider>
-                </GlobalPlayerProvider>
-              </main>
-            </div>
-          </LecternProvider>
-        </MobileChromeProvider>
-      </WorkspaceStoreProvider>
+      <PaneReturnMementoProvider>
+        <WorkspaceStoreProvider
+          workspacePrimaryMetrics={workspacePrimaryMetrics}
+          initialState={initialState}
+        >
+          <MobileChromeProvider>
+            {/* One Lectern owner wraps the Launcher/workspace leaves and the player
+                session (spec §3 architecture): LecternProvider -> leaves ->
+                GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
+            <LecternProvider>
+              <Launcher />
+              <div className={styles.layout} data-hydrated={hydrated || undefined}>
+                <AppNav />
+                <main className={styles.main}>
+                  <GlobalPlayerProvider>
+                    <WalknoteSessionProvider>
+                      <WorkspaceHost />
+                      <LecternMutationNotice />
+                      <GlobalPlayerFooter />
+                    </WalknoteSessionProvider>
+                  </GlobalPlayerProvider>
+                </main>
+              </div>
+            </LecternProvider>
+          </MobileChromeProvider>
+        </WorkspaceStoreProvider>
+      </PaneReturnMementoProvider>
     </>
   );
 }

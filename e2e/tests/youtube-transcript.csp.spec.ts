@@ -58,7 +58,7 @@ async function gotoYoutubeCspSinglePane(
   await page.goto("about:blank");
   const deviceId = workspaceE2eDeviceId(testInfo, "e2e-youtube-csp");
   await pinDeviceId(page, deviceId);
-  await seedWorkspaceSession(page.request, deviceId, singlePaneWorkspaceState(href));
+  await seedWorkspaceSession(page.request, singlePaneWorkspaceState(href));
   return page.goto(href);
 }
 

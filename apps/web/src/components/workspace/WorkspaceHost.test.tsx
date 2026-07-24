@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import type { ResourceLocatorResolution } from "@/lib/resources/resourceLocators";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import {
@@ -26,6 +26,13 @@ import type {
   WorkspaceSecondaryGroupId,
   WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
+import {
+  assumePaneVisitId,
+  type PaneVisit,
+  type WorkspacePaneHistory,
+  type WorkspaceState,
+} from "@/lib/workspace/schema";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const MEDIA_ID_2 = "22222222-2222-4222-8222-222222222222";
@@ -33,6 +40,15 @@ const MEDIA_ID_3 = "33333333-3333-4333-8333-333333333333";
 const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
 const MEDIA_HREF_2 = `/media/${MEDIA_ID_2}`;
 const MEDIA_HREF_3 = `/media/${MEDIA_ID_3}`;
+let nextVisitIndex = 1;
+
+function paneVisit(href: string): PaneVisit {
+  const id = assumePaneVisitId(
+    `00000000-0000-4000-8000-${String(nextVisitIndex).padStart(12, "0")}`,
+  );
+  nextVisitIndex += 1;
+  return { id, href };
+}
 
 const hostMocks = vi.hoisted(() => ({
   bodyInstanceId: 0,
@@ -79,44 +95,7 @@ const hostMocks = vi.hoisted(() => ({
     (locators: readonly unknown[]) => Promise<ResourceLocatorResolution[]>
   >(async () => []),
   store: {
-    state: {
-      primaryPaneOrder: ["pane-1"],
-      primaryPanesById: {
-        "pane-1": {
-          id: "pane-1",
-          href: "/media/11111111-1111-4111-8111-111111111111",
-          primaryWidthPx: 640,
-          attachedSecondaryPaneId: null as string | null,
-          visibility: "visible" as const,
-          history: { back: [], forward: [] } as {
-            back: string[];
-            forward: string[];
-          },
-        },
-      } as Record<
-        string,
-        {
-          id: string;
-          href: string;
-          primaryWidthPx: number;
-          attachedSecondaryPaneId: string | null;
-          visibility: "visible" | "minimized";
-          history: { back: string[]; forward: string[] };
-        }
-      >,
-      secondaryPanesById: {} as Record<
-        string,
-        {
-          id: string;
-          parentPrimaryPaneId: string;
-          groupId: WorkspaceSecondaryGroupId;
-          activeSurfaceId: WorkspaceSecondarySurfaceId;
-          widthPx: number;
-          visibility: "visible" | "collapsed";
-        }
-      >,
-      activePrimaryPaneId: "pane-1",
-    },
+    state: null as unknown as WorkspaceState,
     workspacePrimaryMetrics: {
       primaryMinWidthPx: 684,
       primaryDefaultWidthPx: 684,
@@ -195,10 +174,61 @@ function mediaRoute(href: string) {
     definition: {
       id: "media",
       bodyMode: "document",
+      returnMemento: { kind: "Excluded", owner: "Reader" },
       maxWidthPx: 2400,
       allowsIntrinsicPrimaryWidth: true,
     },
   };
+}
+
+function routeForHostTest(href: string) {
+  const route = mediaRoute(href);
+  switch (route.pathname) {
+    case "/libraries":
+      return {
+        ...route,
+        id: "libraries",
+        defaultLabel: "Libraries",
+        labelMode: "static",
+        header: { kind: "section" } as const,
+        definition: {
+          ...route.definition,
+          id: "libraries",
+          bodyMode: "standard",
+          returnMemento: { kind: "ShellScroll" } as const,
+        },
+      };
+    case "/atlas":
+      return {
+        ...route,
+        id: "atlas",
+        defaultLabel: "Atlas",
+        labelMode: "static",
+        header: { kind: "section" } as const,
+        definition: {
+          ...route.definition,
+          id: "atlas",
+          bodyMode: "document",
+          returnMemento: { kind: "NoVerticalScroll" } as const,
+        },
+      };
+    case "/conversations/new":
+      return {
+        ...route,
+        id: "conversationNew",
+        defaultLabel: "New chat",
+        labelMode: "static",
+        header: { kind: "section" } as const,
+        definition: {
+          ...route.definition,
+          id: "conversationNew",
+          bodyMode: "contained",
+          returnMemento: { kind: "Excluded", owner: "Chat" } as const,
+        },
+      };
+    default:
+      return route;
+  }
 }
 
 function TestPaneBody() {
@@ -325,12 +355,12 @@ vi.mock("@/lib/workspace/store", async () => {
     useWorkspaceHostStore: () => hostMocks.store,
     resolvePaneRouteKey: (href: string) =>
       resolvePaneRouteIdentity(href).routeKey,
-    resolveWorkspacePaneLabel: (pane: { href: string }) => {
-      const route = mediaRoute(pane.href);
+    resolveWorkspacePaneLabel: (pane: { currentVisit: PaneVisit }) => {
+      const route = routeForHostTest(pane.currentVisit.href);
       return {
-        routeKey: resolvePaneRouteIdentity(pane.href).routeKey,
+        routeKey: resolvePaneRouteIdentity(pane.currentVisit.href).routeKey,
         route,
-        label: "Media",
+        label: route.defaultLabel,
         labelState: "pending",
         labelSource: "fallback",
       };
@@ -343,7 +373,10 @@ vi.mock("@/components/workspace/PaneShell", async () => {
     typeof import("@/components/workspace/PaneShell")
   >("@/components/workspace/PaneShell");
   return {
-    default: (props: ComponentProps<typeof ActualPaneShell>) => {
+    default: function MockPaneShell(
+      props: ComponentProps<typeof ActualPaneShell>,
+    ) {
+      const router = usePaneRouter();
       if (hostMocks.useActualPaneShell) {
         return <ActualPaneShell {...props} />;
       }
@@ -354,7 +387,6 @@ vi.mock("@/components/workspace/PaneShell", async () => {
         secondarySizing,
         secondaryPublication,
         fixedChromePublication,
-        navigation,
         isMobile,
         paneId,
         routeKey,
@@ -390,15 +422,15 @@ vi.mock("@/components/workspace/PaneShell", async () => {
           <nav aria-label="Mock pane chrome">
             <button
               type="button"
-              onClick={navigation.onBack}
-              disabled={!navigation.canGoBack}
+              onClick={router.back}
+              disabled={!router.canGoBack}
             >
               Go back in this pane
             </button>
             <button
               type="button"
-              onClick={navigation.onForward}
-              disabled={!navigation.canGoForward}
+              onClick={router.forward}
+              disabled={!router.canGoForward}
             >
               Go forward in this pane
             </button>
@@ -510,18 +542,26 @@ vi.mock("@/lib/resources/resourceLocators", () => ({
     hostMocks.resolveResourceLocators(locators),
 }));
 
-import WorkspaceHost from "@/components/workspace/WorkspaceHost";
+import WorkspaceHostImpl from "@/components/workspace/WorkspaceHost";
+
+function WorkspaceHost() {
+  return (
+    <PaneReturnMementoProvider>
+      <WorkspaceHostImpl />
+    </PaneReturnMementoProvider>
+  );
+}
 
 function setPaneHref(
   href: string,
-  history: { back: string[]; forward: string[] } = { back: [], forward: [] },
+  history: WorkspacePaneHistory = { back: [], forward: [] },
 ) {
   hostMocks.store.state = {
     primaryPaneOrder: ["pane-1"],
     primaryPanesById: {
       "pane-1": {
         id: "pane-1",
-        href,
+        currentVisit: paneVisit(href),
         primaryWidthPx: 640,
         attachedSecondaryPaneId: null,
         visibility: "visible",
@@ -539,7 +579,7 @@ function setTwoPaneHrefs(firstHref: string, secondHref: string) {
     primaryPanesById: {
       "pane-1": {
         id: "pane-1",
-        href: firstHref,
+        currentVisit: paneVisit(firstHref),
         primaryWidthPx: 640,
         attachedSecondaryPaneId: null,
         visibility: "visible",
@@ -547,7 +587,7 @@ function setTwoPaneHrefs(firstHref: string, secondHref: string) {
       },
       "pane-2": {
         id: "pane-2",
-        href: secondHref,
+        currentVisit: paneVisit(secondHref),
         primaryWidthPx: 640,
         attachedSecondaryPaneId: null,
         visibility: "visible",
@@ -561,6 +601,7 @@ function setTwoPaneHrefs(firstHref: string, secondHref: string) {
 
 describe("WorkspaceHost pane route lifecycle", () => {
   beforeEach(() => {
+    nextVisitIndex = 1;
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
@@ -608,6 +649,42 @@ describe("WorkspaceHost pane route lifecycle", () => {
     const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
 
     setPaneHref(`${MEDIA_HREF_1}?loc=chapter-2`);
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("route-body")).toHaveAttribute(
+      "data-instance-id",
+      firstInstance,
+    );
+    expect(hostMocks.mountedBodyIds).toHaveLength(1);
+    expect(hostMocks.unmountedBodyIds).toEqual([]);
+  });
+
+  it("remounts a ShellScroll route body for a new visit occurrence", () => {
+    setPaneHref("/libraries");
+    const { rerender } = render(<WorkspaceHost />);
+    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+
+    setPaneHref("/libraries");
+    rerender(<WorkspaceHost />);
+
+    expect(screen.getByTestId("route-body")).not.toHaveAttribute(
+      "data-instance-id",
+      firstInstance,
+    );
+    expect(hostMocks.mountedBodyIds).toHaveLength(2);
+    expect(hostMocks.unmountedBodyIds).toEqual([Number(firstInstance)]);
+  });
+
+  it.each([
+    ["Reader", MEDIA_HREF_1],
+    ["Chat", "/conversations/new"],
+    ["Atlas", "/atlas"],
+  ])("preserves the %s route body across visit occurrences", (_owner, href) => {
+    setPaneHref(href);
+    const { rerender } = render(<WorkspaceHost />);
+    const firstInstance = screen.getByTestId("route-body").dataset.instanceId;
+
+    setPaneHref(href);
     rerender(<WorkspaceHost />);
 
     expect(screen.getByTestId("route-body")).toHaveAttribute(
@@ -914,15 +991,15 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/authors/author-1",
-      { labelHint: "Chrome Author" },
+      { labelHint: "Chrome Author", modality: "Keyboard" },
     );
     expect(hostMocks.store.openPane).not.toHaveBeenCalled();
   });
 
   it("routes header Back and Forward through the target pane only", () => {
     setPaneHref(MEDIA_HREF_2, {
-      back: [MEDIA_HREF_1],
-      forward: [MEDIA_HREF_3],
+      back: [paneVisit(MEDIA_HREF_1)],
+      forward: [paneVisit(MEDIA_HREF_3)],
     });
 
     render(<WorkspaceHost />);
@@ -934,8 +1011,14 @@ describe("WorkspaceHost pane route lifecycle", () => {
       screen.getByRole("button", { name: "Go forward in this pane" }),
     );
 
-    expect(hostMocks.store.goBackPane).toHaveBeenCalledWith("pane-1");
-    expect(hostMocks.store.goForwardPane).toHaveBeenCalledWith("pane-1");
+    expect(hostMocks.store.goBackPane).toHaveBeenCalledWith(
+      "pane-1",
+      "Keyboard",
+    );
+    expect(hostMocks.store.goForwardPane).toHaveBeenCalledWith(
+      "pane-1",
+      "Keyboard",
+    );
     expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
 
@@ -947,7 +1030,7 @@ describe("WorkspaceHost pane route lifecycle", () => {
     expect(hostMocks.store.navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/authors/body-author",
-      { labelHint: "Body Author" },
+      { labelHint: "Body Author", modality: "Keyboard" },
     );
     expect(hostMocks.store.openPane).not.toHaveBeenCalled();
   });
@@ -964,6 +1047,8 @@ describe("WorkspaceHost pane route lifecycle", () => {
       openerPaneId: "pane-1",
       activate: true,
       labelHint: "Chrome Author",
+      secondaryActivation: undefined,
+      modality: "Keyboard",
     });
     expect(hostMocks.store.navigatePane).not.toHaveBeenCalled();
   });
@@ -1010,7 +1095,7 @@ function setPaneWithSecondary(secondary: {
     primaryPanesById: {
       "pane-1": {
         id: "pane-1",
-        href: MEDIA_HREF_1,
+        currentVisit: paneVisit(MEDIA_HREF_1),
         primaryWidthPx: 640,
         attachedSecondaryPaneId: "secondary-1",
         visibility: "visible",
@@ -1038,7 +1123,10 @@ function setSecondaryPaneHref(href: string) {
       ...hostMocks.store.state.primaryPanesById,
       "pane-1": {
         ...hostMocks.store.state.primaryPanesById["pane-1"]!,
-        href,
+        currentVisit: {
+          ...hostMocks.store.state.primaryPanesById["pane-1"]!.currentVisit,
+          href,
+        },
       },
     },
   };
@@ -1046,6 +1134,7 @@ function setSecondaryPaneHref(href: string) {
 
 describe("WorkspaceHost secondary publication validation", () => {
   beforeEach(() => {
+    nextVisitIndex = 1;
     hostMocks.bodyInstanceId = 0;
     hostMocks.mountedBodyIds = [];
     hostMocks.unmountedBodyIds = [];
@@ -1351,6 +1440,7 @@ describe("WorkspaceHost secondary publication validation", () => {
         activate: true,
         labelHint: "Dossier",
         secondaryActivation: activation,
+        modality: "Programmatic",
       });
     });
   });

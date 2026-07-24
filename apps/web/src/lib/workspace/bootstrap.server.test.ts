@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import type { ReaderProfile } from "@/lib/reader/types";
 import {
+  assumePaneVisitId,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
   type WorkspacePrimaryPaneState,
@@ -82,9 +84,10 @@ const NOTE_PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const NOTE_BLOCK_ID = "22222222-2222-4222-8222-222222222222";
 
 // Saved-session builders — the same primary()/workspace() helpers sessionSync.test.ts
-// uses, so the raw `own`/`most_recent_elsewhere` states the bootstrap sanitizes and
+// uses, so the raw `own`/`most_recent_elsewhere` states the bootstrap exact-decodes and
 // restores are built the way the client store actually persists them.
 const emptyHistory = () => ({ back: [], forward: [] });
+let nextVisitIndex = 1;
 
 function primary(
   id: string,
@@ -96,9 +99,16 @@ function primary(
     >
   > = {},
 ): WorkspacePrimaryPaneState {
+  const visitIndex = nextVisitIndex;
+  nextVisitIndex += 1;
   return {
     id,
-    href,
+    currentVisit: {
+      id: assumePaneVisitId(
+        `00000000-0000-4000-8000-${String(visitIndex).padStart(12, "0")}`,
+      ),
+      href,
+    },
     primaryWidthPx: input.primaryWidthPx ?? 684,
     visibility: input.visibility ?? "visible",
     history: input.history ?? emptyHistory(),
@@ -121,15 +131,20 @@ function sessionEnvelope(input: {
   mostRecentElsewhere?: WorkspaceState | null;
 }): {
   data: {
-    own: { state: unknown } | null;
-    most_recent_elsewhere: { state: unknown } | null;
+    own: { state: unknown; updated_at: string } | null;
+    most_recent_elsewhere: { state: unknown; updated_at: string } | null;
   };
 } {
   return {
     data: {
-      own: input.own ? { state: input.own } : null,
+      own: input.own
+        ? { state: input.own, updated_at: "2026-01-01T00:00:00Z" }
+        : null,
       most_recent_elsewhere: input.mostRecentElsewhere
-        ? { state: input.mostRecentElsewhere }
+        ? {
+            state: input.mostRecentElsewhere,
+            updated_at: "2026-01-01T00:00:00Z",
+          }
         : null,
     },
   };
@@ -138,16 +153,17 @@ function sessionEnvelope(input: {
 function visibleHrefs(state: WorkspaceState): string[] {
   return getWorkspacePrimaryPanes(state)
     .filter((pane) => pane.visibility === "visible")
-    .map((pane) => pane.href);
+    .map((pane) => pane.currentVisit.href);
 }
 
 function activeHref(state: WorkspaceState): string | undefined {
   return getWorkspacePrimaryPanes(state).find(
     (pane) => pane.id === state.activePrimaryPaneId,
-  )?.href;
+  )?.currentVisit.href;
 }
 
 beforeEach(() => {
+  nextVisitIndex = 1;
   requestHeaders.clear();
   requestCookies.clear();
   mockCallFastAPI.mockReset();
@@ -735,7 +751,7 @@ describe("loadWorkspaceBootstrap", () => {
 
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe(result.initialHref);
+    expect(panes[0]?.currentVisit.href).toBe(result.initialHref);
     expect(mockCallFastAPI).not.toHaveBeenCalledWith(
       expect.stringContaining("/me/workspace-session"),
       expect.anything(),
@@ -765,11 +781,93 @@ describe("loadWorkspaceBootstrap", () => {
 
     const panes = getWorkspacePrimaryPanes(result.initialState);
     expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe(result.initialHref);
+    expect(panes[0]?.currentVisit.href).toBe(result.initialHref);
     expect(result.resources["solo"]).toEqual({
       media,
       fragments: { status: "ready", data: [] },
     });
+  });
+
+  it("defects when trusted persisted PaneVisit ids are duplicated", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    const exactState = workspace({
+      primaryPanes: [primary("pane-1", "/libraries")],
+    });
+    const exactPane = exactState.primaryPanesById["pane-1"]!;
+    const malformedState = {
+      ...exactState,
+      primaryPanesById: {
+        "pane-1": {
+          ...exactPane,
+          history: {
+            back: [exactPane.currentVisit],
+            forward: [],
+          },
+        },
+      },
+    };
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": {
+        data: {
+          own: {
+            state: malformedState,
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          most_recent_elsewhere: null,
+        },
+      },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
+    });
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "duplicates another PaneVisit id",
+    );
+  });
+
+  it("defects when a successful trusted session response is malformed", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/me/workspace-session?device_id=dev-1": {
+        data: {
+          own: { updated_at: "2026-01-01T00:00:00Z" },
+          most_recent_elsewhere: null,
+        },
+      },
+      "/libraries": { data: [], page: { has_more: false, next_cursor: null } },
+    });
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "workspace session response.data.own must contain exactly [state, updated_at]",
+    );
+  });
+
+  it("defects when a successful trusted session response is non-JSON", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries");
+    requestCookies.set(DEVICE_COOKIE_NAME, "dev-1");
+    respondWithFn((path) => {
+      if (path === "/me/workspace-session?device_id=dev-1") {
+        throw new ApiError(
+          200,
+          "E_INVALID_RESPONSE",
+          "API returned a non-JSON response",
+        );
+      }
+      if (path === "/me/reader-profile") {
+        return PROFILE_OK;
+      }
+      if (path === "/libraries") {
+        return { data: [], page: { has_more: false, next_cursor: null } };
+      }
+      throw new Error(`unmapped path: ${path}`);
+    });
+
+    await expect(loadWorkspaceBootstrap(false)).rejects.toThrow(
+      "API returned a non-JSON response",
+    );
   });
 
   it("merges the deep-link pane into the restored layout", async () => {
@@ -823,7 +921,7 @@ describe("loadWorkspaceBootstrap", () => {
     const result = await loadWorkspaceBootstrap(true);
 
     const hrefs = getWorkspacePrimaryPanes(result.initialState).map(
-      (pane) => pane.href,
+      (pane) => pane.currentVisit.href,
     );
     expect(hrefs).not.toContain("/settings/local-vault");
   });

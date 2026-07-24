@@ -16,6 +16,11 @@ import {
   projectToScreen,
   type CelestialPosition,
 } from "./projection";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 interface FixtureStar {
   media_id: string;
@@ -66,8 +71,8 @@ function corpusCelestial(x: number, y: number): CelestialPosition {
   return { azimuth: x * Math.PI * 2, altitude: ZENITH_MARGIN + y * ALTITUDE_SPAN };
 }
 
-function screenPoint(celestial: CelestialPosition) {
-  return projectToScreen(celestial, 0, W / 2, H / 2, RADIUS);
+function screenPoint(celestial: CelestialPosition, cameraAzimuth = 0) {
+  return projectToScreen(celestial, cameraAzimuth, W / 2, H / 2, RADIUS);
 }
 
 /**
@@ -99,6 +104,7 @@ function atlasPane(over: { href?: string; onNavigatePane?: () => void } = {}) {
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive={true}
       href={href}
       routeId="atlas"
@@ -273,6 +279,80 @@ describe("GrandAtlasPaneBody", () => {
     fireEvent.pointerUp(canvas, { clientX: point.x + 40, clientY: point.y, pointerId: 1 });
 
     expect(paneOpens()).toHaveLength(0);
+  });
+
+  it("keeps the canvas touch-owned and rotates camera azimuth on horizontal drag", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/atlas") {
+          return jsonResponse(
+            atlasResponse({
+              stars: [
+                star({
+                  media_id: "m-rotation",
+                  x: 0.25,
+                  y: 0.5,
+                  title: "Rotating Work",
+                }),
+              ],
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+    render(atlasPane());
+    await screen.findByText("1 star");
+
+    const canvas = screen.getByRole("img", {
+      name: /celestial chart of the whole library/i,
+    }) as HTMLCanvasElement;
+    Object.defineProperty(canvas, "clientWidth", {
+      configurable: true,
+      value: W,
+    });
+    expect(getComputedStyle(canvas).touchAction).toBe("none");
+
+    const celestial = corpusCelestial(0.25, 0.5);
+    const initialPoint = screenPoint(celestial);
+    fireEvent.pointerMove(canvas, {
+      clientX: initialPoint.x,
+      clientY: initialPoint.y,
+    });
+    expect(await screen.findByText("Rotating Work")).toBeInTheDocument();
+
+    const dragDx = W / 4;
+    fireEvent.pointerDown(canvas, {
+      clientX: initialPoint.x,
+      clientY: initialPoint.y,
+      pointerId: 7,
+    });
+    fireEvent.pointerMove(canvas, {
+      clientX: initialPoint.x + dragDx,
+      clientY: initialPoint.y,
+      pointerId: 7,
+    });
+    fireEvent.pointerUp(canvas, {
+      clientX: initialPoint.x + dragDx,
+      clientY: initialPoint.y,
+      pointerId: 7,
+    });
+
+    fireEvent.pointerMove(canvas, {
+      clientX: initialPoint.x,
+      clientY: initialPoint.y,
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Rotating Work")).not.toBeInTheDocument();
+    });
+
+    const rotatedPoint = screenPoint(celestial, Math.PI * 1.5);
+    fireEvent.pointerMove(canvas, {
+      clientX: rotatedPoint.x,
+      clientY: rotatedPoint.y,
+    });
+    expect(await screen.findByText("Rotating Work")).toBeInTheDocument();
   });
 
   it("hit-tests a Nebula star (x:null) at the rim and shows its tooltip", async () => {

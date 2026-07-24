@@ -332,6 +332,7 @@ export default function PodcastEpisodeList({
       )}
 
       <CollectionView
+        returnScope="PodcastDetail.Episodes"
         rows={rows}
         status="ready"
         ariaLabel="Episodes"

@@ -3,6 +3,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  makeWorkspaceVisit,
   workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
@@ -85,7 +86,10 @@ test.describe("workspace pane history", () => {
       [
         makeWorkspacePane("pane-notes", "/notes"),
         makeWorkspacePane("pane-search", "/search", {
-          history: { back: ["/settings"], forward: [] },
+          history: {
+            back: [makeWorkspaceVisit("/settings")],
+            forward: [],
+          },
         }),
       ],
       { activePrimaryPaneId: "pane-search" },
@@ -137,7 +141,10 @@ test.describe("workspace pane history", () => {
       [
         makeWorkspacePane("pane-wide-media", mediaHref, {
           primaryWidthPx: WIDE_MEDIA_PANE_WIDTH_PX,
-          history: { back: ["/libraries"], forward: [] },
+          history: {
+            back: [makeWorkspaceVisit("/libraries")],
+            forward: [],
+          },
         }),
       ],
       { activePrimaryPaneId: "pane-wide-media" },

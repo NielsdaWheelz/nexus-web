@@ -18,6 +18,7 @@ import {
   getDestination,
   type DestinationId,
 } from "@/lib/navigation/destinations";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 
 interface BindableAction {
   id: string;
@@ -55,6 +56,7 @@ export default function KeybindingsPaneBody() {
   const { platform } = useRenderEnvironment();
   const [capturing, setCapturing] = useState<string | null>(null);
   const [capturedCombo, setCapturedCombo] = useState<string | null>(null);
+  usePaneReturnReady(true);
 
   const startCapture = useCallback((actionId: string) => {
     setCapturing(actionId);
@@ -121,6 +123,7 @@ export default function KeybindingsPaneBody() {
         }
       >
         <CollectionView
+          returnScope="Settings.Keybindings.Commands"
           rows={BINDABLE_ACTIONS.map(({ id, label }) => {
             const isCapturing = capturing === id;
             const currentCombo = bindings[id];

@@ -1,11 +1,14 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  assumePaneVisitId,
   createDefaultWorkspaceState,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
   MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_TOTAL_PANE_HISTORY_ENTRIES,
+  type PaneVisit,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -13,11 +16,17 @@ import {
   resolvePaneRouteKey,
   resolveWorkspacePaneLabel,
   useWorkspaceStore,
-  WorkspaceStoreProvider,
+  WorkspaceStoreProvider as WorkspaceStoreProviderBase,
   type WorkspacePaneLabelRecord,
   type WorkspacePaneLabelSource,
 } from "@/lib/workspace/store";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+  usePaneReturnReady,
+  usePaneReturnScrollport,
+} from "@/lib/workspace/paneReturnMemento";
 import {
   NEXUS_OPEN_PANE_EVENT,
   type OpenInAppPaneDetail,
@@ -29,6 +38,25 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
 };
 
 type WorkspaceStore = ReturnType<typeof useWorkspaceStore>;
+let nextVisitIndex = 1;
+
+function WorkspaceStoreProvider(
+  props: ComponentProps<typeof WorkspaceStoreProviderBase>,
+) {
+  return (
+    <PaneReturnMementoProvider>
+      <WorkspaceStoreProviderBase {...props} />
+    </PaneReturnMementoProvider>
+  );
+}
+
+function paneVisit(href: string): PaneVisit {
+  const id = assumePaneVisitId(
+    `00000000-0000-4000-8000-${String(nextVisitIndex).padStart(12, "0")}`,
+  );
+  nextVisitIndex += 1;
+  return { id, href };
+}
 
 function pane(
   id: string,
@@ -42,7 +70,7 @@ function pane(
 ): WorkspacePrimaryPaneState {
   return {
     id,
-    href,
+    currentVisit: paneVisit(href),
     primaryWidthPx: input.primaryWidthPx ?? 560,
     visibility: input.visibility ?? "visible",
     history: input.history ?? { back: [], forward: [] },
@@ -87,6 +115,75 @@ function mockWorkspaceSession() {
 function StoreProbe({ onStore }: { onStore: (store: WorkspaceStore) => void }) {
   onStore(useWorkspaceStore());
   return null;
+}
+
+function ReturnScrollport({
+  paneId,
+  testId,
+}: {
+  paneId: string;
+  testId: string;
+}) {
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const scrollport = scrollportRef.current;
+    if (!scrollport) {
+      return;
+    }
+    let scrollTop = 0;
+    Object.defineProperties(scrollport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+  }, []);
+  usePaneReturnScrollport({
+    paneId,
+    enabled: true,
+    scrollportRef,
+  });
+  usePaneReturnReady(true);
+  return (
+    <div ref={scrollportRef} data-testid={testId}>
+      <div>Return content</div>
+    </div>
+  );
+}
+
+function ActivePaneReturnBody() {
+  const workspace = useWorkspaceStore();
+  const pane = primaryPanes(workspace.state).find(
+    (item) => item.id === workspace.state.activePrimaryPaneId,
+  )!;
+  return (
+    <PaneReturnVisitScope
+      key={pane.currentVisit.id}
+      visitId={pane.currentVisit.id}
+      routeKey={resolvePaneRouteKey(pane.currentVisit.href)}
+    >
+      <ReturnScrollport paneId={pane.id} testId="active-return-scrollport" />
+    </PaneReturnVisitScope>
+  );
+}
+
+function DetachedReturnBody({ visit }: { visit: PaneVisit }) {
+  return (
+    <PaneReturnVisitScope
+      visitId={visit.id}
+      routeKey={resolvePaneRouteKey(visit.href)}
+    >
+      <ReturnScrollport
+        paneId="detached-return-probe"
+        testId="detached-return-scrollport"
+      />
+    </PaneReturnVisitScope>
+  );
 }
 
 // Render the provider seeded with a server-restored state (the cutover path: the store
@@ -152,7 +249,11 @@ async function mountWorkspaceStore(path = "/libraries") {
 }
 
 function activeHref(store: WorkspaceStore): string {
-  return primaryPanes(store.state).find((pane) => pane.id === store.state.activePrimaryPaneId)?.href ?? "";
+  return (
+    primaryPanes(store.state).find(
+      (pane) => pane.id === store.state.activePrimaryPaneId,
+    )?.currentVisit.href ?? ""
+  );
 }
 
 function flushWorkspaceSession() {
@@ -175,6 +276,7 @@ function labelRecord(
 
 describe("WorkspaceStoreProvider", () => {
   beforeEach(() => {
+    nextVisitIndex = 1;
     window.localStorage.clear();
     window.history.replaceState({}, "", "/libraries");
   });
@@ -188,7 +290,11 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state).map((pane) => pane.href)).toEqual([
+      expect(
+        primaryPanes(workspace().state).map(
+          (pane) => pane.currentVisit.href,
+        ),
+      ).toEqual([
         "/libraries",
         "/conversations",
       ]);
@@ -221,7 +327,7 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
       expect(workspace().state.activePrimaryPaneId).toBe(lecternPaneId);
       expect(primaryPanes(workspace().state)[1]).toMatchObject({
-        href: "/lectern",
+        currentVisit: { href: "/lectern" },
         visibility: "visible",
       });
     });
@@ -277,7 +383,7 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       const targetPane = primaryPanes(workspace().state).find(
-        (item) => item.href === href,
+        (item) => item.currentVisit.href === href,
       );
       expect(targetPane).toBeDefined();
       expect(
@@ -289,7 +395,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     const targetPane = primaryPanes(workspace().state).find(
-      (item) => item.href === href,
+      (item) => item.currentVisit.href === href,
     )!;
     act(() => {
       workspace().acknowledgePendingSecondaryActivation(
@@ -330,26 +436,33 @@ describe("WorkspaceStoreProvider", () => {
   it("records pane-local history for push navigation and traverses it", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
+    const initialVisit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        "/media/22222222-2222-4222-8222-222222222222",
+      );
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/11111111-1111-4111-8111-111111111111"],
+        back: [initialVisit],
         forward: [],
       });
     });
+    const targetVisit = primaryPanes(workspace().state)[0]!.currentVisit;
+    expect(targetVisit.id).not.toBe(initialVisit.id);
 
     act(() => {
       workspace().goBackPane(paneId);
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit).toEqual(
+        initialVisit,
+      );
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
         back: [],
-        forward: ["/media/22222222-2222-4222-8222-222222222222"],
+        forward: [targetVisit],
       });
     });
 
@@ -357,11 +470,175 @@ describe("WorkspaceStoreProvider", () => {
       workspace().goForwardPane(paneId);
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit).toEqual(
+        targetVisit,
+      );
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/11111111-1111-4111-8111-111111111111"],
+        back: [initialVisit],
         forward: [],
       });
+    });
+    flushWorkspaceSession();
+  });
+
+  it("isolates duplicate-href visit mementos and prunes a replaced Forward branch", async () => {
+    const initialState = createDefaultWorkspaceState(
+      "/libraries",
+      workspacePrimaryMetrics,
+    );
+    window.history.replaceState({}, "", "/libraries");
+    mockWorkspaceSession();
+    let store: WorkspaceStore | null = null;
+    let detachedVisit: PaneVisit | null = null;
+    const harness = () => (
+      <WorkspaceStoreProvider
+        workspacePrimaryMetrics={workspacePrimaryMetrics}
+        initialState={initialState}
+      >
+        <StoreProbe onStore={(nextStore) => { store = nextStore; }} />
+        <ActivePaneReturnBody />
+        {detachedVisit ? <DetachedReturnBody visit={detachedVisit} /> : null}
+      </WorkspaceStoreProvider>
+    );
+    const view = render(harness());
+    const workspace = () => {
+      if (!store) {
+        throw new Error("Workspace store has not mounted yet");
+      }
+      return store;
+    };
+    const activeScrollport = () =>
+      screen.getByTestId("active-return-scrollport");
+    const paneId = workspace().state.activePrimaryPaneId;
+    const firstLibraryVisit = primaryPanes(
+      workspace().state,
+    )[0]!.currentVisit;
+
+    act(() => {
+      activeScrollport().scrollTop = 120;
+      workspace().navigatePane(paneId, "/notes");
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/notes");
+    });
+    act(() => {
+      activeScrollport().scrollTop = 220;
+      workspace().navigatePane(paneId, "/libraries");
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/libraries");
+    });
+    const secondLibraryVisit = primaryPanes(
+      workspace().state,
+    )[0]!.currentVisit;
+    expect(secondLibraryVisit.id).not.toBe(firstLibraryVisit.id);
+    expect(activeScrollport().scrollTop).toBe(0);
+    act(() => {
+      activeScrollport().scrollTop = 320;
+      workspace().goBackPane(paneId);
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/notes");
+      expect(activeScrollport().scrollTop).toBe(220);
+    });
+    act(() => {
+      workspace().goBackPane(paneId);
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/libraries");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit).toEqual(
+        firstLibraryVisit,
+      );
+      expect(activeScrollport().scrollTop).toBe(120);
+    });
+    act(() => {
+      workspace().goForwardPane(paneId);
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/notes");
+      expect(activeScrollport().scrollTop).toBe(220);
+    });
+    act(() => {
+      workspace().goForwardPane(paneId);
+    });
+    await waitFor(() => {
+      expect(primaryPanes(workspace().state)[0]?.currentVisit).toEqual(
+        secondLibraryVisit,
+      );
+      expect(activeScrollport().scrollTop).toBe(320);
+    });
+
+    act(() => {
+      workspace().goBackPane(paneId);
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/notes");
+    });
+    act(() => {
+      workspace().navigatePane(paneId, "/authors");
+    });
+    await waitFor(() => {
+      expect(activeHref(workspace())).toBe("/authors");
+      expect(primaryPanes(workspace().state)[0]?.history.forward).toEqual([]);
+    });
+
+    detachedVisit = secondLibraryVisit;
+    view.rerender(harness());
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("detached-return-scrollport").scrollTop,
+      ).toBe(0);
+    });
+    flushWorkspaceSession();
+  });
+
+  it("trims only the far Back and Forward entries through store commands", async () => {
+    const back = Array.from(
+      { length: MAX_PANE_HISTORY_STACK_LENGTH },
+      (_, index) => paneVisit(`/back-${index}`),
+    );
+    const forward = Array.from(
+      { length: MAX_PANE_HISTORY_STACK_LENGTH },
+      (_, index) => paneVisit(`/forward-${index}`),
+    );
+    const backTarget = paneVisit("/back-target");
+    const backPane = pane("pane-back", "/libraries", {
+      history: { back, forward: [] },
+    });
+    const forwardPane = pane("pane-forward", "/authors", {
+      history: { back: [backTarget], forward },
+    });
+    const initialState = workspaceState({
+      activePrimaryPaneId: backPane.id,
+      primaryPanes: [backPane, forwardPane],
+    });
+    const { workspace } = renderSeeded(initialState, "/libraries");
+
+    act(() => {
+      workspace().navigatePane(backPane.id, "/notes");
+    });
+    await waitFor(() => {
+      const current = primaryPanes(workspace().state).find(
+        (item) => item.id === backPane.id,
+      )!;
+      expect(current.history.back).toEqual([
+        ...back.slice(1),
+        backPane.currentVisit,
+      ]);
+    });
+
+    act(() => {
+      workspace().goBackPane(forwardPane.id);
+    });
+    await waitFor(() => {
+      const current = primaryPanes(workspace().state).find(
+        (item) => item.id === forwardPane.id,
+      )!;
+      expect(current.currentVisit).toEqual(backTarget);
+      expect(current.history.forward).toEqual([
+        forwardPane.currentVisit,
+        ...forward.slice(0, -1),
+      ]);
     });
     flushWorkspaceSession();
   });
@@ -369,21 +646,28 @@ describe("WorkspaceStoreProvider", () => {
   it("replace navigation updates href without changing pane history", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
+    const initialVisit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/22222222-2222-4222-8222-222222222222");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual(["/media/11111111-1111-4111-8111-111111111111"]);
+      expect(primaryPanes(workspace().state)[0]?.history.back).toEqual([
+        initialVisit,
+      ]);
     });
+    const pushedVisit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().navigatePane(paneId, "/media/33333333-3333-4333-8333-333333333333", { replace: true });
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/33333333-3333-4333-8333-333333333333");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit).toEqual({
+        id: pushedVisit.id,
+        href: "/media/33333333-3333-4333-8333-333333333333",
+      });
       expect(primaryPanes(workspace().state)[0]?.history).toEqual({
-        back: ["/media/11111111-1111-4111-8111-111111111111"],
+        back: [initialVisit],
         forward: [],
       });
     });
@@ -391,10 +675,10 @@ describe("WorkspaceStoreProvider", () => {
   });
 
   it("reader-style replace at the 48-entry boundary leaves every pane's history untouched", async () => {
-    const fullStack = (label: string): { back: string[]; forward: string[] } => ({
+    const fullStack = (label: string) => ({
       back: Array.from(
         { length: MAX_PANE_HISTORY_STACK_LENGTH },
-        (_, index) => `/${label}-${index}`,
+        (_, index) => paneVisit(`/${label}-${index}`),
       ),
       forward: [],
     });
@@ -402,9 +686,13 @@ describe("WorkspaceStoreProvider", () => {
     // still 12 total) so the deep-equal history assertions below prove replace
     // leaves forward untouched too. An all-back seed can't distinguish a true
     // replace from a push-then-pop mis-implementation that clears forward.
-    const activeMediaStack = (): { back: string[]; forward: string[] } => ({
-      back: Array.from({ length: 10 }, (_, index) => `/media-${index}`),
-      forward: Array.from({ length: 2 }, (_, index) => `/media-forward-${index}`),
+    const activeMediaStack = () => ({
+      back: Array.from({ length: 10 }, (_, index) =>
+        paneVisit(`/media-${index}`),
+      ),
+      forward: Array.from({ length: 2 }, (_, index) =>
+        paneVisit(`/media-forward-${index}`),
+      ),
     });
     const mediaHref = "/media/11111111-1111-4111-8111-111111111111";
     const initialState = workspaceState({
@@ -454,7 +742,9 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       const mediaPane = primaryPanes(workspace().state).find((item) => item.id === paneId);
-      expect(mediaPane?.history.back[mediaPane.history.back.length - 1]).toBe(lastHref);
+      expect(
+        mediaPane?.history.back[mediaPane.history.back.length - 1]?.href,
+      ).toBe(lastHref);
       // Push clears forward; replace must not have — this is only a real contrast
       // guard because the seed above gave the active pane a non-empty forward stack.
       expect(mediaPane?.history.forward).toEqual([]);
@@ -473,7 +763,9 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
       expect(activeHref(workspace())).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
       expect(
-        primaryPanes(workspace().state).find((pane) => pane.href.endsWith("?loc=chapter-2"))
+        primaryPanes(workspace().state).find((pane) =>
+          pane.currentVisit.href.endsWith("?loc=chapter-2"),
+        )
           ?.history,
       ).toEqual({
         back: [],
@@ -518,11 +810,15 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/media/11111111-1111-4111-8111-111111111111",
+        currentVisit: {
+          href: "/media/11111111-1111-4111-8111-111111111111",
+        },
         primaryWidthPx: 900,
       });
       expect(primaryPanes(workspace().state)[1]).toMatchObject({
-        href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+        currentVisit: {
+          href: "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+        },
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       });
     });
@@ -585,7 +881,9 @@ describe("WorkspaceStoreProvider", () => {
       expect(primaryPanes(workspace().state)).toHaveLength(2);
     });
     const paneBId = primaryPanes(workspace().state).find(
-      (pane) => pane.href === "/media/22222222-2222-4222-8222-222222222222",
+      (pane) =>
+        pane.currentVisit.href ===
+        "/media/22222222-2222-4222-8222-222222222222",
     )!.id;
 
     // Give each pane a distinct primary width and an attached resource-inspector secondary.
@@ -665,7 +963,9 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        "/libraries/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      );
       expect(primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId).toBeNull();
       expect(workspace().state.secondaryPanesById).toEqual({});
     });
@@ -691,7 +991,7 @@ describe("WorkspaceStoreProvider", () => {
     });
 
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe(
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
         "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
       );
       expect(primaryPanes(workspace().state)[0]?.attachedSecondaryPaneId).toBe(
@@ -715,7 +1015,7 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/conversations",
+        currentVisit: { href: "/conversations" },
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       });
     });
@@ -737,7 +1037,9 @@ describe("WorkspaceStoreProvider", () => {
       workspace().navigatePane(paneId, "/libraries");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/libraries");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        "/libraries",
+      );
       expect(primaryPanes(workspace().state)[0]?.primaryWidthPx).toBe(
         workspacePrimaryMetrics.primaryDefaultWidthPx,
       );
@@ -749,6 +1051,7 @@ describe("WorkspaceStoreProvider", () => {
   it("uses workspace defaults while traversing history across resources", async () => {
     const workspace = await mountWorkspaceStore("/media/11111111-1111-4111-8111-111111111111");
     const paneId = workspace().state.activePrimaryPaneId;
+    const mediaVisit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().resizePrimaryPane(paneId, 2200);
@@ -756,20 +1059,21 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/libraries",
+        currentVisit: { href: "/libraries" },
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
-        history: { back: ["/media/11111111-1111-4111-8111-111111111111"], forward: [] },
+        history: { back: [mediaVisit], forward: [] },
       });
     });
+    const libraryVisit = primaryPanes(workspace().state)[0]!.currentVisit;
 
     act(() => {
       workspace().goBackPane(paneId);
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/media/11111111-1111-4111-8111-111111111111",
+        currentVisit: mediaVisit,
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
-        history: { back: [], forward: ["/libraries"] },
+        history: { back: [], forward: [libraryVisit] },
       });
     });
 
@@ -778,9 +1082,9 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       expect(primaryPanes(workspace().state)[0]).toMatchObject({
-        href: "/libraries",
+        currentVisit: libraryVisit,
         primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
-        history: { back: ["/media/11111111-1111-4111-8111-111111111111"], forward: [] },
+        history: { back: [mediaVisit], forward: [] },
       });
     });
     flushWorkspaceSession();
@@ -858,7 +1162,9 @@ describe("WorkspaceStoreProvider", () => {
     });
     await waitFor(() => {
       const secondPane = primaryPanes(workspace().state).find((pane) => pane.id === secondPaneId);
-      expect(secondPane?.href).toBe("/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      expect(secondPane?.currentVisit.href).toBe(
+        "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      );
       expect(secondPane?.visibility).toBe("minimized");
       expect(workspace().state.activePrimaryPaneId).toBe(firstPaneId);
     });
@@ -942,7 +1248,9 @@ describe("WorkspaceStoreProvider", () => {
 
     await waitFor(() => {
       expect(primaryPanes(workspace().state)).toHaveLength(1);
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/lectern");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        "/lectern",
+      );
     });
     flushWorkspaceSession();
   });
@@ -963,7 +1271,9 @@ describe("WorkspaceStoreProvider", () => {
       workspace().navigatePane(paneId, "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
     });
     await waitFor(() => {
-      expect(primaryPanes(workspace().state)[0]?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
+      expect(primaryPanes(workspace().state)[0]?.currentVisit.href).toBe(
+        "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+      );
       expect(workspace().runtimeLabelByPaneId.has(paneId)).toBe(false);
     });
     flushWorkspaceSession();
@@ -1008,7 +1318,9 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/22222222-2222-4222-8222-222222222222");
+      expect(activePane?.currentVisit.href).toBe(
+        "/media/22222222-2222-4222-8222-222222222222",
+      );
       expect(workspace().runtimeLabelByPaneId.has(paneId)).toBe(false);
       expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
         label: "Media",
@@ -1066,7 +1378,9 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111");
+      expect(activePane?.currentVisit.href).toBe(
+        "/media/11111111-1111-4111-8111-111111111111",
+      );
       expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
         label: "Library Row Label",
         labelState: "resolved",
@@ -1092,7 +1406,9 @@ describe("WorkspaceStoreProvider", () => {
       const activePane = primaryPanes(workspace().state).find(
         (pane) => pane.id === workspace().state.activePrimaryPaneId,
       );
-      expect(activePane?.href).toBe("/media/11111111-1111-4111-8111-111111111111?loc=chapter-2");
+      expect(activePane?.currentVisit.href).toBe(
+        "/media/11111111-1111-4111-8111-111111111111?loc=chapter-2",
+      );
       expect(resolveWorkspacePaneLabel(activePane!, workspace().runtimeLabelByPaneId)).toMatchObject({
         label: "Second label",
         labelState: "resolved",
@@ -1117,7 +1433,9 @@ describe("WorkspaceStoreProvider", () => {
     );
 
     // The very FIRST rendered state already has all three panes — no 1→N swap.
-    expect(primaryPanes(snapshots[0]!).map((item) => item.href)).toEqual([
+    expect(
+      primaryPanes(snapshots[0]!).map((item) => item.currentVisit.href),
+    ).toEqual([
       "/libraries",
       "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "/notes",
@@ -1160,7 +1478,9 @@ describe("WorkspaceStoreProvider", () => {
     );
 
     expect(store).not.toBeNull();
-    expect(primaryPanes(store!.state).map((item) => item.href)).toEqual([
+    expect(
+      primaryPanes(store!.state).map((item) => item.currentVisit.href),
+    ).toEqual([
       "/libraries",
       "/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     ]);
@@ -1237,7 +1557,9 @@ describe("WorkspaceStoreProvider", () => {
     await waitFor(() => {
       expect(activeHref(workspace())).toBe("/media/11111111-1111-4111-8111-111111111111#loc=chapter-2");
     });
-    expect(primaryPanes(workspace().state).map((item) => item.href)).toEqual([
+    expect(
+      primaryPanes(workspace().state).map((item) => item.currentVisit.href),
+    ).toEqual([
       "/libraries",
       "/media/11111111-1111-4111-8111-111111111111#loc=chapter-2",
     ]);
@@ -1273,14 +1595,14 @@ describe("resolveWorkspacePaneLabel", () => {
   const empty = new Map<string, WorkspacePaneLabelRecord>();
 
   it("returns pending for a dynamic route with no runtime label", () => {
-    const pane = { id: "p1", href: "/media/m1" };
+    const pane = { id: "p1", currentVisit: paneVisit("/media/m1") };
     const result = resolveWorkspacePaneLabel(pane, empty);
     expect(result.labelState).toBe("pending");
     expect(result.label.length).toBeGreaterThan(0);
   });
 
   it("returns resolved with the runtime label when one is published", () => {
-    const pane = { id: "p1", href: "/media/m1" };
+    const pane = { id: "p1", currentVisit: paneVisit("/media/m1") };
     const result = resolveWorkspacePaneLabel(
       pane,
       new Map([["p1", labelRecord("/media/m1", "My Book")]]),
@@ -1290,7 +1612,7 @@ describe("resolveWorkspacePaneLabel", () => {
   });
 
   it("ignores stale label records from a different resource", () => {
-    const pane = { id: "p1", href: "/media/m2" };
+    const pane = { id: "p1", currentVisit: paneVisit("/media/m2") };
     const result = resolveWorkspacePaneLabel(
       pane,
       new Map([["p1", labelRecord("/media/m1", "My Book")]]),
@@ -1300,7 +1622,7 @@ describe("resolveWorkspacePaneLabel", () => {
   });
 
   it("returns resolved for a static route with the route label", () => {
-    const pane = { id: "p2", href: "/libraries" };
+    const pane = { id: "p2", currentVisit: paneVisit("/libraries") };
     const result = resolveWorkspacePaneLabel(pane, empty);
     expect(result.labelState).toBe("resolved");
     expect(result.label).toBe("Libraries");
@@ -1308,7 +1630,10 @@ describe("resolveWorkspacePaneLabel", () => {
 
   it("label is always a non-empty string", () => {
     for (const href of ["/media/m1", "/libraries"]) {
-      const result = resolveWorkspacePaneLabel({ id: "px", href }, empty);
+      const result = resolveWorkspacePaneLabel(
+        { id: "px", currentVisit: paneVisit(href) },
+        empty,
+      );
       expect(result.label.length).toBeGreaterThan(0);
     }
   });

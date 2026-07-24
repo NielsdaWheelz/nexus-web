@@ -26,6 +26,7 @@ import {
 } from "@/lib/workspace/store";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed";
 
@@ -58,7 +59,7 @@ function WorkspaceProbe() {
   const active = panes.find(({ id }) => id === state.activePrimaryPaneId);
   return (
     <output data-testid="workspace-probe" data-pane-count={panes.length}>
-      {active?.href}
+      {active?.currentVisit.href}
     </output>
   );
 }
@@ -73,16 +74,18 @@ function renderNav(
     withRenderEnvironment(
       <KeybindingsProvider>
         <MobileChromeProvider>
-          <WorkspaceStoreProvider
-            workspacePrimaryMetrics={workspacePrimaryMetrics}
-            initialState={createDefaultWorkspaceState(
-              initialHref,
-              workspacePrimaryMetrics,
-            )}
-          >
-            <AppNav />
-            <WorkspaceProbe />
-          </WorkspaceStoreProvider>
+          <PaneReturnMementoProvider>
+            <WorkspaceStoreProvider
+              workspacePrimaryMetrics={workspacePrimaryMetrics}
+              initialState={createDefaultWorkspaceState(
+                initialHref,
+                workspacePrimaryMetrics,
+              )}
+            >
+              <AppNav />
+              <WorkspaceProbe />
+            </WorkspaceStoreProvider>
+          </PaneReturnMementoProvider>
         </MobileChromeProvider>
       </KeybindingsProvider>,
       renderEnvironment,

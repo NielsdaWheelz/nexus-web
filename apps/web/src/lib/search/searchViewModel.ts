@@ -207,7 +207,9 @@ export function adaptSearchResultRow(
       type: result.context_ref.type,
       id: result.context_ref.id,
       evidenceSpanIds: result.context_ref.evidence_span_ids ?? [],
-      locator: result.context_ref.locator ?? undefined,
+      ...(result.context_ref.locator
+        ? { locator: result.context_ref.locator }
+        : {}),
     },
     typeLabel:
       result.type === "content_chunk"

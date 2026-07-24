@@ -72,7 +72,7 @@ export default function AppNav() {
     [primaryPanes, state.activePrimaryPaneId],
   );
   const activeDestinationId = activePane
-    ? sectionDestinationIdForHref(activePane.href)
+    ? sectionDestinationIdForHref(activePane.currentVisit.href)
     : null;
   const activeId = NAV_MODEL.some(
     (destination) => destination.id === activeDestinationId,
@@ -85,10 +85,13 @@ export default function AppNav() {
     (event: MouseEvent<HTMLElement>, href: string) => {
       return handleAppNavLinkActivation(event, href, (nextHref) => {
         const result =
-          activePane && hasSamePaneRoute(activePane.href, nextHref)
+          activePane && hasSamePaneRoute(activePane.currentVisit.href, nextHref)
             ? "handled-source-focus"
             : "handled-destination-focus";
-        openPane({ href: nextHref });
+        openPane({
+          href: nextHref,
+          modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        });
         return result;
       });
     },
@@ -124,7 +127,7 @@ export default function AppNav() {
           items={NAV_ITEMS}
           home={NAV_HOME_ITEM}
           activeId={activeId}
-          activeHref={activePane?.href ?? null}
+          activeHref={activePane?.currentVisit.href ?? null}
           account={NAV_ACCOUNT_ITEM}
           settingsActive={settingsActive}
           commandHint={commandHint}

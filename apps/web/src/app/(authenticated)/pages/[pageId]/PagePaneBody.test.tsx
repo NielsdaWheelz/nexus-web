@@ -23,7 +23,14 @@ import {
 import type { StoredNoteEditorDraft } from "@/lib/notes/useNoteEditorSession";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublication } from "@/lib/panes/panePublications";
+import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import PagePaneBody from "./PagePaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 describe("readDraftBlocksForPersistence", () => {
   it("keeps focused nested note siblings under the focused block's original parent", () => {
@@ -202,6 +209,19 @@ describe("PagePaneBody note activation", () => {
     });
     expect(citedBlock()).toHaveAttribute("data-note-block-id", BLOCK_ID);
     expect(citedBlock()).toContainElement(citedRange());
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return scope is a DOM data contract with no semantic query
+    const returnScope = citedBlock().closest<HTMLElement>(
+      "[data-pane-return-scope]",
+    );
+    expect(returnScope).toHaveAttribute(
+      "data-pane-return-scope",
+      "Notes.EditorBlocks",
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the route editor shell has no semantic role; its overflow ownership is the contract under test
+    const routeEditorShell = returnScope?.parentElement;
+    expect(["auto", "scroll"]).not.toContain(
+      getComputedStyle(routeEditorShell as HTMLElement).overflowY,
+    );
     // The pulse also scrolls the cited block into view. Match by note-block id
     // rather than node identity: ProseMirror may reconcile the `li` instance
     // after the scroll, but every scrolled target is the cited block.
@@ -416,27 +436,30 @@ describe("PagePaneBody daily-note chrome options", () => {
     const href = `/pages/${pageId}`;
     const identity = resolvePaneRouteIdentity(href);
     render(
-      <FeedbackProvider>
-        <PaneRuntimeProvider
-          paneId="pane-chrome-test"
-          isActive={true}
-          href={href}
-          routeId={identity.routeId}
-          routeKey={identity.routeKey}
-          pathParams={{ pageId }}
-          canGoBack={false}
-          canGoForward={false}
-          onNavigatePane={vi.fn()}
-          onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-        >
-          <PanePrimaryChromeProvider publish={captureFn}>
-            <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
-          </PanePrimaryChromeProvider>
-        </PaneRuntimeProvider>
-      </FeedbackProvider>,
+      <PaneReturnMementoProvider>
+        <FeedbackProvider>
+          <PaneRuntimeProvider
+            paneId="pane-chrome-test"
+            visitId={TEST_VISIT_ID}
+            isActive={true}
+            href={href}
+            routeId={identity.routeId}
+            routeKey={identity.routeKey}
+            pathParams={{ pageId }}
+            canGoBack={false}
+            canGoForward={false}
+            onNavigatePane={vi.fn()}
+            onReplacePane={vi.fn()}
+            onOpenInNewPane={vi.fn()}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+          >
+            <PanePrimaryChromeProvider publish={captureFn}>
+              <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
+            </PanePrimaryChromeProvider>
+          </PaneRuntimeProvider>
+        </FeedbackProvider>
+      </PaneReturnMementoProvider>,
     );
     return { captured };
   }
@@ -629,25 +652,30 @@ function renderPagePane(pageId: string, initialPage: NotePage) {
   const href = `/pages/${pageId}`;
   const identity = resolvePaneRouteIdentity(href);
   const { unmount } = render(
-    <FeedbackProvider>
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        isActive={true}
-        href={href}
-        routeId={identity.routeId}
-        routeKey={identity.routeKey}
-        pathParams={{ pageId }}
-        canGoBack={false}
-        canGoForward={false}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-      >
-        <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
-      </PaneRuntimeProvider>
-    </FeedbackProvider>,
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          visitId={TEST_VISIT_ID}
+          isActive={true}
+          href={href}
+          routeId={identity.routeId}
+          routeKey={identity.routeKey}
+          pathParams={{ pageId }}
+          canGoBack={false}
+          canGoForward={false}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={vi.fn()}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+        >
+          <ResolvedPaneBodyMarker>
+            <PagePaneBody pageIdOverride={pageId} initialPage={initialPage} />
+          </ResolvedPaneBodyMarker>
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
   );
   return { unmount };
 }

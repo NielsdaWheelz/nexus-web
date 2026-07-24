@@ -1,7 +1,11 @@
 "use client";
 
 import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
-import type { PaneRouteId } from "@/lib/panes/paneRouteModel";
+import {
+  PANE_ROUTE_MODELS,
+  type PaneRouteId,
+} from "@/lib/panes/paneRouteModel";
+import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
@@ -51,12 +55,28 @@ const PANE_BODIES = (Object.keys(PANE_LOADERS) as PaneRouteId[]).reduce(
   },
   {} as Record<PaneRouteId, ComponentType>,
 );
+const SHELL_SCROLL_ROUTE_IDS = new Set<PaneRouteId>(
+  PANE_ROUTE_MODELS.filter(
+    (route) => route.returnMemento.kind === "ShellScroll",
+  ).map((route) => route.id),
+);
+
+export function ResolvedPaneBodyMarker({ children }: { children: ReactNode }) {
+  usePaneResolvedBodyReady();
+  return children;
+}
 
 export function renderPane(id: PaneRouteId): ReactNode {
   const Body = PANE_BODIES[id];
   return (
     <Suspense fallback={<PaneLoadingState />}>
-      <Body />
+      {SHELL_SCROLL_ROUTE_IDS.has(id) ? (
+        <ResolvedPaneBodyMarker>
+          <Body />
+        </ResolvedPaneBodyMarker>
+      ) : (
+        <Body />
+      )}
     </Suspense>
   );
 }

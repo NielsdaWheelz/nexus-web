@@ -5,6 +5,7 @@ import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import { setAppearanceAction } from "@/lib/theme/setAppearanceAction";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 type Selection = "light" | "dark" | "system";
@@ -16,6 +17,7 @@ export default function SettingsAppearancePaneBody() {
     const value = document.cookie.match(/(?:^|;\s*)nx-theme=(light|dark)/)?.[1];
     setSelection(value === "light" || value === "dark" ? value : "system");
   }, []);
+  usePaneReturnReady(selection !== null);
 
   async function handleChange(next: Selection) {
     setSelection(next);

@@ -7,6 +7,7 @@ import {
   stubFetch,
   wasFetchPathCalled,
 } from "@/__tests__/helpers/fetch";
+import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import NotePaneBody from "./NotePaneBody";
 
 describe("NotePaneBody resource identity", () => {
@@ -39,13 +40,34 @@ describe("NotePaneBody resource identity", () => {
     renderHydratedPane({
       href: `/notes/${blockId}`,
       resources: {},
-      children: <NotePaneBody />,
+      children: (
+        <ResolvedPaneBodyMarker>
+          <NotePaneBody />
+        </ResolvedPaneBodyMarker>
+      ),
     });
 
     await waitFor(() => {
       expect(wasFetchPathCalled(fetchSpy, `/api/notes/blocks/${blockId}`)).toBe(true);
     });
-    await screen.findByRole("textbox", { name: "Note body" });
+    const editor = await screen.findByRole("textbox", { name: "Note body" });
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return scope is a DOM data contract with no semantic query
+    const returnScope = editor.closest<HTMLElement>(
+      "[data-pane-return-scope]",
+    );
+    expect(returnScope).toHaveAttribute(
+      "data-pane-return-scope",
+      "Notes.EditorBlocks",
+    );
+    expect(screen.getByRole("listitem")).toHaveAttribute(
+      "data-note-block-id",
+      blockId,
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the route editor shell has no semantic role; its overflow ownership is the contract under test
+    const routeEditorShell = returnScope?.parentElement;
+    expect(["auto", "scroll"]).not.toContain(
+      getComputedStyle(routeEditorShell as HTMLElement).overflowY,
+    );
     expect(fetchSpy.mock.calls.some(([input]) => fetchInputPath(input).startsWith("/api/notes/pages/"))).toBe(false);
   });
 });

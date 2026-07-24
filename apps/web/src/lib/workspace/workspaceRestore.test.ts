@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPaneVisitTransition,
   isNonTrivialSession,
   mergeRestoredWorkspaceWithDeepLink,
   prepareRestoredState,
   selectRestoredState,
+  traversePaneHistory,
   workspaceStatesEqual,
 } from "@/lib/workspace/workspaceRestore";
 import {
+  assumePaneVisitId,
   createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
+  type PaneVisit,
   type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
@@ -25,6 +29,15 @@ const DEEP_LINK_MEDIA_HREF = `/media/${DEEP_LINK_MEDIA_ID}`;
 const FORWARD_MEDIA_HREF = `/media/${FORWARD_MEDIA_ID}`;
 
 const emptyHistory = () => ({ back: [], forward: [] });
+let nextVisitIndex = 1;
+
+function paneVisit(href: string): PaneVisit {
+  const id = assumePaneVisitId(
+    `00000000-0000-4000-8000-${String(nextVisitIndex).padStart(12, "0")}`,
+  );
+  nextVisitIndex += 1;
+  return { id, href };
+}
 
 function primary(
   id: string,
@@ -38,7 +51,7 @@ function primary(
 ): WorkspacePrimaryPaneState {
   return {
     id,
-    href,
+    currentVisit: paneVisit(href),
     primaryWidthPx: input.primaryWidthPx ?? 684,
     visibility: input.visibility ?? "visible",
     history: input.history ?? emptyHistory(),
@@ -72,7 +85,7 @@ function workspace(input: {
 }
 
 const hrefs = (state: WorkspaceState) =>
-  getWorkspacePrimaryPanes(state).map((pane) => pane.href);
+  getWorkspacePrimaryPanes(state).map((pane) => pane.currentVisit.href);
 
 const librariesPane = primary("pane-1", "/libraries");
 const lecternPane = primary("pane-lectern", "/lectern");
@@ -99,7 +112,7 @@ describe("isNonTrivialSession", () => {
         workspace({
           primaryPanes: [
             primary("pane-1", "/lectern", {
-              history: { back: ["/media/123"], forward: [] },
+              history: { back: [paneVisit("/media/123")], forward: [] },
             }),
           ],
         }),
@@ -157,12 +170,16 @@ describe("workspaceStatesEqual", () => {
   it("returns false when primary history differs", () => {
     const a = workspace({
       primaryPanes: [
-        primary("pane-2", "/media/123", { history: { back: ["/libraries"], forward: [] } }),
+        primary("pane-2", "/media/123", {
+          history: { back: [paneVisit("/libraries")], forward: [] },
+        }),
       ],
     });
     const b = workspace({
       primaryPanes: [
-        primary("pane-2", "/media/123", { history: { back: [], forward: ["/libraries"] } }),
+        primary("pane-2", "/media/123", {
+          history: { back: [], forward: [paneVisit("/libraries")] },
+        }),
       ],
     });
     expect(workspaceStatesEqual(a, b)).toBe(false);
@@ -188,6 +205,88 @@ describe("workspaceStatesEqual", () => {
   });
 });
 
+describe("PaneVisit state algebra", () => {
+  it("pushes the exact current visit and installs a caller-minted target", () => {
+    const current = primary("pane-1", "/libraries", {
+      history: {
+        back: [paneVisit("/lectern")],
+        forward: [paneVisit("/notes")],
+      },
+    });
+    const target = paneVisit("/media/123");
+
+    const result = applyPaneVisitTransition(
+      current,
+      { mode: "push", visit: target },
+      metrics,
+      null,
+    );
+
+    expect(result.currentVisit).toBe(target);
+    expect(result.history.back.at(-1)).toBe(current.currentVisit);
+    expect(result.history.forward).toEqual([]);
+  });
+
+  it("replaces href while retaining the visit id and both stacks", () => {
+    const current = primary("pane-1", DEEP_LINK_MEDIA_HREF, {
+      history: {
+        back: [paneVisit("/libraries")],
+        forward: [paneVisit(FORWARD_MEDIA_HREF)],
+      },
+    });
+
+    const result = applyPaneVisitTransition(
+      current,
+      { mode: "replace", href: `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2` },
+      metrics,
+      null,
+    );
+
+    expect(result.currentVisit).toEqual({
+      id: current.currentVisit.id,
+      href: `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2`,
+    });
+    expect(result.history).toBe(current.history);
+  });
+
+  it("traverses Back and Forward symmetrically by visit occurrence", () => {
+    const backVisit = paneVisit("/libraries");
+    const current = primary("pane-1", "/notes", {
+      history: { back: [backVisit], forward: [] },
+    });
+
+    const wentBack = traversePaneHistory(
+      current,
+      "Back",
+      metrics,
+      null,
+    );
+    expect(wentBack?.currentVisit).toBe(backVisit);
+    expect(wentBack?.history).toEqual({
+      back: [],
+      forward: [current.currentVisit],
+    });
+
+    const wentForward = traversePaneHistory(
+      wentBack!,
+      "Forward",
+      metrics,
+      null,
+    );
+    expect(wentForward?.currentVisit).toBe(current.currentVisit);
+    expect(wentForward?.history).toEqual({
+      back: [backVisit],
+      forward: [],
+    });
+  });
+
+  it("returns null when the requested traversal direction is unavailable", () => {
+    const current = primary("pane-1", "/libraries");
+    expect(traversePaneHistory(current, "Back", metrics, null)).toBeNull();
+    expect(traversePaneHistory(current, "Forward", metrics, null)).toBeNull();
+  });
+});
+
 describe("prepareRestoredState", () => {
   it("round-trips a well-formed raw WorkspaceState", () => {
     const raw = workspace({
@@ -197,15 +296,39 @@ describe("prepareRestoredState", () => {
     expect(prepareRestoredState(raw, metrics, false)).toEqual(raw);
   });
 
-  it("returns a default workspace for null", () => {
-    const result = prepareRestoredState(null, metrics, false);
-    expect(getWorkspacePrimaryPanes(result)).toHaveLength(1);
-    expect(getWorkspacePrimaryPanes(result)[0]?.href).toBe("/lectern");
+  it("defects on null trusted persisted state", () => {
+    expect(() => prepareRestoredState(null, metrics, false)).toThrow(
+      "workspace state must be an object",
+    );
   });
 
-  it("returns a default workspace for garbage state", () => {
-    const garbage = prepareRestoredState({ nonsense: true }, metrics, false);
-    expect(getWorkspacePrimaryPanes(garbage)[0]?.href).toBe("/lectern");
+  it("defects on malformed trusted persisted state", () => {
+    expect(() =>
+      prepareRestoredState({ nonsense: true }, metrics, false),
+    ).toThrow("workspace state must contain exactly");
+  });
+
+  it("adapts persisted primary and secondary widths after exact parsing", () => {
+    const raw = workspace({
+      primaryPanes: [
+        primary("pane-1", "/media/123", {
+          primaryWidthPx: 10,
+          attachedSecondaryPaneId: "secondary-1",
+        }),
+      ],
+      secondaryPanesById: {
+        "secondary-1": secondary({
+          widthPx: 9999,
+        }),
+      },
+    });
+
+    const restored = prepareRestoredState(raw, metrics, false);
+
+    expect(getWorkspacePrimaryPanes(restored)[0]?.primaryWidthPx).toBe(
+      metrics.primaryMinWidthPx,
+    );
+    expect(restored.secondaryPanesById["secondary-1"]?.widthPx).toBe(720);
   });
 
   it("filters Local Vault panes for the Android shell", () => {
@@ -290,7 +413,7 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
         primary("pane-saved-lectern", "/lectern", {
           primaryWidthPx: 640,
           visibility: "minimized",
-          history: { back: ["/notes"], forward: [] },
+          history: { back: [paneVisit("/notes")], forward: [] },
         }),
       ],
     });
@@ -306,10 +429,10 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     expect(
       getWorkspacePrimaryPanes(merged).find(({ id }) => id === "pane-saved-lectern"),
     ).toMatchObject({
-      href: "/lectern",
+      currentVisit: { href: "/lectern" },
       visibility: "visible",
       primaryWidthPx: 640,
-      history: { back: ["/notes"], forward: [] },
+      history: { back: [{ href: "/notes" }], forward: [] },
     });
   });
 
@@ -340,7 +463,7 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     expect(
       getWorkspacePrimaryPanes(merged).find((item) => item.id === "pane-saved-notes"),
     ).toMatchObject({
-      href: "/notes",
+      currentVisit: { href: "/notes" },
       visibility: "visible",
       primaryWidthPx: 480,
     });
@@ -354,7 +477,10 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
         primary("pane-saved-media", DEEP_LINK_MEDIA_HREF, {
           primaryWidthPx: 960,
           visibility: "minimized",
-          history: { back: ["/libraries"], forward: [FORWARD_MEDIA_HREF] },
+          history: {
+            back: [paneVisit("/libraries")],
+            forward: [paneVisit(FORWARD_MEDIA_HREF)],
+          },
         }),
       ],
     });
@@ -374,11 +500,14 @@ describe("mergeRestoredWorkspaceWithDeepLink", () => {
     expect(
       getWorkspacePrimaryPanes(merged).find((item) => item.id === "pane-saved-media"),
     ).toMatchObject({
-      href: `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2`,
+      currentVisit: { href: `${DEEP_LINK_MEDIA_HREF}?loc=chapter-2` },
       visibility: "visible",
       primaryWidthPx: 960,
       attachedSecondaryPaneId: null,
-      history: { back: ["/libraries"], forward: [FORWARD_MEDIA_HREF] },
+      history: {
+        back: [{ href: "/libraries" }],
+        forward: [{ href: FORWARD_MEDIA_HREF }],
+      },
     });
   });
 });

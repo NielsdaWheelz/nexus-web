@@ -10,8 +10,19 @@ import {
 } from "react";
 import {
   normalizePaneLabel,
+  type PaneVisitId,
   type WorkspaceAttachedSecondaryPaneState,
 } from "@/lib/workspace/schema";
+import {
+  PaneReturnVisitScope,
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnDescendantReady,
+  usePaneReturnReady,
+  usePaneVisitData,
+  type PaneNavigationModality,
+  type PaneVisitDataKey,
+} from "@/lib/workspace/paneReturnMemento";
 import {
   normalizeWorkspaceHref,
   parseWorkspaceHref,
@@ -36,6 +47,11 @@ import {
 export interface PaneRouterOptions {
   labelHint?: string;
   viewTransition?: PaneViewTransitionIntent;
+}
+
+export interface PaneNavigationCommandOptions {
+  readonly labelHint?: string;
+  readonly modality: PaneNavigationModality;
 }
 
 export interface PaneScopedRouter {
@@ -68,6 +84,7 @@ export interface PaneSecondarySurfaceRequestOptions {
 
 interface PaneRuntimeContextValue {
   paneId: string;
+  visitId: PaneVisitId;
   /** Workspace-host pane activity; owners use it for adoption-versus-handoff. */
   isActive: boolean;
   href: string;
@@ -109,9 +126,13 @@ const PaneRouterNavigationContext = createContext<{
   canGoBack: boolean;
   canGoForward: boolean;
 } | null>(null);
+const PaneNavigationModalityContext = createContext<
+  ((modality: Exclude<PaneNavigationModality, "Programmatic">) => void) | null
+>(null);
 
 interface PaneRuntimeProviderProps {
   paneId: string;
+  visitId: PaneVisitId;
   isActive: boolean;
   href: string;
   routeId: string;
@@ -126,20 +147,21 @@ interface PaneRuntimeProviderProps {
   onNavigatePane: (
     paneId: string,
     href: string,
-    options?: { labelHint?: string },
+    options: PaneNavigationCommandOptions,
   ) => void;
   onReplacePane: (
     paneId: string,
     href: string,
-    options?: { labelHint?: string },
+    options: PaneNavigationCommandOptions,
   ) => void;
   onOpenInNewPane: (
     href: string,
-    labelHint?: string,
-    secondaryActivation?: WorkspaceSecondaryActivation,
+    labelHint: string | undefined,
+    secondaryActivation: WorkspaceSecondaryActivation | undefined,
+    modality: PaneNavigationModality,
   ) => void;
-  onGoBackPane: (paneId: string) => void;
-  onGoForwardPane: (paneId: string) => void;
+  onGoBackPane: (paneId: string, modality: PaneNavigationModality) => void;
+  onGoForwardPane: (paneId: string, modality: PaneNavigationModality) => void;
   onSetPaneLabel?: (input: {
     paneId: string;
     routeKey: string;
@@ -223,6 +245,7 @@ function runPaneNavigation(
 
 export function PaneRuntimeProvider({
   paneId,
+  visitId,
   isActive,
   href,
   routeId,
@@ -247,6 +270,28 @@ export function PaneRuntimeProvider({
   onAcknowledgeSecondaryActivation,
   children,
 }: PaneRuntimeProviderProps) {
+  const pendingNavigationModalityRef = useRef<{
+    readonly modality: PaneNavigationModality;
+    readonly token: symbol;
+  } | null>(null);
+  const recordNavigationModality = useCallback(
+    (modality: Exclude<PaneNavigationModality, "Programmatic">) => {
+      const pending = { modality, token: Symbol("PaneNavigationModality") };
+      pendingNavigationModalityRef.current = pending;
+      queueMicrotask(() => {
+        if (pendingNavigationModalityRef.current?.token === pending.token) {
+          pendingNavigationModalityRef.current = null;
+        }
+      });
+    },
+    [],
+  );
+  const consumeNavigationModality = useCallback((): PaneNavigationModality => {
+    const modality =
+      pendingNavigationModalityRef.current?.modality ?? "Programmatic";
+    pendingNavigationModalityRef.current = null;
+    return modality;
+  }, []);
   const parsed = useMemo(() => parsePaneHref(href), [href]);
   const routeKey = routeKeyProp ?? buildPaneRouteKey(routeId, href);
   const resourceRef = resourceItem?.ref ?? null;
@@ -311,9 +356,10 @@ export function PaneRuntimeProvider({
           return;
         }
         const current = commandsRef.current;
-        const navigationOptions = options?.labelHint
-          ? { labelHint: options.labelHint }
-          : undefined;
+        const navigationOptions: PaneNavigationCommandOptions = {
+          ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
+          modality: consumeNavigationModality(),
+        };
         runPaneNavigation(normalized, options?.viewTransition, () => {
           current.onNavigatePane(current.paneId, normalized, navigationOptions);
         });
@@ -324,23 +370,24 @@ export function PaneRuntimeProvider({
           return;
         }
         const current = commandsRef.current;
-        const navigationOptions = options?.labelHint
-          ? { labelHint: options.labelHint }
-          : undefined;
+        const navigationOptions: PaneNavigationCommandOptions = {
+          ...(options?.labelHint ? { labelHint: options.labelHint } : {}),
+          modality: consumeNavigationModality(),
+        };
         runPaneNavigation(normalized, options?.viewTransition, () => {
           current.onReplacePane(current.paneId, normalized, navigationOptions);
         });
       },
       back: () => {
         const current = commandsRef.current;
-        current.onGoBackPane(current.paneId);
+        current.onGoBackPane(current.paneId, consumeNavigationModality());
       },
       forward: () => {
         const current = commandsRef.current;
-        current.onGoForwardPane(current.paneId);
+        current.onGoForwardPane(current.paneId, consumeNavigationModality());
       },
     }),
-    [],
+    [consumeNavigationModality],
   );
   const openInNewPane = useCallback(
     (
@@ -352,9 +399,14 @@ export function PaneRuntimeProvider({
       if (!normalized) {
         return;
       }
-      commandsRef.current.onOpenInNewPane(normalized, labelHint, secondaryActivation);
+      commandsRef.current.onOpenInNewPane(
+        normalized,
+        labelHint,
+        secondaryActivation,
+        consumeNavigationModality(),
+      );
     },
-    [],
+    [consumeNavigationModality],
   );
   const setPaneLabel = useCallback(
     (label: string | null) => {
@@ -420,6 +472,7 @@ export function PaneRuntimeProvider({
   const value = useMemo<PaneRuntimeContextValue>(
     () => ({
       paneId,
+      visitId,
       isActive,
       href,
       pathname: parsed.pathname,
@@ -454,6 +507,7 @@ export function PaneRuntimeProvider({
       setSecondarySurface,
       acknowledgeSecondaryActivation,
       paneId,
+      visitId,
       isActive,
       parsed.pathname,
       parsed.searchParams,
@@ -471,11 +525,17 @@ export function PaneRuntimeProvider({
   );
 
   return (
-    <PaneRuntimeContext.Provider value={value}>
-      <PaneRouterNavigationContext.Provider value={navigationState}>
-        {children}
-      </PaneRouterNavigationContext.Provider>
-    </PaneRuntimeContext.Provider>
+    <PaneReturnVisitScope visitId={visitId} routeKey={routeKey}>
+      <PaneRuntimeContext.Provider value={value}>
+        <PaneRouterNavigationContext.Provider value={navigationState}>
+          <PaneNavigationModalityContext.Provider
+            value={recordNavigationModality}
+          >
+            {children}
+          </PaneNavigationModalityContext.Provider>
+        </PaneRouterNavigationContext.Provider>
+      </PaneRuntimeContext.Provider>
+    </PaneReturnVisitScope>
   );
 }
 
@@ -491,6 +551,27 @@ export function usePaneRouter(): PaneScopedRouter {
   }
   return paneRuntime.router;
 }
+
+export function useRecordPaneNavigationModality(): (
+  modality: Exclude<PaneNavigationModality, "Programmatic">,
+) => void {
+  const record = useContext(PaneNavigationModalityContext);
+  if (!record) {
+    throw new Error(
+      "useRecordPaneNavigationModality must be used inside PaneRuntimeProvider",
+    );
+  }
+  return record;
+}
+
+export {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnDescendantReady,
+  usePaneReturnReady,
+  usePaneVisitData,
+};
+export type { PaneNavigationModality, PaneVisitDataKey };
 
 export function usePaneSearchParams(): URLSearchParams {
   const paneRuntime = usePaneRuntime();

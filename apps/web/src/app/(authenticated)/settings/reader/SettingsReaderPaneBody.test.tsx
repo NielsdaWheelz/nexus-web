@@ -6,7 +6,13 @@ import { ReaderProvider } from "@/lib/reader/ReaderContext";
 import { ReaderProfileSaveFeedback } from "@/lib/reader/ReaderProfileSaveFeedback";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import type { ReaderProfile } from "@/lib/reader/types";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import SettingsReaderPaneBody from "./SettingsReaderPaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 const BASE: ReaderProfile = {
   theme: "light",
@@ -36,27 +42,32 @@ function stubFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Pr
 function Harness({ initiallyActive = true }: { initiallyActive?: boolean }) {
   const [isActive, setIsActive] = useState(initiallyActive);
   return (
-    <FeedbackProvider>
-      <ReaderProvider initialProfile={BASE}>
-        <ReaderProfileSaveFeedback />
-        <button onClick={() => setIsActive((active) => !active)}>toggle pane activity</button>
-        <PaneRuntimeProvider
-          paneId="pane-settings"
-          isActive={isActive}
-          href="/settings/reader"
-          routeId="settingsReader"
-          canGoBack={false}
-          canGoForward={false}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-          onNavigatePane={vi.fn()}
-          onReplacePane={vi.fn()}
-          onOpenInNewPane={vi.fn()}
-        >
-          <SettingsReaderPaneBody />
-        </PaneRuntimeProvider>
-      </ReaderProvider>
-    </FeedbackProvider>
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ReaderProvider initialProfile={BASE}>
+          <ReaderProfileSaveFeedback />
+          <button onClick={() => setIsActive((active) => !active)}>
+            toggle pane activity
+          </button>
+          <PaneRuntimeProvider
+            paneId="pane-settings"
+            visitId={TEST_VISIT_ID}
+            isActive={isActive}
+            href="/settings/reader"
+            routeId="settingsReader"
+            canGoBack={false}
+            canGoForward={false}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+            onNavigatePane={vi.fn()}
+            onReplacePane={vi.fn()}
+            onOpenInNewPane={vi.fn()}
+          >
+            <SettingsReaderPaneBody />
+          </PaneRuntimeProvider>
+        </ReaderProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
   );
 }
 

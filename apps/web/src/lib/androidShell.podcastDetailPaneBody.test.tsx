@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
+  definePaneVisitDataKey: (diagnosticName: string) => ({ diagnosticName }),
+  usePaneVisitData: () => null,
+  useClearAllPaneVisitData: () => () => {},
+  usePaneReturnReady: () => {},
+  usePaneReturnDescendantReady: () => {},
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
   usePaneRuntime: () => ({ openInNewPane: vi.fn() }),
   usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),

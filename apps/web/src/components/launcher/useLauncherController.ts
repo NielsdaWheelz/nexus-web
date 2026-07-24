@@ -299,7 +299,7 @@ export function useLauncherController(): LauncherController {
     () =>
       getWorkspacePrimaryPanes(state).map((pane) => ({
         id: pane.id,
-        href: pane.href,
+        href: pane.currentVisit.href,
         visibility: pane.visibility,
         label: resolveWorkspacePaneLabel(pane, runtimeLabelByPaneId).label,
       })),

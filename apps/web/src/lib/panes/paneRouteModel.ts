@@ -38,11 +38,35 @@ interface PaneRouteModelDefinitionCommon extends PaneWidthContract {
   pattern: RoutePattern;
   defaultLabel: string;
   labelMode: "static" | "dynamic";
-  bodyMode: PaneBodyMode;
   secondaryGroups?: readonly WorkspaceSecondaryGroupId[];
 }
 
+export type PaneRouteReturnContract =
+  | {
+      readonly returnMemento: { readonly kind: "ShellScroll" };
+      readonly bodyMode: "standard";
+    }
+  | {
+      readonly returnMemento: { readonly kind: "NoVerticalScroll" };
+      readonly bodyMode: "document";
+    }
+  | {
+      readonly returnMemento: {
+        readonly kind: "Excluded";
+        readonly owner: "Reader";
+      };
+      readonly bodyMode: "document";
+    }
+  | {
+      readonly returnMemento: {
+        readonly kind: "Excluded";
+        readonly owner: "Chat";
+      };
+      readonly bodyMode: "contained";
+    };
+
 type PaneRouteModelDefinitionBase = PaneRouteModelDefinitionCommon &
+  PaneRouteReturnContract &
   (
     | {
         header: Extract<PaneRouteHeaderContract, { kind: "section" }>;
@@ -81,6 +105,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["lectern"],
     defaultLabel: "Lectern",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -94,6 +119,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["libraries"],
     defaultLabel: "Libraries",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -107,6 +133,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["libraries", ":id"],
     defaultLabel: "Library",
     labelMode: "dynamic",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -118,6 +145,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["media", ":id"],
     defaultLabel: "Media",
     labelMode: "dynamic",
+    returnMemento: { kind: "Excluded", owner: "Reader" },
     bodyMode: "document",
     secondaryGroups: ["resource-inspector"],
     ...MEDIA_READER_WIDTH_CONTRACT,
@@ -132,6 +160,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["conversations"],
     defaultLabel: "Chats",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -145,6 +174,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["conversations", "new"],
     defaultLabel: "New chat",
     labelMode: "static",
+    returnMemento: { kind: "Excluded", owner: "Chat" },
     bodyMode: "contained",
     // No Inspector until a conversation exists (A13); the resource-inspector group
     // is published only by the resolved `conversation` route below.
@@ -160,6 +190,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["conversations", ":id"],
     defaultLabel: "Chat",
     labelMode: "dynamic",
+    returnMemento: { kind: "Excluded", owner: "Chat" },
     bodyMode: "contained",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -174,6 +205,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["podcasts"],
     defaultLabel: "Podcasts",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -187,7 +219,8 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["podcasts", ":podcastId"],
     defaultLabel: "Podcast",
     labelMode: "dynamic",
-    bodyMode: "document",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -201,6 +234,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["search"],
     defaultLabel: "Search",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -214,6 +248,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["authors", ":handle"],
     defaultLabel: "Author",
     labelMode: "dynamic",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
@@ -228,6 +263,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["notes"],
     defaultLabel: "Notes",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -241,7 +277,8 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["pages", ":pageId"],
     defaultLabel: "Page",
     labelMode: "dynamic",
-    bodyMode: "document",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -255,7 +292,8 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["notes", ":blockId"],
     defaultLabel: "Note",
     labelMode: "dynamic",
-    bodyMode: "document",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
     secondaryGroups: ["resource-inspector"],
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -269,6 +307,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings"],
     defaultLabel: "Settings",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -282,6 +321,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "account"],
     defaultLabel: "Account",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -295,6 +335,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "billing"],
     defaultLabel: "Billing",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -308,6 +349,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "reader"],
     defaultLabel: "Reader settings",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -321,6 +363,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "appearance"],
     defaultLabel: "Appearance",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -334,6 +377,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "local-vault"],
     defaultLabel: "Local vault",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -347,6 +391,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "identities"],
     defaultLabel: "Linked identities",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -360,6 +405,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["settings", "keybindings"],
     defaultLabel: "Keyboard shortcuts",
     labelMode: "static",
+    returnMemento: { kind: "ShellScroll" },
     bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -373,6 +419,7 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["atlas"],
     defaultLabel: "The Atlas",
     labelMode: "static",
+    returnMemento: { kind: "NoVerticalScroll" },
     bodyMode: "document",
     ...STANDARD_WIDTH_CONTRACT,
   }),
@@ -386,7 +433,8 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["oracle"],
     defaultLabel: "Oracle",
     labelMode: "static",
-    bodyMode: "document",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
   route({
@@ -399,7 +447,8 @@ export const PANE_ROUTE_MODELS = [
     pattern: ["oracle", ":readingId"],
     defaultLabel: "Reading",
     labelMode: "static",
-    bodyMode: "document",
+    returnMemento: { kind: "ShellScroll" },
+    bodyMode: "standard",
     ...STANDARD_WIDTH_CONTRACT,
   }),
 ] as const satisfies readonly PaneRouteModelDefinitionBase[];

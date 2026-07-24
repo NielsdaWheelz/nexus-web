@@ -57,7 +57,9 @@ export default function NavTopBar({
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={() => navigation?.onBack()}
+          onClick={(event) =>
+            navigation?.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+          }
           disabled={!navigation?.canGoBack}
           aria-label="Go back"
         >
@@ -66,7 +68,11 @@ export default function NavTopBar({
         <button
           type="button"
           className={`${styles.topBarButton} ${styles.topBarForward}`}
-          onClick={() => navigation?.onForward()}
+          onClick={(event) =>
+            navigation?.onForward(
+              event.detail === 0 ? "Keyboard" : "Pointer",
+            )
+          }
           disabled={!navigation?.canGoForward}
           aria-label="Go forward"
         >

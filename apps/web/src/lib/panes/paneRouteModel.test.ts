@@ -43,7 +43,8 @@ describe("pane route model", () => {
       id: "podcastDetail",
       params: { podcastId: PODCAST_ID },
       definition: {
-        bodyMode: "document",
+        bodyMode: "standard",
+        returnMemento: { kind: "ShellScroll" },
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
         allowsIntrinsicPrimaryWidth: false,
       },
@@ -52,7 +53,8 @@ describe("pane route model", () => {
       id: "page",
       params: { pageId: PAGE_ID },
       definition: {
-        bodyMode: "document",
+        bodyMode: "standard",
+        returnMemento: { kind: "ShellScroll" },
         maxWidthPx: MAX_STANDARD_PANE_WIDTH_PX,
       },
     });
@@ -109,5 +111,45 @@ describe("pane route model", () => {
   it("declares unique model ids", () => {
     const ids = PANE_ROUTE_MODELS.map((model) => model.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("classifies every supported route under one return owner", () => {
+    const byKind = Object.groupBy(
+      PANE_ROUTE_MODELS,
+      (model) =>
+        model.returnMemento.kind === "Excluded"
+          ? `${model.returnMemento.kind}.${model.returnMemento.owner}`
+          : model.returnMemento.kind,
+    );
+
+    expect(byKind.ShellScroll?.map((model) => model.id)).toEqual([
+      "lectern",
+      "libraries",
+      "library",
+      "conversations",
+      "podcasts",
+      "podcastDetail",
+      "search",
+      "author",
+      "notes",
+      "page",
+      "note",
+      "settings",
+      "settingsAccount",
+      "settingsBilling",
+      "settingsReader",
+      "settingsAppearance",
+      "settingsLocalVault",
+      "settingsIdentities",
+      "settingsKeybindings",
+      "oracle",
+      "oracleReading",
+    ]);
+    expect(byKind.NoVerticalScroll?.map((model) => model.id)).toEqual(["atlas"]);
+    expect(byKind["Excluded.Reader"]?.map((model) => model.id)).toEqual(["media"]);
+    expect(byKind["Excluded.Chat"]?.map((model) => model.id)).toEqual([
+      "conversationNew",
+      "conversation",
+    ]);
   });
 });

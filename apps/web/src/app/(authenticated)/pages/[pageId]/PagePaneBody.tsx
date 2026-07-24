@@ -25,6 +25,7 @@ import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import {
   usePaneParam,
+  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
   useSetPaneLabel,
@@ -142,6 +143,7 @@ export default function PagePaneBody({
   const [editorResetSerial, setEditorResetSerial] = useState(0);
   const [bodyFocusRequest, setBodyFocusRequest] = useState(0);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  usePaneReturnReady(initialDoc !== null || feedback !== null);
   const [notePulseTarget, setNotePulseTarget] =
     useState<NotePulseEditorTarget | null>(null);
   const saveScope = focusBlockId ? `block:${focusBlockId}` : `page:${pageId}`;
@@ -754,6 +756,7 @@ export default function PagePaneBody({
         />
         {feedback ? <FeedbackNotice {...feedback} /> : null}
         <ProseMirrorOutlineEditor
+          returnScope="Notes.EditorBlocks"
           resourceKey={renderedEditorResourceKey}
           initialDoc={initialDoc}
           createBlockId={createRandomId}

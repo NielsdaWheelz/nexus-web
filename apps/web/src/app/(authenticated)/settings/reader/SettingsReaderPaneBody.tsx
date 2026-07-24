@@ -18,7 +18,10 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {
+  usePaneReturnReady,
+  usePaneRuntime,
+} from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
@@ -43,6 +46,7 @@ export default function SettingsReaderPaneBody() {
   } = useReaderContext();
   const { suppressDedupeKey } = useFeedback();
   const isActive = usePaneRuntime()?.isActive ?? true;
+  usePaneReturnReady(true);
 
   // While this pane is active it owns the reader-profile-save presentation:
   // the retained global toast is suppressed and failures render inline below.

@@ -6,8 +6,12 @@ import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfi
 import PaneShell from "@/components/workspace/PaneShell";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
-import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import {
+  assumePaneVisitId,
+  type WorkspaceAttachedSecondaryPaneState,
+} from "@/lib/workspace/schema";
 import type { ChatRunCreateRequest } from "@/lib/api/sse/requests";
 import { decodeRunDataReaderSelection } from "@/lib/conversations/messageWire";
 import type {
@@ -16,6 +20,10 @@ import type {
   ConversationTreeResponse,
   ForkOption,
 } from "@/lib/conversations/types";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 function paneSizing(input: {
   widthPx: number;
@@ -437,6 +445,7 @@ function renderPane(
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive={true}
       href={href}
       routeId={href === "/conversations/new" ? "conversation-new" : "conversation"}
@@ -1089,7 +1098,7 @@ describe("Conversation", () => {
       expect(onReplacePane).toHaveBeenCalledWith(
         "pane-1",
         "/conversations/new-conv-id",
-        undefined,
+        { modality: "Programmatic" },
       );
     });
   });
@@ -1376,8 +1385,10 @@ describe("Conversation", () => {
     );
 
     const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
-      <PaneRuntimeProvider
+      <PaneReturnMementoProvider>
+        <PaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href="/conversations/conversation-1"
         routeId="conversation"
@@ -1397,7 +1408,7 @@ describe("Conversation", () => {
         onRequestSecondarySurface={onRequestSecondarySurface}
         onCloseSecondaryPane={vi.fn()}
       >
-        <PaneShell
+          <PaneShell
           paneId="pane-1"
           routeKey={
             resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
@@ -1408,19 +1419,15 @@ describe("Conversation", () => {
             defaultFolio: "none",
           }}
           label="Chat"
-          navigation={{
-            canGoBack: false,
-            canGoForward: false,
-            onBack: vi.fn(),
-            onForward: vi.fn(),
-          }}
+          returnMementoEnabled={false}
           sizing={paneSizing({ widthPx: 480, minWidthPx: 320, maxWidthPx: 1400 })}
           bodyMode="contained"
           onResizePrimaryPane={vi.fn()}
         >
           <Conversation />
-        </PaneShell>
-      </PaneRuntimeProvider>
+          </PaneShell>
+        </PaneRuntimeProvider>
+      </PaneReturnMementoProvider>
     );
 
     render(tree(null));

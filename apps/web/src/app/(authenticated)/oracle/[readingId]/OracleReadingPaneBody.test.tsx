@@ -1,11 +1,35 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { useLayoutEffect, useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
+import {
+  PaneReturnMementoProvider,
+  usePaneReturnMementoCommands,
+  usePaneReturnReady,
+  usePaneReturnScrollport,
+} from "@/lib/workspace/paneReturnMemento";
+import {
+  assumePaneVisitId,
+  type PaneVisitId,
+} from "@/lib/workspace/schema";
 import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
+const AWAY_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000002",
+);
 
 const mocks = vi.hoisted(() => ({
   fetchStreamToken: vi.fn(),
@@ -41,23 +65,132 @@ function resolvedOpenHrefs(
 function readingPane(readingId: string) {
   const href = `/oracle/${readingId}`;
   return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      isActive={true}
-      href={href}
-      routeId="oracleReading"
-      routeKey={resolvePaneRouteIdentity(href).routeKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      pathParams={{ readingId }}
-      onNavigatePane={vi.fn()}
-      onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
-    >
-      <OracleReadingPaneBody />
-    </PaneRuntimeProvider>
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive={true}
+        href={href}
+        routeId="oracleReading"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ readingId }}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <OracleReadingPaneBody />
+      </PaneRuntimeProvider>
+    </PaneReturnMementoProvider>
+  );
+}
+
+function defineScrollGeometry(
+  scrollport: HTMLElement,
+  contentHeight: number,
+): void {
+  let scrollTop = 0;
+  Object.defineProperties(scrollport, {
+    clientHeight: { configurable: true, value: 100 },
+    scrollHeight: { configurable: true, value: contentHeight },
+    scrollTop: {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    },
+  });
+}
+
+function ReadyRoute({ label }: { readonly label: string }) {
+  usePaneReturnReady(true);
+  return <div>{label}</div>;
+}
+
+function OracleReturnScrollport({
+  phase,
+  visitId,
+}: {
+  readonly phase: "source" | "away" | "return";
+  readonly visitId: PaneVisitId;
+}) {
+  const scrollportRef = useRef<HTMLDivElement>(null);
+  const commands = usePaneReturnMementoCommands();
+  useLayoutEffect(() => {
+    if (scrollportRef.current) {
+      defineScrollGeometry(
+        scrollportRef.current,
+        phase === "return" ? 140 : 400,
+      );
+    }
+  }, [phase, visitId]);
+  usePaneReturnScrollport({
+    paneId: "pane-return-test",
+    enabled: true,
+    scrollportRef,
+  });
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          commands.capturePane({
+            paneId: "pane-return-test",
+            visitId,
+            routeKey: resolvePaneRouteIdentity(
+              "/oracle/reading-1",
+            ).routeKey,
+            modality: "Programmatic",
+          });
+        }}
+      >
+        Capture reading pane
+      </button>
+      <div ref={scrollportRef} data-testid="oracle-return-scrollport">
+        <div>
+          <ResolvedPaneBodyMarker>
+            {phase === "return" ? (
+              <OracleReadingPaneBody />
+            ) : (
+              <ReadyRoute
+                label={phase === "source" ? "Source reading" : "Away reading"}
+              />
+            )}
+          </ResolvedPaneBodyMarker>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function oracleReturnApp(phase: "source" | "away" | "return") {
+  const href = "/oracle/reading-1";
+  const visitId = phase === "away" ? AWAY_VISIT_ID : TEST_VISIT_ID;
+  return (
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider
+        paneId="pane-return-test"
+        visitId={visitId}
+        isActive={true}
+        href={href}
+        routeId="oracleReading"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={phase !== "source"}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        pathParams={{ readingId: "reading-1" }}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        <OracleReturnScrollport phase={phase} visitId={visitId} />
+      </PaneRuntimeProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -80,6 +213,49 @@ describe("OracleReadingPaneBody", () => {
     vi.restoreAllMocks();
     delete (window as unknown as Record<string, unknown>)
       .__nexusPendingPaneOpenQueue;
+  });
+
+  it("does not apply the final return clamp before an async reading commits", async () => {
+    const detail = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/reading-1") {
+          return detail.promise;
+        }
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+
+    const view = render(oracleReturnApp("source"));
+    screen.getByTestId("oracle-return-scrollport").scrollTop = 240;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Capture reading pane" }),
+    );
+    view.rerender(oracleReturnApp("away"));
+    view.rerender(oracleReturnApp("return"));
+
+    expect(screen.getByRole("heading", { name: "…" })).toBeVisible();
+    expect(screen.getByTestId("oracle-return-scrollport").scrollTop).toBe(0);
+
+    detail.resolve(
+      jsonResponse({
+        data: readingDetail({
+          id: "reading-1",
+          question: "When is the reading ready?",
+          folioNumber: 1,
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "When is the reading ready?",
+      }),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByTestId("oracle-return-scrollport").scrollTop).toBe(40);
+    });
   });
 
   it("clears stale reading state when the reading id changes", async () => {
@@ -158,9 +334,16 @@ describe("OracleReadingPaneBody", () => {
       [Record<string, unknown>]
     >;
     expect(sseCalls[0]?.[0]).toMatchObject({
-      url: "https://stream.example.test/stream/oracle-readings/reading-1/events",
       lastEventId: undefined,
       maxReconnects: 3,
+    });
+    const initialConnection = sseCalls[0]?.[0].initialConnection;
+    expect(initialConnection).toBeTypeOf("function");
+    await expect(
+      (initialConnection as () => Promise<unknown>)(),
+    ).resolves.toEqual({
+      url: "https://stream.example.test/stream/oracle-readings/reading-1/events",
+      token: "stream-token-1",
     });
   });
 
@@ -601,6 +784,7 @@ describe("OracleReadingPaneBody", () => {
     const concordancePane = (status: string) => (
       <PaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={concordanceHref}
         routeId="oracleReading"
@@ -653,6 +837,7 @@ describe("OracleReadingPaneBody", () => {
       return (
         <PaneRuntimeProvider
           paneId="pane-1"
+          visitId={TEST_VISIT_ID}
           isActive={true}
           href={href}
           routeId="oracleReading"

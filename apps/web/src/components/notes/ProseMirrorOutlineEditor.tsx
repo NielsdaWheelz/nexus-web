@@ -7,6 +7,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
+  type RefObject,
 } from "react";
 import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
 import {
@@ -20,6 +22,7 @@ import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
 import { isApiError } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import {
   createMarkdownPastePlugin,
   createObjectRefSyntaxPlugin,
@@ -54,6 +57,7 @@ import styles from "./ProseMirrorOutlineEditor.module.css";
 interface ProseMirrorOutlineEditorProps {
   resourceKey: string;
   initialDoc: ProseMirrorNode;
+  returnScope?: "Notes.EditorBlocks";
   editable?: boolean;
   ariaLabel?: string;
   createBlockId?: () => string;
@@ -129,9 +133,31 @@ const PAGE_NOTE_SCHEMES = [
   "note_block",
 ] as const satisfies readonly ResourceScheme[];
 
+function PaneReturnEditorScope({
+  rootRef,
+  ready,
+  children,
+}: {
+  readonly rootRef: RefObject<HTMLDivElement | null>;
+  readonly ready: boolean;
+  readonly children: ReactNode;
+}) {
+  usePaneReturnDescendantReady({ rootRef, ready });
+  return (
+    <div
+      ref={rootRef}
+      className={styles.editorShell}
+      data-pane-return-scope="Notes.EditorBlocks"
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function ProseMirrorOutlineEditor({
   resourceKey,
   initialDoc,
+  returnScope,
   editable = true,
   ariaLabel = "Notes outline",
   createBlockId,
@@ -161,6 +187,7 @@ export default function ProseMirrorOutlineEditor({
   const onFeedbackRef = useRef(onFeedback);
   const onErrorRef = useRef(onError);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
   const editableRef = useRef(editable);
   const attachmentBusyRef = useRef(false);
   const notePulseTargetRef = useRef(notePulseTarget);
@@ -721,6 +748,7 @@ export default function ProseMirrorOutlineEditor({
     });
 
     viewRef.current = view;
+    setEditorReady(true);
     if (notePulseTargetRef.current) {
       applyNotePulseTarget(notePulseTargetRef.current);
     }
@@ -751,8 +779,8 @@ export default function ProseMirrorOutlineEditor({
 
   if (defect) throw defect.error;
 
-  return (
-    <div ref={shellRef} className={styles.editorShell}>
+  const editorContents = (
+    <>
       <div ref={hostRef} className={styles.editorHost} />
       {trigger && targets.length > 0 ? (
         <div
@@ -771,7 +799,19 @@ export default function ProseMirrorOutlineEditor({
           />
         </div>
       ) : null}
-    </div>
+    </>
+  );
+  if (returnScope === undefined) {
+    return (
+      <div ref={shellRef} className={styles.editorShell}>
+        {editorContents}
+      </div>
+    );
+  }
+  return (
+    <PaneReturnEditorScope rootRef={shellRef} ready={editorReady}>
+      {editorContents}
+    </PaneReturnEditorScope>
   );
 }
 

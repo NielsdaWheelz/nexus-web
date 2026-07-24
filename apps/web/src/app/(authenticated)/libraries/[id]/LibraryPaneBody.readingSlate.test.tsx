@@ -1,7 +1,11 @@
 import { type ReactNode } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
@@ -10,6 +14,11 @@ import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import {
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 const LIBRARY_ID = "reading-slate-library";
@@ -18,6 +27,9 @@ const EXISTING_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const SUGGESTED_MEDIA_ID = "22222222-2222-4222-8222-222222222222";
 const SECOND_MEDIA_ID = "33333333-3333-4333-8333-333333333333";
 const SUGGESTED_PODCAST_ID = "44444444-4444-4444-8444-444444444444";
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 function library(id = LIBRARY_ID, name = "Research") {
   return {
@@ -45,8 +57,9 @@ function SwitchingHarness({
   const href = `/libraries/${libraryId}`;
   const identity = resolvePaneRouteIdentity(href);
   return withRenderEnvironment(
-    <FeedbackProvider>
-      <ResourceCacheProvider
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ResourceCacheProvider
         value={{
           [LIBRARY_ID]: {
             library: library(),
@@ -59,10 +72,11 @@ function SwitchingHarness({
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
-      >
-        <LecternProvider>
-          <PaneRuntimeProvider
+        >
+          <LecternProvider>
+            <PaneRuntimeProvider
             paneId="pane-library"
+            visitId={TEST_VISIT_ID}
             isActive={isActive}
             href={href}
             routeId={identity.routeId}
@@ -75,12 +89,13 @@ function SwitchingHarness({
             onOpenInNewPane={vi.fn()}
             onGoBackPane={vi.fn()}
             onGoForwardPane={vi.fn()}
-          >
-            {children}
-          </PaneRuntimeProvider>
-        </LecternProvider>
-      </ResourceCacheProvider>
-    </FeedbackProvider>,
+            >
+              {children}
+            </PaneRuntimeProvider>
+          </LecternProvider>
+        </ResourceCacheProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
   );
 }
 
@@ -187,8 +202,9 @@ function Harness({
   const href = `/libraries/${LIBRARY_ID}${search ? `?${search}` : ""}`;
   const identity = resolvePaneRouteIdentity(href);
   return withRenderEnvironment(
-    <FeedbackProvider>
-      <ResourceCacheProvider
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ResourceCacheProvider
         value={{
           [LIBRARY_ID]: {
             library: library(),
@@ -196,10 +212,11 @@ function Harness({
             entriesPage: { has_more: false, next_cursor: null },
           },
         }}
-      >
-        <LecternProvider>
-          <PaneRuntimeProvider
+        >
+          <LecternProvider>
+            <PaneRuntimeProvider
             paneId="pane-library"
+            visitId={TEST_VISIT_ID}
             isActive={isActive}
             href={href}
             routeId={identity.routeId}
@@ -212,12 +229,13 @@ function Harness({
             onOpenInNewPane={vi.fn()}
             onGoBackPane={vi.fn()}
             onGoForwardPane={vi.fn()}
-          >
-            {children}
-          </PaneRuntimeProvider>
-        </LecternProvider>
-      </ResourceCacheProvider>
-    </FeedbackProvider>,
+            >
+              {children}
+            </PaneRuntimeProvider>
+          </LecternProvider>
+        </ResourceCacheProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>,
   );
 }
 
@@ -227,6 +245,119 @@ afterEach(() => {
 });
 
 describe("LibraryPaneBody Reading Slate host", () => {
+  it("does not capture a controller commit while reconciliation is unresolved", async () => {
+    const user = userEvent.setup();
+    let reconciliationRequests = 0;
+    let slateReads = 0;
+    const unresolvedReconciliation = new Promise<Response>(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = pathWithSearch(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/lectern" && method === "GET") {
+          return response({ data: { items: [] } });
+        }
+        if (path === `/api/libraries/${LIBRARY_ID}/slate` && method === "GET") {
+          slateReads += 1;
+          return response({
+            data: { items: slateReads === 1 ? [slateItem()] : [] },
+          });
+        }
+        if (
+          path === `/api/media/${SUGGESTED_MEDIA_ID}/libraries` &&
+          method === "POST"
+        ) {
+          return new Response(null, { status: 204 });
+        }
+        if (
+          path === `/api/libraries/${LIBRARY_ID}/entries` &&
+          method === "GET"
+        ) {
+          reconciliationRequests += 1;
+          return unresolvedReconciliation;
+        }
+        if (path === "/api/consumption/commands" && method === "POST") {
+          return response({
+            data: {
+              outcome: { kind: "StateOnly" },
+              lectern: { items: [] },
+              nextItem: { kind: "Absent" },
+              listeningStates: [],
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${path}`);
+      }),
+    );
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const href = `/libraries/${LIBRARY_ID}`;
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = (
+      resourceGeneration: number,
+      initialEntries: ReturnType<typeof entry>[],
+    ) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={{
+          [LIBRARY_ID]: {
+            library: library(),
+            entries: initialEntries,
+            entriesPage: { has_more: false, next_cursor: null },
+          },
+        }}
+        resourceGeneration={resourceGeneration}
+        publishCommands={(next) => {
+          commands = next;
+        }}
+      >
+        <LecternProvider>
+          <LibraryPaneBody />
+        </LecternProvider>
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(
+      journey(0, [entry("entry-1", EXISTING_MEDIA_ID, "Existing work")]),
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Add Suggested work to Research",
+      }),
+    );
+    await waitFor(() => expect(reconciliationRequests).toBe(1));
+    expect(
+      screen.getByText("Refreshing library entries…"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Existing work" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as finished" }),
+    );
+    expect(await screen.findByText("Finished")).toBeInTheDocument();
+    await waitFor(() => expect(commands).not.toBeNull());
+
+    act(() => {
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(
+      journey(1, [entry("entry-fresh", SECOND_MEDIA_ID, "Fresh server work")]),
+    );
+
+    expect(await screen.findByText("Fresh server work")).toBeInTheDocument();
+    expect(screen.queryByText("Existing work")).not.toBeInTheDocument();
+    expect(reconciliationRequests).toBe(1);
+  });
+
   it("clears destination-stale reconciliation state when the library id changes", async () => {
     let firstSlateReads = 0;
     let secondEntryReads = 0;
@@ -273,7 +404,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
     const user = userEvent.setup();
     const view = render(
       <SwitchingHarness libraryId={LIBRARY_ID} isActive>
-        <LibraryPaneBody />
+        <LibraryPaneBody key={LIBRARY_ID} />
       </SwitchingHarness>,
     );
 
@@ -286,25 +417,25 @@ describe("LibraryPaneBody Reading Slate host", () => {
 
     view.rerender(
       <SwitchingHarness libraryId={LIBRARY_ID} isActive={false}>
-        <LibraryPaneBody />
+        <LibraryPaneBody key={LIBRARY_ID} />
       </SwitchingHarness>,
     );
     view.rerender(
       <SwitchingHarness libraryId={SECOND_LIBRARY_ID} isActive>
-        <LibraryPaneBody />
+        <LibraryPaneBody key={SECOND_LIBRARY_ID} />
       </SwitchingHarness>,
     );
     expect(await screen.findByText("Archived work")).toBeVisible();
-    await waitFor(() => expect(secondEntryReads).toBe(1));
+    expect(secondEntryReads).toBe(0);
 
     view.rerender(
       <SwitchingHarness libraryId={SECOND_LIBRARY_ID} isActive={false}>
-        <LibraryPaneBody />
+        <LibraryPaneBody key={SECOND_LIBRARY_ID} />
       </SwitchingHarness>,
     );
     view.rerender(
       <SwitchingHarness libraryId={SECOND_LIBRARY_ID} isActive>
-        <LibraryPaneBody />
+        <LibraryPaneBody key={SECOND_LIBRARY_ID} />
       </SwitchingHarness>,
     );
     await waitFor(() =>
@@ -316,7 +447,10 @@ describe("LibraryPaneBody Reading Slate host", () => {
         ),
       ).toHaveLength(2),
     );
-    expect(secondEntryReads).toBe(1);
+    // The production visitId + routeKey render key remounts the owner at the
+    // destination, so the old library's stale marker cannot trigger a new
+    // library reconciliation.
+    expect(secondEntryReads).toBe(0);
   });
 
   it("renders the main empty notice independently from a non-empty Slate", async () => {
@@ -557,7 +691,8 @@ describe("LibraryPaneBody Reading Slate host", () => {
       library_ids: [LIBRARY_ID],
     });
     expect(within(rankedList).getByText("Existing work")).toBeVisible();
-    expect(entryReads).toBe(1);
+    await waitFor(() => expect(entryReads).toBe(2));
+    expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
 
     view.rerender(
       <Harness isActive={false} search="sort=title&direction=asc">
@@ -569,7 +704,7 @@ describe("LibraryPaneBody Reading Slate host", () => {
         <LibraryPaneBody />
       </Harness>,
     );
-    await waitFor(() => expect(entryReads).toBe(2));
+    expect(entryReads).toBe(2);
     expect(within(rankedList).getByText("Existing work")).toBeVisible();
     expect(screen.getByText("Failed to refresh library entries")).toBeVisible();
     // Reconciliation used only the current factual view, never the canonical

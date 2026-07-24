@@ -19,6 +19,7 @@ import { useBillingAccount, type BillingPlanTier } from "@/lib/billing/useBillin
 import { formatDisplayDate, formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 interface CheckoutResponse {
@@ -143,6 +144,7 @@ export default function SettingsBillingPaneBody() {
   const [checkoutBusy, setCheckoutBusy] = useState<BillingPlanTier | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [actionError, setActionError] = useState<FeedbackContent | null>(null);
+  usePaneReturnReady(!loading);
 
   const effectivePlan = account?.entitlement_plan_tier ?? "free";
   const billingPlan = account?.billing_plan_tier ?? "free";

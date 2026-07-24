@@ -228,6 +228,35 @@ force deploy, not for the normal publish path:
 vercel deploy --prod --scope niels-erik-nandals-projects
 ```
 
+### Pane-visit workspace-session hard cut
+
+The pane-visit release is an explicit maintenance window because Vercel and
+Hetzner do not deploy atomically. Do not run these steps out of order.
+
+1. Before pushing `main`, stop every workspace-session writer on Hetzner and
+   keep it stopped:
+
+   ```bash
+   ssh nexus@5.78.194.235 \
+     'cd /opt/nexus-web && NEXUS_ENV_FILE=/etc/nexus/nexus.env docker compose --env-file /etc/nexus/nexus.env -f deploy/hetzner/docker-compose.yml stop worker api'
+   ```
+
+2. Push the hard-cut branch and wait until the corresponding Vercel production
+   deployment is Ready. Verify its commit identity.
+3. While the API remains stopped, send an href-only workspace-session PUT to
+   the production BFF. It must return HTTP `400` with
+   `E_INVALID_WORKSPACE_STATE`; this response is produced before proxying.
+4. Run `./deploy/hetzner/deploy.sh`. Its migration phase runs with API and
+   worker stopped, purges `workspace_sessions`, and restarts services only
+   after the purge succeeds.
+5. Smoke the production BFF: an absent session creates fresh visit-shaped
+   state; exact visit-shaped PUT then GET round-trips; malformed PUT still
+   returns the exact `400` error.
+
+End maintenance only after all five checks pass. Never purge while an old
+writer can run, restart the opaque backend before the strict BFF is live, or
+deploy the strict frontend against unpurged sessions.
+
 ## Operations
 
 SSH into the VPS:

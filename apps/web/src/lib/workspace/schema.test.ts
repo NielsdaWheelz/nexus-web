@@ -3,9 +3,14 @@ import {
   MAX_PANES,
   MAX_PANE_HISTORY_STACK_LENGTH,
   MAX_TOTAL_PANE_HISTORY_ENTRIES,
+  assumePaneVisitId,
   createDefaultWorkspaceState,
+  createWorkspaceStateFromPrimaryPanes,
   getWorkspacePrimaryPanes,
-  sanitizeWorkspaceState,
+  parsePersistedWorkspaceState,
+  trimWorkspacePaneHistory,
+  type PaneVisit,
+  type WorkspacePrimaryPaneState,
 } from "@/lib/workspace/schema";
 import {
   MAX_STANDARD_PANE_WIDTH_PX,
@@ -20,30 +25,29 @@ const workspacePrimaryMetrics: WorkspacePrimaryMetrics = {
   primaryDefaultWidthPx: 684,
 };
 
-function sanitize(
-  value: unknown,
-  options: { fallbackHref?: string; baseOrigin?: string } = {},
-) {
-  return sanitizeWorkspaceState(value, {
-    fallbackHref: options.fallbackHref ?? "/libraries",
-    baseOrigin: options.baseOrigin,
-    workspacePrimaryMetrics,
-  });
+function visit(index: number, href: string): PaneVisit {
+  return {
+    id: assumePaneVisitId(
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    ),
+    href,
+  };
 }
 
 function primary(
   id: string,
   href: string,
   input: {
+    visitIndex?: number;
     primaryWidthPx?: number;
     visibility?: "visible" | "minimized";
     attachedSecondaryPaneId?: string | null;
-    history?: { back: string[]; forward: string[] };
+    history?: { back: PaneVisit[]; forward: PaneVisit[] };
   } = {},
-) {
+): WorkspacePrimaryPaneState {
   return {
     id,
-    href,
+    currentVisit: visit(input.visitIndex ?? Number(id.replace(/\D/g, "")) + 1, href),
     primaryWidthPx: input.primaryWidthPx ?? 720,
     visibility: input.visibility ?? "visible",
     history: input.history ?? { back: [], forward: [] },
@@ -66,6 +70,17 @@ function state(input: {
   };
 }
 
+function rawState(primaryPanes: Record<string, unknown>[]) {
+  return {
+    activePrimaryPaneId: primaryPanes[0]!.id,
+    primaryPaneOrder: primaryPanes.map((pane) => pane.id),
+    primaryPanesById: Object.fromEntries(
+      primaryPanes.map((pane) => [pane.id, pane]),
+    ),
+    secondaryPanesById: {},
+  };
+}
+
 describe("workspace schema", () => {
   it("creates a default workspace with the workspace primary width", () => {
     const current = createDefaultWorkspaceState(
@@ -75,7 +90,12 @@ describe("workspace schema", () => {
     const panes = getWorkspacePrimaryPanes(current);
     expect(panes).toHaveLength(1);
     expect(panes[0]).toMatchObject({
-      href: "/media/abc",
+      currentVisit: {
+        id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        ),
+        href: "/media/abc",
+      },
       primaryWidthPx: workspacePrimaryMetrics.primaryDefaultWidthPx,
       visibility: "visible",
       history: { back: [], forward: [] },
@@ -91,101 +111,168 @@ describe("workspace schema", () => {
     expect(normalizeWorkspaceHref("javascript:alert(1)")).toBeNull();
   });
 
-  it("hard-resets malformed workspace payloads", () => {
-    const current = sanitize({ activePrimaryPaneId: "pane-1" });
-    const panes = getWorkspacePrimaryPanes(current);
-    expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe("/libraries");
-    expect(panes[0]?.attachedSecondaryPaneId).toBeNull();
-    expect(current.secondaryPanesById).toEqual({});
+  it("rejects malformed workspace payloads instead of replacing them", () => {
+    expect(() =>
+      parsePersistedWorkspaceState({ activePrimaryPaneId: "pane-1" }),
+    ).toThrow("workspace state must contain exactly");
   });
 
-  it("sanitizes pane history hrefs", () => {
-    const current = sanitize(
-      state({
-        primaryPanes: [
-          primary("pane-1", "/media/1", {
-            history: {
-              back: ["http://localhost/libraries?sort=recent"],
-              forward: ["/media/2#chapter"],
-            },
-          }),
-        ],
-      }),
-      { baseOrigin: "http://localhost" },
-    );
-    expect(getWorkspacePrimaryPanes(current)[0]?.history).toEqual({
-      back: ["/libraries?sort=recent"],
-      forward: ["/media/2#chapter"],
+  it("exact-decodes canonical PaneVisit history without rewriting it", () => {
+    const raw = state({
+      primaryPanes: [
+        primary("pane-1", "/media/1", {
+          history: {
+            back: [visit(10, "/libraries?sort=recent")],
+            forward: [visit(11, "/media/2#chapter")],
+          },
+        }),
+      ],
     });
+    const current = parsePersistedWorkspaceState(raw, {
+      baseOrigin: "http://localhost",
+    });
+    expect(current).toEqual(raw);
+  });
+
+  it("rejects non-canonical visit ids and duplicate ids across the whole workspace", () => {
+    const duplicateId = assumePaneVisitId(
+      "00000000-0000-4000-8000-000000000099",
+    );
+    const duplicated = state({
+      primaryPanes: [
+        {
+          ...primary("pane-1", "/media/1"),
+          currentVisit: { id: duplicateId, href: "/media/1" },
+          history: {
+            back: [{ id: duplicateId, href: "/libraries" }],
+            forward: [],
+          },
+        },
+      ],
+    });
+    expect(() => parsePersistedWorkspaceState(duplicated)).toThrow(
+      "duplicates another PaneVisit id",
+    );
+
+    const uppercasePane = primary("pane-1", "/media/1");
+    const uppercase = rawState([
+      {
+        ...uppercasePane,
+        currentVisit: {
+          id: "00000000-0000-4000-8000-0000000000AA",
+          href: "/media/1",
+        },
+      },
+    ]);
+    expect(() => parsePersistedWorkspaceState(uppercase)).toThrow(
+      "canonical lowercase UUID",
+    );
+  });
+
+  it("rejects workspace hrefs that would require normalization", () => {
+    const raw = state({
+      primaryPanes: [
+        {
+          ...primary("pane-1", "/media/1"),
+          currentVisit: {
+            id: visit(20, "/media/1").id,
+            href: "http://localhost/media/1",
+          },
+        },
+      ],
+    });
+    expect(() =>
+      parsePersistedWorkspaceState(raw, {
+        baseOrigin: "http://localhost",
+      }),
+    ).toThrow("canonical workspace href");
   });
 
   it("rejects malformed pane history hrefs", () => {
-    const current = sanitize(
-      state({
-        primaryPanes: [
-          primary("pane-1", "/media/1", {
-            history: { back: ["https://example.com/media/0"], forward: [] },
-          }),
-        ],
+    const raw = state({
+      primaryPanes: [
+        primary("pane-1", "/media/1", {
+          history: {
+            back: [
+              {
+                id: visit(30, "/media/0").id,
+                href: "https://example.com/media/0",
+              },
+            ],
+            forward: [],
+          },
+        }),
+      ],
+    });
+    expect(() =>
+      parsePersistedWorkspaceState(raw, {
+        baseOrigin: "http://localhost",
       }),
-      { baseOrigin: "http://localhost" },
-    );
-    expect(getWorkspacePrimaryPanes(current)[0]?.href).toBe("/libraries");
+    ).toThrow("canonical workspace href");
   });
 
-  it("resets invalid primary topology", () => {
+  it("rejects extra fields at every persisted object boundary", () => {
+    const pane = primary("pane-1", "/media/1");
+    expect(() =>
+      parsePersistedWorkspaceState({
+        ...state({ primaryPanes: [pane] }),
+        extra: true,
+      }),
+    ).toThrow("workspace state must contain exactly");
+    const currentVisitWithExtra = {
+      ...pane.currentVisit,
+      extra: true,
+    };
+    expect(() =>
+      parsePersistedWorkspaceState(
+        rawState([{ ...pane, currentVisit: currentVisitWithExtra }]),
+      ),
+    ).toThrow("currentVisit must contain exactly");
+  });
+
+  it("rejects invalid primary topology", () => {
     const oversized = state({
       activePrimaryPaneId: "pane-0",
       primaryPanes: Array.from({ length: MAX_PANES + 1 }, (_, index) =>
         primary(`pane-${index}`, `/media/${index}`),
       ),
     });
-    const current = sanitize(oversized);
-    const panes = getWorkspacePrimaryPanes(current);
-    expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe("/libraries");
+    expect(() => parsePersistedWorkspaceState(oversized)).toThrow(
+      `must contain 1-${MAX_PANES} panes`,
+    );
   });
 
-  it("clamps persisted primary widths to the workspace floor", () => {
-    const current = sanitize(
+  it("preserves valid persisted widths for restore-time layout adaptation", () => {
+    const current = parsePersistedWorkspaceState(
       state({
-        activePrimaryPaneId: "pane-1",
-        primaryPanes: [
-          primary("pane-1", "/libraries", { primaryWidthPx: 10 }),
-          primary("pane-2", "/media/1", { primaryWidthPx: 99999 }),
-        ],
+        primaryPanes: [primary("pane-1", "/libraries", { primaryWidthPx: 10 })],
       }),
     );
     const panes = getWorkspacePrimaryPanes(current);
-    expect(panes[0]?.primaryWidthPx).toBe(
-      workspacePrimaryMetrics.primaryMinWidthPx,
-    );
-    expect(panes[1]?.primaryWidthPx).toBe(99999);
+    expect(panes[0]?.primaryWidthPx).toBe(10);
   });
 
   it("rejects primary panes that omit required fields", () => {
-    const current = sanitize({
-      activePrimaryPaneId: "pane-1",
-      primaryPaneOrder: ["pane-1"],
-      primaryPanesById: {
-        "pane-1": {
-          id: "pane-1",
-          href: "/media/1",
-          visibility: "visible",
-          history: { back: [], forward: [] },
-          attachedSecondaryPaneId: null,
+    expect(() =>
+      parsePersistedWorkspaceState({
+        activePrimaryPaneId: "pane-1",
+        primaryPaneOrder: ["pane-1"],
+        primaryPanesById: {
+          "pane-1": {
+            id: "pane-1",
+            currentVisit: visit(40, "/media/1"),
+            visibility: "visible",
+            history: { back: [], forward: [] },
+            attachedSecondaryPaneId: null,
+          },
         },
-      },
-      secondaryPanesById: {},
-    });
-    const panes = getWorkspacePrimaryPanes(current);
-    expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe("/libraries");
+        secondaryPanesById: {},
+      }),
+    ).toThrow("must contain exactly");
   });
 
-  it("sanitizes compatible attached secondary panes", () => {
-    const current = sanitize(
+  it("exact-decodes compatible attached secondary panes without clamping", () => {
+    const current = parsePersistedWorkspaceState(
       state({
         primaryPanes: [
           primary("pane-1", "/media/1", {
@@ -211,57 +298,57 @@ describe("workspace schema", () => {
       parentPrimaryPaneId: "pane-1",
       groupId: "resource-inspector",
       activeSurfaceId: "resource-evidence",
-      widthPx: 720,
+      widthPx: 9999,
       visibility: "visible",
     });
   });
 
-  it("drops incompatible attached secondary panes", () => {
-    const current = sanitize(
-      state({
-        primaryPanes: [
-          primary("pane-1", "/libraries", {
-            attachedSecondaryPaneId: "secondary-1",
-          }),
-        ],
-        secondaryPanesById: {
-          "secondary-1": {
-            id: "secondary-1",
-            parentPrimaryPaneId: "pane-1",
-            groupId: "resource-inspector",
-            activeSurfaceId: "resource-evidence",
-            widthPx: 320,
-            visibility: "visible",
+  it("rejects incompatible attached secondary panes", () => {
+    expect(() =>
+      parsePersistedWorkspaceState(
+        state({
+          primaryPanes: [
+            primary("pane-1", "/libraries", {
+              attachedSecondaryPaneId: "secondary-1",
+            }),
+          ],
+          secondaryPanesById: {
+            "secondary-1": {
+              id: "secondary-1",
+              parentPrimaryPaneId: "pane-1",
+              groupId: "resource-inspector",
+              activeSurfaceId: "resource-evidence",
+              widthPx: 320,
+              visibility: "visible",
+            },
           },
-        },
-      }),
-    );
-    expect(getWorkspacePrimaryPanes(current)[0]?.attachedSecondaryPaneId).toBeNull();
-    expect(current.secondaryPanesById).toEqual({});
+        }),
+      ),
+    ).toThrow("incompatible with its primary pane");
   });
 
-  it("drops attached secondary pane with a stale surface ID no longer in the surface registry", () => {
-    const current = sanitize(
-      state({
-        primaryPanes: [
-          primary("pane-1", "/media/1", {
-            attachedSecondaryPaneId: "secondary-1",
-          }),
-        ],
-        secondaryPanesById: {
-          "secondary-1": {
-            id: "secondary-1",
-            parentPrimaryPaneId: "pane-1",
-            groupId: "resource-inspector",
-            activeSurfaceId: "reader-highlights",
-            widthPx: 320,
-            visibility: "visible",
+  it("rejects stale secondary surface ids", () => {
+    expect(() =>
+      parsePersistedWorkspaceState(
+        state({
+          primaryPanes: [
+            primary("pane-1", "/media/1", {
+              attachedSecondaryPaneId: "secondary-1",
+            }),
+          ],
+          secondaryPanesById: {
+            "secondary-1": {
+              id: "secondary-1",
+              parentPrimaryPaneId: "pane-1",
+              groupId: "resource-inspector",
+              activeSurfaceId: "reader-highlights",
+              widthPx: 320,
+              visibility: "visible",
+            },
           },
-        },
-      }),
-    );
-    expect(getWorkspacePrimaryPanes(current)[0]?.attachedSecondaryPaneId).toBeNull();
-    expect(current.secondaryPanesById).toEqual({});
+        }),
+      ),
+    ).toThrow("invalid group or surface");
   });
 
   it("keeps route width policy to max width and intrinsic permission", () => {
@@ -283,7 +370,7 @@ describe("workspace schema", () => {
   });
 
   it("keeps minimized panes when the active pane is visible", () => {
-    const current = sanitize(
+    const current = parsePersistedWorkspaceState(
       state({
         activePrimaryPaneId: "pane-2",
         primaryPanes: [
@@ -299,52 +386,76 @@ describe("workspace schema", () => {
     expect(current.activePrimaryPaneId).toBe("pane-2");
   });
 
-  it("resets when the requested active pane is minimized", () => {
-    const current = sanitize(
-      state({
-        activePrimaryPaneId: "pane-1",
-        primaryPanes: [
-          primary("pane-1", "/libraries", { visibility: "minimized" }),
-          primary("pane-2", "/media/1"),
-        ],
-      }),
-      { fallbackHref: "/conversations" },
-    );
-    const panes = getWorkspacePrimaryPanes(current);
-    expect(panes).toHaveLength(1);
-    expect(panes[0]?.href).toBe("/conversations");
-    expect(current.activePrimaryPaneId).toBe(panes[0]?.id);
+  it("rejects when the requested active pane is minimized", () => {
+    expect(() =>
+      parsePersistedWorkspaceState(
+        state({
+          activePrimaryPaneId: "pane-1",
+          primaryPanes: [
+            primary("pane-1", "/libraries", { visibility: "minimized" }),
+            primary("pane-2", "/media/1"),
+          ],
+        }),
+      ),
+    ).toThrow("must identify a visible pane");
   });
 
-  it("trims pane history deterministically", () => {
-    const history = Array.from({ length: 20 }, (_, index) => `/media/${index}`);
-    const current = sanitize(
-      state({
-        activePrimaryPaneId: "pane-0",
-        primaryPanes: Array.from({ length: 5 }, (_, index) =>
-          primary(`pane-${index}`, `/media/current-${index}`, {
-            history: { back: history, forward: history },
-          }),
-        ),
+  it("trims the far ends of Back and Forward", () => {
+    const back = Array.from({ length: 20 }, (_, index) =>
+      visit(100 + index, `/media/back-${index}`),
+    );
+    const forward = Array.from({ length: 20 }, (_, index) =>
+      visit(200 + index, `/media/forward-${index}`),
+    );
+    const untrimmed = createWorkspaceStateFromPrimaryPanes({
+      activePrimaryPaneId: "pane-1",
+      primaryPanes: [
+        primary("pane-1", "/media/current", {
+          history: { back, forward },
+        }),
+      ],
+    });
+    const current = trimWorkspacePaneHistory(untrimmed);
+    const pane = getWorkspacePrimaryPanes(current)[0]!;
+    expect(pane.history.back.map(({ href }) => href)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `/media/back-${index + 8}`),
+    );
+    expect(pane.history.forward.map(({ href }) => href)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `/media/forward-${index}`),
+    );
+  });
+
+  it("enforces the deterministic workspace-wide history budget", () => {
+    const primaryPanes = Array.from({ length: 5 }, (_, paneIndex) =>
+      primary(`pane-${paneIndex}`, `/media/current-${paneIndex}`, {
+        visitIndex: 1000 + paneIndex,
+        history: {
+          back: Array.from({ length: 12 }, (_, index) =>
+            visit(2000 + paneIndex * 100 + index, `/media/back-${paneIndex}-${index}`),
+          ),
+          forward: Array.from({ length: 12 }, (_, index) =>
+            visit(
+              3000 + paneIndex * 100 + index,
+              `/media/forward-${paneIndex}-${index}`,
+            ),
+          ),
+        },
       }),
     );
-
+    const current = trimWorkspacePaneHistory(
+      createWorkspaceStateFromPrimaryPanes({
+        activePrimaryPaneId: "pane-0",
+        primaryPanes,
+      }),
+    );
     const panes = getWorkspacePrimaryPanes(current);
-    for (const pane of panes) {
-      expect(pane.history.back.length).toBeLessThanOrEqual(
-        MAX_PANE_HISTORY_STACK_LENGTH,
-      );
-      expect(pane.history.forward.length).toBeLessThanOrEqual(
-        MAX_PANE_HISTORY_STACK_LENGTH,
-      );
-      if (pane.history.back.length > 0) {
-        expect(pane.history.back[pane.history.back.length - 1]).toBe("/media/19");
-      }
-    }
     const total = panes.reduce(
       (count, pane) => count + pane.history.back.length + pane.history.forward.length,
       0,
     );
-    expect(total).toBeLessThanOrEqual(MAX_TOTAL_PANE_HISTORY_ENTRIES);
+    expect(total).toBe(MAX_TOTAL_PANE_HISTORY_ENTRIES);
+    expect(panes[0]?.history.back).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
+    expect(panes[0]?.history.forward).toHaveLength(MAX_PANE_HISTORY_STACK_LENGTH);
+    expect(panes[1]?.history).toEqual({ back: [], forward: [] });
   });
 });

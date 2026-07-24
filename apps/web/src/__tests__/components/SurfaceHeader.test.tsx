@@ -164,7 +164,7 @@ describe("SurfaceHeader", () => {
 
     await user.click(back);
     fireEvent.click(forward);
-    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onBack).toHaveBeenCalledWith("Pointer");
     expect(onForward).not.toHaveBeenCalled();
   });
 

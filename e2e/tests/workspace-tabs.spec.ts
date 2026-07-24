@@ -13,6 +13,7 @@ import {
   gotoWithWorkspaceSession,
   makeWorkspacePane,
   makeWorkspaceState,
+  makeWorkspaceVisit,
   workspaceE2eDeviceId,
   type WorkspaceState,
 } from "./workspace";
@@ -153,7 +154,12 @@ test.describe("workspace tabs", () => {
       page,
       workspaceTabsDeviceId(testInfo),
       "/libraries",
-      { history: { back: ["/notes"], forward: [] } },
+      {
+        history: {
+          back: [makeWorkspaceVisit("/notes")],
+          forward: [],
+        },
+      },
     );
 
     const strip = workspacePaneStrip(page);

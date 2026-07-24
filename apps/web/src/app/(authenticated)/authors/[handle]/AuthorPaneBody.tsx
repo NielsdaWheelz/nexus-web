@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -40,10 +41,14 @@ import { presentContributorWork } from "@/lib/collections/presenters/presentCont
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { paneResourceLoaders, type AuthorPaneSeed } from "@/lib/panes/paneResourceLoaders";
 import {
+  definePaneVisitDataKey,
   type PaneResourceStatus,
+  useClearAllPaneVisitData,
   usePaneParam,
+  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
+  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
@@ -54,6 +59,9 @@ type AuthorConnectionsResource =
   | { kind: "Ready"; ref: { scheme: "contributor"; id: string } }
   | { kind: "Loading" }
   | { kind: "Unavailable" };
+
+const AUTHOR_VISIT_DATA =
+  definePaneVisitDataKey<AuthorPaneSeed>("Author.Works");
 
 function resolveAuthorConnectionsResource(
   resourceRef: string | null,
@@ -88,9 +96,16 @@ export default function AuthorPaneBody() {
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const openInNewPane = paneRuntime?.openInNewPane;
+  const committedSnapshotRef = useRef<AuthorPaneSeed | null>(null);
+  const captureCommitted = useCallback(
+    () => committedSnapshotRef.current,
+    [],
+  );
+  const restored = usePaneVisitData(AUTHOR_VISIT_DATA, captureCommitted);
+  const allowResourceAdoptionRef = useRef(restored === null);
   const initialAuthor = useResource<AuthorPaneSeed, { handle: string }>({
     descriptor: contributorResource,
-    params: handle ? { handle } : null,
+    params: handle && restored === null ? { handle } : null,
     load: (params, signal) =>
       paneResourceLoaders.author!.load(
         clientResourceFetcher(signal),
@@ -98,7 +113,8 @@ export default function AuthorPaneBody() {
       ) as Promise<AuthorPaneSeed>,
   });
 
-  const [data, setData] = useState<AuthorPaneSeed | null>(null);
+  const [data, setData] = useState<AuthorPaneSeed | null>(restored);
+  const clearAllVisitData = useClearAllPaneVisitData();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [worksError, setWorksError] = useState<FeedbackContent | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -114,26 +130,38 @@ export default function AuthorPaneBody() {
   // Reset the local copy whenever the route handle changes, so stale author data
   // never bleeds across panes while the next initial load runs.
   useEffect(() => {
-    setData(null);
+    if (restored === null) setData(null);
     setError(handle ? null : { severity: "error", title: "Author handle is missing" });
     setWorksError(null);
     setLoadingMore(false);
     setRenameOpen(false);
     setAnnouncement("");
     pendingFocusIndexRef.current = null;
-  }, [handle]);
+  }, [handle, restored]);
 
   // Seed the local copy from the initial resource's ready/error branch.
   useEffect(() => {
-    if (initialAuthor.status === "ready") {
+    if (
+      initialAuthor.status === "ready" &&
+      allowResourceAdoptionRef.current
+    ) {
+      allowResourceAdoptionRef.current = false;
       setData(initialAuthor.data);
       setError(null);
-    } else if (initialAuthor.status === "error") {
+    } else if (
+      initialAuthor.status === "error" &&
+      allowResourceAdoptionRef.current
+    ) {
       setError(toFeedback(initialAuthor.error, { fallback: "Couldn't load this author." }));
       setData(null);
     }
   }, [initialAuthor]);
 
+  useLayoutEffect(() => {
+    committedSnapshotRef.current = data;
+  }, [data]);
+
+  usePaneReturnReady(data !== null || error !== null);
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
   const workCount = data?.works.length ?? 0;
@@ -264,6 +292,17 @@ export default function AuthorPaneBody() {
   }, [handle, data, loadingMore]);
 
   const otherNames = data?.detail.otherNames ?? [];
+  const handleRenamed = useCallback(
+    (detail: ContributorDetail) => {
+      setData((current) =>
+        current && current.detail.handle === detail.handle
+          ? { ...current, detail }
+          : current,
+      );
+      clearAllVisitData();
+    },
+    [clearAllVisitData],
+  );
 
   return (
     <PaneSurface
@@ -310,6 +349,7 @@ export default function AuthorPaneBody() {
 
           <section ref={worksRegionRef} aria-label="Works">
             <CollectionView
+              returnScope="Author.Works"
               rows={workRows}
               status="ready"
               ariaLabel="Works"
@@ -351,13 +391,7 @@ export default function AuthorPaneBody() {
               handle={data.detail.handle}
               currentName={data.detail.displayName}
               onClose={() => setRenameOpen(false)}
-              onRenamed={(detail) =>
-                setData((current) =>
-                  current && current.detail.handle === detail.handle
-                    ? { ...current, detail }
-                    : current,
-                )
-              }
+              onRenamed={handleRenamed}
             />
           ) : null}
         </div>

@@ -22,7 +22,10 @@ import {
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel";
-import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import {
+  assumePaneVisitId,
+  type WorkspaceAttachedSecondaryPaneState,
+} from "@/lib/workspace/schema";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type {
   ActionDescriptor,
@@ -33,6 +36,10 @@ import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import { useEscapeKey } from "@/lib/ui/useEscapeKey";
 import { useModalLayer } from "@/lib/ui/useModalLayer";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 import type {
   ReaderEvidenceConfidence,
   ReaderEvidenceSourceKind,
@@ -806,6 +813,7 @@ function renderMediaPane(
         <GlobalPlayerProvider>
           <PaneRuntimeProvider
             paneId="pane-1"
+            visitId={TEST_VISIT_ID}
             isActive={options.isActive ?? true}
             href={href}
             routeId={identity.routeId}
@@ -1251,6 +1259,7 @@ describe("MediaPaneBody pane sizing", () => {
       "/media/media-1?apparatus=target",
       "Target note",
       undefined,
+      "Programmatic",
     );
     expect(
       apiCallsForPath("/api/media/media-1/sections/section-2"),
@@ -1819,7 +1828,7 @@ describe("MediaPaneBody pane sizing", () => {
     expect(onNavigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/notes/33333333-3333-4333-8333-333333333333",
-      undefined,
+      { modality: "Programmatic" },
     );
   });
 

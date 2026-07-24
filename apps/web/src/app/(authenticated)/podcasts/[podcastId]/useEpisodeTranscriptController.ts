@@ -32,6 +32,7 @@ interface UseEpisodeTranscriptControllerArgs {
   transcriptionAllowed: boolean;
   setError: (feedback: FeedbackContent | null) => void;
   reload: () => void;
+  onMutationCommitted: () => void;
 }
 
 /**
@@ -47,6 +48,7 @@ export function useEpisodeTranscriptController({
   transcriptionAllowed,
   setError,
   reload,
+  onMutationCommitted,
 }: UseEpisodeTranscriptControllerArgs) {
   const [batchTranscriptBusy, setBatchTranscriptBusy] = useState(false);
   const [batchTranscriptSummary, setBatchTranscriptSummary] = useState<
@@ -432,6 +434,7 @@ export function useEpisodeTranscriptController({
           ...prev,
           [mediaId]: toTranscriptForecastState(payload, reason, "request"),
         }));
+        onMutationCommitted();
         try {
           await refreshEpisodeState(mediaId);
         } catch (error) {
@@ -452,6 +455,7 @@ export function useEpisodeTranscriptController({
     [
       applyTranscriptForecasts,
       fetchTranscriptForecasts,
+      onMutationCommitted,
       refreshEpisodeState,
       requestingTranscriptMediaIds,
       setEpisodes,

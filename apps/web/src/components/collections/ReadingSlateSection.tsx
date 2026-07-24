@@ -13,6 +13,7 @@ import Button from "@/components/ui/Button";
 import PaneSection from "@/components/ui/PaneSection";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import type { CollectionRowView } from "@/lib/collections/types";
+import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import { presentSlateItem } from "@/lib/resonance/presentSlateItem";
 import {
   readingSlateErrorMessage,
@@ -130,16 +131,23 @@ export default function ReadingSlateSection({
   paneId,
   isActive,
   accept,
+  returnScope,
 }: {
   destination: ReadingSlateDestination;
   paneId: string;
   isActive: boolean;
   accept: ReadingSlateAccept;
+  returnScope: string;
 }) {
   const reactId = useId();
   const sectionId = `reading-slate-${reactId.replaceAll(":", "")}`;
   const controller = useReadingSlate({ destination, isActive, accept });
   const { state } = controller;
+  const returnReadyRootRef = useRef<HTMLDivElement>(null);
+  usePaneReturnDescendantReady({
+    rootRef: returnReadyRootRef,
+    ready: state.kind !== "InitialLoading",
+  });
   const activeRef = useRef(isActive);
   activeRef.current = isActive;
   const handledFocusRequestRef = useRef<typeof controller.focusRequest>(null);
@@ -294,11 +302,9 @@ export default function ReadingSlateSection({
     return byRef;
   }, [controller, destination, state]);
 
-  if (state.kind === "InitialLoading" && destination.kind === "Library") {
-    return null;
-  }
+  let content: ReactNode = null;
   if (state.kind === "InitialFailed") {
-    return (
+    content = (
       <PaneSection
         id={sectionId}
         aria-label={ariaLabel}
@@ -313,31 +319,40 @@ export default function ReadingSlateSection({
         </div>
       </PaneSection>
     );
+  } else if (
+    !(state.kind === "InitialLoading" && destination.kind === "Library") &&
+    rendersSection
+  ) {
+    content = (
+      <PaneSection
+        id={sectionId}
+        aria-label={ariaLabel}
+        tabIndex={-1}
+        title={title}
+        aria-busy={isBusy(state) || undefined}
+      >
+        {state.kind === "InitialLoading" ? (
+          <div className={styles.loading}>
+            <PaneLoadingState label={`Loading ${ariaLabel}…`} />
+          </div>
+        ) : (
+          <CollectionView
+            returnScope={returnScope}
+            rows={renderedRows}
+            status="ready"
+            ariaLabel={ariaLabel}
+            notice={stateNotice(state)}
+            rowControls={controls}
+            surface={false}
+          />
+        )}
+      </PaneSection>
+    );
   }
-  if (!rendersSection) return null;
 
   return (
-    <PaneSection
-      id={sectionId}
-      aria-label={ariaLabel}
-      tabIndex={-1}
-      title={title}
-      aria-busy={isBusy(state) || undefined}
-    >
-      {state.kind === "InitialLoading" ? (
-        <div className={styles.loading}>
-          <PaneLoadingState label={`Loading ${ariaLabel}…`} />
-        </div>
-      ) : (
-        <CollectionView
-          rows={renderedRows}
-          status="ready"
-          ariaLabel={ariaLabel}
-          notice={stateNotice(state)}
-          rowControls={controls}
-          surface={false}
-        />
-      )}
-    </PaneSection>
+    <div ref={returnReadyRootRef} style={{ display: "contents" }}>
+      {content}
+    </div>
   );
 }

@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { apiFetch } from "@/lib/api/client";
 import {
   librariesResource as librariesResourceDescriptor,
   type LibraryListResourceParams,
 } from "@/lib/api/resource";
-import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
+import type { CursorPage } from "@/lib/api/useCursorPagination";
 import { useResource } from "@/lib/api/useResource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -32,6 +38,12 @@ import {
 } from "@/lib/libraries/sharing";
 import { createLibrary } from "@/lib/libraries/client";
 import type { LibraryForEdit } from "@/components/LibraryEditDialog";
+import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
+  usePaneReturnReady,
+  usePaneVisitData,
+} from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 interface Library {
@@ -48,9 +60,30 @@ interface Library {
   can_edit_entries: boolean;
 }
 
+interface LibrariesSnapshot {
+  readonly libraries: readonly Library[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+}
+
+const LIBRARIES_VISIT_DATA =
+  definePaneVisitDataKey<LibrariesSnapshot>("Libraries.Pagination");
+
 export default function LibrariesPaneBody() {
-  const [localLibraries, setLocalLibraries] = useState<Library[] | null>(null);
+  const committedSnapshotRef = useRef<LibrariesSnapshot | null>(null);
+  const captureCommitted = useCallback(
+    () => committedSnapshotRef.current,
+    [],
+  );
+  const restored = usePaneVisitData(LIBRARIES_VISIT_DATA, captureCommitted);
+  const allowResourceAdoptionRef = useRef(restored === null);
+  const [controller, setController] = useState<LibrariesSnapshot | null>(
+    restored,
+  );
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
+  const clearAllVisitData = useClearAllPaneVisitData();
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const {
     value: newLibraryName,
@@ -63,25 +96,21 @@ export default function LibrariesPaneBody() {
     LibraryListResourceParams
   >({
     descriptor: librariesResourceDescriptor,
-    params: { refreshVersion: librariesRefreshVersion },
+    params:
+      restored !== null && librariesRefreshVersion === 0
+        ? null
+        : { refreshVersion: librariesRefreshVersion },
   });
-  const paginatedLibraries = useCursorPagination<Library>({
-    firstPage: librariesResource,
-    buildMoreHref: (cursor) =>
-      librariesResourceDescriptor.clientPath({
-        refreshVersion: librariesRefreshVersion,
-        cursor,
-      }),
-  });
-  const readyLibraries =
-    librariesResource.status === "ready" ? librariesResource.data.data : null;
-  const libraries = localLibraries ?? readyLibraries ?? [];
+  const libraries = controller?.libraries ?? [];
   const status =
-    libraries.length > 0 || paginatedLibraries.status === "ready"
+    controller !== null
       ? "ready"
-      : paginatedLibraries.status === "error"
+      : librariesResource.status === "error"
         ? "error"
         : "loading";
+  usePaneReturnReady(
+    controller !== null || librariesResource.status === "error",
+  );
 
   usePanePrimaryChrome({
     header: {
@@ -92,8 +121,13 @@ export default function LibrariesPaneBody() {
   });
 
   const refreshLibraries = useCallback(() => {
+    committedSnapshotRef.current = null;
+    clearAllVisitData();
+    allowResourceAdoptionRef.current = true;
+    setController(null);
+    setMoreError(null);
     setLibrariesRefreshVersion((version) => version + 1);
-  }, []);
+  }, [clearAllVisitData]);
 
   /* ---- Edit dialog state ---- */
   const [editLibrary, setEditLibrary] = useState<Library | null>(null);
@@ -101,41 +135,60 @@ export default function LibrariesPaneBody() {
   const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
 
   useEffect(() => {
-    if (librariesResource.status === "ready") {
-      setLocalLibraries(readyLibraries);
+    if (
+      librariesResource.status === "ready" &&
+      allowResourceAdoptionRef.current
+    ) {
+      allowResourceAdoptionRef.current = false;
+      setController({
+        libraries: librariesResource.data.data,
+        nextCursor: librariesResource.data.page.next_cursor,
+        hasMore: librariesResource.data.page.has_more,
+      });
     }
-  }, [librariesResource.status, readyLibraries]);
+  }, [librariesResource]);
 
-  const paginatedLibrarySignature = useMemo(
-    () => paginatedLibraries.items.map((library) => library.id).join("\u001f"),
-    [paginatedLibraries.items],
-  );
-
-  useEffect(() => {
-    if (paginatedLibraries.status !== "ready" || paginatedLibraries.items.length === 0) {
-      return;
-    }
-    setLocalLibraries((current) => {
-      if (current === null) {
-        return paginatedLibraries.items;
-      }
-      const currentById = new Map(current.map((library) => [library.id, library]));
-      const merged = paginatedLibraries.items.map((library) => currentById.get(library.id) ?? library);
-      for (const library of current) {
-        if (!paginatedLibraries.items.some((item) => item.id === library.id)) {
-          merged.push(library);
-        }
-      }
-      return merged;
-    });
-  }, [paginatedLibraries.status, paginatedLibrarySignature, paginatedLibraries.items]);
+  useLayoutEffect(() => {
+    committedSnapshotRef.current = controller;
+  }, [controller]);
 
   const loadError =
-    paginatedLibraries.error !== null
-      ? toFeedback(paginatedLibraries.error, {
+    controller === null && librariesResource.status === "error"
+      ? toFeedback(librariesResource.error, {
           fallback: "Failed to load libraries",
         })
-      : null;
+      : moreError;
+
+  const loadMore = useCallback(async () => {
+    const cursor = controller?.nextCursor ?? null;
+    if (cursor === null || loadingMore) return;
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const page = await apiFetch<CursorPage<Library>>(
+        librariesResourceDescriptor.clientPath({
+          refreshVersion: librariesRefreshVersion,
+          cursor,
+        }),
+      );
+      setController((current) =>
+        current === null
+          ? current
+          : {
+              libraries: [...current.libraries, ...page.data],
+              nextCursor: page.page.next_cursor,
+              hasMore: page.page.has_more,
+            },
+      );
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      setMoreError(
+        toFeedback(error, { fallback: "Failed to load more libraries" }),
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [controller?.nextCursor, librariesRefreshVersion, loadingMore]);
 
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,10 +219,17 @@ export default function LibrariesPaneBody() {
       await apiFetch(`/api/libraries/${library.id}`, {
         method: "DELETE",
       });
-      setLocalLibraries((current) =>
-        (current ?? readyLibraries ?? []).filter((item) => item.id !== library.id),
+      setController((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              libraries: current.libraries.filter(
+                (item) => item.id !== library.id,
+              ),
+            },
       );
-      refreshLibraries();
+      clearAllVisitData();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       setFeedback(
@@ -212,14 +272,21 @@ export default function LibrariesPaneBody() {
         body: JSON.stringify({ name }),
       });
       setEditLibrary((prev) => (prev ? { ...prev, name } : null));
-      setLocalLibraries((current) =>
-        (current ?? readyLibraries ?? []).map((library) =>
-          library.id === editLibrary.id ? { ...library, name } : library,
-        ),
+      setController((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              libraries: current.libraries.map((library) =>
+                library.id === editLibrary.id
+                  ? { ...library, name }
+                  : library,
+              ),
+            },
       );
-      refreshLibraries();
+      clearAllVisitData();
     },
-    [editLibrary, refreshLibraries, readyLibraries],
+    [clearAllVisitData, editLibrary],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -232,8 +299,9 @@ export default function LibrariesPaneBody() {
       setEditMembers((prev) =>
         prev.map((m) => (m.user_id === userId ? { ...m, role } : m))
       );
+      clearAllVisitData();
     },
-    [editLibrary]
+    [clearAllVisitData, editLibrary]
   );
 
   const handleRemoveMember = useCallback(
@@ -243,8 +311,9 @@ export default function LibrariesPaneBody() {
         method: "DELETE",
       });
       setEditMembers((prev) => prev.filter((m) => m.user_id !== userId));
+      clearAllVisitData();
     },
-    [editLibrary]
+    [clearAllVisitData, editLibrary]
   );
 
   const handleCreateInvite = useCallback(
@@ -265,8 +334,9 @@ export default function LibrariesPaneBody() {
         }
       );
       setEditInvites((prev) => [resp.data, ...prev]);
+      clearAllVisitData();
     },
-    [editLibrary]
+    [clearAllVisitData, editLibrary]
   );
 
   const handleSearchUsers = useCallback(
@@ -289,8 +359,9 @@ export default function LibrariesPaneBody() {
           inv.id === inviteId ? { ...inv, status: "revoked" } : inv
         )
       );
+      clearAllVisitData();
     },
-    []
+    [clearAllVisitData]
   );
 
   const handleDeleteFromDialog = useCallback(async () => {
@@ -301,11 +372,18 @@ export default function LibrariesPaneBody() {
       method: "DELETE",
     });
     closeEditDialog();
-    setLocalLibraries((current) =>
-      (current ?? readyLibraries ?? []).filter((library) => library.id !== editLibrary.id),
+    setController((current) =>
+      current === null
+        ? current
+        : {
+            ...current,
+            libraries: current.libraries.filter(
+              (library) => library.id !== editLibrary.id,
+            ),
+          },
     );
-    refreshLibraries();
-  }, [editLibrary, closeEditDialog, refreshLibraries, readyLibraries]);
+    clearAllVisitData();
+  }, [clearAllVisitData, closeEditDialog, editLibrary]);
 
   /* ---- Edit dialog library data ---- */
 
@@ -322,6 +400,7 @@ export default function LibrariesPaneBody() {
   return (
     <>
       <CollectionView
+        returnScope="Libraries.Items"
         rows={libraries.map((library) =>
           presentLibrary(library, {
             onEdit: () => void openEditDialog(library),
@@ -345,9 +424,9 @@ export default function LibrariesPaneBody() {
             <>
               {loadError ? <FeedbackNotice feedback={loadError} /> : null}
               <LoadMoreFooter
-                hasMore={paginatedLibraries.hasMore}
-                loading={paginatedLibraries.loadingMore}
-                onLoadMore={paginatedLibraries.loadMore}
+                hasMore={controller?.hasMore ?? false}
+                loading={loadingMore}
+                onLoadMore={loadMore}
                 label="Load more libraries"
               />
             </>

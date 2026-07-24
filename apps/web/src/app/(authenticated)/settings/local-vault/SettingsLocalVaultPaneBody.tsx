@@ -26,6 +26,7 @@ import PaneSurface from "@/components/ui/PaneSurface";
 import SectionOpener from "@/components/ui/SectionOpener";
 import Pill from "@/components/ui/Pill";
 import Toggle from "@/components/ui/Toggle";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 type VaultStatus = "notConnected" | "needsPermission" | "synced" | "syncing" | "conflicts" | "error";
@@ -94,6 +95,11 @@ export default function SettingsLocalVaultPaneBody() {
       };
     },
   });
+  usePaneReturnReady(
+    androidShell ||
+      initResource.status === "ready" ||
+      initResource.status === "error",
+  );
 
   useEffect(() => {
     if (initResource.status === "ready") {

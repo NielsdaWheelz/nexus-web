@@ -29,7 +29,11 @@ import {
 import { toRoman } from "@/lib/toRoman";
 import { useResource } from "@/lib/api/useResource";
 import { isRecord } from "@/lib/validation";
-import { usePaneParam, usePaneRouter } from "@/lib/panes/paneRuntime";
+import {
+  usePaneParam,
+  usePaneReturnReady,
+  usePaneRouter,
+} from "@/lib/panes/paneRuntime";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import type { OracleCreateResponse } from "../types";
 import BorderFrame from "../BorderFrame";
@@ -408,6 +412,9 @@ export default function OracleReadingPaneBody() {
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
   const [chatError, setChatError] = useState<FeedbackContent | null>(null);
+  const [committedReadingId, setCommittedReadingId] = useState<string | null>(
+    null,
+  );
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const detailResource = useResource<ReadingDetail>({
@@ -423,9 +430,13 @@ export default function OracleReadingPaneBody() {
     }
     return null;
   }, [detailResource, readingId]);
+  usePaneReturnReady(
+    committedReadingId === readingId || loadError !== null,
+  );
 
   const retryLoad = useCallback(() => {
     setLoadError(null);
+    setCommittedReadingId(null);
     setRetryNonce((current) => current + 1);
   }, []);
 
@@ -482,6 +493,7 @@ export default function OracleReadingPaneBody() {
     }
     setLoadError(null);
     setState(stateFromDetail(detailResource.data));
+    setCommittedReadingId(readingId);
   }, [detailResource, readingId]);
 
   const shouldStream =

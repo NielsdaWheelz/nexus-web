@@ -1,9 +1,14 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { horizontallyScrollableElements } from "@/__tests__/helpers/horizontalOverflow";
+import {
+  definePaneReturnGeometry,
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
 import {
   fetchCallsForPath,
   fetchInputPath,
@@ -21,7 +26,17 @@ import {
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import {
+  MAX_PANE_VISIT_DATA_BYTES,
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
 import LibraryPaneBody from "./LibraryPaneBody";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 // A pane host whose href is real state, so a pane-router replace (the library
 // view codec's write path) re-decodes the view and drives the entries endpoint
@@ -37,10 +52,12 @@ function StatefulLibraryPane({
   const [href, setHref] = useState(initialHref);
   const identity = resolvePaneRouteIdentity(href);
   return (
-    <FeedbackProvider>
-      <ResourceCacheProvider value={resources}>
-        <PaneRuntimeProvider
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ResourceCacheProvider value={resources}>
+          <PaneRuntimeProvider
           paneId="pane-1"
+          visitId={TEST_VISIT_ID}
           isActive
           href={href}
           routeId={identity.routeId}
@@ -53,13 +70,14 @@ function StatefulLibraryPane({
           onOpenInNewPane={vi.fn()}
           onGoBackPane={vi.fn()}
           onGoForwardPane={vi.fn()}
-        >
-          <LecternProvider>
-            <LibraryPaneBody />
-          </LecternProvider>
-        </PaneRuntimeProvider>
-      </ResourceCacheProvider>
-    </FeedbackProvider>
+          >
+            <LecternProvider>
+              <LibraryPaneBody />
+            </LecternProvider>
+          </PaneRuntimeProvider>
+        </ResourceCacheProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -468,6 +486,213 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`,
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  it("restores loaded entry pages and their semantic eye-line without refetching or duplication", async () => {
+    const user = userEvent.setup();
+    let primaryResourceRequests = 0;
+    let loadMoreRequests = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (
+        path ===
+        `/api/libraries/${LIBRARY_ID}/entries?cursor=cursor-2`
+      ) {
+        loadMoreRequests += 1;
+        return Response.json({
+          data: [mediaEntryWire("entry-2", "media-2", "Second Page Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (
+        path === `/api/libraries/${LIBRARY_ID}` ||
+        path === `/api/libraries/${LIBRARY_ID}/entries`
+      ) {
+        primaryResourceRequests += 1;
+        return Response.json({
+          data: [mediaEntryWire("replacement", "replacement", "Replacement Work")],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const publishCommands = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const href = `/libraries/${LIBRARY_ID}`;
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = (resourceGeneration: number) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={
+          resourceGeneration === 0
+            ? {
+                [LIBRARY_ID]: {
+                  library: seededLibrary(),
+                  entries: [
+                    seededMediaEntry("entry-1", "media-1", "First Page Work"),
+                  ],
+                  entriesPage: {
+                    has_more: true,
+                    next_cursor: "cursor-2",
+                  },
+                },
+              }
+            : {}
+        }
+        resourceGeneration={resourceGeneration}
+        publishCommands={publishCommands}
+      >
+        {paneWithLectern}
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey(0));
+
+    expect(await screen.findByText("First Page Work")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more entries" }));
+    expect(await screen.findByText("Second Page Work")).toBeInTheDocument();
+    await waitFor(() => expect(commands).not.toBeNull());
+    const sourceScrollport = screen.getByTestId("return-journey-scrollport");
+    definePaneReturnGeometry(sourceScrollport, {
+      "entry-1": 0,
+      "entry-2": 120,
+    });
+    act(() => {
+      sourceScrollport.scrollTop = 100;
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(1));
+
+    const restoredScrollport = screen.getByTestId("return-journey-scrollport");
+    definePaneReturnGeometry(restoredScrollport, {
+      "entry-1": 0,
+      "entry-2": 120,
+    });
+    expect(screen.getByText("First Page Work")).toBeInTheDocument();
+    expect(screen.getByText("Second Page Work")).toBeInTheDocument();
+    await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
+    const restoredSecondTitle = screen.getByText("Second Page Work");
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: the scoped semantic-anchor attributes are the observable restoration contract under test.
+    const restoredSecondRow = restoredSecondTitle.closest<HTMLElement>(
+      "[data-collection-row-id]",
+    );
+    expect(restoredSecondRow).toHaveAttribute(
+      "data-collection-row-id",
+      "entry-2",
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: row ids are collision-safe only together with their nearest published scope.
+    expect(restoredSecondRow?.closest("[data-pane-return-scope]")).toHaveAttribute(
+      "data-pane-return-scope",
+      "Library.Entries",
+    );
+    expect(restoredSecondRow?.getBoundingClientRect().top).toBe(20);
+    expect(loadMoreRequests).toBe(1);
+    expect(primaryResourceRequests).toBe(0);
+    expect(screen.queryByText("Replacement Work")).not.toBeInTheDocument();
+    expect(screen.getAllByText("First Page Work")).toHaveLength(1);
+    expect(screen.getAllByText("Second Page Work")).toHaveLength(1);
+  });
+
+  it("refetches after an over-budget snapshot while preserving the final raw return clamp", async () => {
+    const oversizedBase = seededMediaEntry(
+      "entry-oversized",
+      "media-oversized",
+      "Oversized Work",
+    );
+    const oversizedEntry = {
+      ...oversizedBase,
+      media: {
+        ...oversizedBase.media,
+        canonical_source_url: "x".repeat(MAX_PANE_VISIT_DATA_BYTES + 1),
+      },
+    };
+    let libraryRequests = 0;
+    let entriesRequests = 0;
+    stubFetch(async (input) => {
+      const lectern = lecternGetResponse(input);
+      if (lectern) return lectern;
+      const path = fetchInputPathWithSearch(input);
+      if (path === `/api/libraries/${LIBRARY_ID}`) {
+        libraryRequests += 1;
+        return Response.json({ data: seededLibrary() });
+      }
+      if (path === `/api/libraries/${LIBRARY_ID}/entries`) {
+        entriesRequests += 1;
+        return Response.json({
+          data: [
+            mediaEntryWire(
+              "entry-replacement",
+              "media-replacement",
+              "Replacement Work",
+            ),
+          ],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+
+    let commands: PaneReturnMementoCommands | null = null;
+    const publishCommands = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    const href = `/libraries/${LIBRARY_ID}`;
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = (resourceGeneration: number) => (
+      <PaneReturnJourneyHarness
+        href={href}
+        resources={
+          resourceGeneration === 0
+            ? {
+                [LIBRARY_ID]: {
+                  library: seededLibrary(),
+                  entries: [oversizedEntry],
+                  entriesPage: { has_more: false, next_cursor: null },
+                },
+              }
+            : {}
+        }
+        resourceGeneration={resourceGeneration}
+        publishCommands={publishCommands}
+      >
+        {paneWithLectern}
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey(0));
+
+    expect(await screen.findByText("Oversized Work")).toBeInTheDocument();
+    await waitFor(() => expect(commands).not.toBeNull());
+    const sourceScrollport = screen.getByTestId("return-journey-scrollport");
+    definePaneReturnGeometry(sourceScrollport, { "entry-oversized": 120 });
+    act(() => {
+      sourceScrollport.scrollTop = 100;
+      commands?.capturePane({
+        paneId: "pane-return-journey",
+        visitId: RETURN_JOURNEY_VISIT_ID,
+        routeKey,
+        modality: "Programmatic",
+      });
+    });
+
+    view.rerender(journey(1));
+
+    const restoredScrollport = screen.getByTestId("return-journey-scrollport");
+    definePaneReturnGeometry(restoredScrollport, {});
+    expect(await screen.findByText("Replacement Work")).toBeInTheDocument();
+    await waitFor(() => expect(restoredScrollport.scrollTop).toBe(100));
+    expect(libraryRequests).toBe(1);
+    expect(entriesRequests).toBe(1);
+    expect(screen.queryByText("Oversized Work")).not.toBeInTheDocument();
   });
 
   it("loads another page of a factually sorted view with the view query", async () => {
@@ -1163,12 +1388,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await waitFor(() =>
       expect(screen.queryByText("First Work")).not.toBeInTheDocument(),
     );
-    await waitFor(() => {
-      const secondRow = screen
-        .getByText("Second Work")
-        .closest("[data-collection-row-id]");
-      expect(secondRow?.contains(document.activeElement)).toBe(true);
-    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Second Work" }),
+      ).toHaveFocus(),
+    );
   });
 
   // Regression: under Hide finished, marking the only visible row(s) on a page

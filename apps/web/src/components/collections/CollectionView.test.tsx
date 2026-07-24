@@ -1,5 +1,10 @@
-import { useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState, type ReactElement, type ReactNode } from "react";
+import {
+  fireEvent,
+  render as testingRender,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { absent, present } from "@/lib/api/presence";
@@ -7,7 +12,30 @@ import { decodePublicationDate } from "@/lib/dates/publicationDate";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
+import {
+  PaneReturnMementoProvider,
+  PaneReturnVisitScope,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import CollectionView from "./CollectionView";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000011",
+);
+
+function PaneReturnTestHarness({ children }: { children: ReactNode }) {
+  return (
+    <PaneReturnMementoProvider>
+      <PaneReturnVisitScope visitId={TEST_VISIT_ID} routeKey="/test">
+        {children}
+      </PaneReturnVisitScope>
+    </PaneReturnMementoProvider>
+  );
+}
+
+function render(ui: ReactElement) {
+  return testingRender(ui, { wrapper: PaneReturnTestHarness });
+}
 
 function row(id: string, title: string): CollectionRowView {
   return {
@@ -60,6 +88,7 @@ const connectedPeer: ConnectionEndpointOut = {
 function renderView(props: Partial<Parameters<typeof CollectionView>[0]> = {}) {
   return render(
     <CollectionView
+      returnScope="Test.Documents"
       rows={ROWS}
       status="ready"
       ariaLabel="Documents"
@@ -201,6 +230,7 @@ describe("canonical CollectionView", () => {
       const [rows, setRows] = useState(ROWS);
       return (
         <CollectionView
+          returnScope="Test.Documents"
           rows={rows}
           status="ready"
           ariaLabel="Documents"
@@ -402,6 +432,7 @@ describe("canonical CollectionView", () => {
       const [rows, setRows] = useState(ROWS);
       return (
         <CollectionView
+          returnScope="Test.Documents"
           rows={rows}
           status="ready"
           ariaLabel="Documents"
@@ -524,6 +555,7 @@ describe("canonical CollectionView", () => {
 
     view.rerender(
       <CollectionView
+        returnScope="Test.Documents"
         rows={[]}
         status="error"
         ariaLabel="Documents"
@@ -535,6 +567,7 @@ describe("canonical CollectionView", () => {
 
     view.rerender(
       <CollectionView
+        returnScope="Test.Documents"
         rows={[]}
         status="ready"
         ariaLabel="Documents"

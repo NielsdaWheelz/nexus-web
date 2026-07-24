@@ -68,11 +68,8 @@ function workspaceSessionRestoreDeviceId(testInfo: TestInfo): string {
 
 async function fetchWorkspaceSession(
   request: APIRequestContext,
-  deviceId: string
 ): Promise<WorkspaceSessionResponse["data"]> {
-  const response = await request.get(
-    `${WORKSPACE_SESSION_PATH}?device_id=${encodeURIComponent(deviceId)}`
-  );
+  const response = await request.get(WORKSPACE_SESSION_PATH);
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as WorkspaceSessionResponse;
   return payload.data;
@@ -123,7 +120,7 @@ test.describe("workspace session restore", () => {
   test("cold open silently restores a saved session", async ({ page }, testInfo) => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
-    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
+    await seedWorkspaceSession(page.request, twoPaneSession());
 
     try {
       // Cold open the active pane's own route; siblings hydrate from the session.
@@ -142,7 +139,7 @@ test.describe("workspace session restore", () => {
       // pane's path, with no encoded-state query param.
       await expect(page).toHaveURL(/\/libraries$/);
     } finally {
-      await seedWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, trivialSession());
     }
   });
 
@@ -151,7 +148,7 @@ test.describe("workspace session restore", () => {
     await pinDeviceId(page, deviceId);
     // Start from a trivial session so the cold open arms capture without
     // restoring anything.
-    await seedWorkspaceSession(page.request, deviceId, trivialSession());
+    await seedWorkspaceSession(page.request, trivialSession());
 
     try {
       await page.goto("/libraries");
@@ -184,13 +181,13 @@ test.describe("workspace session restore", () => {
       await expect
         .poll(
           async () =>
-            (await fetchWorkspaceSession(page.request, deviceId)).own?.state
+            (await fetchWorkspaceSession(page.request)).own?.state
               .primaryPaneOrder.length ?? 0,
           { timeout: 15_000 }
         )
         .toBeGreaterThan(1);
     } finally {
-      await seedWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, trivialSession());
     }
   });
 
@@ -201,7 +198,7 @@ test.describe("workspace session restore", () => {
     await pinDeviceId(page, deviceId);
     // Seed a two-pane session (Libraries + Notes) that does NOT contain the
     // conversation we are about to deep-link to.
-    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
+    await seedWorkspaceSession(page.request, twoPaneSession());
 
     try {
       const conversationId = await createConversation(page);
@@ -228,7 +225,7 @@ test.describe("workspace session restore", () => {
         new RegExp(`/conversations/${conversationId}$`)
       );
     } finally {
-      await seedWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, trivialSession());
     }
   });
 
@@ -238,7 +235,7 @@ test.describe("workspace session restore", () => {
     const deviceId = workspaceSessionRestoreDeviceId(testInfo);
     await pinDeviceId(page, deviceId);
     // Seed a two-pane session whose first pane is the active one (Libraries).
-    await seedWorkspaceSession(page.request, deviceId, twoPaneSession());
+    await seedWorkspaceSession(page.request, twoPaneSession());
 
     try {
       // Deep-link to /notes, which IS already a pane in the saved session.
@@ -265,7 +262,7 @@ test.describe("workspace session restore", () => {
       );
       await expect(page).toHaveURL(/\/notes$/);
     } finally {
-      await seedWorkspaceSession(page.request, deviceId, trivialSession());
+      await seedWorkspaceSession(page.request, trivialSession());
     }
   });
 });

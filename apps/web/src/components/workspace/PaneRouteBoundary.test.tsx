@@ -3,9 +3,18 @@ import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActionMenu from "@/components/ui/ActionMenu";
 import { ResourceCache, ResourceCacheContext } from "@/lib/api/resourceCache";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import {
+  PaneRuntimeProvider,
+  type PaneNavigationCommandOptions,
+} from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import type { PaneNavigationModality } from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import PaneRouteBoundary from "./PaneRouteBoundary";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 // preloadPane dynamically imports the real pane body (ProseMirror, the reader stack, …);
 // stub that chunk-warm side effect — the same documented heavy-chunk exception
@@ -17,13 +26,14 @@ vi.mock("@/lib/panes/paneRenderRegistry", () => ({ preloadPane }));
 type NavigatePane = (
   paneId: string,
   href: string,
-  options?: { labelHint?: string },
+  options: PaneNavigationCommandOptions,
 ) => void;
 
 type OpenInNewPane = (
   href: string,
   labelHint?: string,
   secondaryActivation?: WorkspaceSecondaryActivation,
+  modality?: PaneNavigationModality,
 ) => void;
 
 function renderBoundary(input: {
@@ -34,6 +44,7 @@ function renderBoundary(input: {
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive={true}
       href="/settings"
       routeId="settings"
@@ -77,6 +88,7 @@ function renderIntentBoundary(input: {
     <ResourceCacheContext.Provider value={cache}>
       <PaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href="/settings"
         routeId="settings"
@@ -177,7 +189,7 @@ describe("PaneRouteBoundary", () => {
     expect(navigatePane).toHaveBeenCalledWith(
       "pane-1",
       "/settings/reader",
-      { labelHint: "Reader settings" },
+      { labelHint: "Reader settings", modality: "Pointer" },
     );
   });
 
@@ -196,6 +208,7 @@ describe("PaneRouteBoundary", () => {
       "/settings/reader",
       "Reader settings",
       undefined,
+      "Keyboard",
     );
     expect(navigatePane).not.toHaveBeenCalled();
   });

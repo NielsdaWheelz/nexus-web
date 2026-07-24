@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
@@ -76,9 +85,13 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import {
+  definePaneVisitDataKey,
+  useClearAllPaneVisitData,
   usePaneParam,
+  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
+  usePaneVisitData,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
@@ -248,6 +261,16 @@ interface LibraryPaneResource {
   entriesPage: LibraryPageInfo;
 }
 
+interface LibrarySnapshot {
+  readonly library: Library;
+  readonly entries: readonly LibraryEntry[];
+  readonly nextCursor: string | null;
+}
+
+const LIBRARY_VISIT_DATA =
+  definePaneVisitDataKey<LibrarySnapshot>("Library.Entries");
+const EMPTY_LIBRARY_ENTRIES: LibraryEntry[] = [];
+
 // The default library's read surface is a deduplicated virtual set: the server
 // can hand back a different representative entry id for the same underlying
 // media across paginated fetches, so Default rows/merges key by `media.id`.
@@ -369,9 +392,64 @@ export default function LibraryPaneBody() {
     [setDecodedView],
   );
 
-  const [library, setLibrary] = useState<Library | null>(null);
-  const [entries, setEntries] = useState<LibraryEntry[]>([]);
-  const [entryCursor, setEntryCursor] = useState<string | null>(null);
+  const committedSnapshotRef = useRef<LibrarySnapshot | null>(null);
+  const captureCommitted = useCallback(
+    () => committedSnapshotRef.current,
+    [],
+  );
+  const restored = usePaneVisitData(LIBRARY_VISIT_DATA, captureCommitted);
+  const [controller, setController] =
+    useState<LibrarySnapshot | null>(restored);
+  const clearAllVisitData = useClearAllPaneVisitData();
+  const allowInitialAdoptionRef = useRef(restored === null);
+  const library = controller?.library ?? null;
+  const entries = useMemo(
+    () =>
+      controller === null
+        ? EMPTY_LIBRARY_ENTRIES
+        : [...controller.entries],
+    [controller],
+  );
+  const entryCursor = controller?.nextCursor ?? null;
+  const setLibrary: Dispatch<SetStateAction<Library | null>> = useCallback(
+    (update) => {
+      setController((current) => {
+        const library =
+          typeof update === "function"
+            ? update(current?.library ?? null)
+            : update;
+        return library === null
+          ? null
+          : current === null
+            ? { library, entries: [], nextCursor: null }
+            : { ...current, library };
+      });
+    },
+    [],
+  );
+  const setEntries: Dispatch<SetStateAction<LibraryEntry[]>> = useCallback(
+    (update) => {
+      setController((current) => {
+        if (current === null) return current;
+        const previous = [...current.entries];
+        const entries =
+          typeof update === "function" ? update(previous) : update;
+        return { ...current, entries };
+      });
+    },
+    [],
+  );
+  const setEntryCursor: Dispatch<SetStateAction<string | null>> = useCallback(
+    (update) => {
+      setController((current) => {
+        if (current === null) return current;
+        const nextCursor =
+          typeof update === "function" ? update(current.nextCursor) : update;
+        return { ...current, nextCursor };
+      });
+    },
+    [],
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<FeedbackContent | null>(
     null,
@@ -433,11 +511,11 @@ export default function LibraryPaneBody() {
         ),
       );
     },
-    [],
+    [setEntries],
   );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
-    params: { id },
+    params: restored === null ? { id } : null,
     load: (params, signal) =>
       paneResourceLoaders.library!.load(
         clientResourceFetcher(signal),
@@ -456,7 +534,9 @@ export default function LibraryPaneBody() {
   // Default's "Add content" capability).
   const canReorder = canEditEntries && !isDefaultLibrary;
   const loading =
-    libraryResource.status === "loading" && currentLibrary === null;
+    currentLibrary === null &&
+    error === null &&
+    libraryResource.status === "loading";
   useSetPaneLabel(currentLibrary?.name ?? (loading ? null : "Library"));
   const connectionSummaries = useConnectionSummaries(
     entries.map((entry) =>
@@ -469,7 +549,7 @@ export default function LibraryPaneBody() {
   // The single non-initial first-page seam: a canonical/all view seeds from the
   // bootstrap resource, any other view fetches page 1 from the entries endpoint.
   const viewFirstPageParams: LibraryEntriesResourceParams | null =
-    view !== null && !isInitialView ? { id, view } : null;
+    restored === null && view !== null && !isInitialView ? { id, view } : null;
   const viewFirstPagePath = viewFirstPageParams
     ? libraryEntriesResource.clientPath(viewFirstPageParams)
     : null;
@@ -522,6 +602,9 @@ export default function LibraryPaneBody() {
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   const requestEntryReconciliation = useCallback(
     (requestedView: LibraryEntryView) => {
+      cancelEntryLoadMore();
+      committedSnapshotRef.current = null;
+      clearAllVisitData();
       const serial = entryReconciliationSerialRef.current + 1;
       entryReconciliationSerialRef.current = serial;
       setEntryReconciliationRequest({
@@ -530,7 +613,7 @@ export default function LibraryPaneBody() {
         serial,
       });
     },
-    [id],
+    [cancelEntryLoadMore, clearAllVisitData, id],
   );
   const entryReconciliationParams: LibraryEntriesResourceParams | null =
     entryReconciliationRequest
@@ -589,6 +672,8 @@ export default function LibraryPaneBody() {
     entryReconciliationFetch.data,
     entryReconciliationRequest,
     id,
+    setEntries,
+    setEntryCursor,
   ]);
 
   useEffect(() => {
@@ -612,7 +697,21 @@ export default function LibraryPaneBody() {
   // view effect below, not here, so appended pages survive resource re-reads.
   useEffect(() => {
     if (libraryResource.status === "ready") {
-      setLibrary(libraryResource.data.library);
+      if (!allowInitialAdoptionRef.current) return;
+      allowInitialAdoptionRef.current = false;
+      setController(
+        isInitialView
+          ? {
+              library: libraryResource.data.library,
+              entries: libraryResource.data.entries,
+              nextCursor: libraryResource.data.entriesPage.next_cursor,
+            }
+          : {
+              library: libraryResource.data.library,
+              entries: [],
+              nextCursor: null,
+            },
+      );
       setError(null);
       return;
     }
@@ -636,13 +735,22 @@ export default function LibraryPaneBody() {
       setEntryCursor(null);
       setLoadMoreError(null);
     }
-  }, [cancelEntryLoadMore, id, libraryResource, router]);
+  }, [
+    cancelEntryLoadMore,
+    id,
+    isInitialView,
+    libraryResource,
+    router,
+    setEntries,
+    setEntryCursor,
+    setLibrary,
+  ]);
 
   // The single controller keyed by the view: reset on any view change, then seed
   // page 1 from the bootstrap resource (canonical/all) or clear until the view
   // fetch delivers page 1 (factual order or unfinished filter).
   useEffect(() => {
-    if (view === null) return;
+    if (view === null || restored !== null) return;
     cancelEntryLoadMore();
     clearRemovedEntryIds();
     setLoadMoreError(null);
@@ -673,11 +781,14 @@ export default function LibraryPaneBody() {
     id,
     cancelEntryLoadMore,
     clearRemovedEntryIds,
+    restored,
+    setEntries,
+    setEntryCursor,
   ]);
 
   // Apply the non-initial view's first page once it lands.
   useEffect(() => {
-    if (isInitialView || viewFetch.data === null) return;
+    if (restored !== null || isInitialView || viewFetch.data === null) return;
     cancelEntryLoadMore();
     clearRemovedEntryIds();
     setEntries(viewFetch.data.data);
@@ -690,6 +801,9 @@ export default function LibraryPaneBody() {
     viewFetch.data,
     cancelEntryLoadMore,
     clearRemovedEntryIds,
+    restored,
+    setEntries,
+    setEntryCursor,
   ]);
 
   // A rejected (invalid) view fetch is terminal until the view changes.
@@ -698,6 +812,20 @@ export default function LibraryPaneBody() {
       setViewInvalid(true);
     }
   }, [isInitialView, viewFetch.error]);
+
+  useLayoutEffect(() => {
+    committedSnapshotRef.current =
+      entryReconciliationRequest === null ? controller : null;
+  }, [controller, entryReconciliationRequest]);
+
+  usePaneReturnReady(
+    (controller !== null &&
+      (restored !== null || isInitialView || viewFetch.data !== null)) ||
+      view === null ||
+      viewInvalid ||
+      viewFetch.error !== null ||
+      error !== null,
+  );
 
   const closeLibraryPanel = useCallback(() => {
     libraryPanelRequestIdRef.current += 1;
@@ -770,6 +898,7 @@ export default function LibraryPaneBody() {
             patchLibraryMembership(current, libraryId, true),
           );
         }
+        clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         setLibraryPanelError(
@@ -779,7 +908,7 @@ export default function LibraryPaneBody() {
         setLibraryPanelBusy(false);
       }
     },
-    [libraryPanelBusy, libraryPanelEntry],
+    [clearAllVisitData, libraryPanelBusy, libraryPanelEntry],
   );
 
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
@@ -810,7 +939,12 @@ export default function LibraryPaneBody() {
               if (!observing) return;
               observing = false;
               options.signal.removeEventListener("abort", abandon);
-              libraryEntriesStaleRef.current = true;
+              if (isPaneActive && view !== null) {
+                requestEntryReconciliation(view);
+              } else {
+                libraryEntriesStaleRef.current = true;
+                clearAllVisitData();
+              }
               feedback.show({
                 severity: "success",
                 title: `Added to ${currentLibrary?.name ?? "library"}`,
@@ -849,7 +983,15 @@ export default function LibraryPaneBody() {
         runAttempt();
       });
     },
-    [currentLibrary?.name, feedback, id],
+    [
+      clearAllVisitData,
+      currentLibrary?.name,
+      feedback,
+      id,
+      isPaneActive,
+      requestEntryReconciliation,
+      view,
+    ],
   );
 
   const handleRemoveFromLibrary = useCallback(
@@ -901,6 +1043,7 @@ export default function LibraryPaneBody() {
             libraryId,
           });
         }
+        clearAllVisitData();
 
         if (removingCurrentEntry) {
           return;
@@ -927,11 +1070,13 @@ export default function LibraryPaneBody() {
     },
     [
       closeLibraryPanel,
+      clearAllVisitData,
       entries,
       id,
       libraryPanelBusy,
       libraryPanelEntry,
       removedEntryIds,
+      setEntries,
     ],
   );
 
@@ -960,6 +1105,7 @@ export default function LibraryPaneBody() {
           },
         }));
         feedback.show(projection.feedback);
+        clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -969,7 +1115,7 @@ export default function LibraryPaneBody() {
         args.busySet.remove(args.mediaId);
       }
     },
-    [feedback, patchMediaInViews],
+    [clearAllVisitData, feedback, patchMediaInViews],
   );
 
   const handleRetryProcessing = useCallback(
@@ -1023,6 +1169,7 @@ export default function LibraryPaneBody() {
             title: "Deleting from your library",
           });
         }
+        clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -1032,7 +1179,7 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [feedback],
+    [clearAllVisitData, feedback, setEntries],
   );
 
   const handleSetConsumption = useCallback(
@@ -1062,6 +1209,7 @@ export default function LibraryPaneBody() {
         } else {
           await lectern.setUnread(parseMediaId(mediaId));
         }
+        clearAllVisitData();
       } catch (err) {
         if (
           consumptionOperationTokensRef.current.get(mediaId) !== operationToken
@@ -1090,7 +1238,14 @@ export default function LibraryPaneBody() {
         }
       }
     },
-    [entries, feedback, lectern, patchMediaInViews],
+    [
+      clearAllVisitData,
+      entries,
+      feedback,
+      lectern,
+      patchMediaInViews,
+      setEntries,
+    ],
   );
 
   const handleAddToLectern = useCallback(
@@ -1101,6 +1256,7 @@ export default function LibraryPaneBody() {
           placement: { kind: "Last" },
         });
         feedback.show({ severity: "success", title: "Added to Lectern" });
+        clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
@@ -1108,7 +1264,7 @@ export default function LibraryPaneBody() {
         });
       }
     },
-    [feedback, lectern],
+    [clearAllVisitData, feedback, lectern],
   );
 
   const handleDeleteLibrary = async () => {
@@ -1123,6 +1279,8 @@ export default function LibraryPaneBody() {
       await apiFetch(`/api/libraries/${currentLibrary.id}`, {
         method: "DELETE",
       });
+      committedSnapshotRef.current = null;
+      clearAllVisitData();
       router.push("/libraries");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
@@ -1171,8 +1329,9 @@ export default function LibraryPaneBody() {
         body: JSON.stringify({ name }),
       });
       setLibrary({ ...currentLibrary, name });
+      clearAllVisitData();
     },
-    [currentLibrary],
+    [clearAllVisitData, currentLibrary, setLibrary],
   );
 
   const handleUpdateMemberRole = useCallback(
@@ -1187,8 +1346,9 @@ export default function LibraryPaneBody() {
           member.user_id === userId ? { ...member, role } : member,
         ),
       );
+      clearAllVisitData();
     },
-    [currentLibrary],
+    [clearAllVisitData, currentLibrary],
   );
 
   const handleRemoveMember = useCallback(
@@ -1200,8 +1360,9 @@ export default function LibraryPaneBody() {
       setEditMembers((prev) =>
         prev.filter((member) => member.user_id !== userId),
       );
+      clearAllVisitData();
     },
-    [currentLibrary],
+    [clearAllVisitData, currentLibrary],
   );
 
   const handleCreateInvite = useCallback(
@@ -1220,8 +1381,9 @@ export default function LibraryPaneBody() {
         },
       );
       setEditInvites((prev) => [response.data, ...prev]);
+      clearAllVisitData();
     },
-    [currentLibrary],
+    [clearAllVisitData, currentLibrary],
   );
 
   const handleSearchUsers = useCallback(
@@ -1243,7 +1405,8 @@ export default function LibraryPaneBody() {
         invite.id === inviteId ? { ...invite, status: "revoked" } : invite,
       ),
     );
-  }, []);
+    clearAllVisitData();
+  }, [clearAllVisitData]);
 
   const handleDeleteFromDialog = useCallback(async () => {
     if (!currentLibrary) return;
@@ -1253,14 +1416,17 @@ export default function LibraryPaneBody() {
     await apiFetch(`/api/libraries/${currentLibrary.id}`, {
       method: "DELETE",
     });
+    committedSnapshotRef.current = null;
+    clearAllVisitData();
     closeEditDialog();
     router.push("/libraries");
-  }, [currentLibrary, closeEditDialog, router]);
+  }, [clearAllVisitData, currentLibrary, closeEditDialog, router]);
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
       try {
         const conversationId = await startResourceContextChat(`media:${media.id}`);
+        clearAllVisitData();
         openInNewPane?.(`/conversations/${conversationId}`, media.title);
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
@@ -1271,11 +1437,16 @@ export default function LibraryPaneBody() {
         );
       }
     },
-    [openInNewPane],
+    [clearAllVisitData, openInNewPane],
   );
 
   const handleLoadMoreEntries = useCallback(() => {
-    if (entryCursor === null || loadingMore || view === null) {
+    if (
+      entryCursor === null ||
+      loadingMore ||
+      view === null ||
+      entryReconciliationRequest !== null
+    ) {
       return;
     }
     entryLoadMoreAbortRef.current?.abort();
@@ -1330,7 +1501,16 @@ export default function LibraryPaneBody() {
         }
         setLoadingMore(false);
       });
-  }, [entryCursor, id, isDefaultLibrary, loadingMore, view]);
+  }, [
+    entryCursor,
+    entryReconciliationRequest,
+    id,
+    isDefaultLibrary,
+    loadingMore,
+    setEntries,
+    setEntryCursor,
+    view,
+  ]);
 
   const handleReorderEntries = (nextEntries: LibraryEntry[]) => {
     if (!canReorder || entryCursor !== null) {
@@ -1344,6 +1524,7 @@ export default function LibraryPaneBody() {
       method: "PATCH",
       body: JSON.stringify({ entry_ids: nextEntries.map((entry) => entry.id) }),
     })
+      .then(clearAllVisitData)
       .catch((err: unknown) => {
         setEntries(previousEntries);
         if (handleUnauthenticatedApiError(err)) return;
@@ -1550,7 +1731,9 @@ export default function LibraryPaneBody() {
     <>
       {loadMoreError ? <FeedbackNotice {...loadMoreError} /> : null}
       <LoadMoreFooter
-        hasMore={entryCursor !== null}
+        hasMore={
+          entryReconciliationRequest === null && entryCursor !== null
+        }
         loading={loadingMore}
         onLoadMore={handleLoadMoreEntries}
         label="Load more entries"
@@ -1726,6 +1909,7 @@ export default function LibraryPaneBody() {
     </FeedbackNotice>
   ) : visibleEntries.length > 0 ? (
     <CollectionView
+      returnScope="Library.Entries"
       rows={visibleEntryRows}
       status="ready"
       ariaLabel="Library entries"
@@ -1814,6 +1998,7 @@ export default function LibraryPaneBody() {
       >
         <div ref={listRegionRef}>{mainBody}</div>
         <ReadingSlateSection
+          returnScope="Library.ReadingSlate"
           destination={{
             kind: "Library",
             id: currentLibrary.id,

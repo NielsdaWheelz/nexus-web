@@ -16,7 +16,13 @@ import type {
   ActionDescriptor,
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
@@ -36,11 +42,9 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
   }),
 }));
 
-const disabledNavigation = {
-  canGoBack: false,
-  canGoForward: false,
-  onBack: vi.fn(),
-  onForward: vi.fn(),
+const runtimeNavigation = {
+  back: vi.fn(),
+  forward: vi.fn(),
 };
 
 const sectionHeader = {
@@ -85,7 +89,7 @@ const defaultPaneProps = {
   routeHeader: sectionHeader,
   href: "/libraries",
   label: "Libraries",
-  navigation: disabledNavigation,
+  returnMementoEnabled: false,
   sizing: paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 }),
   bodyMode: "standard",
   onResizePrimaryPane: vi.fn(),
@@ -101,22 +105,25 @@ function RuntimeRoute({
   readonly paneId?: string;
 }) {
   return (
-    <PaneRuntimeProvider
-      paneId={paneId}
-      isActive
-      href="/media/media-1"
-      routeId="media"
-      routeKey={routeKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      onNavigatePane={vi.fn()}
-      onReplacePane={vi.fn()}
-      onOpenInNewPane={vi.fn()}
-    >
-      {children}
-    </PaneRuntimeProvider>
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider
+        paneId={paneId}
+        visitId={TEST_VISIT_ID}
+        isActive
+        href="/media/media-1"
+        routeId="media"
+        routeKey={routeKey}
+        canGoBack
+        canGoForward
+        onGoBackPane={runtimeNavigation.back}
+        onGoForwardPane={runtimeNavigation.forward}
+        onNavigatePane={vi.fn()}
+        onReplacePane={vi.fn()}
+        onOpenInNewPane={vi.fn()}
+      >
+        {children}
+      </PaneRuntimeProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -187,6 +194,66 @@ beforeEach(() => {
 });
 
 describe("PaneShell", () => {
+  it("fills the pane with one native-touch scroll owner while the bounded secondary pane still scrolls", () => {
+    render(
+      <div style={{ height: 640 }}>
+        {paneTree({
+          returnMementoEnabled: true,
+          secondaryPane: {
+            id: "secondary-a",
+            parentPrimaryPaneId: "pane-a",
+            groupId: "resource-inspector",
+            activeSurfaceId: "resource-contents",
+            widthPx: 360,
+            visibility: "visible",
+          },
+          secondarySizing: {
+            widthPx: 360,
+            minWidthPx: 280,
+            maxWidthPx: 720,
+            storedWidthCorrectionPx: null,
+          },
+          secondaryPublication: {
+            groupId: "resource-inspector",
+            defaultSurfaceId: "resource-contents",
+            surfaces: [
+              {
+                id: "resource-contents",
+                body: <div>Long secondary content</div>,
+              },
+            ],
+          },
+          children: <div>Page or Note editor</div>,
+        })}
+      </div>,
+    );
+
+    const shell = screen.getByTestId("pane-shell-root");
+    const primaryScrollport = screen.getByTestId("pane-shell-body");
+    const primaryStyle = getComputedStyle(primaryScrollport);
+    expect(primaryStyle.display).toBe("flex");
+    expect(primaryStyle.flexDirection).toBe("column");
+    expect(primaryStyle.minHeight).toBe("0px");
+    expect(primaryStyle.overflowY).toBe("auto");
+    expect(primaryStyle.overflowX).toBe("hidden");
+    expect(primaryStyle.touchAction).toBe("auto");
+    expect(primaryScrollport.getBoundingClientRect().height).toBeGreaterThan(0);
+    expect(primaryScrollport.getBoundingClientRect().bottom).toBeCloseTo(
+      shell.getBoundingClientRect().bottom,
+      0,
+    );
+
+    const secondaryScrollport = screen.getByRole("tabpanel", {
+      name: "Contents",
+    });
+    const secondaryStyle = getComputedStyle(secondaryScrollport);
+    expect(secondaryStyle.minHeight).toBe("0px");
+    expect(secondaryStyle.overflowY).toBe("auto");
+    expect(secondaryScrollport.getBoundingClientRect().height).toBeGreaterThan(
+      0,
+    );
+  });
+
   it("names section landmarks from the route contract, independent of bodyMode", () => {
     render(
       paneTree({
@@ -750,15 +817,8 @@ describe("PaneShell", () => {
 
   it("keeps resize and pane navigation behavior with typed header identity", () => {
     const onResizePrimaryPane = vi.fn();
-    const navigation = {
-      canGoBack: true,
-      canGoForward: true,
-      onBack: vi.fn(),
-      onForward: vi.fn(),
-    };
     render(
       paneTree({
-        navigation,
         onResizePrimaryPane,
         sizing: paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 }),
       }),
@@ -771,6 +831,7 @@ describe("PaneShell", () => {
     fireEvent.keyDown(handle, { key: "Home" });
     fireEvent.click(
       screen.getByRole("button", { name: "Go back in this pane" }),
+      { detail: 1 },
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Go forward in this pane" }),
@@ -778,7 +839,10 @@ describe("PaneShell", () => {
 
     expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 576);
     expect(onResizePrimaryPane).toHaveBeenCalledWith("pane-a", 320);
-    expect(navigation.onBack).toHaveBeenCalledTimes(1);
-    expect(navigation.onForward).toHaveBeenCalledTimes(1);
+    expect(runtimeNavigation.back).toHaveBeenCalledWith("pane-a", "Pointer");
+    expect(runtimeNavigation.forward).toHaveBeenCalledWith(
+      "pane-a",
+      "Keyboard",
+    );
   });
 });

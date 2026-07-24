@@ -28,6 +28,7 @@ import { formatDisplayDate } from "@/lib/display/format";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const LOAD_FAILED_MESSAGE = "Failed to load identities";
@@ -72,6 +73,10 @@ export default function SettingsIdentitiesPaneBody() {
     null
   );
   const loading = initialIdentities.status === "loading";
+  usePaneReturnReady(
+    initialIdentities.status === "ready" ||
+      initialIdentities.status === "error",
+  );
 
   // Imperative refresh after mutations (unlink, password change). The initial
   // load is owned by useResource above; this re-reads the server action.
@@ -152,6 +157,7 @@ export default function SettingsIdentitiesPaneBody() {
 
         {!loading && identities.length > 0 && (
           <CollectionView
+            returnScope="Settings.Identities.Linked"
             rows={identities.map((identity) => {
               const canUnlink = mayUnlinkIdentity(identities, identity.id);
               const pendingUnlink = unlinkingIdentityId === identity.id;

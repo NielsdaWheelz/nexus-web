@@ -2,6 +2,10 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
 import SearchPaneBody from "./SearchPaneBody";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -10,6 +14,17 @@ import {
   consumeSearchInputFocus,
   requestSearchInputFocus,
 } from "@/lib/search/pendingSearchFocus";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import {
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
+const SEARCH_HREF = "/search?q=return";
+const SEARCH_ROUTE_KEY = resolvePaneRouteIdentity(SEARCH_HREF).routeKey;
 
 function pathOf(input: RequestInfo | URL): string {
   if (input instanceof Request) {
@@ -34,30 +49,63 @@ function jsonResponse(body: unknown): Response {
 function StatefulSearchPane({ initialHref }: { initialHref: string }) {
   const [href, setHref] = useState(initialHref);
   return (
-    <PaneRuntimeProvider
-      paneId="pane-1"
-      isActive={true}
-      href={href}
-      routeId="search"
-      routeKey={resolvePaneRouteIdentity(href).routeKey}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBackPane={vi.fn()}
-      onGoForwardPane={vi.fn()}
-      onNavigatePane={vi.fn()}
-      onReplacePane={(_paneId: string, nextHref: string) => {
-        setHref(nextHref);
-      }}
-      onOpenInNewPane={vi.fn()}
-      onSetPaneLabel={vi.fn()}
-    >
-      <SearchPaneBody />
-    </PaneRuntimeProvider>
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider
+        paneId="pane-1"
+        visitId={TEST_VISIT_ID}
+        isActive={true}
+        href={href}
+        routeId="search"
+        routeKey={resolvePaneRouteIdentity(href).routeKey}
+        canGoBack={false}
+        canGoForward={false}
+        onGoBackPane={vi.fn()}
+        onGoForwardPane={vi.fn()}
+        onNavigatePane={vi.fn()}
+        onReplacePane={(_paneId: string, nextHref: string) => {
+          setHref(nextHref);
+        }}
+        onOpenInNewPane={vi.fn()}
+        onSetPaneLabel={vi.fn()}
+      >
+        <SearchPaneBody />
+      </PaneRuntimeProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
 function renderSearch(initialHref: string) {
   render(<StatefulSearchPane initialHref={initialHref} />);
+}
+
+function searchNote(id: string, bodyText: string) {
+  return {
+    type: "note_block",
+    id,
+    score: 0.9,
+    snippet: bodyText,
+    title: bodyText,
+    source_label: "note",
+    media_id: null,
+    media_kind: null,
+    resource_ref: `note_block:${id}`,
+    activation: {
+      resourceRef: `note_block:${id}`,
+      kind: "route",
+      href: `/notes/${id}`,
+      unresolvedReason: null,
+    },
+    citation_target: `note_block:${id}`,
+    context_ref: { type: "note_block", id },
+    body_text: bodyText,
+    highlight_excerpt: null,
+    locator: {
+      type: "note_block_offsets",
+      block_id: id,
+      start_offset: 0,
+      end_offset: bodyText.length,
+    },
+  };
 }
 
 function stubEmptySearch() {
@@ -88,6 +136,76 @@ function nextFrame(): Promise<void> {
 }
 
 describe("SearchPaneBody filter chips", () => {
+  it("restores the captured result controller before initial search can settle again", async () => {
+    const cursors: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/search") {
+          const cursor = url.searchParams.get("cursor");
+          cursors.push(cursor);
+          return jsonResponse(
+            cursor === "cursor-2"
+              ? {
+                  results: [searchNote("second", "Restored second page")],
+                  page: { next_cursor: null },
+                }
+              : {
+                  results: [searchNote("first", "Restored first page")],
+                  page: { next_cursor: "cursor-2" },
+                },
+          );
+        }
+        if (url.pathname.startsWith("/api/contributors")) {
+          return jsonResponse({ data: [] });
+        }
+        throw new Error(`Unexpected fetch call: ${url.pathname}`);
+      }),
+    );
+    let commands!: PaneReturnMementoCommands;
+    const publish = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    let resourceGeneration = 0;
+    const journey = () => (
+      <PaneReturnJourneyHarness
+        href={SEARCH_HREF}
+        paneId="pane-1"
+        resources={{}}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publish}
+      >
+        <SearchPaneBody />
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey());
+    expect(
+      await screen.findByRole("link", { name: "Restored first page" }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(
+      await screen.findByRole("link", { name: "Restored second page" }),
+    ).toBeVisible();
+    commands.capturePane({
+      paneId: "pane-1",
+      visitId: RETURN_JOURNEY_VISIT_ID,
+      routeKey: SEARCH_ROUTE_KEY,
+      modality: "Programmatic",
+    });
+
+    resourceGeneration += 1;
+    view.rerender(journey());
+
+    expect(
+      screen.getAllByRole("link", { name: "Restored first page" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("link", { name: "Restored second page" }),
+    ).toHaveLength(1);
+    await waitFor(() => expect(cursors).toEqual([null, "cursor-2"]));
+  });
+
   it("adds a format filter as a removable applied chip, then removes it", async () => {
     stubEmptySearch();
     renderSearch("/search?q=test");
@@ -159,21 +277,33 @@ describe("SearchPaneBody filter chips", () => {
     renderSearch("/search");
     const user = userEvent.setup();
 
-    const input = screen.getByLabelText("Search content");
-    const kinds = screen.getByRole("group", { name: "Result kinds" });
-
     for (const kind of SEARCH_KINDS) {
       await user.click(
-        within(kinds).getByRole("button", {
+        within(screen.getByRole("group", { name: "Result kinds" })).getByRole(
+          "button",
+          {
           name: SEARCH_KIND_LABELS[kind],
-        }),
+          },
+        ),
+      );
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("group", { name: "Result kinds" })).getByRole(
+            "button",
+            { name: SEARCH_KIND_LABELS[kind] },
+          ),
+        ).toHaveAttribute("aria-pressed", "false"),
       );
     }
 
+    const input = screen.getByLabelText("Search content");
     await user.type(input, "e2e non-pdf");
 
     await waitFor(() => {
-      expect(input).toHaveValue("e2e non-pdf");
+      expect(screen.getByLabelText("Search content")).toHaveValue(
+        "e2e non-pdf",
+      );
+      const kinds = screen.getByRole("group", { name: "Result kinds" });
       for (const kind of SEARCH_KINDS) {
         expect(
           within(kinds).getByRole("button", {

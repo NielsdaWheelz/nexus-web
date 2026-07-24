@@ -2,6 +2,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
+import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import NotesPaneBody from "./NotesPaneBody";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the normalized note-page
@@ -103,13 +104,29 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
           },
         ],
       },
-      children: <NotesPaneBody />,
+      children: (
+        <ResolvedPaneBodyMarker>
+          <NotesPaneBody />
+        </ResolvedPaneBodyMarker>
+      ),
     });
 
     // (a) The seeded page's title renders from the hydration cache.
-    expect(
-      await screen.findByText("Hydrated Note Page"),
-    ).toBeInTheDocument();
+    const pageLink = await screen.findByRole("link", {
+      name: "Hydrated Note Page",
+    });
+    expect(pageLink).toBeInTheDocument();
+    expect(pageLink).toHaveAttribute("data-row-focusable");
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return row identity is a DOM data contract with no semantic query
+    expect(pageLink.closest("[data-collection-row-id]")).toHaveAttribute(
+      "data-collection-row-id",
+      "p1",
+    );
+    // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return scope is a DOM data contract with no semantic query
+    expect(pageLink.closest("[data-pane-return-scope]")).toHaveAttribute(
+      "data-pane-return-scope",
+      "Notes.Pages",
+    );
 
     // (b) No client fetch to the notes pages endpoint — the seed was the source.
     const fetchedPages = wasFetchPathCalled(fetchSpy, "/api/notes/pages");

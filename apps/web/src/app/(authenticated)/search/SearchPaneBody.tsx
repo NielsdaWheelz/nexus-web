@@ -8,7 +8,14 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -58,11 +65,27 @@ import type {
   SearchResultPage,
   SearchResultRowViewModel,
 } from "@/lib/search/types";
-import { usePaneRouter, usePaneSearchParams } from "@/lib/panes/paneRuntime";
+import {
+  definePaneVisitDataKey,
+  usePaneReturnReady,
+  usePaneRouter,
+  usePaneSearchParams,
+  usePaneVisitData,
+} from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const SEARCH_DEBOUNCE_MS = 200;
 const PAGE_LIMIT = 20;
+
+interface SearchSnapshot {
+  readonly rows: readonly SearchResultRowViewModel[];
+  readonly nextCursor: string | null;
+  readonly hasSearched: boolean;
+}
+
+const SEARCH_VISIT_DATA =
+  definePaneVisitDataKey<SearchSnapshot>("Search.Results");
+const EMPTY_SEARCH_ROWS: readonly SearchResultRowViewModel[] = [];
 
 function queryKey(query: SearchQuery): string {
   return searchQueryToParams(query).toString();
@@ -102,6 +125,26 @@ export default function SearchPaneBody() {
     [paneSearchParams],
   );
   const queryString = queryKey(query);
+  const explicitEmptyKinds = hasExplicitEmptyKinds(query);
+  const blank = isBlankQuery(query) || explicitEmptyKinds;
+
+  const committedSnapshotRef = useRef<SearchSnapshot | null>(null);
+  const captureCommitted = useCallback(
+    () => committedSnapshotRef.current,
+    [],
+  );
+  const restored = usePaneVisitData(SEARCH_VISIT_DATA, captureCommitted);
+  const [controller, setController] = useState<SearchSnapshot | null>(() =>
+    restored ??
+    (blank
+      ? { rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
+      : null),
+  );
+  const allowFirstPageAdoptionRef = useRef(restored === null && !blank);
+  const controllerQueryKeyRef = useRef(queryString);
+  const firstPageLoadingQueryRef = useRef<string | null>(
+    blank || restored !== null ? null : queryString,
+  );
 
   const [draft, setDraft] = useState(query.text);
   const [mounted, setMounted] = useState(false);
@@ -198,43 +241,66 @@ export default function SearchPaneBody() {
 
   // First page: refetched (immediately, then aborted) whenever the effective
   // query changes; blank queries make no request. Pagination is appended below.
-  const explicitEmptyKinds = hasExplicitEmptyKinds(query);
-  const blank = isBlankQuery(query) || explicitEmptyKinds;
   const firstPage = useDebouncedFetch<SearchResultPage>(
-    blank ? null : queryString,
+    blank || restored !== null ? null : queryString,
     (signal) =>
       fetchSearchResultPage(query, { limit: PAGE_LIMIT, cursor: null, signal }),
     { debounceMs: 0 },
   );
 
-  // "Load more" appends the next page(s); reset whenever the first page changes.
-  const [more, setMore] = useState<{
-    rows: SearchResultRowViewModel[];
-    cursor: string | null;
-  }>({ rows: [], cursor: null });
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const moreAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (controllerQueryKeyRef.current === queryString) return;
+    controllerQueryKeyRef.current = queryString;
     moreAbortRef.current?.abort();
-    setMore({ rows: [], cursor: null });
     setLoadingMore(false);
     setMoreError(null);
-  }, [queryString]);
+    allowFirstPageAdoptionRef.current = restored === null && !blank;
+    setController(
+      restored ??
+        (blank
+          ? { rows: [], nextCursor: null, hasSearched: explicitEmptyKinds }
+          : null),
+    );
+  }, [blank, explicitEmptyKinds, queryString, restored]);
 
-  const results = useMemo(
-    () => (firstPage.data ? [...firstPage.data.rows, ...more.rows] : []),
-    [firstPage.data, more.rows],
-  );
-  const nextCursor =
-    more.rows.length > 0 ? more.cursor : (firstPage.data?.nextCursor ?? null);
-  const searching = firstPage.loading || loadingMore;
-  const hasSearched = explicitEmptyKinds || firstPage.data !== null;
+  useEffect(() => {
+    if (firstPage.loading) {
+      firstPageLoadingQueryRef.current = queryString;
+      return;
+    }
+    if (
+      firstPageLoadingQueryRef.current !== queryString ||
+      !allowFirstPageAdoptionRef.current ||
+      firstPage.data === null
+    ) {
+      return;
+    }
+    allowFirstPageAdoptionRef.current = false;
+    setController({
+      rows: firstPage.data.rows,
+      nextCursor: firstPage.data.nextCursor,
+      hasSearched: true,
+    });
+  }, [firstPage.data, firstPage.loading, queryString]);
+
+  useLayoutEffect(() => {
+    committedSnapshotRef.current = controller;
+  }, [controller]);
+
+  const results = controller?.rows ?? EMPTY_SEARCH_ROWS;
+  const nextCursor = controller?.nextCursor ?? null;
+  const searching =
+    (controller === null && firstPage.loading) || loadingMore;
+  const hasSearched = controller?.hasSearched ?? false;
   const error =
-    firstPage.error !== null
+    controller === null && firstPage.error !== null
       ? toFeedback(firstPage.error, { fallback: "Search failed" })
       : moreError;
+  usePaneReturnReady(controller !== null || firstPage.error !== null);
 
   const loadMore = useCallback(
     async (cursor: string) => {
@@ -249,10 +315,15 @@ export default function SearchPaneBody() {
           cursor,
           signal: controller.signal,
         });
-        setMore((prev) => ({
-          rows: [...prev.rows, ...page.rows],
-          cursor: page.nextCursor,
-        }));
+        setController((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                rows: [...current.rows, ...page.rows],
+                nextCursor: page.nextCursor,
+              },
+        );
       } catch (err) {
         if (isAbortError(err) || handleUnauthenticatedApiError(err)) return;
         setMoreError(toFeedback(err, { fallback: "Search failed" }));
@@ -375,6 +446,7 @@ export default function SearchPaneBody() {
 
   return (
     <CollectionView
+      returnScope="Search.Results"
       rows={rows}
       status="ready"
       ariaLabel="Search results"

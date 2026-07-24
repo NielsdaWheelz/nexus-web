@@ -30,8 +30,10 @@ export default function SectionOpener({
       <div className={styles.headingRow}>
         <h1
           className={styles.display}
+          data-pane-return-heading="true"
           data-scale={scale}
           aria-busy={pending || undefined}
+          tabIndex={-1}
         >
           {pending ? (
             <>

@@ -10,7 +10,11 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource, type NoResourceParams } from "@/lib/api/resource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneRouter, useSetPaneLabel } from "@/lib/panes/paneRuntime";
+import {
+  usePaneReturnReady,
+  usePaneRouter,
+  useSetPaneLabel,
+} from "@/lib/panes/paneRuntime";
 import { createNotePage } from "@/lib/notes/api";
 import { openTodayPage } from "@/lib/notes/openToday";
 import type { NotePageSummary } from "@/lib/notes/normalize";
@@ -40,6 +44,9 @@ export default function NotesPaneBody() {
         params,
       ) as Promise<NotePageSummary[]>,
   });
+  usePaneReturnReady(
+    pagesResource.status === "ready" || pagesResource.status === "error",
+  );
   const resourcePages =
     pagesResource.status === "ready" ? pagesResource.data : null;
   const pages = localPages ?? resourcePages ?? [];
@@ -94,6 +101,7 @@ export default function NotesPaneBody() {
 
   return (
     <CollectionView
+      returnScope="Notes.Pages"
       rows={pages.map((page) => presentNote(page))}
       status={loading ? "loading" : "ready"}
       ariaLabel="Notes"

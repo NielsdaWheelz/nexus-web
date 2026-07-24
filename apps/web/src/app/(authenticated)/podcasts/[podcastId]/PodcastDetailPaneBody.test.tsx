@@ -9,17 +9,22 @@ import {
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const subscribeToPodcastMock = vi.fn();
-
-vi.mock("@/lib/panes/paneRuntime", () => ({
-  usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
-  usePaneRuntime: () => ({ openInNewPane: vi.fn() }),
-  usePaneRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  usePaneSearchParams: () => new URLSearchParams(),
-  useSetPaneLabel: () => {},
+const panePrimaryChromeState = vi.hoisted(() => ({
+  options: [] as Array<{
+    readonly id: string;
+    readonly kind: string;
+    readonly onSelect?: (detail: {
+      readonly triggerEl: HTMLButtonElement | null;
+    }) => void;
+  }>,
 }));
 
 vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
-  usePanePrimaryChrome: () => {},
+  usePanePrimaryChrome: (publication: {
+    readonly options?: typeof panePrimaryChromeState.options;
+  }) => {
+    panePrimaryChromeState.options = publication.options ?? [];
+  },
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
@@ -65,19 +70,59 @@ vi.mock("../podcastSubscriptions", async () => {
 });
 
 import PodcastDetailPaneBody from "@/app/(authenticated)/podcasts/[podcastId]/PodcastDetailPaneBody";
+import {
+  PaneReturnJourneyHarness,
+  RETURN_JOURNEY_VISIT_ID,
+} from "@/__tests__/helpers/paneReturnJourney";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import {
+  PaneReturnMementoProvider,
+  type PaneReturnMementoCommands,
+} from "@/lib/workspace/paneReturnMemento";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 // Render the pane under the real Lectern + global-player providers (the pane
 // reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
 // answers the provider's initial GET /api/lectern.
 function Wrapped() {
+  const podcastId = mockUsePaneParam("podcastId");
+  const href = podcastId ? `/podcasts/${podcastId}` : "/podcasts/missing";
+  const routeKey = resolvePaneRouteIdentity(href).routeKey;
   return (
-    <LecternProvider>
-      <GlobalPlayerProvider>
-        <PodcastDetailPaneBody />
-      </GlobalPlayerProvider>
-    </LecternProvider>
+    <PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <PaneRuntimeProvider
+          paneId="pane-1"
+          visitId={TEST_VISIT_ID}
+          isActive
+          href={href}
+          routeId="podcastDetail"
+          routeKey={routeKey}
+          pathParams={podcastId ? { podcastId } : {}}
+          canGoBack={false}
+          canGoForward={false}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={vi.fn()}
+        >
+          <LecternProvider>
+            <GlobalPlayerProvider>
+              <PodcastDetailPaneBody />
+            </GlobalPlayerProvider>
+          </LecternProvider>
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
+    </PaneReturnMementoProvider>
   );
 }
 
@@ -188,6 +233,7 @@ function transcriptForecast(mediaId = "episode-1") {
 
 describe("PodcastDetailPaneBody subscribe flow", () => {
   beforeEach(() => {
+    panePrimaryChromeState.options = [];
     subscribeToPodcastMock.mockReset();
     subscribeToPodcastMock.mockResolvedValue({
       podcast_id: "podcast-1",
@@ -273,6 +319,132 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(payload.library_ids).toEqual(["lib-research", "lib-books"]);
   });
 
+  it("does not recapture sync-patched detail while refresh reconciliation is pending", async () => {
+    const pendingDetail = deferredResponse();
+    const pendingEpisodes = deferredResponse();
+    let detailCalls = 0;
+    let episodeCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        detailCalls += 1;
+        if (detailCalls === 2) return pendingDetail.promise;
+        return jsonResponse(
+          podcastDetailResponse({
+            subscription: {
+              podcast_id: "podcast-1",
+              user_id: "user-1",
+              status: "active",
+              default_playback_speed: null,
+              auto_queue: false,
+              sync_status: detailCalls === 1 ? "complete" : "pending",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: detailCalls,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+            title:
+              detailCalls === 1
+                ? "Before refresh"
+                : "After refresh reconciliation",
+          }),
+        );
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        episodeCalls += 1;
+        if (episodeCalls === 2) return pendingEpisodes.promise;
+        return jsonResponse({
+          data: [
+            episodeMedia({
+              title:
+                episodeCalls === 1
+                  ? "Before refresh episode"
+                  : "After refresh episode",
+            }),
+          ],
+        });
+      }
+      if (
+        url.pathname === "/api/podcasts/subscriptions/podcast-1/sync" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({
+          data: {
+            podcast_id: "podcast-1",
+            sync_status: "pending",
+            sync_error_code: null,
+            sync_error_message: null,
+            sync_attempts: 2,
+            sync_enqueued: true,
+          },
+        });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+    let commands!: PaneReturnMementoCommands;
+    const publish = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    let resourceGeneration = 0;
+    const href = "/podcasts/podcast-1";
+    const routeKey = resolvePaneRouteIdentity(href).routeKey;
+    const journey = () => (
+      <PaneReturnJourneyHarness
+        href={href}
+        paneId="pane-1"
+        resources={{}}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publish}
+      >
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <PodcastDetailPaneBody />
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey());
+
+    expect(await screen.findByText("Before refresh episode")).toBeVisible();
+    await waitFor(() => expect(commands).toBeDefined());
+    const refreshSync = panePrimaryChromeState.options.find(
+      (option) => option.id === "refresh-podcast-sync",
+    );
+    expect(refreshSync?.kind).toBe("command");
+    refreshSync?.onSelect?.({ triggerEl: null });
+    await waitFor(() => {
+      expect(detailCalls).toBe(2);
+      expect(episodeCalls).toBe(2);
+    });
+    commands.capturePane({
+      paneId: "pane-1",
+      visitId: RETURN_JOURNEY_VISIT_ID,
+      routeKey,
+      modality: "Programmatic",
+    });
+
+    resourceGeneration += 1;
+    view.rerender(journey());
+
+    expect(
+      await screen.findByText("After refresh episode"),
+    ).toBeVisible();
+    expect(detailCalls).toBe(3);
+    expect(episodeCalls).toBe(3);
+  });
+
   it("does not refetch podcast episodes when show notes expand", async () => {
     const calls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -327,6 +499,121 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         call.startsWith("/api/podcasts/podcast-1/episodes"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("restores the captured episode controller without initial load overwriting it", async () => {
+    const episodeRequests: Array<{
+      offset: string;
+      sort: string | null;
+    }> = [];
+    let detailCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        detailCalls += 1;
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        const offset = url.searchParams.get("offset") ?? "0";
+        episodeRequests.push({
+          offset,
+          sort: url.searchParams.get("sort"),
+        });
+        return jsonResponse({
+          data:
+            offset === "100"
+              ? [
+                  episodeMedia({
+                    id: "episode-101",
+                    title: "Restored Episode Second Page",
+                  }),
+                ]
+              : Array.from({ length: 100 }, (_, index) =>
+                  episodeMedia({
+                    id: `episode-${index + 1}`,
+                    title:
+                      index === 0
+                        ? "Restored Episode First"
+                        : `Episode ${index + 1}`,
+                  }),
+                ),
+        });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+    let commands!: PaneReturnMementoCommands;
+    const publish = (next: PaneReturnMementoCommands) => {
+      commands = next;
+    };
+    let resourceGeneration = 0;
+    let href = "/podcasts/podcast-1";
+    const journey = () => (
+      <PaneReturnJourneyHarness
+        href={href}
+        paneId="pane-1"
+        resources={{}}
+        resourceGeneration={resourceGeneration}
+        publishCommands={publish}
+      >
+        <LecternProvider>
+          <GlobalPlayerProvider>
+            <PodcastDetailPaneBody
+              key={resolvePaneRouteIdentity(href).routeKey}
+            />
+          </GlobalPlayerProvider>
+        </LecternProvider>
+      </PaneReturnJourneyHarness>
+    );
+    const view = render(journey());
+    expect(await screen.findByText("Restored Episode First")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Load more episodes" }),
+    );
+    expect(
+      await screen.findByText("Restored Episode Second Page"),
+    ).toBeVisible();
+    commands.capturePane({
+      paneId: "pane-1",
+      visitId: RETURN_JOURNEY_VISIT_ID,
+      routeKey: resolvePaneRouteIdentity("/podcasts/podcast-1").routeKey,
+      modality: "Programmatic",
+    });
+
+    resourceGeneration += 1;
+    view.rerender(journey());
+
+    expect(screen.getAllByText("Restored Episode First")).toHaveLength(1);
+    expect(
+      screen.getAllByText("Restored Episode Second Page"),
+    ).toHaveLength(1);
+    await waitFor(() => {
+      expect(episodeRequests).toEqual([
+        { offset: "0", sort: "newest" },
+        { offset: "100", sort: "newest" },
+      ]);
+      expect(detailCalls).toBe(1);
+    });
+
+    href = "/podcasts/podcast-1?state=all&sort=oldest";
+    view.rerender(journey());
+
+    await waitFor(() => {
+      expect(episodeRequests).toEqual([
+        { offset: "0", sort: "newest" },
+        { offset: "100", sort: "newest" },
+        { offset: "0", sort: "oldest" },
+      ]);
+      expect(detailCalls).toBe(2);
+    });
   });
 
   it("ignores older podcast loads that resolve after a newer route load", async () => {

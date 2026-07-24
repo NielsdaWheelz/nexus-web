@@ -5,6 +5,7 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
 import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 
 const SETTINGS_ITEMS: {
   href: string;
@@ -40,6 +41,7 @@ const SETTINGS_ITEMS: {
 
 export default function SettingsPaneBody() {
   const androidShell = useAndroidShell();
+  usePaneReturnReady(true);
   const settingsItems = SETTINGS_ITEMS.filter(({ href }) => {
     if (!androidShell) {
       return true;
@@ -49,6 +51,7 @@ export default function SettingsPaneBody() {
 
   return (
     <CollectionView
+      returnScope="Settings.Sections"
       rows={settingsItems.map((item) =>
         presentSettingsRow({
           title: item.title,

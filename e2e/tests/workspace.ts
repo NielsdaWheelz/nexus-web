@@ -5,6 +5,7 @@ import {
   type Page,
   type TestInfo,
 } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { stateChangingApiHeaders } from "./api";
 import { AUTHENTICATED_HOME_PATH } from "./app-routes";
 
@@ -17,20 +18,29 @@ const DEVICE_COOKIE_NAME = "nx_device";
 const WORKSPACE_SESSION_PATH = "/api/me/workspace-session";
 const WORKSPACE_DEFAULT_FALLBACK_HREF = AUTHENTICATED_HOME_PATH;
 const EXPLICIT_FALLBACK_HISTORY: WorkspacePaneHistory = {
-  back: ["/notes"],
+  back: [makeWorkspaceVisit("/notes")],
   forward: [],
 };
 const WORKSPACE_SESSION_SEED_ATTEMPTS = 3;
 export const ACTIVE_WORKSPACE_PANE_SELECTOR = '[data-pane-id][data-active="true"]';
 
 export interface WorkspacePaneHistory {
-  back: string[];
-  forward: string[];
+  back: WorkspacePaneVisit[];
+  forward: WorkspacePaneVisit[];
+}
+
+export interface WorkspacePaneVisit {
+  id: string;
+  href: string;
+}
+
+export function makeWorkspaceVisit(href: string): WorkspacePaneVisit {
+  return { id: randomUUID(), href };
 }
 
 export interface WorkspacePaneState {
   id: string;
-  href: string;
+  currentVisit: WorkspacePaneVisit;
   primaryWidthPx: number;
   visibility: WorkspacePaneVisibility;
   history: WorkspacePaneHistory;
@@ -40,12 +50,14 @@ export interface WorkspacePaneState {
 export interface WorkspaceAttachedSecondaryPaneState {
   id: string;
   parentPrimaryPaneId: string;
-  groupId: "reader-tools" | "conversation-context";
+  groupId: "resource-inspector";
   activeSurfaceId:
-    | "reader-contents"
-    | "reader-evidence"
-    | "conversation-context-refs"
-    | "conversation-forks";
+    | "resource-contents"
+    | "resource-evidence"
+    | "resource-context"
+    | "resource-connections"
+    | "resource-forks"
+    | "resource-dossier";
   widthPx: number;
   visibility: "visible" | "collapsed";
 }
@@ -68,7 +80,7 @@ export function makeWorkspacePane(
 ): WorkspacePaneState {
   return {
     id,
-    href,
+    currentVisit: makeWorkspaceVisit(href),
     primaryWidthPx: options?.primaryWidthPx ?? 560,
     visibility: options?.visibility ?? "visible",
     history: options?.history ?? { back: [], forward: [] },
@@ -114,9 +126,8 @@ export function singlePaneWorkspaceState(
   );
 }
 
-// Pin the device id before any navigation. It's the server-owned httpOnly cookie now, so the
-// SSR data root restores for it and the BFF injects it into capture writes (the body's
-// device_id is ignored). Setting it present also stops middleware from minting a fresh one.
+// Pin the device id before any navigation. The server-owned httpOnly cookie is the sole
+// device-identity input for workspace-session reads and writes.
 export async function pinDeviceId(page: Page, deviceId: string): Promise<void> {
   await page.context().addCookies([
     {
@@ -140,7 +151,6 @@ async function leaveCurrentWorkspaceDocument(page: Page): Promise<void> {
 
 export async function seedWorkspaceSession(
   request: APIRequestContext,
-  deviceId: string,
   state: WorkspaceState,
 ): Promise<void> {
   let lastError: unknown = null;
@@ -149,7 +159,7 @@ export async function seedWorkspaceSession(
     try {
       const response = await request.put(WORKSPACE_SESSION_PATH, {
         headers: stateChangingApiHeaders(),
-        data: { device_id: deviceId, state },
+        data: { state },
       });
       if (response.ok()) {
         return;
@@ -182,7 +192,7 @@ export async function gotoWithWorkspaceSession(
 ): Promise<void> {
   await leaveCurrentWorkspaceDocument(page);
   await pinDeviceId(page, deviceId);
-  await seedWorkspaceSession(page.request, deviceId, state);
+  await seedWorkspaceSession(page.request, state);
   // Restore is server-side now: the seeded session is read during SSR and streamed into the
   // first paint, so there is no client GET to await — the caller asserts on the restored panes.
   await page.goto(path, { waitUntil: "domcontentloaded" });

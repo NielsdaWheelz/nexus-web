@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { putWorkspaceSession } from "@/lib/workspace/sessionSync";
 import {
+  createPaneVisit,
   createWorkspaceStateFromPrimaryPanes,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -10,7 +11,7 @@ const state: WorkspaceState = createWorkspaceStateFromPrimaryPanes({
   primaryPanes: [
     {
       id: "pane-1",
-      href: "/media/123",
+      currentVisit: createPaneVisit("/media/123"),
       primaryWidthPx: 684,
       visibility: "visible",
       history: { back: [], forward: [] },

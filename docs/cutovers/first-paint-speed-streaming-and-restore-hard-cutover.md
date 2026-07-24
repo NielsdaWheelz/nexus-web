@@ -151,7 +151,15 @@ useWorkspaceSession(state, mounted, …, serverRestored=true)
 
 ### 3.3 Identity / sizing split
 
-`mergeRestoredIdentity` and the server seed deal only in **identity** — pane hrefs, order, active pane, per-pane history, secondary-pane attachment — plus the persisted `primaryWidthPx` carried as-is. On client init, `useWorkspacePrimaryMetrics` measures the viewport and `createWorkspaceStateFromServer` **normalizes/clamps widths** to the current viewport. Same-device reloads (the common case) keep the persisted widths unchanged (no settle). Cross-viewport restores adjust column widths only — never the pane set, never content. This is the only client-side reconciliation, and it is a layout adjust within the first frame.
+`mergeRestoredIdentity` and the server seed deal only in **identity** — pane
+visits, order, active pane, per-pane visit history, secondary-pane attachment —
+plus the persisted `primaryWidthPx` carried as-is. On client init,
+`useWorkspacePrimaryMetrics` measures the viewport and
+`createWorkspaceStateFromServer` **normalizes/clamps widths** to the current
+viewport. Same-device reloads (the common case) keep the persisted widths
+unchanged (no settle). Cross-viewport restores adjust column widths only —
+never the pane set, never content. This is the only client-side reconciliation,
+and it is a layout adjust within the first frame.
 
 ### 3.4 Device identity (server-owned)
 

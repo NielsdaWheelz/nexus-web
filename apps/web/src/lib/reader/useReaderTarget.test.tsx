@@ -1,9 +1,17 @@
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import {
+  PaneRuntimeProvider,
+  type PaneNavigationCommandOptions,
+} from "@/lib/panes/paneRuntime";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
 
 const defaultNavigationProps = {
   canGoBack: false,
@@ -20,13 +28,18 @@ function Runtime({
   children,
 }: {
   href: string;
-  onReplacePane: (paneId: string, href: string) => void;
+  onReplacePane: (
+    paneId: string,
+    href: string,
+    options: PaneNavigationCommandOptions,
+  ) => void;
   children: ReactNode;
 }) {
   const identity = resolvePaneRouteIdentity(href);
   return (
     <PaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive={true}
       href={href}
       routeId={identity.routeId}
@@ -85,7 +98,9 @@ describe("useReaderTarget", () => {
     fireEvent.click(screen.getByTestId("target"));
 
     await waitFor(() =>
-      expect(onReplacePane).toHaveBeenCalledWith("pane-1", "/media/media-1", undefined),
+      expect(onReplacePane).toHaveBeenCalledWith("pane-1", "/media/media-1", {
+        modality: "Programmatic",
+      }),
     );
     expect(screen.getByTestId("target")).toHaveAttribute("data-status", "active");
 

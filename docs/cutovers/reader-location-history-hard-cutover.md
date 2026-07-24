@@ -222,8 +222,9 @@ reader routing uses `usePaneRouter`; no optional-call no-op survives.
 ## Documentation Cutover
 
 - `workspace.md`: add the generic owner contract now misplaced under reader
-  pane history: push records current href and clears Forward; replace changes
-  current href without changing either stack; Back/Forward traverse checkpoints;
+  pane history: push records the current visit and clears Forward; replace
+  changes the current visit href without changing its id or either stack;
+  Back/Forward traverse visit occurrences;
   feature owners choose the operation.
 - `reader-implementation.md`: change the overview, Contents navigation,
   progress/URL paragraph, pane-history mapping, and EPUB active-section URL

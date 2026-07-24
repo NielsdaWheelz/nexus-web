@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ComponentProps } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
@@ -9,11 +9,26 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { PaneViewTransitionIntent } from "@/lib/ui/viewTransitions";
+import { assumePaneVisitId } from "@/lib/workspace/schema";
+import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 
 const MEDIA_ID_1 = "11111111-1111-4111-8111-111111111111";
 const LIBRARY_ID = "33333333-3333-4333-8333-333333333333";
 const MEDIA_HREF_1 = `/media/${MEDIA_ID_1}`;
 const LIBRARY_HREF = `/libraries/${LIBRARY_ID}`;
+const TEST_VISIT_ID = assumePaneVisitId(
+  "00000000-0000-4000-8000-000000000001",
+);
+
+function TestPaneRuntimeProvider(
+  props: ComponentProps<typeof PaneRuntimeProvider>,
+) {
+  return (
+    <PaneReturnMementoProvider>
+      <PaneRuntimeProvider {...props} />
+    </PaneReturnMementoProvider>
+  );
+}
 
 function Publisher({ label }: { label: string }) {
   useSetPaneLabel(label);
@@ -193,8 +208,9 @@ function runtime(
 ) {
   const identity = resolvePaneRouteIdentity(href);
   return (
-    <PaneRuntimeProvider
+    <TestPaneRuntimeProvider
       paneId="pane-1"
+      visitId={TEST_VISIT_ID}
       isActive={true}
       href={href}
       routeId={identity.routeId}
@@ -206,7 +222,7 @@ function runtime(
       onSetPaneLabel={onSetPaneLabel}
     >
       <Publisher label="Same label" />
-    </PaneRuntimeProvider>
+    </TestPaneRuntimeProvider>
   );
 }
 
@@ -251,8 +267,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -263,14 +280,14 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action={action} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
       expect({ onNavigatePane, onReplacePane }[callbackName]).toHaveBeenCalledWith(
         "pane-1",
         MEDIA_HREF_1,
-        { labelHint: "Library Row Label" },
+        { labelHint: "Library Row Label", modality: "Programmatic" },
       );
     });
   });
@@ -280,8 +297,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -292,7 +310,7 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={onOpenInNewPane}
       >
         <OpenInNewPaneOnMount />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
@@ -300,6 +318,7 @@ describe("PaneRuntimeProvider", () => {
         MEDIA_HREF_1,
         "Library Row Label",
         { kind: "Surface", surfaceId: "resource-evidence" },
+        "Programmatic",
       );
     });
   });
@@ -311,8 +330,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -323,13 +343,14 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
         labelHint: "Library Row Label",
+        modality: "Programmatic",
       });
     });
   });
@@ -341,8 +362,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -353,13 +375,14 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={vi.fn()}
       >
         <NavigateOnMount action="replace" viewTransition={{ kind: "collection-reflow" }} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
       expect(startViewTransition).not.toHaveBeenCalled();
       expect(onReplacePane).toHaveBeenCalledWith("pane-1", MEDIA_HREF_1, {
         labelHint: "Library Row Label",
+        modality: "Programmatic",
       });
     });
   });
@@ -370,8 +393,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -385,12 +409,12 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={vi.fn()}
       >
         <GoBackForwardOnMount />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
-      expect(onGoBackPane).toHaveBeenCalledWith("pane-1");
-      expect(onGoForwardPane).toHaveBeenCalledWith("pane-1");
+      expect(onGoBackPane).toHaveBeenCalledWith("pane-1", "Programmatic");
+      expect(onGoForwardPane).toHaveBeenCalledWith("pane-1", "Programmatic");
     });
     const state = screen.getByTestId("router-navigation-state");
     expect(state).toHaveAttribute("data-can-go-back", "true");
@@ -402,6 +426,7 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
+      visitId: TEST_VISIT_ID,
       isActive: true,
       href: LIBRARY_HREF,
       routeId: identity.routeId,
@@ -413,17 +438,17 @@ describe("PaneRuntimeProvider", () => {
     };
 
     const { rerender } = render(
-      <PaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
+      <TestPaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
         <RouterIdentityProbe onRouter={onRouter} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => expect(onRouter).toHaveBeenCalledTimes(1));
 
     rerender(
-      <PaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
+      <TestPaneRuntimeProvider {...stableProps} pathParams={{ id: LIBRARY_ID }}>
         <RouterIdentityProbe onRouter={onRouter} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -435,6 +460,7 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
     const stableProps = {
       paneId: "pane-1",
+      visitId: TEST_VISIT_ID,
       isActive: true,
       href: LIBRARY_HREF,
       routeId: identity.routeId,
@@ -447,13 +473,13 @@ describe("PaneRuntimeProvider", () => {
     };
 
     const { rerender } = render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         {...stableProps}
         canGoBack={false}
         canGoForward={false}
       >
         <RouterStateProbe onRouter={onRouter} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => expect(onRouter).toHaveBeenCalledTimes(1));
@@ -464,13 +490,13 @@ describe("PaneRuntimeProvider", () => {
     );
 
     rerender(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         {...stableProps}
         canGoBack
         canGoForward
       >
         <RouterStateProbe onRouter={onRouter} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
@@ -488,8 +514,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -501,7 +528,7 @@ describe("PaneRuntimeProvider", () => {
         onSetPaneLayout={onSetPaneLayout}
       >
         <PublishLayoutOnMount />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
@@ -522,8 +549,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(MEDIA_HREF_1);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={MEDIA_HREF_1}
         routeId={identity.routeId}
@@ -545,7 +573,7 @@ describe("PaneRuntimeProvider", () => {
         onSetSecondarySurface={onSetSecondarySurface}
       >
         <SecondaryCommandsOnMount />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => {
@@ -567,8 +595,9 @@ describe("PaneRuntimeProvider", () => {
     const identity = resolvePaneRouteIdentity(LIBRARY_HREF);
 
     render(
-      <PaneRuntimeProvider
+      <TestPaneRuntimeProvider
         paneId="pane-1"
+        visitId={TEST_VISIT_ID}
         isActive={true}
         href={LIBRARY_HREF}
         routeId={identity.routeId}
@@ -579,7 +608,7 @@ describe("PaneRuntimeProvider", () => {
         onOpenInNewPane={vi.fn()}
       >
         <RuntimeShapeProbe onValue={onValue} />
-      </PaneRuntimeProvider>,
+      </TestPaneRuntimeProvider>,
     );
 
     await waitFor(() => expect(onValue).toHaveBeenCalled());

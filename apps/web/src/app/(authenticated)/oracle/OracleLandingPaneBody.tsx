@@ -10,7 +10,10 @@ import {
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
-import { usePaneRouter } from "@/lib/panes/paneRuntime";
+import {
+  usePaneReturnReady,
+  usePaneRouter,
+} from "@/lib/panes/paneRuntime";
 import OracleAlephGrid from "./OracleAlephGrid";
 import OracleThemeWrapper from "./OracleThemeWrapper";
 import type { OracleCreateResponse } from "./types";
@@ -20,6 +23,7 @@ const QUESTION_MAX = 280;
 
 export default function OracleLandingPaneBody() {
   const paneRouter = usePaneRouter();
+  usePaneReturnReady(true);
 
   const [question, setQuestion] = useState("");
   const [submitting, setSubmitting] = useState(false);

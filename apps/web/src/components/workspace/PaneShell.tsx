@@ -21,6 +21,10 @@ import {
   resolvePaneHeaderModel,
 } from "@/lib/panes/paneHeaderModel";
 import {
+  usePaneRouter,
+  useRecordPaneNavigationModality,
+} from "@/lib/panes/paneRuntime";
+import {
   arePanePrimaryChromePublicationsEqual,
   secondaryPublicationIncludesSurface,
   type PaneFixedChromePublication,
@@ -40,6 +44,7 @@ import type {
 } from "@/lib/ui/actionDescriptor";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import { usePaneReturnScrollport } from "@/lib/workspace/paneReturnMemento";
 import {
   isPaneSecondaryRegionId,
   paneSecondaryRegionId,
@@ -66,7 +71,7 @@ interface PaneShellProps {
   href?: string;
   label: string;
   labelPending?: boolean;
-  navigation: SurfaceHeaderNavigation;
+  returnMementoEnabled: boolean;
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
   secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
@@ -93,7 +98,7 @@ export default function PaneShell({
   href = "/",
   label,
   labelPending = false,
-  navigation,
+  returnMementoEnabled,
   sizing,
   bodyMode,
   secondaryPane = null,
@@ -109,6 +114,33 @@ export default function PaneShell({
   isMobile = false,
   children,
 }: PaneShellProps) {
+  if (returnMementoEnabled && bodyMode !== "standard") {
+    throw new Error("ShellScroll PaneShell must use bodyMode standard");
+  }
+  const paneRouter = usePaneRouter();
+  const recordNavigationModality = useRecordPaneNavigationModality();
+  const canGoBack = paneRouter.canGoBack;
+  const canGoForward = paneRouter.canGoForward;
+  const navigation = useMemo<SurfaceHeaderNavigation>(
+    () => ({
+      canGoBack,
+      canGoForward,
+      onBack: (modality) => {
+        recordNavigationModality(modality);
+        paneRouter.back();
+      },
+      onForward: (modality) => {
+        recordNavigationModality(modality);
+        paneRouter.forward();
+      },
+    }),
+    [
+      canGoBack,
+      canGoForward,
+      paneRouter,
+      recordNavigationModality,
+    ],
+  );
   const { handleResizeMouseDown, handleResizeKeyDown } = useResizeHandle({
     id: paneId,
     widthPx: sizing.primaryWidthPx,
@@ -117,6 +149,12 @@ export default function PaneShell({
     onResize: onResizePrimaryPane,
   });
   const chromeRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  usePaneReturnScrollport({
+    paneId,
+    enabled: returnMementoEnabled,
+    scrollportRef: bodyRef,
+  });
   const currentRouteKeyRef = useRef(routeKey);
   currentRouteKeyRef.current = routeKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
@@ -396,6 +434,7 @@ export default function PaneShell({
           }}
         >
           <div
+            ref={bodyRef}
             className={styles.body}
             id={bodyId}
             data-testid="pane-shell-body"

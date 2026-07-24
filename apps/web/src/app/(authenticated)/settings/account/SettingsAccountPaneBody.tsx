@@ -29,6 +29,7 @@ import {
   type NoResourceParams,
 } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
 
@@ -74,6 +75,11 @@ export default function SettingsAccountPaneBody() {
   const [displayNamePending, startDisplayNameTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
   const accountReady = mounted && accountResource.status === "ready";
+  usePaneReturnReady(
+    mounted &&
+      (accountResource.status === "ready" ||
+        accountResource.status === "error"),
+  );
 
   useEffect(() => {
     setMounted(true);

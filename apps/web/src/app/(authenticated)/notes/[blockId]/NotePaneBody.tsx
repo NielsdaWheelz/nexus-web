@@ -25,6 +25,7 @@ import {
 import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import {
   usePaneParam,
+  usePaneReturnReady,
   usePaneRouter,
   usePaneRuntime,
   useSetPaneLabel,
@@ -60,6 +61,7 @@ export default function NotePaneBody() {
     pulseId: number;
   } | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  usePaneReturnReady(initialDoc !== null || feedback !== null);
   const baseBodyVersionRef = useRef<number | null>(null);
   const currentDocRef = useRef<ProseMirrorNode | null>(null);
   const notePulseIdRef = useRef(0);
@@ -248,6 +250,7 @@ export default function NotePaneBody() {
       />
       {feedback ? <FeedbackNotice {...feedback} /> : null}
       <ProseMirrorOutlineEditor
+        returnScope="Notes.EditorBlocks"
         resourceKey={resourceKey}
         initialDoc={initialDoc ?? createEmptyOutlineDoc(createRandomId())}
         singleBlock

@@ -246,13 +246,13 @@ describe("apiFetch", () => {
       .mockResolvedValue(new Response(null, { status: 204 }));
 
     await expect(
-      apiKeepaliveJson("/api/me/workspace-session", { device_id: "device-1" }),
+      apiKeepaliveJson("/api/test/keepalive", { value: "example" }),
     ).resolves.toBeUndefined();
-    expect(fetchSpy).toHaveBeenCalledWith("/api/me/workspace-session", {
+    expect(fetchSpy).toHaveBeenCalledWith("/api/test/keepalive", {
       method: "PUT",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: "device-1" }),
+      body: JSON.stringify({ value: "example" }),
     });
   });
 });
