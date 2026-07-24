@@ -3,6 +3,10 @@ docs/cutovers/reader-highlight-quote-chat-hard-cutover.md §Migration).
 
 Transform:
 
+0. Provide the canonical snapshot owner an empty transaction-local
+   ``resource_grants`` relation. The deployed head's permission query includes
+   grants, but the permanent table is introduced by 0191; at the 0188 boundary
+   the exact grant set is structurally empty.
 1. Add nullable ``messages.reader_selection_snapshot`` JSONB with the shallow
    object CHECK (parity with sibling message JSON; strict decode owns the deep
    shape).
@@ -136,6 +140,24 @@ def _plan_backfill(session: Session) -> dict[UUID, str]:
 def upgrade() -> None:
     bind = op.get_bind()
 
+    # The canonical snapshot owner intentionally uses the current permission
+    # implementation. At this migration boundary, however, resource grants do
+    # not exist yet (0191 owns the permanent table), so expose the exact
+    # pre-sharing state as an empty transaction-local relation. A successful
+    # migration drops it explicitly before Alembic advances to 0190 because one
+    # ``upgrade head`` transaction can span several revisions; a failed
+    # migration drops it on rollback. No compatibility schema survives.
+    op.execute(
+        """
+        CREATE TEMPORARY TABLE resource_grants (
+            subject_scheme text NOT NULL,
+            subject_id uuid NOT NULL,
+            created_by_user_id uuid NOT NULL,
+            grantee_user_id uuid NULL
+        ) ON COMMIT DROP
+        """
+    )
+
     # 1. Add the snapshot column + shallow object CHECK (sibling-parity only).
     op.execute("ALTER TABLE messages ADD COLUMN reader_selection_snapshot jsonb NULL")
     op.execute(
@@ -193,6 +215,7 @@ def upgrade() -> None:
         "ALTER TABLE chat_run_turn_contexts ADD CONSTRAINT ck_chat_run_turn_contexts_has_anchor"
         " CHECK (subject_id IS NOT NULL)"
     )
+    op.execute("DROP TABLE pg_temp.resource_grants")
 
 
 def downgrade() -> None:

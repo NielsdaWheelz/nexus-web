@@ -21410,6 +21410,16 @@ class TestMigration0189ReaderHighlightQuoteChat:
                 ).scalar_one()
                 assert "subject_id IS NOT NULL" in has_anchor
                 assert "reader_selection" not in has_anchor
+
+                # 0189's empty grant relation is transaction-local scaffolding
+                # for the head runtime's permission query; 0191 remains the
+                # sole owner of the persistent resource_grants table.
+                assert (
+                    session.execute(
+                        text("SELECT to_regclass('public.resource_grants')")
+                    ).scalar_one()
+                    is None
+                )
         finally:
             reset_test_schema()
             run_alembic_command("upgrade head")
