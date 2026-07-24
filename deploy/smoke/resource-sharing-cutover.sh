@@ -140,8 +140,8 @@ has_cache_control_directive() {
   local wanted="$2"
   printf '%s\n' "$value" | awk -F, -v wanted="$wanted" '
     {
-      for (index = 1; index <= NF; index += 1) {
-        directive = tolower($index)
+      for (field = 1; field <= NF; field += 1) {
+        directive = tolower($field)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", directive)
         if (directive == wanted) {
           found = 1
