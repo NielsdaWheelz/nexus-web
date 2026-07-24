@@ -31,6 +31,14 @@ ResourceExpansionPolicy = Literal[
     "artifact_revisions",
 ]
 UserLinkTargetMode = Literal["none", "direct", "materialize_passage"]
+ShareMode = Literal[
+    "None",
+    "CopyOnly",
+    "CopyWithLibraryFiling",
+    "ResourceGrants",
+    "HighlightGrants",
+    "LibraryMembership",
+]
 
 
 class ResourceInspectorSurfaceRole(StrEnum):
@@ -74,6 +82,7 @@ class ResourceUserRelationPolicy:
 
 @dataclass(frozen=True, slots=True)
 class ResourceItemCapability:
+    sharing: ShareMode
     user_relation: ResourceUserRelationPolicy
     attachable: bool
     chat_subject: ResourceChatSubjectMode
@@ -96,6 +105,7 @@ class ResourceItemCapability:
 
 RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
     "media": ResourceItemCapability(
+        sharing="ResourceGrants",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
@@ -120,6 +130,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "library": ResourceItemCapability(
+        sharing="LibraryMembership",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="scope",
@@ -140,6 +151,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "evidence_span": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(
             user_link_source=False, user_link_target="materialize_passage"
         ),
@@ -158,6 +170,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "content_chunk": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(
             user_link_source=False, user_link_target="materialize_passage"
         ),
@@ -176,6 +189,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "highlight": ResourceItemCapability(
+        sharing="HighlightGrants",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="quote",
@@ -192,6 +206,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "page": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
@@ -212,6 +227,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "note_block": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
@@ -232,6 +248,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "fragment": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(
             user_link_source=False, user_link_target="materialize_passage"
         ),
@@ -250,6 +267,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "conversation": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
@@ -274,6 +292,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "message": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="readable",
@@ -290,6 +309,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "oracle_reading": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
@@ -306,6 +326,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "oracle_passage_anchor": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(
             user_link_source=False, user_link_target="materialize_passage"
         ),
@@ -324,6 +345,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "artifact": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
@@ -340,6 +362,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "artifact_revision": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="generated_output",
@@ -356,6 +379,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "external_snapshot": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(user_link_source=False, user_link_target="none"),
         attachable=False,
         chat_subject="none",
@@ -372,6 +396,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=False,
     ),
     "contributor": ResourceItemCapability(
+        sharing="CopyOnly",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
@@ -392,6 +417,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "podcast": ResourceItemCapability(
+        sharing="CopyWithLibraryFiling",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="label",
@@ -412,6 +438,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "reader_apparatus_item": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(
             user_link_source=False, user_link_target="materialize_passage"
         ),
@@ -430,6 +457,7 @@ RESOURCE_ITEM_CAPABILITIES: dict[ResourceScheme, ResourceItemCapability] = {
         adjacency_target=True,
     ),
     "passage_anchor": ResourceItemCapability(
+        sharing="None",
         user_relation=ResourceUserRelationPolicy(user_link_source=True, user_link_target="direct"),
         attachable=True,
         chat_subject="quote",

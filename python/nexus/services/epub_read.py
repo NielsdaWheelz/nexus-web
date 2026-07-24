@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
@@ -17,6 +18,89 @@ from nexus.schemas.media import (
     ReaderNavigationTocNodeOut,
 )
 from nexus.services.capabilities import is_document_status_ready
+
+
+@dataclass(frozen=True, slots=True)
+class EpubSectionSource:
+    """Private source facts for a deterministic reading-order section."""
+
+    ordinal: int
+    label: str
+    depth: int
+    html_sanitized: str
+    canonical_text: str
+
+
+def list_epub_section_sources(
+    db: Session,
+    *,
+    media_id: UUID,
+    after_ordinal: int | None = None,
+    limit: int,
+) -> list[EpubSectionSource]:
+    """Load section source facts without making an authorization decision."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT n.ordinal,
+                       n.label,
+                       COALESCE(toc.depth, 0) AS depth,
+                       f.html_sanitized,
+                       f.canonical_text
+                FROM epub_nav_locations n
+                JOIN fragments f
+                  ON f.media_id = n.media_id
+                 AND f.idx = n.fragment_idx
+                LEFT JOIN epub_toc_nodes toc
+                  ON toc.media_id = n.media_id
+                 AND toc.node_id = n.source_node_id
+                AND toc.nav_type = 'toc'
+                WHERE n.media_id = :media_id
+                  AND (
+                    CAST(:after_ordinal AS INTEGER) IS NULL
+                    OR n.ordinal > CAST(:after_ordinal AS INTEGER)
+                  )
+                ORDER BY n.ordinal ASC
+                LIMIT :limit
+                """
+            ),
+            {
+                "media_id": media_id,
+                "after_ordinal": after_ordinal,
+                "limit": limit,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [
+        EpubSectionSource(
+            ordinal=int(row["ordinal"]),
+            label=str(row["label"]),
+            depth=int(row["depth"]),
+            html_sanitized=str(row["html_sanitized"]),
+            canonical_text=str(row["canonical_text"]),
+        )
+        for row in rows
+    ]
+
+
+def get_epub_section_source(
+    db: Session,
+    *,
+    media_id: UUID,
+    ordinal: int,
+) -> EpubSectionSource | None:
+    rows = list_epub_section_sources(
+        db,
+        media_id=media_id,
+        after_ordinal=ordinal - 1,
+        limit=1,
+    )
+    if not rows or rows[0].ordinal != ordinal:
+        return None
+    return rows[0]
 
 
 def _enforce_epub_read_guards(

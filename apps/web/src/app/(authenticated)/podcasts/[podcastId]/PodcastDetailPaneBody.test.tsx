@@ -18,14 +18,37 @@ const panePrimaryChromeState = vi.hoisted(() => ({
     }) => void;
   }>,
 }));
-
-vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
-  usePanePrimaryChrome: (publication: {
-    readonly options?: typeof panePrimaryChromeState.options;
-  }) => {
-    panePrimaryChromeState.options = publication.options ?? [];
-  },
+const primaryChromeMock = vi.hoisted(() => ({
+  publish: vi.fn(),
 }));
+const shareControllerMock = vi.hoisted(() => ({
+  openShare: vi.fn(),
+}));
+
+vi.mock("@/components/workspace/PanePrimaryChrome", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/components/workspace/PanePrimaryChrome")
+  >("@/components/workspace/PanePrimaryChrome");
+  return {
+    ...actual,
+    usePanePrimaryChrome: (publication: {
+      readonly options?: typeof panePrimaryChromeState.options;
+    }) => {
+      panePrimaryChromeState.options = publication.options ?? [];
+      primaryChromeMock.publish(publication);
+    },
+  };
+});
+
+vi.mock("@/lib/sharing/controller", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/sharing/controller")
+  >("@/lib/sharing/controller");
+  return {
+    ...actual,
+    useShareController: () => shareControllerMock,
+  };
+});
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
@@ -234,6 +257,8 @@ function transcriptForecast(mediaId = "episode-1") {
 describe("PodcastDetailPaneBody subscribe flow", () => {
   beforeEach(() => {
     panePrimaryChromeState.options = [];
+    primaryChromeMock.publish.mockReset();
+    shareControllerMock.openShare.mockReset();
     subscribeToPodcastMock.mockReset();
     subscribeToPodcastMock.mockResolvedValue({
       podcast_id: "podcast-1",
@@ -443,6 +468,43 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     ).toBeVisible();
     expect(detailCalls).toBe(3);
     expect(episodeCalls).toBe(3);
+  });
+
+  it("leaves pane-level Share ownership to PaneShell", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({ data: [episodeMedia()] });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    expect(await screen.findByText("Episode 1")).toBeInTheDocument();
+    await waitFor(() => {
+      const publication = primaryChromeMock.publish.mock.calls.at(-1)?.[0] as
+        | { options?: Array<{ id: string }> }
+        | undefined;
+      expect(
+        publication?.options?.filter((option) => option.id === "share") ?? [],
+      ).toHaveLength(0);
+    });
   });
 
   it("does not refetch podcast episodes when show notes expand", async () => {

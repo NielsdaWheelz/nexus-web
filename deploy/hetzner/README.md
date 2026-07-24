@@ -118,11 +118,85 @@ the remote env was already verified for the same deploy.
 The env sync rejects maintenance worker settings unless
 `NEXUS_ALLOW_WORKER_MAINTENANCE=1` is set for a bounded maintenance sync.
 
+`CUTOVER_SHA` is deployment-owned attestation, not a persistent secret.
+`deploy.sh` derives it from a clean local `HEAD`, requires a full exact match,
+injects it into API/worker through Compose, then verifies API health, worker
+environment, and migration head. Do not add it to `/etc/nexus/nexus.env`.
+
 To deploy without uploading env again:
 
 ```bash
 NEXUS_SYNC_ENV=0 ./deploy/hetzner/deploy.sh
 ```
+
+### Universal resource-sharing hard cutover
+
+This first schema/edge release is two explicit phases because the maintenance
+gate and verified backup must exist before `main` is pushed. Start from the one
+clean cutover commit. Use an ordinary probe SSH host whose public egress differs
+from `NEXUS_RELEASE_SMOKE_IP`. The deployed typed fixture selects an entitled
+viewer and a ready document without an existing creator Link; it never prints
+the bearer token:
+
+```bash
+export CUTOVER_SHA="$(git rev-parse HEAD)"
+export NEXUS_CUTOVER_STATE_FILE="/secure/operator/resource-sharing-${CUTOVER_SHA}.json"
+export APP_URL="https://nexus.example.com"
+export API_URL="https://api.example.com"
+export NEXUS_RELEASE_SMOKE_IP="<release-public-ip>"
+export NEXUS_ORDINARY_PROBE_SSH_TARGET="<ordinary-probe-host>"
+export NEXUS_SSH_TARGET="<deploy-user>@<backend-host>"
+export NEXUS_DEPLOY_PATH="/opt/nexus-web"
+export NEXUS_REMOTE_ENV_FILE="/etc/nexus/nexus.env"
+export NEXUS_SMOKE_MEDIA_KIND="pdf" # or web_article / epub
+export VERCEL_TOKEN="<operator-token>"
+export VERCEL_PROJECT_ID="<project-id>"
+export VERCEL_TEAM_ID="<team-id>"
+export VERCEL_CWD="/absolute/path/to/linked/apps/web"
+
+deploy/hetzner/resource-sharing-cutover.sh --prepare
+deploy/hetzner/resource-sharing-cutover.sh --release
+```
+
+`--prepare` publishes and reads back the maintenance rule first, proves an
+ordinary `/s` request is denied, stops API/worker, creates a custom-format
+PostgreSQL dump outside the rsynced deploy tree, validates it with
+`pg_restore --file=/dev/null`, records the observed production start contract
+at migration `0188` (distinct from the cutover chain's local
+`down_revision`),
+then publishes/reads back the permanent public-share rate limit. It leaves the
+gate closed and writers stopped.
+
+`--release` revalidates the stopped writers, backup bytes/digest, migration
+head, and linked Vercel project identity. It records the exact pre-cutover Git
+and READY Vercel deployment revisions in the protected state file before it
+fast-forward pushes the exact
+`CUTOVER_SHA` to `main`, waits for the Git-triggered Vercel production deployment
+to report that SHA READY, deploys Hetzner, and requires migration `0192`
+(including universal-sharing migration `0191`).
+The server-side typed operator fixture proves entitlement, authority, and
+projection readiness without a production JWT. The smoke reads it only through
+the public BFF, proves bogus Cookie/Authorization/internal-trust inputs do not
+change the public response, exercises PDF ranges when selected, then revokes
+through the same typed operator and proves the masked public 404. Local
+real-stack E2E owns authenticated API+BFF evidence. The release also checks the
+token is absent from API/Caddy logs and verifies the permanent WAF. Only then
+does it remove/read back the gate, prove ordinary traffic reopened, and repeat
+the typed create/read/revoke smoke. A failure after deploy stops the new API and
+worker; a failure after the gate may have opened first restores and verifies the
+maintenance rule. Either way the state becomes `failed_closed`. While the
+maintenance gate remains closed, inspect that state and run:
+
+```bash
+deploy/hetzner/resource-sharing-cutover.sh --rollback
+```
+
+`--rollback` is deliberately explicit and destructive: it rechecks the backup,
+recreates Postgres from that verified dump, deploys an archive of the recorded
+pre-cutover Git revision, invokes Vercel rollback for the recorded production
+deployment, verifies the old API/worker and `/s` contract, and only then removes
+the maintenance gate. Never use it after the cutover has reopened to user
+writes; post-open recovery is a gated forward fix.
 
 ## Operations
 

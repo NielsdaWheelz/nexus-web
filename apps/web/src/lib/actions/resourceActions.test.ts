@@ -18,18 +18,16 @@ describe("mediaResourceOptions", () => {
   it("keeps the same resource menu for header and list item consumers", () => {
     const headerMenu = mediaResourceOptions({
       media,
-      canManageLibraries: true,
       onOpenChat: () => {},
-      onManageLibraries: () => {},
+      onShare: () => {},
       onRetry: () => {},
       onDelete: () => {},
     });
 
     const rowMenu = mediaResourceOptions({
       media,
-      canManageLibraries: true,
       onOpenChat: () => {},
-      onManageLibraries: () => {},
+      onShare: () => {},
       onRetry: () => {},
       onDelete: () => {},
     });
@@ -56,34 +54,37 @@ describe("mediaResourceOptions", () => {
       }))
     );
     expect(headerMenu.map((option) => option.id)).toEqual([
+      "share",
       "open-source",
       "retry-processing",
       "chat-about-media",
-      "manage-media-libraries",
       "delete-media",
     ]);
-    expect(headerMenu[0]).toMatchObject({
+    expect(headerMenu[1]).toMatchObject({
       kind: "link",
       id: "open-source",
       href: "https://example.com/source",
     });
-    expect(headerMenu.slice(1).every((option) => option.kind === "command")).toBe(true);
+    expect(
+      headerMenu
+        .filter((option) => option.id !== "open-source")
+        .every((option) => option.kind === "command"),
+    ).toBe(true);
     expect(headerMenu.at(-1)).toMatchObject({
       kind: "command",
       id: "delete-media",
-      label: "Delete document",
+      label: "Remove media",
       tone: "danger",
       separatorBefore: true,
     });
   });
 
   it("exposes Add to Lectern only when onAddToLectern is wired", () => {
-    const withoutHandler = mediaResourceOptions({ media, canManageLibraries: false });
+    const withoutHandler = mediaResourceOptions({ media });
     expect(withoutHandler.some((option) => option.id === "add-to-lectern")).toBe(false);
 
     const withHandler = mediaResourceOptions({
       media,
-      canManageLibraries: false,
       onAddToLectern: () => {},
     });
     expect(withHandler.map((option) => option.id)).toContain("add-to-lectern");
@@ -95,7 +96,6 @@ describe("mediaResourceOptions", () => {
   it("only exposes actions the surface can actually execute", () => {
     const options = mediaResourceOptions({
       media,
-      canManageLibraries: false,
       retryBusy: true,
       deleteBusy: true,
       onRetry: () => {},
@@ -125,7 +125,6 @@ describe("mediaResourceOptions", () => {
         ...media,
         capabilities: { can_refresh_source: true },
       },
-      canManageLibraries: false,
       refreshBusy: true,
       onRefreshSource: () => {},
     });
@@ -147,7 +146,6 @@ describe("mediaResourceOptions", () => {
         ...media,
         capabilities: { can_refresh_source: true, can_retry_metadata: true },
       },
-      canManageLibraries: false,
       refreshBusy: false,
       retryMetadataBusy: true,
       onRefreshSource: () => {},
@@ -178,7 +176,6 @@ describe("mediaResourceOptions", () => {
           can_refresh_source: true,
         },
       },
-      canManageLibraries: false,
       onDelete: () => {},
       onRetry: () => {},
       onRefreshSource: () => {},
@@ -195,18 +192,18 @@ describe("libraryResourceOptions", () => {
   it("orders canonical library actions with destructive work last", () => {
     const options = libraryResourceOptions({
       library: {
-        is_default: false,
+        isDefault: false,
         role: "admin",
-        can_rename: true,
-        can_delete: true,
-        can_edit_entries: true,
+        canRename: true,
+        canDelete: true,
+        canEditEntries: true,
       },
-      onEdit: () => {},
+      onOpenSettings: () => {},
       onDelete: () => {},
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "edit-library",
+      "library-settings",
       "delete-library",
     ]);
     expect(options.at(-1)).toMatchObject({
@@ -221,13 +218,13 @@ describe("libraryResourceOptions", () => {
     // still editable); the dossier is now inline, not a menu action.
     const options = libraryResourceOptions({
       library: {
-        is_default: true,
+        isDefault: true,
         role: "admin",
-        can_rename: false,
-        can_delete: false,
-        can_edit_entries: true,
+        canRename: false,
+        canDelete: false,
+        canEditEntries: true,
       },
-      onEdit: () => {},
+      onOpenSettings: () => {},
       onDelete: () => {},
     });
 
@@ -239,13 +236,13 @@ describe("libraryResourceOptions", () => {
     // so no edit/delete action is offered even to an admin owner.
     const options = libraryResourceOptions({
       library: {
-        is_default: false,
+        isDefault: false,
         role: "admin",
-        can_rename: false,
-        can_delete: false,
-        can_edit_entries: false,
+        canRename: false,
+        canDelete: false,
+        canEditEntries: false,
       },
-      onEdit: () => {},
+      onOpenSettings: () => {},
       onDelete: () => {},
     });
 
@@ -258,26 +255,28 @@ describe("podcastResourceOptions", () => {
     expect(
       podcastResourceOptions({
         canUsePodcastActions: false,
-        onManageLibraries: () => {},
+        onShare: () => {},
         onOpenSettings: () => {},
         onRefreshSync: () => {},
         onUnsubscribe: () => {},
       })
-    ).toEqual([]);
+    ).toEqual([
+      expect.objectContaining({ id: "share", label: "Share…" }),
+    ]);
   });
 
   it("keeps subscribed podcast management consistent across surfaces", () => {
     const options = podcastResourceOptions({
       canUsePodcastActions: true,
       refreshBusy: true,
-      onManageLibraries: () => {},
+      onShare: () => {},
       onOpenSettings: () => {},
       onRefreshSync: () => {},
       onUnsubscribe: () => {},
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "manage-podcast-libraries",
+      "share",
       "open-podcast-settings",
       "refresh-podcast-sync",
       "unsubscribe-podcast",
@@ -310,7 +309,7 @@ describe("episodeResourceOptions", () => {
       played: false,
       markingBusy: true,
       episodePanelId: "episode-panel-episode-1",
-      onManageLibraries: () => {},
+      onShare: () => {},
       onOpenChat: () => {},
       onRetry: () => {},
       onDelete: () => {},
@@ -318,20 +317,19 @@ describe("episodeResourceOptions", () => {
     });
 
     expect(options.map((option) => option.id)).toEqual([
+      "share",
       "open-source",
       "retry-processing",
       "chat-about-media",
-      "manage-media-libraries",
       "toggle-episode-played",
       "delete-media",
     ]);
-    expect(options[1]).toMatchObject({
+    expect(options[2]).toMatchObject({
       id: "retry-processing",
       disabled: true,
     });
-    expect(options[3]).toMatchObject({
-      id: "manage-media-libraries",
-      disabled: true,
+    expect(options[0]).toMatchObject({
+      id: "share",
     });
     expect(options[4]).toMatchObject({
       id: "toggle-episode-played",
@@ -356,7 +354,7 @@ describe("episodeResourceOptions", () => {
       },
       played: false,
       episodePanelId: "episode-panel-episode-2",
-      onManageLibraries: () => {},
+      onShare: () => {},
       onTogglePlayed: () => {},
       onAddToLectern: () => {},
     });
@@ -375,7 +373,7 @@ describe("episodeResourceOptions", () => {
       episodePanelId: "episode-panel-episode-3",
       showNotesExpanded: true,
       transcriptPanelExpanded: true,
-      onManageLibraries: () => {},
+      onShare: () => {},
       onTogglePlayed: () => {},
       onToggleShowNotes: () => {},
       onPlayNext: () => {},
@@ -383,7 +381,7 @@ describe("episodeResourceOptions", () => {
     });
 
     expect(options.map((option) => option.id)).toEqual([
-      "manage-media-libraries",
+      "share",
       "toggle-episode-notes",
       "play-episode-next",
       "request-episode-transcript",

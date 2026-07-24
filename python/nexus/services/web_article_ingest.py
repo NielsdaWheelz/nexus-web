@@ -223,6 +223,14 @@ def _do_ingest(
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, error_message) from exc
 
     now = datetime.now(UTC)
+    locked_media_id = db.execute(
+        text("SELECT id FROM media WHERE id = :id FOR UPDATE"),
+        {"id": media_id},
+    ).scalar()
+    if locked_media_id is None:
+        if not mark_terminal_media_state:
+            raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        return {"status": "failed", "reason": "media_deleted_during_ingest"}
     delete_web_article_artifacts(
         db,
         owner_user_id=media.created_by_user_id or actor_user_id,
@@ -497,7 +505,11 @@ def _handle_duplicate(
 
     storage_paths: list[str] = []
     if delete_loser:
-        storage_paths = delete_duplicate_document_media(db, loser_id)
+        storage_paths = delete_duplicate_document_media(
+            db,
+            loser_media_id=loser_id,
+            winner_media_id=winner_id,
+        )
     else:
         db.flush()
     db.commit()

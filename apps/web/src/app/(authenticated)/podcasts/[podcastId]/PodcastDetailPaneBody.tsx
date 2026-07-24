@@ -34,13 +34,11 @@ import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
 import { assumeMediaId, type Placement } from "@/lib/lectern/contract";
-import { patchLibraryMembership } from "@/lib/media/mediaLibraries";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
 import PodcastEpisodeList from "./PodcastEpisodeList";
 import PodcastSubscriptionSettingsModal from "../PodcastSubscriptionSettingsModal";
 import LibraryDestinationPicker from "@/components/LibraryDestinationPicker";
-import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   createLibrary,
   type LibraryDestinationSelection,
@@ -196,12 +194,7 @@ export default function PodcastDetailPaneBody() {
     () => paneSearchParams.get("q") ?? "",
   );
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const [podcastLibrariesLoading, setPodcastLibrariesLoading] = useState(false);
   const busyMediaIds = useStringIdSet();
-  const [podcastMembershipPanelOpen, setPodcastMembershipPanelOpen] =
-    useState(false);
-  const [podcastMembershipPanelTriggerEl, setPodcastMembershipPanelTriggerEl] =
-    useState<HTMLElement | null>(null);
   const markingEpisodeIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
@@ -252,28 +245,6 @@ export default function PodcastDetailPaneBody() {
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
-
-  // Populate the membership panel's library list for the active podcast. The
-  // hook's loadLibraries does the fetch + error reporting; this layer adds the
-  // loading flag and the "already loaded" short-circuit.
-  const ensurePodcastLibrariesLoaded = useCallback(async () => {
-    if (!podcastId || podcastLibrariesLoading || podcastLibraries.length > 0) {
-      return;
-    }
-    setPodcastLibrariesLoading(true);
-    try {
-      const nextLibraries = await actions.loadLibraries(podcastId);
-      setPodcastLibraries(nextLibraries ?? []);
-    } finally {
-      setPodcastLibrariesLoading(false);
-    }
-  }, [
-    actions,
-    podcastId,
-    podcastLibraries.length,
-    podcastLibrariesLoading,
-    setPodcastLibraries,
-  ]);
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const closeSettingsModal = settingsModal.close;
@@ -525,36 +496,6 @@ export default function PodcastDetailPaneBody() {
     }
   }, [detail, reload, selectedDestinations]);
 
-  const addPodcastToLibrary = useCallback(
-    (libraryId: string) => {
-      if (!podcastId) {
-        return;
-      }
-      void actions.addToLibrary(podcastId, libraryId, () => {
-        setPodcastLibraries((prev) =>
-          patchLibraryMembership(prev, libraryId, true),
-        );
-        clearAllVisitData();
-      });
-    },
-    [actions, clearAllVisitData, podcastId, setPodcastLibraries],
-  );
-
-  const removePodcastFromLibrary = useCallback(
-    (libraryId: string) => {
-      if (!podcastId) {
-        return;
-      }
-      void actions.removeFromLibrary(podcastId, libraryId, () => {
-        setPodcastLibraries((prev) =>
-          patchLibraryMembership(prev, libraryId, false),
-        );
-        clearAllVisitData();
-      });
-    },
-    [actions, clearAllVisitData, podcastId, setPodcastLibraries],
-  );
-
   const refreshPodcastSync = useCallback(() => {
     if (!podcastId || !detail?.subscription) {
       return;
@@ -579,8 +520,6 @@ export default function PodcastDetailPaneBody() {
       );
       setDetail((prev) => (prev ? { ...prev, subscription: null } : prev));
       setPodcastLibraries(retainedLibraries);
-      setPodcastMembershipPanelOpen(false);
-      setPodcastMembershipPanelTriggerEl(null);
       clearAllVisitData();
     });
   }, [
@@ -958,16 +897,10 @@ export default function PodcastDetailPaneBody() {
     [clearAllVisitData, lectern],
   );
   const activeSubscription = detail?.subscription ?? null;
-  const podcastMembershipBusy = actions.busyLibraryMembershipKeys.ids.size > 0;
   const paneOptions = podcastResourceOptions({
     canUsePodcastActions: Boolean(activeSubscription),
     refreshBusy: refreshSyncBusy,
     unsubscribeBusy,
-    onManageLibraries: ({ triggerEl }) => {
-      setPodcastMembershipPanelOpen(true);
-      setPodcastMembershipPanelTriggerEl(triggerEl);
-      void ensurePodcastLibrariesLoaded();
-    },
     onOpenSettings: () => openSettingsModal(),
     onRefreshSync: refreshPodcastSync,
     onUnsubscribe: unsubscribePodcast,
@@ -1135,23 +1068,6 @@ export default function PodcastDetailPaneBody() {
         </PaneSection>
         <PaneSection>{episodePaneContent}</PaneSection>
       </div>
-
-      <LibraryMembershipPanel
-        open={podcastMembershipPanelOpen}
-        title="Libraries"
-        anchorEl={podcastMembershipPanelTriggerEl}
-        libraries={podcastLibraries}
-        loading={podcastLibrariesLoading}
-        busy={podcastMembershipBusy}
-        error={error}
-        emptyMessage="No non-default libraries available."
-        onClose={() => {
-          setPodcastMembershipPanelOpen(false);
-          setPodcastMembershipPanelTriggerEl(null);
-        }}
-        onAddToLibrary={addPodcastToLibrary}
-        onRemoveFromLibrary={removePodcastFromLibrary}
-      />
 
       <PodcastSubscriptionSettingsModal
         podcastTitle={

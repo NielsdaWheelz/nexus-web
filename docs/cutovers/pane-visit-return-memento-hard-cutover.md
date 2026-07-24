@@ -596,7 +596,7 @@ Scroll-owner cleanup:
 
 Docs and tests:
 
-- new `migrations/alembic/versions/0191_clear_workspace_sessions_for_pane_visits.py`
+- new `migrations/alembic/versions/0192_clear_workspace_sessions_for_pane_visits.py`
 - `docs/modules/workspace.md`
 - `docs/architecture.md`
 - `deployment.md`

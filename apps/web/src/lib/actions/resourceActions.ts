@@ -36,14 +36,13 @@ function normalizeMediaActionCapabilities(value: unknown): MediaActionCapabiliti
 
 export function mediaResourceOptions(input: {
   media: MediaActionSubject | null | undefined;
-  canManageLibraries: boolean;
   retryBusy?: boolean;
   refreshBusy?: boolean;
   deleteBusy?: boolean;
   retryMetadataBusy?: boolean;
   readState?: ReadStatus;
   onOpenChat?: () => void;
-  onManageLibraries?: (detail: ActionSelectDetail) => void;
+  onShare?: (detail: ActionSelectDetail) => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
   onDelete?: () => void;
@@ -57,6 +56,16 @@ export function mediaResourceOptions(input: {
 
   const capabilities = normalizeMediaActionCapabilities(media.capabilities);
   const options: ActionDescriptor[] = [];
+
+  if (input.onShare) {
+    options.push({
+      kind: "command",
+      id: "share",
+      label: "Share…",
+      restoreFocusOnClose: false,
+      onSelect: input.onShare,
+    });
+  }
 
   if (media.canonical_source_url) {
     options.push({
@@ -115,16 +124,6 @@ export function mediaResourceOptions(input: {
     });
   }
 
-  if (input.canManageLibraries && input.onManageLibraries) {
-    options.push({
-      kind: "command",
-      id: "manage-media-libraries",
-      label: "Libraries...",
-      restoreFocusOnClose: false,
-      onSelect: input.onManageLibraries,
-    });
-  }
-
   // Read-state override verb: mark-finished on unread/in-progress; mark-unread on
   // finished. Exactly one is offered, driven by the current derived read-state.
   if (input.readState !== "finished" && input.onMarkFinished) {
@@ -148,7 +147,7 @@ export function mediaResourceOptions(input: {
     options.push({
       kind: "command",
       id: "delete-media",
-      label: "Delete document",
+      label: "Remove media",
       tone: "danger",
       separatorBefore: options.length > 0,
       disabled: input.deleteBusy,
@@ -160,21 +159,22 @@ export function mediaResourceOptions(input: {
 }
 
 export interface LibraryActionSubject {
-  is_default: boolean;
+  isDefault: boolean;
   role: string;
   /**
    * Backend-backed capability flags (LibraryOut). A system-protected library
    * (e.g. the Oracle Corpus, `system_key != null`) reports all of these false,
    * which hides every mutation action below.
    */
-  can_rename: boolean;
-  can_delete: boolean;
-  can_edit_entries: boolean;
+  canRename: boolean;
+  canDelete: boolean;
+  canEditEntries: boolean;
 }
 
 export function libraryResourceOptions(input: {
   library: LibraryActionSubject | null | undefined;
-  onEdit?: () => void;
+  onShare?: (detail: ActionSelectDetail) => void;
+  onOpenSettings?: () => void;
   onDelete?: () => void;
 }): ActionDescriptor[] {
   const library = input.library;
@@ -182,19 +182,26 @@ export function libraryResourceOptions(input: {
 
   const options: ActionDescriptor[] = [];
 
-  // The edit dialog owns rename + sharing/membership (not media-entry
-  // editing), so it is gated on can_rename. The default library reports
-  // can_rename === false; a system library reports all can_* false.
-  if (library.can_rename && input.onEdit) {
+  if (input.onShare) {
     options.push({
       kind: "command",
-      id: "edit-library",
-      label: "Edit library",
-      onSelect: input.onEdit,
+      id: "share",
+      label: "Share…",
+      restoreFocusOnClose: false,
+      onSelect: input.onShare,
     });
   }
 
-  if (library.can_delete && input.onDelete) {
+  if (library.canRename && input.onOpenSettings) {
+    options.push({
+      kind: "command",
+      id: "library-settings",
+      label: "Settings",
+      onSelect: input.onOpenSettings,
+    });
+  }
+
+  if (library.canDelete && input.onDelete) {
     options.push({
       kind: "command",
       id: "delete-library",
@@ -213,25 +220,24 @@ export function podcastResourceOptions(input: {
   busy?: boolean;
   refreshBusy?: boolean;
   unsubscribeBusy?: boolean;
-  onManageLibraries?: (detail: ActionSelectDetail) => void;
+  onShare?: (detail: ActionSelectDetail) => void;
   onOpenSettings?: () => void;
   onRefreshSync?: () => void;
   onUnsubscribe?: () => void;
 }): ActionDescriptor[] {
-  if (!input.canUsePodcastActions) return [];
-
   const options: ActionDescriptor[] = [];
 
-  if (input.onManageLibraries) {
+  if (input.onShare) {
     options.push({
       kind: "command",
-      id: "manage-podcast-libraries",
-      label: "Libraries...",
+      id: "share",
+      label: "Share…",
       restoreFocusOnClose: false,
-      disabled: input.busy || input.unsubscribeBusy,
-      onSelect: input.onManageLibraries,
+      onSelect: input.onShare,
     });
   }
+
+  if (!input.canUsePodcastActions) return options;
 
   if (input.onOpenSettings) {
     options.push({
@@ -277,7 +283,7 @@ export function episodeResourceOptions(input: {
   retryMetadataBusy?: boolean;
   played: boolean;
   markingBusy?: boolean;
-  onManageLibraries: (detail: ActionSelectDetail) => void;
+  onShare: (detail: ActionSelectDetail) => void;
   onOpenChat?: () => void;
   onRetry?: () => void;
   onRefreshSource?: () => void;
@@ -295,23 +301,18 @@ export function episodeResourceOptions(input: {
 }): ActionDescriptor[] {
   const options = mediaResourceOptions({
     media: input.media,
-    canManageLibraries: true,
     retryBusy: input.retryBusy,
     refreshBusy: input.refreshBusy,
     deleteBusy: input.deleteBusy,
     retryMetadataBusy: input.retryMetadataBusy,
     onOpenChat: input.onOpenChat,
-    onManageLibraries: input.onManageLibraries,
+    onShare: input.onShare,
     onRetry: input.onRetry,
     onRefreshSource: input.onRefreshSource,
     onDelete: input.onDelete,
     onRetryMetadata: input.onRetryMetadata,
     onAddToLectern: input.onAddToLectern,
-  }).map((option) =>
-    option.id === "manage-media-libraries"
-      ? { ...option, disabled: input.busy }
-      : option
-  );
+  });
   const playbackOption: ActionDescriptor = {
     kind: "command",
     id: "toggle-episode-played",

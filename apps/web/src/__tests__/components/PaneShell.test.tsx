@@ -19,6 +19,7 @@ import type {
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
+import { routeShareTarget } from "@/lib/sharing/targets";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -26,6 +27,9 @@ const TEST_VISIT_ID = assumePaneVisitId(
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
+}));
+const shareControllerMock = vi.hoisted(() => ({
+  openShare: vi.fn(),
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
@@ -40,6 +44,10 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
     onDocumentScroll: () => {},
     acquireVisibleLock: () => () => {},
   }),
+}));
+
+vi.mock("@/lib/sharing/controller", () => ({
+  useShareController: () => shareControllerMock,
 }));
 
 const runtimeNavigation = {
@@ -87,7 +95,7 @@ const defaultPaneProps = {
   paneId: "pane-a",
   routeKey: "media:/media/media-1",
   routeHeader: sectionHeader,
-  href: "/libraries",
+  shareIdentity: routeShareTarget({ href: "/libraries", label: "Libraries" }),
   label: "Libraries",
   returnMementoEnabled: false,
   sizing: paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 }),
@@ -489,7 +497,10 @@ describe("PaneShell", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["Copy pane link", "Credits…"]);
+    ).toEqual(["Share…", "Credits…"]);
+    expect(
+      within(menu).getAllByRole("menuitem", { name: "Share…" }),
+    ).toHaveLength(1);
     expect(
       within(menu).queryByRole("menuitem", { name: "Companion" }),
     ).not.toBeInTheDocument();
@@ -546,7 +557,12 @@ describe("PaneShell", () => {
     ]);
     expect(
       publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Copy pane link", "Credits…"]);
+    ).toEqual(["Share…", "Credits…"]);
+    expect(
+      publication?.options.filter(
+        (option: ActionDescriptor) => option.id === "share",
+      ),
+    ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
   });

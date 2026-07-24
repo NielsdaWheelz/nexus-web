@@ -128,7 +128,6 @@ import HoverPreview, {
   HOVER_PREVIEW_DELAY_MS,
 } from "@/components/ui/HoverPreview";
 import ActionMenu from "@/components/ui/ActionMenu";
-import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import {
   getReaderDocumentMap,
   findEvidenceItem,
@@ -215,7 +214,6 @@ import {
 } from "@/lib/media/documentEmbeds";
 import { useDocumentActions } from "@/lib/media/useDocumentActions";
 import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
-import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useFocusModeTracking } from "@/lib/reader/useFocusModeTracking";
 import ReaderContentsNav from "@/components/reader/ReaderContentsNav";
 import TextDocumentReader, {
@@ -266,6 +264,10 @@ import {
   type ReaderPulseTarget,
 } from "@/lib/reader/pulseEvent";
 import { useReaderTarget } from "@/lib/reader/useReaderTarget";
+import {
+  fetchResolvedHighlightReaderTarget,
+  type ResolvedHighlightReaderTarget,
+} from "@/lib/reader/readerTargetHash";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import { mediaKindIcon } from "@/lib/resources/resourceKind";
@@ -1042,6 +1044,14 @@ export default function MediaPaneBody() {
     cacheKey: requestedEvidenceId ? `${id}:${requestedEvidenceId}` : null,
     path: () => `/api/media/${id}/evidence/${requestedEvidenceId!}`,
   });
+  const resolvedHighlightTargetResource =
+    useResource<ResolvedHighlightReaderTarget>({
+      cacheKey: requestedHighlightId
+        ? `${id}:highlight-target:${requestedHighlightId}`
+        : null,
+      load: (signal) =>
+        fetchResolvedHighlightReaderTarget(requestedHighlightId!, signal),
+    });
 
   useEffect(() => {
     if (
@@ -1055,9 +1065,30 @@ export default function MediaPaneBody() {
     }
   }, [feedback, resolvedEvidenceResource]);
 
+  useEffect(() => {
+    if (resolvedHighlightTargetResource.status !== "error") {
+      return;
+    }
+    feedback.show({
+      severity: "error",
+      title:
+        isApiError(resolvedHighlightTargetResource.error) &&
+        resolvedHighlightTargetResource.error.status === 404
+          ? "Highlight unavailable"
+          : "Couldn't open highlight",
+    });
+    // Never allow a missing, stale, mismatched, or malformed target to focus a
+    // highlight that happens to exist in the initially rendered source.
+    clearTarget();
+  }, [clearTarget, feedback, resolvedHighlightTargetResource]);
+
   const resolvedEvidence =
     resolvedEvidenceResource.status === "ready"
       ? resolvedEvidenceResource.data.data
+      : null;
+  const resolvedHighlightTarget =
+    resolvedHighlightTargetResource.status === "ready"
+      ? resolvedHighlightTargetResource.data
       : null;
 
   const resolvedEvidenceParams = resolvedEvidence?.resolver.params ?? null;
@@ -1142,18 +1173,33 @@ export default function MediaPaneBody() {
   ]);
   const activeRequestedFragmentId =
     requestedFragmentId ??
+    (resolvedHighlightTarget?.kind === "WebTextOffsets" ||
+    resolvedHighlightTarget?.kind === "TranscriptTextOffsets"
+      ? resolvedHighlightTarget.fragmentId
+      : null) ??
     resolvedEvidenceFragmentId ??
     resolvedTranscriptEvidenceFragment?.id ??
     null;
   const activeRequestedReaderLoc =
-    requestedReaderLoc ?? resolvedEvidenceReaderLoc;
+    requestedReaderLoc ??
+    (resolvedHighlightTarget?.kind === "EpubTextOffsets"
+      ? resolvedHighlightTarget.sectionId
+      : null) ??
+    resolvedEvidenceReaderLoc;
   const activeRequestedStartMs =
     requestedStartMs ??
+    (resolvedHighlightTarget?.kind === "TranscriptTextOffsets" &&
+    resolvedHighlightTarget.timeRange.kind === "Present"
+      ? resolvedHighlightTarget.timeRange.value.startMs
+      : null) ??
     resolvedEvidenceStartMs ??
     resolvedTranscriptEvidenceFragment?.t_start_ms ??
     null;
   const activeRequestedPdfPageNumber =
     requestedPdfPageNumber ??
+    (resolvedHighlightTarget?.kind === "PdfPageGeometry"
+      ? resolvedHighlightTarget.pageNumber
+      : null) ??
     parsePositivePageNumber(resolvedEvidenceParams?.page);
 
   const {
@@ -1205,6 +1251,8 @@ export default function MediaPaneBody() {
   const [quickNote, setQuickNote] = useState<QuickNoteSession | null>(null);
   const focusedHighlightIdRef = useRef<string | null>(focusState.focusedId);
   const urlHighlightAppliedRef = useRef<string | null>(null);
+  const urlPdfHighlightPreparedRef = useRef<string | null>(null);
+  const urlTranscriptSeekAppliedRef = useRef<string | null>(null);
   const urlApparatusAppliedRef = useRef<string | null>(null);
   const urlEvidenceAppliedRef = useRef<string | null>(null);
   const mismatchToastFragmentRef = useRef<string | null>(null);
@@ -3318,6 +3366,9 @@ export default function MediaPaneBody() {
       urlHighlightAppliedRef.current = null;
       return;
     }
+    if (resolvedHighlightTargetResource.status !== "ready") {
+      return;
+    }
     if (!activeContent || !contentRef.current || epubSectionLoading) {
       return;
     }
@@ -3364,6 +3415,7 @@ export default function MediaPaneBody() {
     };
   }, [
     requestedHighlightId,
+    resolvedHighlightTargetResource.status,
     activeContent,
     epubSectionLoading,
     highlights,
@@ -3373,6 +3425,26 @@ export default function MediaPaneBody() {
     paneMobileChrome,
     markActive,
   ]);
+
+  useEffect(() => {
+    if (!requestedHighlightId) {
+      urlPdfHighlightPreparedRef.current = null;
+      return;
+    }
+    if (
+      resolvedHighlightTarget?.kind !== "PdfPageGeometry" ||
+      urlPdfHighlightPreparedRef.current === requestedHighlightId
+    ) {
+      return;
+    }
+    urlPdfHighlightPreparedRef.current = requestedHighlightId;
+    setPdfHighlightNavigation({
+      highlightId: requestedHighlightId,
+      pageNumber: resolvedHighlightTarget.pageNumber,
+      quads: resolvedHighlightTarget.quads,
+    });
+    focusHighlight(requestedHighlightId);
+  }, [focusHighlight, requestedHighlightId, resolvedHighlightTarget]);
 
   useEffect(() => {
     const textEvidenceHighlightId =
@@ -4163,6 +4235,21 @@ export default function MediaPaneBody() {
   );
 
   const { seekTo, resume } = useGlobalPlayer();
+  useEffect(() => {
+    if (!requestedHighlightId) {
+      urlTranscriptSeekAppliedRef.current = null;
+      return;
+    }
+    if (
+      resolvedHighlightTarget?.kind !== "TranscriptTextOffsets" ||
+      resolvedHighlightTarget.timeRange.kind !== "Present" ||
+      urlTranscriptSeekAppliedRef.current === requestedHighlightId
+    ) {
+      return;
+    }
+    urlTranscriptSeekAppliedRef.current = requestedHighlightId;
+    seekTo(resolvedHighlightTarget.timeRange.value.startMs);
+  }, [requestedHighlightId, resolvedHighlightTarget, seekTo]);
   const readerSurfaceStyle = buildReaderSurfaceStyle(readerProfile);
   const readerSurfaceClassName = `${styles.readerContentRoot} ${
     readerProfile.theme === "dark"
@@ -4305,22 +4392,9 @@ export default function MediaPaneBody() {
   // Highlights pane state
   // ==========================================================================
 
-  const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
-  const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
-    useState<HTMLElement | null>(null);
   const [videoSeekTargetMs, setVideoSeekTargetMs] = useState<number | null>(
     null,
   );
-
-  const {
-    libraries: libraryPickerLibraries,
-    loading: libraryPickerLoading,
-    error: libraryPickerError,
-    busy: libraryMembershipBusy,
-    loadLibraries: loadLibraryPickerLibraries,
-    addToLibrary: handleAddToLibrary,
-    removeFromLibrary: handleRemoveFromLibrary,
-  } = useLibraryMembership(media?.id);
 
   const handleProcessingRestarted = useCallback(
     ({
@@ -4374,11 +4448,11 @@ export default function MediaPaneBody() {
   }, [media, refreshMetadataRetryState]);
 
   const {
-    deleteBusy: documentDeleteBusy,
+    deleteBusy: mediaRemovalBusy,
     retryBusy: retryProcessingBusy,
     refreshBusy: refreshSourceBusy,
     retryMetadataBusy,
-    handleDelete: handleDeleteDocument,
+    handleDelete: handleRemoveMedia,
     handleRetry: handleRetryProcessing,
     handleRefresh: handleRefreshSource,
     handleRetryMetadata,
@@ -4626,10 +4700,9 @@ export default function MediaPaneBody() {
   const mediaHeaderOptions = useMemo(() => {
     const options = mediaResourceOptions({
       media,
-      canManageLibraries: Boolean(media),
       retryBusy: retryProcessingBusy,
       refreshBusy: refreshSourceBusy,
-      deleteBusy: documentDeleteBusy,
+      deleteBusy: mediaRemovalBusy,
       retryMetadataBusy,
       onRetry: media?.capabilities?.can_retry
         ? () => {
@@ -4651,14 +4724,9 @@ export default function MediaPaneBody() {
             void openChatForMedia();
           }
         : undefined,
-      onManageLibraries: ({ triggerEl }) => {
-        setLibraryPanelAnchorEl(triggerEl);
-        setLibraryPanelOpen(true);
-        void loadLibraryPickerLibraries();
-      },
       onDelete: media?.capabilities?.can_delete
         ? () => {
-            void handleDeleteDocument();
+            void handleRemoveMedia();
           }
         : undefined,
       onAddToLectern: media
@@ -4759,9 +4827,9 @@ export default function MediaPaneBody() {
     }
     return options;
   }, [
-    documentDeleteBusy,
+    mediaRemovalBusy,
     handleAddMediaToLectern,
-    handleDeleteDocument,
+    handleRemoveMedia,
     handleMarkFinished,
     handleMarkUnread,
     handleRefreshSource,
@@ -4769,7 +4837,6 @@ export default function MediaPaneBody() {
     handleRetryProcessing,
     isPdf,
     isReflowableReader,
-    loadLibraryPickerLibraries,
     media,
     mediaResourceHeader,
     mediaReadState,
@@ -5135,9 +5202,6 @@ export default function MediaPaneBody() {
         paneMobileChrome.acquireVisibleLock("mobile-secondary"),
       );
     }
-    if (libraryPanelOpen) {
-      releaseLocks.push(paneMobileChrome.acquireVisibleLock("library-picker"));
-    }
     if (selection && !focusState.editingBounds) {
       releaseLocks.push(paneMobileChrome.acquireVisibleLock("text-selection"));
     }
@@ -5147,21 +5211,12 @@ export default function MediaPaneBody() {
       }
     };
   }, [
-    libraryPanelOpen,
     focusState.editingBounds,
     isMobileViewport,
     paneMobileChrome,
     secondaryPane,
     selection,
   ]);
-
-  useEffect(() => {
-    if (media) {
-      return;
-    }
-    setLibraryPanelOpen(false);
-    setLibraryPanelAnchorEl(null);
-  }, [media]);
 
   const anchoredHighlights = useMemo<AnchoredReaderRow[]>(() => {
     if (isPdf) {
@@ -6042,23 +6097,6 @@ export default function MediaPaneBody() {
 
   return (
     <>
-      <LibraryMembershipPanel
-        open={libraryPanelOpen}
-        title="Libraries"
-        anchorEl={libraryPanelAnchorEl}
-        libraries={libraryPickerLibraries}
-        loading={libraryPickerLoading}
-        busy={libraryMembershipBusy}
-        error={libraryPickerError}
-        emptyMessage="No non-default libraries available."
-        onClose={() => setLibraryPanelOpen(false)}
-        onAddToLibrary={(libraryId) => {
-          void handleAddToLibrary(libraryId);
-        }}
-        onRemoveFromLibrary={(libraryId) => {
-          void handleRemoveFromLibrary(libraryId);
-        }}
-      />
       <div
         className={styles.readerLayout}
         data-focus-mode={focusModeForRoot}
@@ -6222,6 +6260,12 @@ export default function MediaPaneBody() {
                   navigateToHighlight={pdfHighlightNavigation}
                   onHighlightNavigationComplete={() => {
                     setPdfHighlightNavigation(null);
+                    if (
+                      requestedHighlightId &&
+                      resolvedHighlightTarget?.kind === "PdfPageGeometry"
+                    ) {
+                      markActive();
+                    }
                   }}
                   onControlsStateChange={setPdfControlsState}
                   onControlsReady={(controls) => {

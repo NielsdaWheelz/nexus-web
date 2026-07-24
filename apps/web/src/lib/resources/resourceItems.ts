@@ -7,6 +7,7 @@ import type {
   ResourceReadMode,
   UserLinkTargetMode,
 } from "@/lib/resources/resourceCapabilities";
+import { isShareMode, type ShareMode } from "@/lib/sharing/types";
 import {
   normalizeResourceActivation,
   type ResourceActivation,
@@ -24,6 +25,7 @@ export interface ResourceUserRelation {
 
 export interface ResourceItemCapabilities {
   userRelation: ResourceUserRelation;
+  sharing: ShareMode;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -88,6 +90,9 @@ export function normalizeResourceItem(raw: Record<string, unknown>): ResourceIte
   if (!activation) {
     throw new Error("Invalid resource activation");
   }
+  if (!isShareMode(capabilities.sharing)) {
+    throw new Error("Invalid resource sharing capability");
+  }
   const versionByLane = isRecord(raw.versionByLane)
     ? raw.versionByLane
     : isRecord(raw.version_by_lane)
@@ -106,6 +111,7 @@ export function normalizeResourceItem(raw: Record<string, unknown>): ResourceIte
       userRelation: normalizeUserRelation(
         capabilities.userRelation ?? capabilities.user_relation,
       ),
+      sharing: capabilities.sharing,
       attachable: Boolean(capabilities.attachable),
       chatSubject: String(
         capabilities.chatSubject ?? capabilities.chat_subject ?? "none",

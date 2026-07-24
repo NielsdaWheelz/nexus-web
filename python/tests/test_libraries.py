@@ -12,6 +12,7 @@ Tests cover:
 import base64
 import json
 import threading
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,6 +20,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from nexus.services import library_entries, library_governance
+from nexus.services.sealed_handles import (
+    seal_library_invitation,
+    seal_user,
+    unseal_library_invitation,
+    unseal_user,
+)
 from tests.factories import (
     add_media_to_library,
     create_test_fragment,
@@ -31,6 +38,33 @@ from tests.support.teardown import drive_media_teardown, install_fake_storage_fo
 from tests.utils.db import DirectSessionManager
 
 pytestmark = pytest.mark.integration
+
+
+def _user_handle(user_id: UUID) -> str:
+    return str(seal_user(user_id))
+
+
+def _invite_handle(invitation_id: UUID | str) -> str:
+    return str(seal_library_invitation(UUID(str(invitation_id))))
+
+
+def _user_invitee(user_id: UUID) -> dict:
+    return {"kind": "User", "userHandle": _user_handle(user_id)}
+
+
+@pytest.fixture
+def _sharing_entitled(monkeypatch):
+    from nexus.services import billing_entitlements
+
+    def entitlement(_db, _user_id):
+        return SimpleNamespace(can_share=True)
+
+    monkeypatch.setattr(
+        billing_entitlements,
+        "get_effective_entitlements",
+        entitlement,
+    )
+    monkeypatch.setattr(library_entries, "get_effective_entitlements", entitlement)
 
 
 @pytest.fixture(autouse=True)
@@ -117,9 +151,10 @@ class TestCreateLibrary:
         assert response.status_code == 201
         data = response.json()["data"]
         assert data["name"] == "My New Library"
-        assert data["is_default"] is False
+        assert data["isDefault"] is False
         assert data["role"] == "admin"
-        assert data["owner_user_id"] == str(user_id)
+        assert unseal_user(data["ownerUserHandle"]) == user_id
+        assert data["canTransferOwnership"] is True
 
     def test_create_library_owner_is_admin(self, auth_client, direct_db: DirectSessionManager):
         """Creator becomes admin of new library."""
@@ -223,9 +258,10 @@ class TestListLibraries:
         assert len(data) >= 1
 
         # Find default library
-        default_libs = [lib for lib in data if lib["is_default"]]
+        default_libs = [lib for lib in data if lib["isDefault"]]
         assert len(default_libs) == 1
         assert default_libs[0]["name"] == "My Library"
+        assert default_libs[0]["canTransferOwnership"] is False
 
     def test_list_libraries_ordering(self, auth_client):
         """Libraries are ordered by created_at ASC, id ASC."""
@@ -242,10 +278,10 @@ class TestListLibraries:
         data = response.json()["data"]
 
         # First should be default (created first), then A, B, C in order
-        assert data[0]["is_default"] is True
+        assert data[0]["isDefault"] is True
         # Verify ascending order by checking created_at
         for i in range(len(data) - 1):
-            assert data[i]["created_at"] <= data[i + 1]["created_at"]
+            assert data[i]["createdAt"] <= data[i + 1]["createdAt"]
 
     def test_list_libraries_limit(self, auth_client):
         """Limit parameter works correctly."""
@@ -546,17 +582,17 @@ class TestSystemLibraryMutationGuards:
             auth_client.delete(f"/libraries/{system_id}", headers=auth_headers(owner_id)),
             auth_client.post(
                 f"/libraries/{system_id}/invites",
-                json={"invitee_user_id": str(invitee_id), "role": "member"},
+                json={"invitee": _user_invitee(invitee_id), "role": "member"},
                 headers=auth_headers(owner_id),
             ),
             auth_client.get(f"/libraries/{system_id}/invites", headers=auth_headers(owner_id)),
             auth_client.patch(
-                f"/libraries/{system_id}/members/{owner_id}",
+                f"/libraries/{system_id}/members/{_user_handle(owner_id)}",
                 json={"role": "admin"},
                 headers=auth_headers(owner_id),
             ),
             auth_client.delete(
-                f"/libraries/{system_id}/members/{owner_id}",
+                f"/libraries/{system_id}/members/{_user_handle(owner_id)}",
                 headers=auth_headers(owner_id),
             ),
             auth_client.post(
@@ -1981,7 +2017,7 @@ class TestDefaultLibraryVirtualView:
     assert on anymore, only the live query's observable behavior."""
 
     def test_direct_and_shared_media_appears_once_preferring_direct_entry(
-        self, auth_client, direct_db: DirectSessionManager
+        self, auth_client, direct_db: DirectSessionManager, _sharing_entitled
     ):
         """AC2: direct + shared non-system media appears once. The two-stage
         DISTINCT ON dedupe prefers a direct default entry as the representative
@@ -2000,12 +2036,12 @@ class TestDefaultLibraryVirtualView:
         auth_client.get("/me", headers=auth_headers(viewer_id))
         invite_resp = auth_client.post(
             f"/libraries/{shared_library_id}/invites",
-            json={"invitee_user_id": str(viewer_id), "role": "member"},
+            json={"invitee": _user_invitee(viewer_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
-        invite_id = invite_resp.json()["data"]["id"]
+        invitation_handle = invite_resp.json()["data"]["invitationHandle"]
         accept_resp = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept", headers=auth_headers(viewer_id)
+            f"/libraries/invites/{invitation_handle}/accept", headers=auth_headers(viewer_id)
         )
         assert accept_resp.status_code == 200
         add_resp = auth_client.post(
@@ -2352,7 +2388,7 @@ class TestReorderLibraryMedia:
         assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_reorder_library_entries_forbids_non_admin(
-        self, auth_client, direct_db: DirectSessionManager
+        self, auth_client, direct_db: DirectSessionManager, _sharing_entitled
     ):
         owner_id = create_test_user_id()
         member_id = create_test_user_id()
@@ -2377,13 +2413,13 @@ class TestReorderLibraryMedia:
 
         invite_resp = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(member_id), "role": "member"},
+            json={"invitee": _user_invitee(member_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert invite_resp.status_code == 201
-        invite_id = invite_resp.json()["data"]["id"]
+        invitation_handle = invite_resp.json()["data"]["invitationHandle"]
         accept_resp = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(member_id),
         )
         assert accept_resp.status_code == 200
@@ -2551,6 +2587,34 @@ class TestGetLibrary:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_LIBRARY_NOT_FOUND"
 
+    def test_get_library_non_owner_admin_cannot_transfer_ownership(
+        self, auth_client, direct_db: DirectSessionManager
+    ):
+        owner_id = create_test_user_id()
+        admin_id = create_test_user_id()
+        create_resp = auth_client.post(
+            "/libraries", json={"name": "Shared"}, headers=auth_headers(owner_id)
+        )
+        library_id = create_resp.json()["data"]["id"]
+        auth_client.get("/me", headers=auth_headers(admin_id))
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    INSERT INTO memberships (library_id, user_id, role)
+                    VALUES (:library_id, :user_id, 'admin')
+                """),
+                {"library_id": library_id, "user_id": admin_id},
+            )
+            session.commit()
+
+        response = auth_client.get(f"/libraries/{library_id}", headers=auth_headers(admin_id))
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["canManageMembers"] is True
+        assert data["canDelete"] is False
+        assert data["canTransferOwnership"] is False
+
 
 # =============================================================================
 # Library Delete (owner-only)
@@ -2678,18 +2742,18 @@ class TestListMembers:
         assert len(data) == 3
 
         # Owner first
-        assert data[0]["user_id"] == str(owner_id)
-        assert data[0]["is_owner"] is True
+        assert unseal_user(data[0]["userHandle"]) == owner_id
+        assert data[0]["isOwner"] is True
         assert data[0]["role"] == "admin"
 
         # Admin second
-        assert data[1]["user_id"] == str(admin_id)
-        assert data[1]["is_owner"] is False
+        assert unseal_user(data[1]["userHandle"]) == admin_id
+        assert data[1]["isOwner"] is False
         assert data[1]["role"] == "admin"
 
         # Member last
-        assert data[2]["user_id"] == str(member_id)
-        assert data[2]["is_owner"] is False
+        assert unseal_user(data[2]["userHandle"]) == member_id
+        assert data[2]["isOwner"] is False
         assert data[2]["role"] == "member"
 
     def test_list_members_limit_and_clamp(self, auth_client, direct_db: DirectSessionManager):
@@ -2764,11 +2828,11 @@ class TestListMembers:
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 1
-        assert data[0]["user_id"] == str(user_id)
+        assert unseal_user(data[0]["userHandle"]) == user_id
 
 
 class TestUpdateMemberRole:
-    """Tests for PATCH /libraries/{id}/members/{user_id} endpoint."""
+    """Tests for PATCH /libraries/{id}/members/{user_handle} endpoint."""
 
     def test_patch_member_role_promote_success(self, auth_client, direct_db: DirectSessionManager):
         """Admin can promote member to admin."""
@@ -2792,14 +2856,14 @@ class TestUpdateMemberRole:
             session.commit()
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{member_id}",
+            f"/libraries/{library_id}/members/{_user_handle(member_id)}",
             json={"role": "admin"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["role"] == "admin"
-        assert data["user_id"] == str(member_id)
+        assert unseal_user(data["userHandle"]) == member_id
 
     def test_patch_member_role_idempotent_no_change(
         self, auth_client, direct_db: DirectSessionManager
@@ -2825,7 +2889,7 @@ class TestUpdateMemberRole:
             session.commit()
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{member_id}",
+            f"/libraries/{library_id}/members/{_user_handle(member_id)}",
             json={"role": "member"},
             headers=auth_headers(owner_id),
         )
@@ -2859,7 +2923,7 @@ class TestUpdateMemberRole:
             session.commit()
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{target_id}",
+            f"/libraries/{library_id}/members/{_user_handle(target_id)}",
             json={"role": "admin"},
             headers=auth_headers(member_id),
         )
@@ -2878,7 +2942,7 @@ class TestUpdateMemberRole:
         auth_client.get("/me", headers=auth_headers(outsider_id))
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             json={"role": "member"},
             headers=auth_headers(outsider_id),
         )
@@ -2895,7 +2959,7 @@ class TestUpdateMemberRole:
         library_id = create_resp.json()["data"]["id"]
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{uuid4()}",
+            f"/libraries/{library_id}/members/{_user_handle(uuid4())}",
             json={"role": "admin"},
             headers=auth_headers(owner_id),
         )
@@ -2912,7 +2976,7 @@ class TestUpdateMemberRole:
         library_id = create_resp.json()["data"]["id"]
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             json={"role": "member"},
             headers=auth_headers(owner_id),
         )
@@ -2943,7 +3007,7 @@ class TestUpdateMemberRole:
             session.commit()
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             json={"role": "member"},
             headers=auth_headers(admin_id),
         )
@@ -2975,14 +3039,14 @@ class TestUpdateMemberRole:
             session.commit()
 
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{admin_id}",
+            f"/libraries/{library_id}/members/{_user_handle(admin_id)}",
             json={"role": "member"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["role"] == "member"
-        assert data["user_id"] == str(admin_id)
+        assert unseal_user(data["userHandle"]) == admin_id
 
     def test_patch_member_role_default_library_forbidden(self, auth_client):
         """Cannot change roles in default library."""
@@ -2991,7 +3055,7 @@ class TestUpdateMemberRole:
         default_library_id = me_resp.json()["data"]["default_library_id"]
 
         response = auth_client.patch(
-            f"/libraries/{default_library_id}/members/{user_id}",
+            f"/libraries/{default_library_id}/members/{_user_handle(user_id)}",
             json={"role": "member"},
             headers=auth_headers(user_id),
         )
@@ -3000,7 +3064,7 @@ class TestUpdateMemberRole:
 
 
 class TestRemoveMember:
-    """Tests for DELETE /libraries/{id}/members/{user_id} endpoint."""
+    """Tests for DELETE /libraries/{id}/members/{user_handle} endpoint."""
 
     def test_delete_member_success(self, auth_client, direct_db: DirectSessionManager):
         """Admin can remove a member."""
@@ -3024,7 +3088,7 @@ class TestRemoveMember:
             session.commit()
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{member_id}",
+            f"/libraries/{library_id}/members/{_user_handle(member_id)}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -3050,7 +3114,7 @@ class TestRemoveMember:
         library_id = create_resp.json()["data"]["id"]
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{uuid4()}",
+            f"/libraries/{library_id}/members/{_user_handle(uuid4())}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -3082,7 +3146,7 @@ class TestRemoveMember:
             session.commit()
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{target_id}",
+            f"/libraries/{library_id}/members/{_user_handle(target_id)}",
             headers=auth_headers(member_id),
         )
         assert response.status_code == 403
@@ -3100,7 +3164,7 @@ class TestRemoveMember:
         auth_client.get("/me", headers=auth_headers(outsider_id))
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             headers=auth_headers(outsider_id),
         )
         assert response.status_code == 404
@@ -3116,7 +3180,7 @@ class TestRemoveMember:
         library_id = create_resp.json()["data"]["id"]
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 403
@@ -3146,7 +3210,7 @@ class TestRemoveMember:
             session.commit()
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             headers=auth_headers(admin_id),
         )
         assert response.status_code == 403
@@ -3176,7 +3240,7 @@ class TestRemoveMember:
             session.commit()
 
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{admin_id}",
+            f"/libraries/{library_id}/members/{_user_handle(admin_id)}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -3198,7 +3262,7 @@ class TestRemoveMember:
         default_library_id = me_resp.json()["data"]["default_library_id"]
 
         response = auth_client.delete(
-            f"/libraries/{default_library_id}/members/{user_id}",
+            f"/libraries/{default_library_id}/members/{_user_handle(user_id)}",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 403
@@ -3212,6 +3276,22 @@ class TestRemoveMember:
 
 class TestTransferOwnership:
     """Tests for POST /libraries/{id}/transfer-ownership endpoint."""
+
+    def test_transfer_rejects_snake_case_user_handle_alias(self, auth_client):
+        viewer_id = create_test_user_id()
+
+        response = auth_client.post(
+            f"/libraries/{uuid4()}/transfer-ownership",
+            json={
+                "new_owner_user_handle": _user_handle(
+                    create_test_user_id(),
+                )
+            },
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_transfer_ownership_success_promotes_target_to_admin_and_preserves_previous_owner_admin(
         self, auth_client, direct_db: DirectSessionManager
@@ -3238,12 +3318,14 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(member_id)},
+            json={"newOwnerUserHandle": _user_handle(member_id)},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["owner_user_id"] == str(member_id)
+        assert unseal_user(data["ownerUserHandle"]) == member_id
+        assert data["canDelete"] is False
+        assert data["canTransferOwnership"] is False
 
         # Verify roles in DB
         with direct_db.session() as session:
@@ -3270,11 +3352,11 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(owner_id)},
+            json={"newOwnerUserHandle": _user_handle(owner_id)},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
-        assert response.json()["data"]["owner_user_id"] == str(owner_id)
+        assert unseal_user(response.json()["data"]["ownerUserHandle"]) == owner_id
 
     def test_transfer_ownership_non_owner_admin_owner_required(
         self, auth_client, direct_db: DirectSessionManager
@@ -3301,7 +3383,7 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(admin_id)},
+            json={"newOwnerUserHandle": _user_handle(admin_id)},
             headers=auth_headers(admin_id),
         )
         assert response.status_code == 403
@@ -3332,7 +3414,7 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(member_id)},
+            json={"newOwnerUserHandle": _user_handle(member_id)},
             headers=auth_headers(member_id),
         )
         assert response.status_code == 403
@@ -3351,7 +3433,7 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(owner_id)},
+            json={"newOwnerUserHandle": _user_handle(owner_id)},
             headers=auth_headers(outsider_id),
         )
         assert response.status_code == 404
@@ -3365,7 +3447,7 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{default_library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(uuid4())},
+            json={"newOwnerUserHandle": _user_handle(uuid4())},
             headers=auth_headers(user_id),
         )
         assert response.status_code == 403
@@ -3382,7 +3464,7 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(uuid4())},
+            json={"newOwnerUserHandle": _user_handle(uuid4())},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 409
@@ -3399,7 +3481,7 @@ class TestTransferOwnership:
             "/libraries", json={"name": "Team"}, headers=auth_headers(owner_id)
         )
         library_id = create_resp.json()["data"]["id"]
-        original_updated_at = create_resp.json()["data"]["updated_at"]
+        original_updated_at = create_resp.json()["data"]["updatedAt"]
 
         auth_client.get("/me", headers=auth_headers(member_id))
         with direct_db.session() as session:
@@ -3414,11 +3496,11 @@ class TestTransferOwnership:
 
         response = auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(member_id)},
+            json={"newOwnerUserHandle": _user_handle(member_id)},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 200
-        new_updated_at = response.json()["data"]["updated_at"]
+        new_updated_at = response.json()["data"]["updatedAt"]
         assert new_updated_at >= original_updated_at
 
     def test_transfer_then_previous_owner_exit_path_allowed(
@@ -3447,13 +3529,13 @@ class TestTransferOwnership:
         # Transfer
         auth_client.post(
             f"/libraries/{library_id}/transfer-ownership",
-            json={"new_owner_user_id": str(member_id)},
+            json={"newOwnerUserHandle": _user_handle(member_id)},
             headers=auth_headers(owner_id),
         )
 
         # New owner can now remove previous owner
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{owner_id}",
+            f"/libraries/{library_id}/members/{_user_handle(owner_id)}",
             headers=auth_headers(member_id),
         )
         assert response.status_code == 204
@@ -3513,7 +3595,7 @@ class TestGovernanceInvariantRepair:
 
         # admin_id (still admin) performs a SUCCESSFUL mutation: promote member_id
         response = auth_client.patch(
-            f"/libraries/{library_id}/members/{member_id}",
+            f"/libraries/{library_id}/members/{_user_handle(member_id)}",
             json={"role": "admin"},
             headers=auth_headers(admin_id),
         )
@@ -3586,6 +3668,7 @@ class TestVisibility:
 # =============================================================================
 
 
+@pytest.mark.usefixtures("_sharing_entitled")
 class TestLibraryInviteCreateList:
     """Tests for POST /libraries/{library_id}/invites and GET invite list endpoints."""
 
@@ -3604,18 +3687,36 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
 
         assert response.status_code == 201
         data = response.json()["data"]
         assert data["status"] == "pending"
-        assert data["invitee_user_id"] == str(invitee_id)
-        assert data["inviter_user_id"] == str(owner_id)
-        assert data["library_id"] == library_id
+        assert unseal_user(data["inviteeUserHandle"]) == invitee_id
+        assert unseal_user(data["inviterUserHandle"]) == owner_id
+        assert data["libraryId"] == library_id
         assert data["role"] == "member"
-        assert data["responded_at"] is None
+        assert data["respondedAt"] is None
+
+    def test_create_invite_rejects_snake_case_user_handle_alias(self, auth_client):
+        owner_id = create_test_user_id()
+
+        response = auth_client.post(
+            f"/libraries/{uuid4()}/invites",
+            json={
+                "invitee": {
+                    "kind": "User",
+                    "user_handle": _user_handle(create_test_user_id()),
+                },
+                "role": "member",
+            },
+            headers=auth_headers(owner_id),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "E_INVALID_REQUEST"
 
     def test_create_invite_non_admin_forbidden(self, auth_client, direct_db: DirectSessionManager):
         """Non-admin member cannot create invites."""
@@ -3642,7 +3743,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(member_id),
         )
         assert response.status_code == 403
@@ -3664,7 +3765,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(outsider_id),
         )
         assert response.status_code == 404
@@ -3682,7 +3783,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{default_library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(user_id),
         )
         assert response.status_code == 403
@@ -3699,7 +3800,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(uuid4()), "role": "member"},
+            json={"invitee": _user_invitee(uuid4()), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 404
@@ -3730,7 +3831,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(member_id), "role": "member"},
+            json={"invitee": _user_invitee(member_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 409
@@ -3747,7 +3848,7 @@ class TestLibraryInviteCreateList:
 
         response = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(owner_id), "role": "member"},
+            json={"invitee": _user_invitee(owner_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 409
@@ -3768,7 +3869,7 @@ class TestLibraryInviteCreateList:
         # First invite
         resp1 = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert resp1.status_code == 201
@@ -3776,7 +3877,7 @@ class TestLibraryInviteCreateList:
         # Second invite — duplicate
         resp2 = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "admin"},
+            json={"invitee": _user_invitee(invitee_id), "role": "admin"},
             headers=auth_headers(owner_id),
         )
         assert resp2.status_code == 409
@@ -3798,12 +3899,12 @@ class TestLibraryInviteCreateList:
 
         auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_a), "role": "member"},
+            json={"invitee": _user_invitee(invitee_a), "role": "member"},
             headers=auth_headers(owner_id),
         )
         auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_b), "role": "member"},
+            json={"invitee": _user_invitee(invitee_b), "role": "member"},
             headers=auth_headers(owner_id),
         )
 
@@ -3814,9 +3915,9 @@ class TestLibraryInviteCreateList:
         data = response.json()["data"]
         assert len(data) == 2
         # DESC order: last created first
-        assert data[0]["created_at"] >= data[1]["created_at"]
+        assert data[0]["createdAt"] >= data[1]["createdAt"]
         for inv in data:
-            assert inv["library_id"] == library_id
+            assert inv["libraryId"] == library_id
             assert inv["status"] == "pending"
 
     def test_list_library_invites_status_filter_default_pending(self, auth_client):
@@ -3833,7 +3934,7 @@ class TestLibraryInviteCreateList:
 
         auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
 
@@ -3841,9 +3942,9 @@ class TestLibraryInviteCreateList:
         list_resp = auth_client.get(
             f"/libraries/{library_id}/invites", headers=auth_headers(owner_id)
         )
-        invite_id = list_resp.json()["data"][0]["id"]
+        invitation_handle = list_resp.json()["data"][0]["invitationHandle"]
         auth_client.post(
-            f"/libraries/invites/{invite_id}/decline", headers=auth_headers(invitee_id)
+            f"/libraries/invites/{invitation_handle}/decline", headers=auth_headers(invitee_id)
         )
 
         # Default list (pending) should be empty
@@ -3893,7 +3994,7 @@ class TestLibraryInviteCreateList:
             lib_id = create_resp.json()["data"]["id"]
             auth_client.post(
                 f"/libraries/{lib_id}/invites",
-                json={"invitee_user_id": str(invitee_id), "role": "member"},
+                json={"invitee": _user_invitee(invitee_id), "role": "member"},
                 headers=auth_headers(owner_id),
             )
 
@@ -3901,8 +4002,9 @@ class TestLibraryInviteCreateList:
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 2
+        assert {inv["libraryName"] for inv in data} == {"Lib A", "Lib B"}
         for inv in data:
-            assert inv["invitee_user_id"] == str(invitee_id)
+            assert unseal_user(inv["inviteeUserHandle"]) == invitee_id
             assert inv["status"] == "pending"
 
     def test_list_viewer_invites_status_filter_and_order(self, auth_client):
@@ -3919,14 +4021,17 @@ class TestLibraryInviteCreateList:
 
         auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
 
         # Accept it
         inv_resp = auth_client.get("/libraries/invites", headers=auth_headers(invitee_id))
-        invite_id = inv_resp.json()["data"][0]["id"]
-        auth_client.post(f"/libraries/invites/{invite_id}/accept", headers=auth_headers(invitee_id))
+        invitation_handle = inv_resp.json()["data"][0]["invitationHandle"]
+        auth_client.post(
+            f"/libraries/invites/{invitation_handle}/accept",
+            headers=auth_headers(invitee_id),
+        )
 
         # Pending should be empty
         response = auth_client.get(
@@ -3943,18 +4048,19 @@ class TestLibraryInviteCreateList:
         assert len(response.json()["data"]) == 1
 
 
+@pytest.mark.usefixtures("_sharing_entitled")
 class TestLibraryInviteAccept:
-    """Tests for POST /libraries/invites/{invite_id}/accept endpoint."""
+    """Tests for POST /libraries/invites/{invitation_handle}/accept endpoint."""
 
     def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
-        """Helper to create a pending invite and return its ID."""
+        """Create a pending invitation and return its sealed handle."""
         resp = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert resp.status_code == 201
-        return resp.json()["data"]["id"]
+        return resp.json()["data"]["invitationHandle"]
 
     def test_accept_invite_happy_path_returns_200(
         self, auth_client, direct_db: DirectSessionManager
@@ -3969,18 +4075,18 @@ class TestLibraryInviteAccept:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["invite"]["status"] == "accepted"
-        assert data["invite"]["responded_at"] is not None
-        assert data["membership"]["library_id"] == library_id
-        assert data["membership"]["user_id"] == str(invitee_id)
+        assert data["invite"]["respondedAt"] is not None
+        assert data["membership"]["libraryId"] == library_id
+        assert unseal_user(data["membership"]["userHandle"]) == invitee_id
         assert data["membership"]["role"] == "member"
         assert data["idempotent"] is False
         assert "backfill_job_status" not in data
@@ -4008,11 +4114,11 @@ class TestLibraryInviteAccept:
         direct_db.register_cleanup("media", "id", media_id)
 
         auth_client.get("/me", headers=auth_headers(invitee_id))
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Accept
         auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
 
@@ -4035,7 +4141,7 @@ class TestLibraryInviteAccept:
                 text("""
                     SELECT status, responded_at FROM library_invitations WHERE id = :iid
                 """),
-                {"iid": invite_id},
+                {"iid": unseal_library_invitation(invitation_handle)},
             )
             row = result.fetchone()
             assert row[0] == "accepted"
@@ -4075,14 +4181,14 @@ class TestLibraryInviteAccept:
 
         me_resp = auth_client.get("/me", headers=auth_headers(invitee_id))
         default_library_id = me_resp.json()["data"]["default_library_id"]
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Before accept: shared media is absent from invitee's Default.
         before = _list_library_entries(auth_client, invitee_id, default_library_id).json()["data"]
         assert str(media_id) not in _library_entry_media_ids(before)
 
         auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
 
@@ -4095,7 +4201,7 @@ class TestLibraryInviteAccept:
 
         # Owner (admin) removes the invitee from the shared library.
         response = auth_client.delete(
-            f"/libraries/{library_id}/members/{invitee_id}",
+            f"/libraries/{library_id}/members/{_user_handle(invitee_id)}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -4127,9 +4233,9 @@ class TestLibraryInviteAccept:
         direct_db.register_cleanup("media", "id", media_id)
 
         auth_client.get("/me", headers=auth_headers(invitee_id))
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
         auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
 
@@ -4150,11 +4256,11 @@ class TestLibraryInviteAccept:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Accept first time
         resp1 = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert resp1.status_code == 200
@@ -4162,7 +4268,7 @@ class TestLibraryInviteAccept:
 
         # Accept second time — idempotent
         resp2 = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert resp2.status_code == 200
@@ -4179,17 +4285,17 @@ class TestLibraryInviteAccept:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Decline it
         auth_client.post(
-            f"/libraries/invites/{invite_id}/decline",
+            f"/libraries/invites/{invitation_handle}/decline",
             headers=auth_headers(invitee_id),
         )
 
         # Try to accept
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 409
@@ -4208,10 +4314,10 @@ class TestLibraryInviteAccept:
         auth_client.get("/me", headers=auth_headers(invitee_id))
         auth_client.get("/me", headers=auth_headers(other_user))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(other_user),
         )
         assert response.status_code == 404
@@ -4248,10 +4354,10 @@ class TestLibraryInviteAccept:
                 """),
                 {"lid": default_library_id, "uid": invitee_id},
             ).fetchone()
-            invite_id = str(inv[0])
+            invitation_handle = _invite_handle(inv[0])
 
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 403
@@ -4270,7 +4376,7 @@ class TestLibraryInviteAccept:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Pre-create membership directly
         with direct_db.session() as session:
@@ -4285,7 +4391,7 @@ class TestLibraryInviteAccept:
 
         # Accept still succeeds
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 200
@@ -4302,17 +4408,18 @@ class TestLibraryInviteAccept:
             assert result.scalar() == 1
 
 
+@pytest.mark.usefixtures("_sharing_entitled")
 class TestLibraryInviteDecline:
-    """Tests for POST /libraries/invites/{invite_id}/decline endpoint."""
+    """Tests for POST /libraries/invites/{invitation_handle}/decline endpoint."""
 
     def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
         resp = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert resp.status_code == 201
-        return resp.json()["data"]["id"]
+        return resp.json()["data"]["invitationHandle"]
 
     def test_decline_invite_pending_to_declined(self, auth_client):
         """Invitee declines pending invite; invite becomes declined."""
@@ -4325,16 +4432,16 @@ class TestLibraryInviteDecline:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/decline",
+            f"/libraries/invites/{invitation_handle}/decline",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["invite"]["status"] == "declined"
-        assert data["invite"]["responded_at"] is not None
+        assert data["invite"]["respondedAt"] is not None
         assert data["idempotent"] is False
 
     def test_decline_invite_idempotent_when_already_declined(self, auth_client):
@@ -4348,17 +4455,17 @@ class TestLibraryInviteDecline:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Decline first time
         auth_client.post(
-            f"/libraries/invites/{invite_id}/decline",
+            f"/libraries/invites/{invitation_handle}/decline",
             headers=auth_headers(invitee_id),
         )
 
         # Decline second time
         resp2 = auth_client.post(
-            f"/libraries/invites/{invite_id}/decline",
+            f"/libraries/invites/{invitation_handle}/decline",
             headers=auth_headers(invitee_id),
         )
         assert resp2.status_code == 200
@@ -4375,17 +4482,17 @@ class TestLibraryInviteDecline:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Accept first
         auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
 
         # Try to decline
         response = auth_client.post(
-            f"/libraries/invites/{invite_id}/decline",
+            f"/libraries/invites/{invitation_handle}/decline",
             headers=auth_headers(invitee_id),
         )
         assert response.status_code == 409
@@ -4397,24 +4504,25 @@ class TestLibraryInviteDecline:
         auth_client.get("/me", headers=auth_headers(user_id))
 
         response = auth_client.post(
-            f"/libraries/invites/{uuid4()}/decline",
+            f"/libraries/invites/{_invite_handle(uuid4())}/decline",
             headers=auth_headers(user_id),
         )
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "E_INVITE_NOT_FOUND"
 
 
+@pytest.mark.usefixtures("_sharing_entitled")
 class TestLibraryInviteRevoke:
-    """Tests for DELETE /libraries/invites/{invite_id} endpoint."""
+    """Tests for DELETE /libraries/invites/{invitation_handle} endpoint."""
 
     def _create_invite(self, auth_client, owner_id, invitee_id, library_id):
         resp = auth_client.post(
             f"/libraries/{library_id}/invites",
-            json={"invitee_user_id": str(invitee_id), "role": "member"},
+            json={"invitee": _user_invitee(invitee_id), "role": "member"},
             headers=auth_headers(owner_id),
         )
         assert resp.status_code == 201
-        return resp.json()["data"]["id"]
+        return resp.json()["data"]["invitationHandle"]
 
     def test_revoke_invite_pending_to_revoked(self, auth_client):
         """Admin revokes pending invite; returns 204."""
@@ -4427,10 +4535,10 @@ class TestLibraryInviteRevoke:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -4446,17 +4554,17 @@ class TestLibraryInviteRevoke:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Revoke first time
         auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(owner_id),
         )
 
         # Revoke second time
         response = auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 204
@@ -4472,17 +4580,17 @@ class TestLibraryInviteRevoke:
         library_id = create_resp.json()["data"]["id"]
         auth_client.get("/me", headers=auth_headers(invitee_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         # Accept it
         auth_client.post(
-            f"/libraries/invites/{invite_id}/accept",
+            f"/libraries/invites/{invitation_handle}/accept",
             headers=auth_headers(invitee_id),
         )
 
         # Try to revoke
         response = auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(owner_id),
         )
         assert response.status_code == 409
@@ -4501,10 +4609,10 @@ class TestLibraryInviteRevoke:
         auth_client.get("/me", headers=auth_headers(invitee_id))
         auth_client.get("/me", headers=auth_headers(outsider_id))
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(outsider_id),
         )
         assert response.status_code == 404
@@ -4533,10 +4641,10 @@ class TestLibraryInviteRevoke:
             )
             session.commit()
 
-        invite_id = self._create_invite(auth_client, owner_id, invitee_id, library_id)
+        invitation_handle = self._create_invite(auth_client, owner_id, invitee_id, library_id)
 
         response = auth_client.delete(
-            f"/libraries/invites/{invite_id}",
+            f"/libraries/invites/{invitation_handle}",
             headers=auth_headers(member_id),
         )
         assert response.status_code == 403

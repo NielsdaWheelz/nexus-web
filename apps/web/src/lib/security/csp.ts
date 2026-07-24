@@ -44,6 +44,28 @@ export const CSP_DIRECTIVES = {
   "report-uri": [CSP_REPORT_PATH],
 } as const satisfies Record<string, readonly string[]>;
 
+export const PUBLIC_READER_CSP_DIRECTIVES = {
+  "default-src": ["'self'"],
+  "script-src": [`'nonce-${NONCE_PLACEHOLDER}'`, "'strict-dynamic'"],
+  "style-src": ["'self'", "'unsafe-inline'"],
+  "img-src": ["'self'", "data:", "blob:"],
+  "font-src": ["'self'"],
+  "connect-src": ["'self'"],
+  "media-src": ["'self'", "blob:"],
+  "worker-src": ["'self'", "blob:"],
+  "manifest-src": ["'self'"],
+  "frame-src": ["'none'"],
+  "object-src": ["'none'"],
+  "base-uri": ["'none'"],
+  "form-action": ["'none'"],
+  "frame-ancestors": ["'none'"],
+  "report-to": ["csp"],
+  "report-uri": [CSP_REPORT_PATH],
+} as const satisfies Record<string, readonly string[]>;
+
+export const PUBLIC_API_CONTENT_SECURITY_POLICY =
+  "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 /**
  * Deterministic emission order. `upgrade-insecure-requests` is value-less and inserted
  * (when applicable) just before the reporting directives.
@@ -125,6 +147,42 @@ export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
     serialized.push(sources.length > 0 ? `${name} ${sources.join(" ")}` : name);
   }
   return serialized.join("; ");
+}
+
+export function buildPublicReaderContentSecurityPolicy(
+  opts: Pick<CspBuildOptions, "nonce" | "isDev" | "isHttpsRequest"> & {
+    devWebSocketOrigins?: readonly string[];
+  }
+): string {
+  const values: Record<string, string[]> = {};
+  for (const [name, sources] of Object.entries(
+    PUBLIC_READER_CSP_DIRECTIVES
+  )) {
+    values[name] = [...sources];
+  }
+  values["script-src"] = values["script-src"].map((source) =>
+    source.replace(NONCE_PLACEHOLDER, opts.nonce)
+  );
+  if (opts.isDev) {
+    values["script-src"].push("'unsafe-eval'");
+    values["connect-src"].push(...(opts.devWebSocketOrigins ?? []));
+  }
+  if (opts.isHttpsRequest) {
+    values["upgrade-insecure-requests"] = [];
+  }
+  const serialized: string[] = [];
+  for (const name of DIRECTIVE_ORDER) {
+    if (!(name in values)) continue;
+    const sources = values[name];
+    serialized.push(
+      sources.length > 0 ? `${name} ${sources.join(" ")}` : name
+    );
+  }
+  return serialized.join("; ");
+}
+
+export function buildPublicApiContentSecurityPolicy(): string {
+  return PUBLIC_API_CONTENT_SECURITY_POLICY;
 }
 
 /** 16 random bytes, base64. Web Crypto + btoa only (edge + node safe). */

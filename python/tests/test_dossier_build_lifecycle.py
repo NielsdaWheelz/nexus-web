@@ -63,7 +63,7 @@ from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.contributor_taxonomy import parse_contributor_handle
 from nexus.services.contributors import prune_contributors_if_orphaned
 from nexus.services.library_governance import delete_library, remove_library_member
-from nexus.services.media_deletion import delete_document_for_viewer
+from nexus.services.media_deletion import remove_media_for_viewer
 from nexus.services.resource_graph.citations import record_citation
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot
@@ -179,14 +179,20 @@ def test_last_library_visibility_path_removal_purges_user_dossier(
 
     remove_library_member(db_session, owner_id, library_id, member_id)
 
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-        {"artifact_id": ticket.artifact_id},
-    ).scalar_one() == 0
-    assert db_session.execute(
-        text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-        {"dedupe_key": f"dossier_build:{ticket.build_id}"},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+            {"artifact_id": ticket.artifact_id},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+            {"dedupe_key": f"dossier_build:{ticket.build_id}"},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_shared_library_delete_rechecks_every_members_user_dossiers(
@@ -226,23 +232,35 @@ def test_shared_library_delete_rechecks_every_members_user_dossiers(
 
     delete_library(db_session, owner_id, shared_library_id)
 
-    assert db_session.execute(
-        text("SELECT count(*) FROM media WHERE id = :media_id"),
-        {"media_id": media_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one()
+        == 1
+    )
     for ticket in tickets:
-        assert db_session.execute(
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+                {"artifact_id": ticket.artifact_id},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+                {"dedupe_key": f"dossier_build:{ticket.build_id}"},
+            ).scalar_one()
+            == 0
+        )
+    assert (
+        db_session.execute(
             text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-            {"artifact_id": ticket.artifact_id},
-        ).scalar_one() == 0
-        assert db_session.execute(
-            text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-            {"dedupe_key": f"dossier_build:{ticket.build_id}"},
-        ).scalar_one() == 0
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-        {"artifact_id": surviving_ticket.artifact_id},
-    ).scalar_one() == 1
+            {"artifact_id": surviving_ticket.artifact_id},
+        ).scalar_one()
+        == 1
+    )
 
 
 def test_last_visible_work_removal_purges_media_and_contributor_user_dossiers(
@@ -295,22 +313,31 @@ def test_last_visible_work_removal_purges_media_and_contributor_user_dossiers(
         instruction=None,
     )
 
-    delete_document_for_viewer(db_session, viewer_id, media_id)
+    remove_media_for_viewer(db_session, viewer_id, media_id)
 
-    assert db_session.execute(
-        text("SELECT count(*) FROM media WHERE id = :media_id"),
-        {"media_id": media_id},
-    ).scalar_one() == 1
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).scalar_one()
+        == 1
+    )
     assert db_session.get(Contributor, contributor.id) is not None
     for ticket in (media_ticket, contributor_ticket):
-        assert db_session.execute(
-            text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-            {"artifact_id": ticket.artifact_id},
-        ).scalar_one() == 0
-        assert db_session.execute(
-            text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-            {"dedupe_key": f"dossier_build:{ticket.build_id}"},
-        ).scalar_one() == 0
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+                {"artifact_id": ticket.artifact_id},
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            db_session.execute(
+                text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+                {"dedupe_key": f"dossier_build:{ticket.build_id}"},
+            ).scalar_one()
+            == 0
+        )
 
 
 def test_user_teardown_purges_private_heads_and_cancels_shared_active_builds(
@@ -328,9 +355,7 @@ def test_user_teardown_purges_private_heads_and_cancels_shared_active_builds(
     private_conversation = create_test_conversation(db_session, departing_user_id)
     private = create_build(
         db_session,
-        locator=SubjectResource(
-            ref=ResourceRef(scheme="conversation", id=private_conversation)
-        ),
+        locator=SubjectResource(ref=ResourceRef(scheme="conversation", id=private_conversation)),
         requester_user_id=departing_user_id,
         idempotency_key="private",
         instruction=None,
@@ -346,25 +371,36 @@ def test_user_teardown_purges_private_heads_and_cancels_shared_active_builds(
     on_user_deleted(db_session, user_id=departing_user_id)
     db_session.commit()
 
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-        {"artifact_id": private.artifact_id},
-    ).scalar_one() == 0
-    assert db_session.execute(
-        text("SELECT requester_user_id FROM artifact_builds WHERE id = :build_id"),
-        {"build_id": shared.build_id},
-    ).scalar_one() is None
-    assert db_session.execute(
-        text(
-            "SELECT actor_user_id FROM artifact_build_cancellations "
-            "WHERE build_id = :build_id"
-        ),
-        {"build_id": shared.build_id},
-    ).scalar_one() is None
-    assert db_session.execute(
-        text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
-        {"dedupe_key": f"dossier_build:{shared.build_id}"},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+            {"artifact_id": private.artifact_id},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        db_session.execute(
+            text("SELECT requester_user_id FROM artifact_builds WHERE id = :build_id"),
+            {"build_id": shared.build_id},
+        ).scalar_one()
+        is None
+    )
+    assert (
+        db_session.execute(
+            text(
+                "SELECT actor_user_id FROM artifact_build_cancellations WHERE build_id = :build_id"
+            ),
+            {"build_id": shared.build_id},
+        ).scalar_one()
+        is None
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+            {"dedupe_key": f"dossier_build:{shared.build_id}"},
+        ).scalar_one()
+        == 0
+    )
 
 
 def test_user_teardown_rehomes_surviving_library_citations(
@@ -385,9 +421,7 @@ def test_user_teardown_rehomes_surviving_library_citations(
         requester_user_id=departing_user_id,
     )
     db_session.execute(
-        text(
-            "UPDATE artifact_revisions SET creator_user_id = :user_id WHERE id = :revision_id"
-        ),
+        text("UPDATE artifact_revisions SET creator_user_id = :user_id WHERE id = :revision_id"),
         {"user_id": departing_user_id, "revision_id": revision_id},
     )
     cited_page = Page(
@@ -419,13 +453,16 @@ def test_user_teardown_rehomes_surviving_library_citations(
         {"revision_id": revision_id},
     ).one()
     assert revision == (library_owner_id, None)
-    assert db_session.execute(
-        text(
-            "SELECT user_id FROM resource_edges "
-            "WHERE source_scheme = 'artifact_revision' AND source_id = :revision_id"
-        ),
-        {"revision_id": revision_id},
-    ).scalar_one() == library_owner_id
+    assert (
+        db_session.execute(
+            text(
+                "SELECT user_id FROM resource_edges "
+                "WHERE source_scheme = 'artifact_revision' AND source_id = :revision_id"
+            ),
+            {"revision_id": revision_id},
+        ).scalar_one()
+        == library_owner_id
+    )
 
 
 def test_contributor_orphan_pruning_purges_its_dossier(
@@ -468,10 +505,7 @@ def test_contributor_orphan_pruning_purges_its_dossier(
         instruction=None,
     )
     db_session.execute(
-        text(
-            "DELETE FROM contributor_credits "
-            "WHERE contributor_id = :contributor_id"
-        ),
+        text("DELETE FROM contributor_credits WHERE contributor_id = :contributor_id"),
         {"contributor_id": contributor.id},
     )
 
@@ -482,17 +516,20 @@ def test_contributor_orphan_pruning_purges_its_dossier(
     db_session.commit()
 
     assert db_session.get(Contributor, contributor.id) is None
-    assert db_session.execute(
-        text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
-        {"artifact_id": ticket.artifact_id},
-    ).scalar_one() == 0
-    assert db_session.execute(
-        text(
-            "SELECT count(*) FROM background_jobs "
-            "WHERE dedupe_key = :dedupe_key"
-        ),
-        {"dedupe_key": f"dossier_build:{ticket.build_id}"},
-    ).scalar_one() == 0
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM artifacts WHERE id = :artifact_id"),
+            {"artifact_id": ticket.artifact_id},
+        ).scalar_one()
+        == 0
+    )
+    assert (
+        db_session.execute(
+            text("SELECT count(*) FROM background_jobs WHERE dedupe_key = :dedupe_key"),
+            {"dedupe_key": f"dossier_build:{ticket.build_id}"},
+        ).scalar_one()
+        == 0
+    )
 
 
 def _children(db: Session, build_id: UUID) -> tuple[int, int, int]:
@@ -635,8 +672,7 @@ def test_r6_persisted_conflicting_terminal_children_is_defect(db_session: Sessio
     )
     db_session.execute(
         text(
-            "INSERT INTO artifact_build_failures (id, build_id, failure_code) "
-            "VALUES (:i, :b, :c)"
+            "INSERT INTO artifact_build_failures (id, build_id, failure_code) VALUES (:i, :b, :c)"
         ),
         {"i": uuid4(), "b": t.build_id, "c": str(DossierBuildFailureCode.NoSourceMaterial)},
     )
@@ -703,10 +739,7 @@ def test_read_head_hides_older_failure_after_later_success(db_session: Session) 
         )
     )
     db_session.execute(
-        text(
-            "UPDATE artifact_builds SET created_at = '2026-07-22T00:00:00Z' "
-            "WHERE id = :build_id"
-        ),
+        text("UPDATE artifact_builds SET created_at = '2026-07-22T00:00:00Z' WHERE id = :build_id"),
         {"build_id": failed.build_id},
     )
     create_test_message(
@@ -731,10 +764,7 @@ def test_read_head_hides_older_failure_after_later_success(db_session: Session) 
         instruction=None,
     )
     db_session.execute(
-        text(
-            "UPDATE artifact_builds SET created_at = '2026-07-23T00:00:00Z' "
-            "WHERE id = :build_id"
-        ),
+        text("UPDATE artifact_builds SET created_at = '2026-07-23T00:00:00Z' WHERE id = :build_id"),
         {"build_id": succeeded.build_id},
     )
     revision_id = _seed_success_revision(
@@ -765,10 +795,7 @@ def test_read_head_hides_older_cancellation_after_later_success(
     )
     cancel_build(db_session, build_id=cancelled.build_id, actor_user_id=uid)
     db_session.execute(
-        text(
-            "UPDATE artifact_builds SET created_at = '2026-07-22T00:00:00Z' "
-            "WHERE id = :build_id"
-        ),
+        text("UPDATE artifact_builds SET created_at = '2026-07-22T00:00:00Z' WHERE id = :build_id"),
         {"build_id": cancelled.build_id},
     )
     succeeded = create_build(
@@ -779,10 +806,7 @@ def test_read_head_hides_older_cancellation_after_later_success(
         instruction=None,
     )
     db_session.execute(
-        text(
-            "UPDATE artifact_builds SET created_at = '2026-07-23T00:00:00Z' "
-            "WHERE id = :build_id"
-        ),
+        text("UPDATE artifact_builds SET created_at = '2026-07-23T00:00:00Z' WHERE id = :build_id"),
         {"build_id": succeeded.build_id},
     )
     revision_id = _seed_success_revision(

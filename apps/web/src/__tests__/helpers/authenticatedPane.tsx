@@ -13,6 +13,7 @@ import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -63,31 +64,33 @@ export function renderHydratedPane({
     <PaneReturnMementoProvider>
       <FeedbackProvider>
         <ResourceCacheProvider value={resources}>
-          <PaneRuntimeProvider
-            paneId={paneId}
-            visitId={TEST_VISIT_ID}
-            isActive={true}
-            href={href}
-            routeId={identity.routeId}
-            routeKey={identity.routeKey}
-            secondaryPane={null}
-            canGoBack={false}
-            canGoForward={false}
-            pathParams={pathParams ?? route.params}
-            onNavigatePane={onNavigatePane}
-            onReplacePane={onReplacePane}
-            onOpenInNewPane={onOpenInNewPane}
-            onGoBackPane={onGoBackPane}
-            onGoForwardPane={onGoForwardPane}
-            onSetPaneLabel={onSetPaneLabel}
-            onSetPaneLayout={onSetPaneLayout}
-          >
-            <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
-              <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
-                {children}
-              </PaneFixedChromeContext.Provider>
-            </PaneSecondaryContext.Provider>
-          </PaneRuntimeProvider>
+          <ShareControllerProvider>
+            <PaneRuntimeProvider
+              paneId={paneId}
+              visitId={TEST_VISIT_ID}
+              isActive={true}
+              href={href}
+              routeId={identity.routeId}
+              routeKey={identity.routeKey}
+              secondaryPane={null}
+              canGoBack={false}
+              canGoForward={false}
+              pathParams={pathParams ?? route.params}
+              onNavigatePane={onNavigatePane}
+              onReplacePane={onReplacePane}
+              onOpenInNewPane={onOpenInNewPane}
+              onGoBackPane={onGoBackPane}
+              onGoForwardPane={onGoForwardPane}
+              onSetPaneLabel={onSetPaneLabel}
+              onSetPaneLayout={onSetPaneLayout}
+            >
+              <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
+                <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
+                  {children}
+                </PaneFixedChromeContext.Provider>
+              </PaneSecondaryContext.Provider>
+            </PaneRuntimeProvider>
+          </ShareControllerProvider>
         </ResourceCacheProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,

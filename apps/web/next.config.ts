@@ -9,6 +9,11 @@ import { APP_AUTHENTICATED_HOME_HREF } from "./src/lib/routes/defaults";
 const env = getEnv();
 
 const nextConfig: NextConfig = {
+  // Client-safe build constant derived from the already validated canonical
+  // public origin. Share links must never inherit a preview or Host origin.
+  env: {
+    NEXT_PUBLIC_APP_PUBLIC_ORIGIN: env.appPublicOrigin,
+  },
   // `make check` owns lint. `next build` enforces build-time TypeScript validation.
   eslint: {
     ignoreDuringBuilds: true,

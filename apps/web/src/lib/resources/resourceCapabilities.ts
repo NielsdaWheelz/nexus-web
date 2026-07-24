@@ -1,4 +1,5 @@
 import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
+import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceChatSubjectMode =
   | "none"
@@ -74,6 +75,7 @@ export type ResourceInspectorPolicy = ResourceInspectorResourcePolicy | null;
 
 export interface ResourceCapabilityProjection {
   userRelation: ResourceUserRelationPolicy;
+  sharing: ShareMode;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -101,6 +103,7 @@ export const SYNAPSE_SOURCE_SCHEMES = [
 export const RESOURCE_CAPABILITIES = {
   media: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "ResourceGrants",
     attachable: true,
     chatSubject: "readable",
     readable: "media",
@@ -121,6 +124,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   library: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "LibraryMembership",
     attachable: true,
     chatSubject: "scope",
     readable: "scope",
@@ -141,6 +145,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   evidence_span: {
     userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    sharing: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -157,6 +162,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   content_chunk: {
     userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    sharing: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -173,6 +179,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   highlight: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "HighlightGrants",
     attachable: true,
     chatSubject: "quote",
     readable: "body",
@@ -189,6 +196,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   page: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -209,6 +217,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   note_block: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -229,6 +238,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   fragment: {
     userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    sharing: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -245,6 +255,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   conversation: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "label",
     readable: "body",
@@ -265,6 +276,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   message: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -281,6 +293,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   oracle_reading: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -297,6 +310,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   oracle_passage_anchor: {
     userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    sharing: "None",
     attachable: false,
     chatSubject: "none",
     readable: "body",
@@ -313,6 +327,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   artifact: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -329,6 +344,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   artifact_revision: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "None",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -345,6 +361,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   external_snapshot: {
     userRelation: { userLinkSource: false, userLinkTarget: "none" },
+    sharing: "None",
     attachable: false,
     chatSubject: "none",
     readable: "none",
@@ -361,6 +378,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   contributor: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyOnly",
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -381,6 +399,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   podcast: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "CopyWithLibraryFiling",
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -401,6 +420,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   reader_apparatus_item: {
     userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    sharing: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -417,6 +437,7 @@ export const RESOURCE_CAPABILITIES = {
   },
   passage_anchor: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
+    sharing: "None",
     attachable: true,
     chatSubject: "quote",
     readable: "body",

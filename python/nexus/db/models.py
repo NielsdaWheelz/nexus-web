@@ -20,6 +20,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     SmallInteger,
     Text,
@@ -5492,6 +5493,56 @@ class LibraryInvitation(Base):
     library: Mapped["Library"] = relationship("Library")
     inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_user_id])
     invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_user_id])
+
+
+class ResourceGrant(Base):
+    """One active user or bearer-link path to an exact ResourceRef subject.
+
+    Branch consistency is owned by ``services.resource_grants``. The database
+    stores the two nullable audience shapes without a business CHECK so trusted
+    row-shape drift defects in the typed owner rather than becoming a second
+    policy implementation.
+    """
+
+    __tablename__ = "resource_grants"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    subject_scheme: Mapped[str] = mapped_column(Text, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    grantee_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    share_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    share_token_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("uq_resource_grants_share_token_hash", "share_token_hash", unique=True),
+        Index("ix_resource_grants_subject", "subject_scheme", "subject_id"),
+        Index(
+            "ix_resource_grants_recipient_subject",
+            "grantee_user_id",
+            "subject_scheme",
+            "subject_id",
+        ),
+        Index(
+            "ix_resource_grants_creator_subject",
+            "created_by_user_id",
+            "subject_scheme",
+            "subject_id",
+        ),
+    )
 
 
 class UserMediaDeletion(Base):

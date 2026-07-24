@@ -29,4 +29,4 @@ def search_users(
     Minimum query length: 3 characters.
     """
     results = users_service.search_users(db, q, viewer.user_id, limit=limit)
-    return ok(results)
+    return ok(results, by_alias=True)

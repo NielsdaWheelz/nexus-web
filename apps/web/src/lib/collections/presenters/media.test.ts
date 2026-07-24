@@ -29,7 +29,6 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
 
 function ctx(overrides: Partial<MediaPresenterContext> = {}): MediaPresenterContext {
   return {
-    canManageLibraries: false,
     readingTimeEstimate: { kind: "Absent" },
     ...overrides,
   };
@@ -143,12 +142,12 @@ describe("presentMedia", () => {
     ];
     const view = presentMedia(
       item({ contributors: credits, capabilities: { can_quote: true, can_delete: true } }),
-      ctx({ canManageLibraries: true, onDelete: vi.fn(), onManageLibraries: vi.fn() }),
+      ctx({ onDelete: vi.fn(), onShare: vi.fn() }),
     );
 
     expect(view.contributors).toEqual(credits);
     expect(view.actions.map((action) => action.id)).toEqual(
-      expect.arrayContaining(["delete-media", "manage-media-libraries"]),
+      expect.arrayContaining(["delete-media", "share"]),
     );
     expect(view).not.toHaveProperty("swipeActions");
   });

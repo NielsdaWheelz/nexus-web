@@ -38,10 +38,24 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `{invite, membership, idempotent}`. The membership commit alone is what
   changes the accepting user's default-library list/count on the very next
   read; there is no backfill job, projection worker, or provenance row to
-  catch up afterward (see [sharing.md](sharing.md)).
+  catch up afterward.
 
 Media capabilities call these services to attach or validate visibility, then
 return to their own owners for ingestion, playback, files, or assets.
+
+## Membership sharing versus resource sharing
+
+A library is shared only through membership/invitation governance. It never has
+a `resource_grants` row or anonymous public reader. Copying a library URL changes
+no access; a non-member remains masked. Default and system libraries are
+copy-only and cannot accept membership changes.
+
+The universal Share modal is the UI owner for non-default library membership:
+it embeds `LibraryMemberEditor`, including invitation lifecycle and ownership
+transfer. `LibrarySettingsDialog` owns name/color settings only. Media and
+podcast Share embed the library-entry editor for filing, but library entries are
+organization references rather than access-grant provenance. See
+[resource-sharing.md](resource-sharing.md).
 
 Library entry mutations are commands, not refreshed read models. Successful
 media-membership add/remove, add-podcast, and reorder requests return `204 No
@@ -61,11 +75,14 @@ idempotent (by `system_key`) creator, and the seed is an explicit system-mainten
 command, never a user request — system libraries still never bypass
 `library_entries`.
 
-`LibraryOut` carries the policy to the client so UI never infers protection from
-the name: `system_key`, plus the booleans `can_rename` / `can_delete` /
-`can_edit_entries`. `library_governance._library_capabilities` is the one place
-they are computed — a library is mutable only when `system_key IS NULL`, it is not
-the default library, and the viewer is an admin.
+`LibraryOut` carries the policy to the client so UI never infers protection or
+owner authority from names, roles, or raw identity: `system_key`, plus the
+booleans `can_rename` / `can_delete` / `can_edit_entries` /
+`can_manage_members` / `can_transfer_ownership`.
+`library_governance._library_capabilities` is the one place they are computed.
+A library is mutable only when `system_key IS NULL` and it is not the default
+library. Rename, entry editing, and member management require an admin; delete
+and ownership transfer require the current owner.
 
 ## The `library_entries` sole-writer rule
 

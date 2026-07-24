@@ -7,9 +7,11 @@ import {
   type DehydratedResources,
 } from "@/lib/api/resourceCache";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
+import { resolvePaneShareIdentity } from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
   PaneReturnMementoProvider,
   usePaneReturnMementoCommands,
@@ -163,7 +165,8 @@ export function PaneShellReturnJourneyHarness({
       <CommandsProbe publish={publishCommands} />
       <MobileChromeProvider>
         <FeedbackProvider>
-          <PaneRuntimeProvider
+          <ShareControllerProvider>
+            <PaneRuntimeProvider
             paneId={paneId}
             visitId={visitId}
             isActive
@@ -185,7 +188,7 @@ export function PaneShellReturnJourneyHarness({
               paneId={paneId}
               routeKey={identity.routeKey}
               routeHeader={route.definition.header}
-              href={href}
+              shareIdentity={resolvePaneShareIdentity(route, route.defaultLabel)}
               label={route.defaultLabel}
               returnMementoEnabled
               sizing={RETURN_JOURNEY_PANE_SIZING}
@@ -202,7 +205,8 @@ export function PaneShellReturnJourneyHarness({
                 </ResourceCacheProvider>
               </div>
             </PaneShell>
-          </PaneRuntimeProvider>
+            </PaneRuntimeProvider>
+          </ShareControllerProvider>
         </FeedbackProvider>
       </MobileChromeProvider>
     </PaneReturnMementoProvider>
@@ -238,8 +242,9 @@ export function PaneReturnJourneyHarness({
     <PaneReturnMementoProvider>
       <CommandsProbe publish={publishCommands} />
       <FeedbackProvider>
-        <ResourceCacheProvider key={resourceGeneration} value={resources}>
-          <PaneRuntimeProvider
+        <ShareControllerProvider>
+          <ResourceCacheProvider key={resourceGeneration} value={resources}>
+            <PaneRuntimeProvider
             paneId={paneId}
             visitId={RETURN_JOURNEY_VISIT_ID}
             isActive
@@ -260,8 +265,9 @@ export function PaneReturnJourneyHarness({
             <RegisteredReturnRoute paneId={paneId}>
               {children}
             </RegisteredReturnRoute>
-          </PaneRuntimeProvider>
-        </ResourceCacheProvider>
+            </PaneRuntimeProvider>
+          </ResourceCacheProvider>
+        </ShareControllerProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>
   );

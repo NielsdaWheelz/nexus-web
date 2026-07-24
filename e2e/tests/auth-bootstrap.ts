@@ -173,6 +173,7 @@ async function completeMagicLinkInBrowser(
 async function createMagicLink(
   request: APIRequestContext,
   env: ResolvedAuthEnv,
+  email: string,
 ): Promise<string> {
   const response = await request.post(
     `${env.supabaseUrl.replace(/\/$/, "")}/auth/v1/admin/generate_link`,
@@ -184,7 +185,7 @@ async function createMagicLink(
       },
       data: {
         type: "magiclink",
-        email: E2E_USER_EMAIL,
+        email,
         options: {
           redirectTo: `${env.appBaseUrl}${AUTHENTICATED_HOME_PATH}`,
         },
@@ -201,8 +202,20 @@ export async function bootstrapMagicLinkSession(
   page: Page,
   request: APIRequestContext,
 ) {
+  return bootstrapMagicLinkSessionForEmail(
+    page,
+    request,
+    E2E_USER_EMAIL,
+  );
+}
+
+export async function bootstrapMagicLinkSessionForEmail(
+  page: Page,
+  request: APIRequestContext,
+  email: string,
+) {
   const env = resolveAuthEnv();
-  const actionLink = await createMagicLink(request, env);
+  const actionLink = await createMagicLink(request, env, email);
 
   await completeMagicLinkInBrowser(page, request, env, actionLink);
   await page.goto(AUTHENTICATED_HOME_PATH);

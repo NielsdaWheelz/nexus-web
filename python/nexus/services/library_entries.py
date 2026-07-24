@@ -28,7 +28,7 @@ from nexus.auth.permissions import (
 )
 from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
     ItemLibraryMembershipOut,
     LibraryEntryKind,
@@ -42,6 +42,7 @@ from nexus.schemas.library import (
 from nexus.schemas.podcast import PodcastSubscriptionVisibleLibraryOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services import library_governance as governance
+from nexus.services.billing_entitlements import get_effective_entitlements
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
@@ -527,7 +528,7 @@ def _lock_authorized_media_for_filing(
     viewer_id: UUID,
     media_id: UUID,
     *,
-    authorization: Literal["readable", "restorable"],
+    authorization: Literal["readable", "restorable", "filable"],
 ) -> None:
     """Lock, then reauthorize an actor filing before any library lock.
 
@@ -548,6 +549,13 @@ def _lock_authorized_media_for_filing(
         authorized = can_restore_media(db, viewer_id, media_id)
     elif authorization == "readable":
         authorized = can_read_media(
+            db,
+            viewer_id,
+            media_id,
+            include_tearing_down=True,
+        )
+    elif authorization == "filable":
+        authorized = can_restore_media(db, viewer_id, media_id) or can_read_media(
             db,
             viewer_id,
             media_id,
@@ -679,6 +687,31 @@ def entry_exists(db: Session, library_id: UUID, target: EntryTarget) -> bool:
         {"lib": library_id, "tid": target.id},
     ).fetchone()
     return row is not None
+
+
+def _require_share_entitlement_for_access_increase(
+    db: Session, *, actor_user_id: UUID, library_id: UUID
+) -> None:
+    increases_access = bool(
+        db.execute(
+            text("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM memberships
+                    WHERE library_id = :library_id
+                      AND user_id != :actor_user_id
+                    UNION ALL
+                    SELECT 1
+                    FROM library_invitations
+                    WHERE library_id = :library_id
+                      AND status = 'pending'
+                )
+            """),
+            {"actor_user_id": actor_user_id, "library_id": library_id},
+        ).scalar_one()
+    )
+    if increases_access and not get_effective_entitlements(db, actor_user_id).can_share:
+        raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires Plus.")
 
 
 def list_media_ids_in_library(db: Session, library_id: UUID) -> list[UUID]:
@@ -1082,20 +1115,28 @@ def ensure_media_in_library(
         ).fetchone()
         if media_exists is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if not can_restore_media(db, viewer_id, media_id):
+        if not (
+            can_restore_media(db, viewer_id, media_id)
+            or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
+        ):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         _lock_authorized_media_for_filing(
             db,
             viewer_id,
             media_id,
-            authorization="restorable",
+            authorization="filable",
         )
 
         ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
         governance.require_not_system(ctx.system_key)
 
-        inserted = ensure_entry(db, library_id, media_target(media_id))
+        target = media_target(media_id)
+        if not ctx.is_default and not entry_exists(db, library_id, target):
+            _require_share_entitlement_for_access_increase(
+                db, actor_user_id=viewer_id, library_id=library_id
+            )
+        inserted = ensure_entry(db, library_id, target)
         # Idempotent re-file clears a tombstone even when the entry already
         # existed (spec S4.3 rule 6 / AC4).
         clear_user_media_deletion(db, viewer_id, media_id)
@@ -1218,7 +1259,12 @@ def add_podcast_to_library(
         if podcast_row is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Active podcast subscription not found")
 
-        inserted = ensure_entry(db, library_id, podcast_target(podcast_id))
+        target = podcast_target(podcast_id)
+        if not entry_exists(db, library_id, target):
+            _require_share_entitlement_for_access_increase(
+                db, actor_user_id=viewer_id, library_id=library_id
+            )
+        inserted = ensure_entry(db, library_id, target)
     return LibraryFilingOutcome(inserted=inserted)
 
 
@@ -1750,16 +1796,22 @@ def ensure_media_in_default_library(db: Session, user_id: UUID, media_id: UUID) 
 def ensure_media_in_libraries_for_viewer(
     db: Session, viewer_id: UUID, media_id: UUID, library_ids: list[UUID]
 ) -> None:
-    """Verify the viewer can read the media, then add selected writable destinations."""
-    from nexus.services import media as media_service
-
+    """Verify the viewer can file the media, then add selected writable destinations."""
     with transaction(db):
-        media_service.get_media_for_viewer(db, viewer_id, media_id)
+        media_exists = db.execute(
+            text("SELECT 1 FROM media WHERE id = :media_id"),
+            {"media_id": media_id},
+        ).fetchone()
+        if media_exists is None or not (
+            can_restore_media(db, viewer_id, media_id)
+            or can_read_media(db, viewer_id, media_id, include_tearing_down=True)
+        ):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         _lock_authorized_media_for_filing(
             db,
             viewer_id,
             media_id,
-            authorization="readable",
+            authorization="filable",
         )
         targets = governance.resolve_writable_non_default_library_ids(db, viewer_id, library_ids)
         _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
@@ -1785,8 +1837,14 @@ def _add_media_to_resolved_libraries(
         governance.require_admin(ctx.role)
         governance.require_not_system(ctx.system_key)
 
+    target = media_target(media_id)
     for library_id in library_ids:
-        ensure_entry(db, library_id, media_target(media_id))
+        if not entry_exists(db, library_id, target):
+            _require_share_entitlement_for_access_increase(
+                db, actor_user_id=viewer_id, library_id=library_id
+            )
+    for library_id in library_ids:
+        ensure_entry(db, library_id, target)
     clear_user_media_deletion(db, viewer_id, media_id)
 
 
@@ -1811,6 +1869,50 @@ def assign_libraries_for_media_in_current_transaction(
     governance.lock_library_rows_in_order(db, [default_library_id, *targets])
     ensure_media_in_default_library(db, viewer_id, media_id)
     _add_media_to_resolved_libraries(db, viewer_id, media_id, targets)
+
+
+def materialize_subscription_episode_libraries_in_current_transaction(
+    db: Session,
+    subscription_user_id: UUID,
+    subscription_podcast_id: UUID,
+    media_id: UUID,
+) -> None:
+    """File one episode through an already-admitted subscription relationship."""
+    target_library_ids = [
+        UUID(str(row[0]))
+        for row in db.execute(
+            text("""
+                SELECT psl.library_id
+                FROM podcast_subscription_libraries psl
+                JOIN podcast_episodes pe
+                  ON pe.podcast_id = psl.subscription_podcast_id
+                 AND pe.media_id = :media_id
+                JOIN libraries l
+                  ON l.id = psl.library_id
+                 AND l.is_default = false
+                 AND l.system_key IS NULL
+                JOIN memberships membership
+                  ON membership.library_id = psl.library_id
+                 AND membership.user_id = psl.subscription_user_id
+                 AND membership.role = 'admin'
+                WHERE psl.subscription_user_id = :user_id
+                  AND psl.subscription_podcast_id = :podcast_id
+                ORDER BY psl.library_id
+            """),
+            {
+                "user_id": subscription_user_id,
+                "podcast_id": subscription_podcast_id,
+                "media_id": media_id,
+            },
+        ).fetchall()
+    ]
+    default_library_id = governance.default_library_id_for_user(db, subscription_user_id)
+    raise_if_media_teardown_pending(db, media_id)
+    governance.lock_library_rows_in_order(db, [default_library_id, *target_library_ids])
+    ensure_media_in_default_library(db, subscription_user_id, media_id)
+    target = media_target(media_id)
+    for library_id in target_library_ids:
+        ensure_entry(db, library_id, target)
 
 
 def set_subscription_libraries(
@@ -1840,6 +1942,33 @@ def set_subscription_libraries_in_current_transaction(
     targets = governance.resolve_writable_non_default_library_ids(
         db, subscription_user_id, library_ids
     )
+    contexts = {
+        library_id: governance.lock_library_for_member(db, subscription_user_id, library_id)
+        for library_id in sorted(targets)
+    }
+    for context in contexts.values():
+        governance.require_admin(context.role)
+        governance.require_non_default(context.is_default)
+        governance.require_not_system(context.system_key)
+    existing_targets = {
+        UUID(str(row[0]))
+        for row in db.execute(
+            text("""
+                SELECT library_id
+                FROM podcast_subscription_libraries
+                WHERE subscription_user_id = :user_id
+                  AND subscription_podcast_id = :podcast_id
+            """),
+            {"user_id": subscription_user_id, "podcast_id": subscription_podcast_id},
+        ).fetchall()
+    }
+    for library_id in targets:
+        if library_id not in existing_targets:
+            _require_share_entitlement_for_access_increase(
+                db,
+                actor_user_id=subscription_user_id,
+                library_id=library_id,
+            )
     db.execute(
         text("""
             DELETE FROM podcast_subscription_libraries

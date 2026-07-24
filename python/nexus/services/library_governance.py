@@ -35,6 +35,7 @@ from nexus.schemas.library import (
     LibraryPageInfo,
     LibraryRole,
 )
+from nexus.services.sealed_handles import seal_user
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -57,30 +58,45 @@ class LibraryMembershipContext:
     updated_at: datetime
 
 
-def _library_capabilities(*, role: str, is_default: bool, system_key: str | None) -> dict:
+def _library_capabilities(
+    *,
+    role: str,
+    is_default: bool,
+    system_key: str | None,
+    viewer_user_id: UUID,
+    owner_user_id: UUID,
+) -> dict:
     """Derive the user-facing mutability affordances for a LibraryOut. System and
-    default libraries are immutable; otherwise rename/delete/entry-edit gate on admin."""
+    default libraries are immutable; common edits gate on admin while destructive
+    ownership actions remain owner-only."""
     mutable = system_key is None and not is_default
+    is_owner = viewer_user_id == owner_user_id
     return {
         "can_rename": mutable and role == "admin",
-        "can_delete": mutable and role == "admin",
+        "can_delete": mutable and is_owner,
         "can_edit_entries": mutable and role == "admin",
+        "can_manage_members": mutable and role == "admin",
+        "can_transfer_ownership": mutable and is_owner,
     }
 
 
-def _library_out_from_row(row) -> LibraryOut:
+def _library_out_from_row(row, *, viewer_user_id: UUID) -> LibraryOut:
     return LibraryOut(
         id=row["id"],
         name=row["name"],
         color=row["color"],
-        owner_user_id=row["owner_user_id"],
+        owner_user_handle=seal_user(row["owner_user_id"]),
         is_default=row["is_default"],
         role=row["role"],
         system_key=row["system_key"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         **_library_capabilities(
-            role=row["role"], is_default=row["is_default"], system_key=row["system_key"]
+            role=row["role"],
+            is_default=row["is_default"],
+            system_key=row["system_key"],
+            viewer_user_id=viewer_user_id,
+            owner_user_id=row["owner_user_id"],
         ),
     )
 
@@ -240,13 +256,15 @@ def create_library(db: Session, viewer_id: UUID, name: str) -> LibraryOut:
         id=row["id"],
         name=row["name"],
         color=row["color"],
-        owner_user_id=row["owner_user_id"],
+        owner_user_handle=seal_user(row["owner_user_id"]),
         is_default=row["is_default"],
         role="admin",
         system_key=None,
         can_rename=True,
         can_delete=True,
         can_edit_entries=True,
+        can_manage_members=True,
+        can_transfer_ownership=True,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -312,14 +330,18 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         id=ctx.library_id,
         name=name,
         color=ctx.color,
-        owner_user_id=ctx.owner_user_id,
+        owner_user_handle=seal_user(ctx.owner_user_id),
         is_default=ctx.is_default,
         role=ctx.role,
         system_key=ctx.system_key,
         created_at=ctx.created_at,
         updated_at=now,
         **_library_capabilities(
-            role=ctx.role, is_default=ctx.is_default, system_key=ctx.system_key
+            role=ctx.role,
+            is_default=ctx.is_default,
+            system_key=ctx.system_key,
+            viewer_user_id=viewer_id,
+            owner_user_id=ctx.owner_user_id,
         ),
     )
 
@@ -379,14 +401,10 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> None:
                 db,
                 subject_refs=[
                     ResourceRef(scheme="library", id=library_id),
-                    *(
-                        ResourceRef(scheme="media", id=media_id)
-                        for media_id in media_ids
-                    ),
+                    *(ResourceRef(scheme="media", id=media_id) for media_id in media_ids),
                 ],
                 audiences=[
-                    AudienceUser(user_id=affected_user_id)
-                    for affected_user_id in affected_user_ids
+                    AudienceUser(user_id=affected_user_id) for affected_user_id in affected_user_ids
                 ],
             )
             artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
@@ -497,7 +515,7 @@ def list_libraries(
         _encode_library_cursor(page_rows[-1], viewer_id=viewer_id) if len(rows) > limit else None
     )
     return (
-        [_library_out_from_row(row) for row in page_rows],
+        [_library_out_from_row(row, viewer_user_id=viewer_id) for row in page_rows],
         LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
     )
 
@@ -657,7 +675,7 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     )
     if row is None:
         raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-    return _library_out_from_row(row)
+    return _library_out_from_row(row, viewer_user_id=viewer_id)
 
 
 def list_library_members(
@@ -693,7 +711,7 @@ def list_library_members(
 
     return [
         LibraryMemberOut(
-            user_id=row["user_id"],
+            user_handle=seal_user(row["user_id"]),
             role=row["role"],
             is_owner=(row["user_id"] == ctx.owner_user_id),
             created_at=row["created_at"],
@@ -738,7 +756,7 @@ def update_library_member_role(
 
         if target["role"] == role:
             return LibraryMemberOut(
-                user_id=target["user_id"],
+                user_handle=seal_user(target["user_id"]),
                 role=target["role"],
                 is_owner=False,
                 created_at=target["created_at"],
@@ -753,7 +771,7 @@ def update_library_member_role(
         )
 
     return LibraryMemberOut(
-        user_id=target["user_id"],
+        user_handle=seal_user(target["user_id"]),
         role=role,
         is_owner=False,
         created_at=target["created_at"],
@@ -819,14 +837,18 @@ def transfer_library_ownership(
                 id=ctx.library_id,
                 name=ctx.name,
                 color=ctx.color,
-                owner_user_id=ctx.owner_user_id,
+                owner_user_handle=seal_user(ctx.owner_user_id),
                 is_default=ctx.is_default,
                 role=ctx.role,
                 system_key=ctx.system_key,
                 created_at=ctx.created_at,
                 updated_at=ctx.updated_at,
                 **_library_capabilities(
-                    role=ctx.role, is_default=ctx.is_default, system_key=ctx.system_key
+                    role=ctx.role,
+                    is_default=ctx.is_default,
+                    system_key=ctx.system_key,
+                    viewer_user_id=viewer_id,
+                    owner_user_id=ctx.owner_user_id,
                 ),
             )
 
@@ -862,13 +884,19 @@ def transfer_library_ownership(
         id=ctx.library_id,
         name=ctx.name,
         color=ctx.color,
-        owner_user_id=new_owner_user_id,
+        owner_user_handle=seal_user(new_owner_user_id),
         is_default=ctx.is_default,
         created_at=ctx.created_at,
         updated_at=now,
         role="admin",
         system_key=ctx.system_key,
-        **_library_capabilities(role="admin", is_default=ctx.is_default, system_key=ctx.system_key),
+        **_library_capabilities(
+            role="admin",
+            is_default=ctx.is_default,
+            system_key=ctx.system_key,
+            viewer_user_id=viewer_id,
+            owner_user_id=new_owner_user_id,
+        ),
     )
 
 

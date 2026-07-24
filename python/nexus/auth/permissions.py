@@ -11,13 +11,11 @@ All functions:
 Query Semantics:
 - Membership role values: 'admin', 'member' (lowercase strings, not enums)
 - LibraryEntry rows with non-null media_id connect libraries and media
-- Media readability is a single membership-join relation (see below)
 
 Media Readability Rule (can_read_media / visible_media_ids_cte_sql):
-- A media item is readable iff a current membership reaches a physical
-  library_entries row for that media, in ANY library the viewer belongs to
-  (default, non-default, or system — no is_default distinction), AND the
-  viewer has no user_media_deletions tombstone for it, AND no
+- A media item is readable iff the viewer has a membership path or an incoming
+  or creator grant path to that media (including an exact child-highlight
+  grant), AND the viewer has no user_media_deletions tombstone for it, AND no
   media_teardown_intents row is armed for it.
 - This is the sole authorization/global-readable relation. It is broader
   than "My Library": services/library_entries.py:library_media_ids_cte_sql()
@@ -30,26 +28,35 @@ Conversation Visibility (can_read_conversation):
 
 Highlight Visibility (can_read_highlight):
 - Viewer can read anchor media (via can_read_media), AND
-- Exists a library containing that media where both viewer and highlight author are members
+- Viewer is its author, shares a library containing the media with its author,
+  or has an incoming or creator grant on that exact highlight
 """
 
 from uuid import UUID
 
-from sqlalchemy import exists, literal, select
+from sqlalchemy import exists, literal, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
     Conversation,
     ConversationShare,
+    Fragment,
     Highlight,
+    HighlightFragmentAnchor,
+    HighlightPdfAnchor,
     LibraryEntry,
+    Media,
     MediaTeardownIntent,
     Membership,
     UserMediaDeletion,
 )
+from nexus.services import resource_grants
 
 
-def _media_membership_path_exists(viewer_user_id: UUID, media_id: UUID):
+def _media_membership_path_exists(
+    viewer_user_id: UUID,
+    media_id: UUID | InstrumentedAttribute[UUID],
+):
     """Core exists() expression: a current membership reaches a physical
     library_entries row for this media in any library the viewer belongs to
     (default, non-default, or system — no is_default distinction). Shared by
@@ -64,6 +71,29 @@ def _media_membership_path_exists(viewer_user_id: UUID, media_id: UUID):
     )
 
 
+def _media_readability_predicate(
+    viewer_user_id: UUID,
+    media_id: UUID | InstrumentedAttribute[UUID],
+    *,
+    include_tearing_down: bool,
+):
+    access_path = _media_membership_path_exists(
+        viewer_user_id,
+        media_id,
+    ) | resource_grants.media_grant_path_exists_expr(viewer_user_id, media_id)
+    predicate = (
+        exists().where(Media.id == media_id)
+        & access_path
+        & ~exists().where(
+            UserMediaDeletion.user_id == viewer_user_id,
+            UserMediaDeletion.media_id == media_id,
+        )
+    )
+    if not include_tearing_down:
+        predicate &= ~exists().where(MediaTeardownIntent.media_id == media_id)
+    return predicate
+
+
 def can_read_media(
     session: Session,
     viewer_user_id: UUID,
@@ -73,11 +103,8 @@ def can_read_media(
 ) -> bool:
     """Check if viewer can read a media item.
 
-    True iff a current membership reaches a physical library_entries row for
-    this media in any library the viewer belongs to (default, non-default, or
-    system — no is_default distinction), AND the viewer has no
-    user_media_deletions tombstone for it, AND no media_teardown_intents row
-    is armed for it.
+    True iff the media exists, the viewer has a membership or grant path, the
+    viewer has no tombstone for it, and it is not tearing down.
 
     ``include_tearing_down=True`` drops only the teardown clause (keeping the
     tombstone exclusion), so a reachable, non-tombstoned target still mid-
@@ -89,18 +116,15 @@ def can_read_media(
     Returns False if media_id does not exist (no existence leak: a
     non-existent media_id can never match a library_entries row).
     """
-    membership_path = _media_membership_path_exists(viewer_user_id, media_id)
-
-    not_deleted = ~exists().where(
-        UserMediaDeletion.user_id == viewer_user_id,
-        UserMediaDeletion.media_id == media_id,
+    result = session.execute(
+        select(
+            _media_readability_predicate(
+                viewer_user_id,
+                media_id,
+                include_tearing_down=include_tearing_down,
+            )
+        )
     )
-
-    predicate = membership_path & not_deleted
-    if not include_tearing_down:
-        predicate = predicate & ~exists().where(MediaTeardownIntent.media_id == media_id)
-
-    result = session.execute(select(predicate))
     return bool(result.scalar())
 
 
@@ -149,26 +173,33 @@ def non_system_media_ref_exists_sql(media_expr: str, viewer_param: str = ":viewe
 def visible_media_ids_cte_sql() -> str:
     """Return SQL for the canonical visible-media CTE. Binds :viewer_id.
 
-    Sole authorization/global-readable relation: a viewer's current
-    membership reaching a physical library_entries row, minus tombstoned and
-    armed-teardown media. Includes system libraries (no is_default filter).
+    Sole authorization/global-readable relation: a viewer's membership or
+    incoming/creator grant path, minus tombstoned and armed-teardown media.
     """
-    return """
-        SELECT DISTINCT le.media_id
-        FROM library_entries le
-        JOIN memberships m ON m.library_id = le.library_id
-        WHERE m.user_id = :viewer_id
-          AND le.media_id IS NOT NULL
+    return f"""
+        SELECT m.id AS media_id
+        FROM media m
+        WHERE (
+            EXISTS (
+                SELECT 1
+                FROM library_entries le
+                JOIN memberships membership
+                  ON membership.library_id = le.library_id
+                WHERE membership.user_id = :viewer_id
+                  AND le.media_id = m.id
+            )
+            OR {resource_grants.media_grant_path_exists_sql("m.id")}
+          )
           AND NOT EXISTS (
               SELECT 1
               FROM user_media_deletions umd
               WHERE umd.user_id = :viewer_id
-                AND umd.media_id = le.media_id
+                AND umd.media_id = m.id
           )
           AND NOT EXISTS (
               SELECT 1
               FROM media_teardown_intents mti
-              WHERE mti.media_id = le.media_id
+              WHERE mti.media_id = m.id
           )
     """
 
@@ -374,50 +405,28 @@ def highlight_library_intersection_exists(
     )
 
 
-def highlight_shared_library_exists_sql(highlight_alias: str = "h") -> str:
-    """Text-SQL twin of :func:`highlight_library_intersection_exists`. Binds :viewer_id.
-
-    EXISTS predicate: viewer and highlight author share membership in at least
-    one library containing the highlight's anchor media. Correlates with the
-    outer query's ``{highlight_alias}.anchor_media_id`` / ``{highlight_alias}.user_id``.
-    Co-located with the ORM expression above so the two forms of the one
-    shared-library highlight-visibility rule cannot drift.
-    """
-    return f"""EXISTS (
-        SELECT 1
-        FROM library_entries le
-        JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
-        JOIN memberships author_m ON author_m.library_id = le.library_id
-        WHERE le.media_id = {highlight_alias}.anchor_media_id
-          AND viewer_m.user_id = :viewer_id
-          AND author_m.user_id = {highlight_alias}.user_id
+def highlight_visibility_sql(highlight_alias: str = "h") -> str:
+    """Text-SQL twin of :func:`highlight_visibility_filter`. Binds :viewer_id."""
+    return f"""(
+        {highlight_alias}.user_id = :viewer_id
+        OR EXISTS (
+            SELECT 1
+            FROM library_entries le
+            JOIN memberships viewer_m ON viewer_m.library_id = le.library_id
+            JOIN memberships author_m ON author_m.library_id = le.library_id
+            WHERE le.media_id = {highlight_alias}.anchor_media_id
+              AND viewer_m.user_id = :viewer_id
+              AND author_m.user_id = {highlight_alias}.user_id
+        )
+        OR {resource_grants.highlight_grant_path_exists_sql(f"{highlight_alias}.id")}
     )"""
-
-
-def _resolve_typed_highlight_media_id(highlight: Highlight) -> UUID | None:
-    """Resolve the media id for a canonical typed highlight."""
-    if highlight.anchor_media_id is None:
-        return None
-
-    if highlight.anchor_kind == "fragment_offsets":
-        fragment_anchor = highlight.fragment_anchor
-        fragment = fragment_anchor.fragment if fragment_anchor is not None else None
-        if fragment is not None and fragment.media_id == highlight.anchor_media_id:
-            return highlight.anchor_media_id
-
-    if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = highlight.pdf_anchor
-        if pdf_anchor is not None and pdf_anchor.media_id == highlight.anchor_media_id:
-            return highlight.anchor_media_id
-
-    return None
 
 
 def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
     """SQL filter expression for visible highlights in list queries.
 
-    Evaluates to True for highlights where viewer and highlight author share
-    membership in at least one library containing the given media.
+    Evaluates to True when the viewer is the author, shares a library containing
+    the media with the author, or has an exact incoming/creator grant.
 
     For use in .where() clauses on queries selecting from Highlight.
     Correlates with Highlight.user_id from the outer query.
@@ -425,45 +434,72 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: UUID):
     Caller must separately verify viewer can read the anchor media
     (e.g. via get_fragment_for_viewer_or_404).
     """
-    return highlight_library_intersection_exists(
-        viewer_user_id=viewer_user_id,
-        author_user_id_expr=Highlight.user_id,
-        media_id=media_id,
+    return or_(
+        Highlight.user_id == viewer_user_id,
+        highlight_library_intersection_exists(
+            viewer_user_id=viewer_user_id,
+            author_user_id_expr=Highlight.user_id,
+            media_id=media_id,
+        ),
+        resource_grants.highlight_grant_path_exists_expr(
+            viewer_user_id,
+            Highlight.id,
+        ),
     )
 
 
 def can_read_highlight(session: Session, viewer_user_id: UUID, highlight_id: UUID) -> bool:
     """Check if viewer can read a highlight under visibility rules.
 
-    True iff:
-    - Viewer can read the anchor media (via can_read_media), AND
-    - Exists a library containing that media where both viewer and highlight author are members.
+    True iff the typed anchor is valid, the viewer can read its parent media,
+    and the viewer is its author, shares the existing library-intersection path
+    with the author, or has an exact incoming/creator grant.
 
     Returns False if highlight_id does not exist (no existence leak).
     Returns False on irreconcilable typed-anchor state.
 
-    Consumes canonical highlight_library_intersection_exists helper.
+    Evaluates the complete rule in one statement.
     """
-    highlight = session.get(Highlight, highlight_id)
-    if highlight is None:
-        return False
-
-    media_id = _resolve_typed_highlight_media_id(highlight)
-    if media_id is None:
-        return False
-
-    author_id = highlight.user_id
-
-    if not can_read_media(session, viewer_user_id, media_id):
-        return False
-
-    intersection_expr = highlight_library_intersection_exists(
-        viewer_user_id=viewer_user_id,
-        author_user_id_expr=author_id,
-        media_id=media_id,
+    fragment_anchor_exists = exists().where(
+        HighlightFragmentAnchor.highlight_id == Highlight.id,
     )
-    result = session.execute(select(intersection_expr))
-    return bool(result.scalar())
+    fragment_anchor_media_mismatch_exists = exists(
+        select(literal(1))
+        .select_from(HighlightFragmentAnchor)
+        .join(Fragment, Fragment.id == HighlightFragmentAnchor.fragment_id)
+        .where(
+            HighlightFragmentAnchor.highlight_id == Highlight.id,
+            Fragment.media_id != Highlight.anchor_media_id,
+        )
+    )
+    pdf_anchor_exists = exists().where(
+        HighlightPdfAnchor.highlight_id == Highlight.id,
+        HighlightPdfAnchor.media_id == Highlight.anchor_media_id,
+    )
+    typed_anchor_exists = or_(
+        (Highlight.anchor_kind == "fragment_offsets")
+        & fragment_anchor_exists
+        & ~fragment_anchor_media_mismatch_exists,
+        (Highlight.anchor_kind == "pdf_page_geometry") & pdf_anchor_exists,
+    )
+    readable = session.scalar(
+        select(
+            exists().where(
+                Highlight.id == highlight_id,
+                typed_anchor_exists,
+                _media_readability_predicate(
+                    viewer_user_id,
+                    Highlight.anchor_media_id,
+                    include_tearing_down=False,
+                ),
+                highlight_visibility_filter(
+                    viewer_user_id,
+                    Highlight.anchor_media_id,
+                ),
+            )
+        )
+    )
+    return bool(readable)
 
 
 def is_library_member(session: Session, viewer_user_id: UUID, library_id: UUID) -> bool:

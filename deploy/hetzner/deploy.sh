@@ -18,6 +18,17 @@ die() {
 
 command -v rsync >/dev/null 2>&1 || die "rsync is not installed locally"
 command -v ssh >/dev/null 2>&1 || die "ssh is not installed locally"
+command -v git >/dev/null 2>&1 || die "git is not installed locally"
+
+HEAD_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+CUTOVER_SHA="${CUTOVER_SHA:-$HEAD_SHA}"
+case "$CUTOVER_SHA" in
+  *[!0-9a-f]*|"") die "CUTOVER_SHA must be a lowercase Git commit SHA" ;;
+esac
+[ "${#CUTOVER_SHA}" = "40" ] || die "CUTOVER_SHA must be a full 40-character Git SHA"
+[ "$CUTOVER_SHA" = "$HEAD_SHA" ] || die "CUTOVER_SHA must equal the checked-out HEAD"
+[ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)" ] || \
+  die "production deploy requires a clean checkout"
 
 case "$SYNC_ENV" in
   0|1) ;;
@@ -32,7 +43,7 @@ fi
 ssh "$SSH_TARGET" "sudo install -d -o ${DEPLOY_USER} -g ${DEPLOY_USER} '${DEPLOY_PATH}' && test -f '${ENV_FILE}'"
 
 rsync -az --delete \
-  --exclude ".git/" \
+  --exclude ".git" \
   --exclude ".agency/" \
   --exclude ".claude/" \
   --exclude ".env" \
@@ -56,7 +67,7 @@ rsync -az --delete \
 
 # shellcheck disable=SC2029
 ssh "$SSH_TARGET" \
-  "DEPLOY_PATH='${DEPLOY_PATH}' ENV_FILE='${ENV_FILE}' bash -s" <<'REMOTE'
+  "DEPLOY_PATH='${DEPLOY_PATH}' ENV_FILE='${ENV_FILE}' CUTOVER_SHA='${CUTOVER_SHA}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 cd "$DEPLOY_PATH"
@@ -91,4 +102,23 @@ compose run -T --rm --no-deps worker /app/.venv/bin/python /app/scripts/oracle/s
 compose run -T --rm --no-deps worker /app/.venv/bin/python /app/scripts/oracle/check_corpus_readiness.py </dev/null
 compose up -d --remove-orphans --force-recreate
 compose ps
+
+API_HEALTH="$(compose exec -T api /app/.venv/bin/python -c \
+  'import json, urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5))["data"]["cutover_sha"])')"
+WORKER_REVISION="$(compose exec -T worker /app/.venv/bin/python -c \
+  'import os; print(os.environ.get("CUTOVER_SHA", ""))')"
+[ "$API_HEALTH" = "$CUTOVER_SHA" ] || {
+  echo "error: API reports ${API_HEALTH}, expected ${CUTOVER_SHA}" >&2
+  exit 1
+}
+[ "$WORKER_REVISION" = "$CUTOVER_SHA" ] || {
+  echo "error: worker reports ${WORKER_REVISION}, expected ${CUTOVER_SHA}" >&2
+  exit 1
+}
+MIGRATION_HEAD="$(compose exec -T api sh -c \
+  'cd /app/migrations && /app/.venv/bin/alembic current')"
+echo "cutover_sha=${CUTOVER_SHA}"
+echo "api_revision=${API_HEALTH}"
+echo "worker_revision=${WORKER_REVISION}"
+echo "migration_head=${MIGRATION_HEAD}"
 REMOTE

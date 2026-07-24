@@ -1,4 +1,4 @@
-"""Document deletion behavior tests."""
+"""Viewer media removal and document teardown behavior tests."""
 
 from uuid import UUID, uuid4
 
@@ -16,6 +16,7 @@ from nexus.db.models import (
     ResourceExternalSnapshot,
     ResourceMutation,
 )
+from nexus.ids import new_uuid7
 from nexus.services import contributors, library_entries, library_governance, passage_anchors
 from nexus.services.content_indexing import rebuild_fragment_content_index
 from nexus.services.contributor_taxonomy import (
@@ -62,6 +63,60 @@ def _seed_default_library_reachability(
     with direct_db.session() as session:
         library_entries.ensure_media_in_default_library(session, user_id, media_id)
         session.commit()
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_kind"),
+    [
+        (MediaKind.web_article, "Deleting"),
+        (MediaKind.epub, "Deleting"),
+        (MediaKind.pdf, "Deleting"),
+        (MediaKind.video, "Removed"),
+        (MediaKind.podcast_episode, "Removed"),
+    ],
+)
+def test_remove_media_supports_every_media_kind(
+    auth_client,
+    direct_db: DirectSessionManager,
+    kind: MediaKind,
+    expected_kind: str,
+) -> None:
+    viewer_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(viewer_id))
+    with direct_db.session() as session:
+        media_id = create_test_media(
+            session,
+            kind=kind.value,
+            title=f"Remove {kind.value}",
+        )
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("media", "id", media_id)
+    _seed_default_library_reachability(direct_db, viewer_id, media_id)
+
+    detail = auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["capabilities"]["can_delete"] is True
+
+    response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["kind"] == expected_kind
+    with direct_db.session() as session:
+        assert (
+            session.execute(
+                text("SELECT 1 FROM library_entries WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).first()
+            is None
+        )
+        teardown_exists = (
+            session.execute(
+                text("SELECT 1 FROM media_teardown_intents WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).first()
+            is not None
+        )
+        assert teardown_exists is (expected_kind == "Deleting")
 
 
 @pytest.fixture(autouse=True)
@@ -140,12 +195,13 @@ def test_delete_document_hides_shared_member_copy(auth_client, direct_db: Direct
     direct_db.register_cleanup("consumption_queue_items", "media_id", media_id)
 
     _seed_default_library_reachability(direct_db, owner_id, media_id)
-    add_response = auth_client.post(
-        f"/media/{media_id}/libraries",
-        json={"library_ids": [str(library_id)]},
-        headers=auth_headers(owner_id),
-    )
-    assert add_response.status_code == 204, add_response.text
+    with direct_db.session() as session:
+        library_entries.ensure_entry(
+            session,
+            library_id,
+            library_entries.media_target(media_id),
+        )
+        session.commit()
     assert auth_client.get(f"/media/{media_id}", headers=auth_headers(member_id)).status_code == 200
 
     # The member has a latent Lectern row for this media (spec §3: viewer-scoped
@@ -245,17 +301,17 @@ def test_delete_document_removes_default_and_administered_libraries(
     assert row is None
 
 
-def test_delete_document_removes_personal_reference_when_system_reference_remains(
+def test_delete_document_hides_remaining_system_reference(
     auth_client, direct_db: DirectSessionManager
 ):
     """Mixed-reference cell (spec S4.3/S5): a viewer holding both a non-system
     reference (their own default library) and a system-library reference to the
     same media deletes the personal reference. The system reference is untouched
-    corpus data the viewer never controls, so this is a truthful ``Removed`` —
-    not ``Hidden`` (no tombstone; a live non-viewer-controlled reference remains
-    but it's a system one) and not ``Deleting`` (the system reference keeps the
-    media alive). ``_total_reference_count`` dropped the closure term in S2, so
-    this branch needs direct physical-count coverage."""
+    corpus data the viewer never controls, so the subject-wide Remove action
+    records a viewer tombstone and truthfully returns ``Hidden``. It is not
+    ``Deleting`` because the system reference keeps the media alive.
+    ``_total_reference_count`` dropped the closure term in S2, so this branch
+    needs direct physical-count coverage."""
     user_id = create_test_user_id()
     default_id = auth_client.get("/me", headers=auth_headers(user_id)).json()["data"][
         "default_library_id"
@@ -287,9 +343,10 @@ def test_delete_document_removes_personal_reference_when_system_reference_remain
 
     assert delete_response.status_code == 200, delete_response.json()
     data = delete_response.json()["data"]
-    assert data["kind"] == "Removed", data
+    assert data["kind"] == "Hidden", data
     assert data["remainingReferenceCount"] == 1, data
     assert data["removedFromLibraryIds"] == [str(default_id)], data
+    assert auth_client.get(f"/media/{media_id}", headers=auth_headers(user_id)).status_code == 404
 
     with direct_db.session() as session:
         system_entry = session.execute(
@@ -321,7 +378,103 @@ def test_delete_document_removes_personal_reference_when_system_reference_remain
         ).fetchone()
     assert system_entry is not None, "system-library reference must survive a personal delete"
     assert default_entry is None, "the personal default-library reference must be removed"
-    assert tombstone is None, "a personal delete that leaves a live reference records no tombstone"
+    assert tombstone is not None, "a retained system access path must be hidden after Remove"
+
+
+def test_delete_document_hides_system_path_after_incoming_grant_is_removed(
+    auth_client,
+    direct_db: DirectSessionManager,
+) -> None:
+    viewer_id = create_test_user_id()
+    creator_id = create_test_user_id()
+    auth_client.get("/me", headers=auth_headers(viewer_id))
+    auth_client.get("/me", headers=auth_headers(creator_id))
+
+    with direct_db.session() as session:
+        media_id = create_test_media(session, title="System and grant path")
+        system_library_id = library_governance.ensure_system_library(
+            session,
+            system_key=f"test_system_grant_{media_id.hex[:12]}",
+            name="System Grant Library",
+            owner_user_id=viewer_id,
+        )
+        library_entries.ensure_entry(
+            session,
+            system_library_id,
+            library_entries.media_target(media_id),
+        )
+        session.commit()
+
+    direct_db.register_cleanup("media", "id", media_id)
+    direct_db.register_cleanup("libraries", "id", system_library_id)
+    direct_db.register_cleanup("memberships", "library_id", system_library_id)
+    direct_db.register_cleanup("library_entries", "media_id", media_id)
+    direct_db.register_cleanup("user_media_deletions", "media_id", media_id)
+    direct_db.register_cleanup("resource_grants", "subject_id", media_id)
+
+    system_only = auth_client.delete(
+        f"/media/{media_id}",
+        headers=auth_headers(viewer_id),
+    )
+    assert system_only.status_code == 403, system_only.text
+
+    with direct_db.session() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO resource_grants (
+                    id, subject_scheme, subject_id, created_by_user_id,
+                    grantee_user_id, share_token, share_token_hash
+                )
+                VALUES (
+                    :grant_id, 'media', :media_id, :creator_id,
+                    :viewer_id, NULL, NULL
+                )
+                """
+            ),
+            {
+                "grant_id": new_uuid7(),
+                "media_id": media_id,
+                "creator_id": creator_id,
+                "viewer_id": viewer_id,
+            },
+        )
+        session.commit()
+
+    assert auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id)).status_code == 200
+
+    response = auth_client.delete(f"/media/{media_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["kind"] == "Hidden"
+    assert auth_client.get(f"/media/{media_id}", headers=auth_headers(viewer_id)).status_code == 404
+    with direct_db.session() as session:
+        assert (
+            session.execute(
+                text(
+                    """
+                    SELECT 1 FROM resource_grants
+                    WHERE subject_scheme = 'media'
+                      AND subject_id = :media_id
+                      AND grantee_user_id = :viewer_id
+                    """
+                ),
+                {"media_id": media_id, "viewer_id": viewer_id},
+            ).first()
+            is None
+        )
+        assert (
+            session.execute(
+                text(
+                    """
+                    SELECT 1 FROM user_media_deletions
+                    WHERE user_id = :viewer_id AND media_id = :media_id
+                    """
+                ),
+                {"viewer_id": viewer_id, "media_id": media_id},
+            ).first()
+            is not None
+        )
 
 
 def test_delete_document_hard_deletes_source_attempt_storage_artifacts(

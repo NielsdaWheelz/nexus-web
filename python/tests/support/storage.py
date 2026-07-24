@@ -56,6 +56,18 @@ class FakeStorageClient(StorageClientBase):
         for i in range(0, len(content), 8 * 1024 * 1024):
             yield content[i : i + 8 * 1024 * 1024]
 
+    def stream_object_range(
+        self,
+        path: str,
+        *,
+        start: int,
+        end_inclusive: int,
+    ) -> Iterator[bytes]:
+        if path not in self._objects:
+            raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING")
+        content, _ = self._objects[path]
+        yield content[start : end_inclusive + 1]
+
     def put_object(
         self,
         path: str,

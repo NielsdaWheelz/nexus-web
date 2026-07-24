@@ -16,13 +16,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
-from nexus.db.models import MediaKind
+from nexus.db.models import Highlight, MediaKind
 from nexus.db.session import transaction
-from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
+from nexus.errors import ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.ids import new_uuid7
 from nexus.jobs.queue import enqueue_job
 from nexus.logging import get_logger
@@ -38,6 +38,7 @@ from nexus.services import (
     library_governance,
     media_intelligence,
     passage_anchors,
+    resource_grants,
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -103,6 +104,26 @@ def claim_media_teardown(db: Session, media_id: UUID) -> UUID:
     return intent_id
 
 
+def claim_document_teardown_if_unreferenced_locked(
+    db: Session,
+    media_id: UUID,
+) -> bool:
+    """Claim a document whose caller already locked its media row and removed a ref.
+
+    This is the narrow composition doorway for non-library reference owners:
+    reference counting and the durable claim remain owned here, while the caller
+    keeps its path deletion and last-reference admission in one transaction.
+    """
+    kind = db.scalar(
+        text("SELECT kind FROM media WHERE id = :media_id"),
+        {"media_id": media_id},
+    )
+    if kind not in _DOCUMENT_KINDS or _total_reference_count(db, media_id) != 0:
+        return False
+    claim_media_teardown(db, media_id)
+    return True
+
+
 _DOCUMENT_KINDS = {
     MediaKind.pdf.value,
     MediaKind.epub.value,
@@ -111,10 +132,10 @@ _DOCUMENT_KINDS = {
 
 
 def _total_reference_count(db: Session, media_id: UUID) -> int:
-    """All remaining references to a media (spec S4.3/AC5): physical
-    ``library_entries`` rows are the sole reference count — no closure/intrinsic
-    count survives."""
-    return library_entries.count_entries_for_media(db, media_id)
+    """All physical library-entry and grant references to one media."""
+    return library_entries.count_entries_for_media(db, media_id) + resource_grants.count_for_media(
+        db, media_id
+    )
 
 
 def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, media_id: UUID) -> bool:
@@ -136,24 +157,18 @@ def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, medi
     )
 
 
-def delete_document_for_viewer(
+def remove_media_for_viewer(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-    storage_client: StorageClientBase | None = None,
 ) -> MediaDeleteResult:
-    """Remove a document from the viewer's whole workspace (spec §4.3).
+    """Remove any media kind from the viewer's whole workspace.
 
-    Truthful viewer deletion: system-only media (the viewer's only path is a
-    system library they never control) is ``E_FORBIDDEN`` with no mutation —
-    corpus data is never deleted through a viewer action. Otherwise removes the
-    viewer's own default/administered-non-default entries, preserves latent
-    consumption/listening rows, then: last physical reference gone -> claim
-    (intent + job), return ``Deleting``; a non-system reference the viewer
-    doesn't control still reaches the media -> record the viewer hide marker and
-    return ``Hidden``; only a system-library reference remains -> ``Removed``
-    without a hide marker. Storage and child-state teardown are owned by the
-    ``media_teardown`` job, not this transaction.
+    System-only media with no grant path is not viewer-removable. Otherwise the
+    command removes the viewer's controlled entries, incoming grant paths, grants
+    they created for the media or its highlights, and viewer-owned state. A
+    remaining reachable non-system membership is hidden. Zero-reference document
+    media enters physical teardown; zero-reference video/episode media is retained.
     """
     removed_from_library_ids: list[UUID] = []
 
@@ -164,12 +179,12 @@ def delete_document_for_viewer(
         ).fetchone()
         if media is None or not can_read_media(db, viewer_id, media_id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        if media[0] not in _DOCUMENT_KINDS:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_KIND,
-                "Delete document only supports document media",
-            )
-        if not _viewer_has_non_system_media_reference(db, viewer_id=viewer_id, media_id=media_id):
+        has_non_system_reference = _viewer_has_non_system_media_reference(
+            db, viewer_id=viewer_id, media_id=media_id
+        )
+        if not has_non_system_reference and not resource_grants.media_grant_path_exists(
+            db, viewer_user_id=viewer_id, media_id=media_id
+        ):
             raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "System-only media cannot be deleted")
 
         default_library = db.execute(
@@ -208,12 +223,13 @@ def delete_document_for_viewer(
             library_entries.normalize_positions(db, library_id)
             removed_from_library_ids.append(UUID(str(library_id)))
 
+        resource_grants.delete_viewer_media_paths(db, viewer_user_id=viewer_id, media_id=media_id)
         _delete_viewer_media_state(db, viewer_id, media_id)
         from nexus.services.artifacts import engine as artifact_engine
         from nexus.services.artifacts.dossier_types import AudienceUser
 
         remaining_reference_count = _total_reference_count(db, media_id)
-        if remaining_reference_count == 0:
+        if remaining_reference_count == 0 and media[0] in _DOCUMENT_KINDS:
             claim_media_teardown(db, media_id)
             result: MediaDeleteResult = MediaDeletingResult()
         else:
@@ -225,20 +241,13 @@ def delete_document_for_viewer(
                 db, owner_user_id=viewer_id, target_media_id=media_id
             )
 
-            # A remaining reference the viewer could not remove is either a shared
-            # non-system library still reachable by them (hide it per-viewer) or a
-            # reference they can no longer reach — a system-only library, or another
-            # user's private library (never surfaced to the viewer → nothing to
-            # hide). Branch on whether the viewer retains a reachable NON-SYSTEM
-            # path, not on the presence of a system one: a media with BOTH a system
-            # reference AND a remaining reachable non-system shared reference must
-            # still be Hidden, else it stays visible with no tombstone (AC5
-            # "truthful" violation).
-            if not _viewer_has_non_system_media_reference(
-                db,
-                viewer_id=viewer_id,
-                media_id=media_id,
-            ):
+            # Branch on canonical post-removal readability. A system-library
+            # membership is still an authenticated access path, even though the
+            # viewer cannot remove that physical entry. If any such path remains,
+            # the subject-wide Remove action must tombstone it or the media would
+            # remain immediately readable after a successful response. References
+            # reachable only by other viewers need no tombstone.
+            if not can_read_media(db, viewer_id, media_id):
                 result = MediaRemovedResult(
                     removed_from_library_ids=removed_from_library_ids,
                     remaining_reference_count=remaining_reference_count,
@@ -284,15 +293,37 @@ def clear_user_media_deletion(db: Session, viewer_id: UUID, media_id: UUID) -> N
     )
 
 
-def delete_duplicate_document_media(db: Session, media_id: UUID) -> list[str]:
+def delete_duplicate_document_media(
+    db: Session,
+    *,
+    loser_media_id: UUID,
+    winner_media_id: UUID,
+) -> list[str]:
     """Claim a duplicate document row for teardown after its replacement is reachable.
 
-    Routes through the claim doorway (spec §3.1): purge the loser's references, then
-    claim (intent + ``media_teardown`` job) so the durable job owns the physical
-    deletion and storage sweep. Returns an empty path list — the job, not the caller,
-    deletes storage.
+    Direct grants follow the canonical winner before the loser is made
+    unreachable. Exact grants on loser-owned highlights cannot be repointed,
+    because highlight identity and location are exact to that source; revoke
+    those doomed paths before the grant-aware teardown admission. Then the
+    claim doorway purges the loser's library references and claims its durable
+    teardown job.
     """
-    return _claim_document_media_teardown(db, media_id)
+    locked_media_ids = library_entries.lock_media_rows_in_order(
+        db,
+        [loser_media_id, winner_media_id],
+    )
+    if set(locked_media_ids) != {loser_media_id, winner_media_id}:
+        # justify-service-invariant-check: canonicalization supplies two durable
+        # media identities and cannot safely repoint an access path otherwise.
+        # justify-defect: a missing participant means the dedupe owner drifted.
+        raise AssertionError("duplicate media changed before grant repoint")
+    resource_grants.repoint_media_subjects(
+        db,
+        loser_media_id=loser_media_id,
+        winner_media_id=winner_media_id,
+    )
+    resource_grants.delete_media_and_child_highlight_subjects(db, loser_media_id)
+    return _claim_document_media_teardown(db, loser_media_id)
 
 
 def delete_abandoned_document_media(db: Session, media_id: UUID) -> list[str]:
@@ -396,6 +427,10 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     from nexus.services.artifacts import engine as artifact_engine
 
     artifact_engine.on_subject_deleted(db, ResourceRef(scheme="media", id=media_id))
+    if resource_grants.delete_media_and_child_highlight_subjects(db, media_id) != 0:
+        # justify-defect: the media lock and zero-reference check exclude grants.
+        # A deletion here means reference counting and teardown admission diverged.
+        raise AssertionError("media teardown reached grants excluded from its reference count")
 
     db.execute(
         text("DELETE FROM document_embeds WHERE media_id = :media_id"), {"media_id": media_id}
@@ -648,24 +683,11 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
     # cleanup is scoped to the deleted refs (§9.6). When the media is
     # hard-deleted right after, its own edges die in
     # delete_document_media_if_unreferenced.
-    highlight_ids = (
-        db.execute(
-            text(
-                "SELECT id FROM highlights "
-                "WHERE user_id = :viewer_id AND anchor_media_id = :media_id"
-            ),
-            {"viewer_id": viewer_id, "media_id": media_id},
-        )
-        .scalars()
-        .all()
-    )
-    for highlight_id in highlight_ids:
-        cleanup.delete_edges_for_deleted_resource(
-            db, ref=ResourceRef(scheme="highlight", id=highlight_id)
-        )
-    # The viewer's own passage anchors on this media die with their workspace
-    # removal (their edges/view states first, inside delete_for_owner); other
-    # users' anchors survive until true media deletion.
+    highlight_rows = db.scalars(
+        select(Highlight)
+        .where(Highlight.user_id == viewer_id, Highlight.anchor_media_id == media_id)
+        .order_by(Highlight.id)
+    ).all()
     passage_anchors.delete_for_owner(db, owner_scheme="media", owner_id=media_id, user_id=viewer_id)
     db.execute(
         text("""
@@ -679,44 +701,10 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
         """),
         {"viewer_id": viewer_id, "media_id": media_id},
     )
-    db.execute(
-        text("""
-            DELETE FROM highlight_pdf_quads hpq
-            USING highlights h
-            WHERE hpq.highlight_id = h.id
-              AND h.user_id = :viewer_id
-              AND h.anchor_media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM highlight_pdf_anchors hpa
-            USING highlights h
-            WHERE hpa.highlight_id = h.id
-              AND h.user_id = :viewer_id
-              AND h.anchor_media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM highlight_fragment_anchors hfa
-            USING highlights h
-            WHERE hfa.highlight_id = h.id
-              AND h.user_id = :viewer_id
-              AND h.anchor_media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
-    db.execute(
-        text("""
-            DELETE FROM highlights
-            WHERE user_id = :viewer_id
-              AND anchor_media_id = :media_id
-        """),
-        {"viewer_id": viewer_id, "media_id": media_id},
-    )
+    from nexus.services import highlights as highlights_service
+
+    for highlight in highlight_rows:
+        highlights_service.delete_highlight_rows(db, highlight)
     db.execute(
         text("""
             DELETE FROM reader_media_state

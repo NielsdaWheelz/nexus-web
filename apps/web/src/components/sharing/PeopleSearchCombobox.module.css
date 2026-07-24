@@ -1,0 +1,45 @@
+.root {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.root > span {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.results {
+  display: grid;
+  max-height: 14rem;
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  list-style: none;
+}
+
+.option {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  gap: 2px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  padding: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option[aria-selected="true"],
+.option:hover {
+  background: var(--surface-hover);
+}
+
+.option span:last-child:not(:first-child) {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}

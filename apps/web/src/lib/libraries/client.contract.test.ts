@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  decodeCreatedLibraryDestination,
+  decodeMemberLibrariesResponse,
   decodeWritableLibraryDestinationPage,
 } from "./client";
+
+const OWNER_USER_HANDLE =
+  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 const destination = {
   id: "library-1",
@@ -51,27 +54,43 @@ describe("library destination response contract", () => {
     ).toThrow(message);
   });
 
-  it("decodes and projects a create success without trusting extra fields", () => {
+  it("decodes the exact camel-case member LibraryOut contract", () => {
+    const library = {
+      id: "library-1",
+      name: "Research",
+      color: "#0ea5e9",
+      ownerUserHandle: OWNER_USER_HANDLE,
+      isDefault: false,
+      role: "admin",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+      createdAt: "2026-07-21T12:00:00Z",
+      updatedAt: "2026-07-21T12:30:00Z",
+    };
     expect(
-      decodeCreatedLibraryDestination({
-        data: {
-          ...destination,
-          owner_user_id: "user-1",
-          role: "admin",
-          is_default: false,
-        },
+      decodeMemberLibrariesResponse({
+        data: [library],
+        page: { has_more: false, next_cursor: null },
       }),
-    ).toEqual(destination);
-  });
-
-  it("defects on a malformed create success envelope or destination", () => {
-    expect(() => decodeCreatedLibraryDestination({ data: null })).toThrow(
-      "create payload",
-    );
+    ).toEqual({
+      data: [library],
+      page: { has_more: false, next_cursor: null },
+    });
     expect(() =>
-      decodeCreatedLibraryDestination({
-        data: { ...destination, color: false },
+      decodeMemberLibrariesResponse({
+        data: [{ ...library, ownerUserHandle: undefined }],
+        page: { has_more: false, next_cursor: null },
       }),
-    ).toThrow("data.color");
+    ).toThrow("LibraryOut");
+    expect(() =>
+      decodeMemberLibrariesResponse({
+        data: [{ ...library, ownerUserHandle: "raw-user-id" }],
+        page: { has_more: false, next_cursor: null },
+      }),
+    ).toThrow("sealed-handle grammar");
   });
 });

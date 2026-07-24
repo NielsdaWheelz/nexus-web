@@ -1,0 +1,263 @@
+.shell {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34rem),
+    var(--surface-canvas);
+  color: var(--ink);
+}
+
+.header {
+  width: min(920px, calc(100% - 2 * var(--space-5)));
+  margin: 0 auto;
+  padding: clamp(3rem, 9vw, 7rem) 0 var(--space-6);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.brand {
+  margin-bottom: var(--space-5);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.header h1 {
+  max-width: 22ch;
+  margin: 0;
+  font-family: var(--font-eb-garamond), serif;
+  font-size: clamp(2.25rem, 7vw, 4.75rem);
+  font-weight: 500;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.bylines {
+  margin: var(--space-4) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-md);
+}
+
+.sourceLink {
+  display: inline-block;
+  margin-top: var(--space-4);
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+.highlightCallout {
+  width: min(760px, calc(100% - 2 * var(--space-5)));
+  margin: var(--space-6) auto 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--edge);
+  border-inline-start: 4px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+}
+
+.highlightLabel {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.highlightCallout blockquote,
+.highlightCallout p {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-eb-garamond), serif;
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+}
+
+.reader {
+  width: min(920px, calc(100% - 2 * var(--space-5)));
+  min-height: 45dvh;
+  margin: 0 auto;
+  padding: var(--space-8) 0;
+}
+
+.article {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.article > section + section {
+  margin-top: var(--space-6);
+}
+
+.targetSection {
+  scroll-margin-block: 25dvh;
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.reader :global(mark[data-nexus-public-highlight-segment="true"]) {
+  scroll-margin-block: 25dvh;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent) 28%, var(--highlight-yellow) 42%);
+  color: inherit;
+}
+
+.reader
+  :global(
+    [data-nexus-public-highlight-container="true"]:focus
+      mark[data-nexus-public-highlight-segment="true"]
+  ) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.highlightUnavailable {
+  max-width: 760px;
+  margin: var(--space-3) auto;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.transcript {
+  display: grid;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0;
+  gap: var(--space-3);
+  list-style: none;
+}
+
+.transcript li {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--edge-subtle);
+}
+
+.transcript p {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+}
+
+.segmentMeta {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.epubLayout {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+
+.toc {
+  position: sticky;
+  top: var(--space-4);
+  align-self: start;
+  max-height: calc(100dvh - 2 * var(--space-4));
+  overflow-y: auto;
+  border-inline-end: 1px solid var(--edge-subtle);
+}
+
+.toc button {
+  width: 100%;
+  padding-block: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  text-align: start;
+  cursor: pointer;
+}
+
+.toc button[aria-current] {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.epubSection {
+  min-width: 0;
+}
+
+.pdfFrame {
+  position: relative;
+  height: min(78dvh, 900px);
+}
+
+.pdfContainer {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--ink-faint);
+}
+
+.pdfViewer {
+  min-height: 100%;
+}
+
+.pdfViewer :global(.page) {
+  position: relative;
+}
+
+.pdfHighlightLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.pdfHighlightRect {
+  position: absolute;
+  border-radius: var(--radius-xs);
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 1px;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+.statusCard {
+  width: min(480px, calc(100% - 2 * var(--space-5)));
+  margin: 0 auto;
+  padding-top: 30dvh;
+  text-align: center;
+}
+
+.statusCard h1 {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-eb-garamond), serif;
+  font-size: var(--text-2xl);
+  font-weight: 500;
+}
+
+.statusCard p,
+.empty {
+  color: var(--ink-muted);
+}
+
+.footer {
+  width: min(920px, calc(100% - 2 * var(--space-5)));
+  margin: 0 auto;
+  padding: var(--space-5) 0 var(--space-8);
+  border-top: 1px solid var(--edge-subtle);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 720px) {
+  .epubLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .toc {
+    position: static;
+    max-height: 12rem;
+    border: 1px solid var(--edge-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  .pdfContainer {
+    height: 70dvh;
+    margin-inline: calc(-1 * var(--space-3));
+    border-radius: 0;
+  }
+}

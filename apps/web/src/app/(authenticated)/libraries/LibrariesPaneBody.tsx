@@ -29,35 +29,41 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
-import LibraryEditDialog from "@/components/LibraryEditDialog";
-import {
-  fetchEditableLibrarySharing,
-  type LibraryInvite,
-  type LibraryMember,
-  type UserSearchResult,
-} from "@/lib/libraries/sharing";
+import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import { createLibrary } from "@/lib/libraries/client";
-import type { LibraryForEdit } from "@/components/LibraryEditDialog";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
+  usePaneRuntime,
   usePaneReturnReady,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
+import {
+  acceptLibraryInvite,
+  declineLibraryInvite,
+  fetchViewerLibraryInvites,
+  type ViewerLibraryInvite,
+} from "@/lib/libraries/sharing";
+import { useShareController } from "@/lib/sharing/controller";
+import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 import styles from "./page.module.css";
 
 interface Library {
   id: string;
   name: string;
-  owner_user_id: string;
-  is_default: boolean;
+  color: string | null;
+  ownerUserHandle: string;
+  isDefault: boolean;
   role: string;
-  created_at: string;
-  updated_at: string;
-  system_key: string | null;
-  can_rename: boolean;
-  can_delete: boolean;
-  can_edit_entries: boolean;
+  createdAt: string;
+  updatedAt: string;
+  systemKey: string | null;
+  canRename: boolean;
+  canDelete: boolean;
+  canEditEntries: boolean;
+  canManageMembers: boolean;
+  canTransferOwnership: boolean;
 }
 
 interface LibrariesSnapshot {
@@ -80,11 +86,21 @@ export default function LibrariesPaneBody() {
   const [controller, setController] = useState<LibrariesSnapshot | null>(
     restored,
   );
+  const paneRuntime = usePaneRuntime();
+  const { openShare } = useShareController();
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const clearAllVisitData = useClearAllPaneVisitData();
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const [invitesRefreshVersion, setInvitesRefreshVersion] = useState(0);
+  const [viewerInvites, setViewerInvites] = useState<ViewerLibraryInvite[]>([]);
+  const [busyInvitationHandle, setBusyInvitationHandle] = useState<
+    string | null
+  >(null);
+  const [declineInvitationHandle, setDeclineInvitationHandle] = useState<
+    string | null
+  >(null);
   const {
     value: newLibraryName,
     setValue: setNewLibraryName,
@@ -102,6 +118,14 @@ export default function LibrariesPaneBody() {
         : { refreshVersion: librariesRefreshVersion },
   });
   const libraries = controller?.libraries ?? [];
+  const viewerInvitesResource = useResource<ViewerLibraryInvite[]>({
+    cacheKey: `viewer-library-invites:${invitesRefreshVersion}`,
+    load: fetchViewerLibraryInvites,
+  });
+  const readyViewerInvites =
+    viewerInvitesResource.status === "ready"
+      ? viewerInvitesResource.data
+      : null;
   const status =
     controller !== null
       ? "ready"
@@ -129,10 +153,7 @@ export default function LibrariesPaneBody() {
     setLibrariesRefreshVersion((version) => version + 1);
   }, [clearAllVisitData]);
 
-  /* ---- Edit dialog state ---- */
-  const [editLibrary, setEditLibrary] = useState<Library | null>(null);
-  const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
-  const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
+  const [settingsLibrary, setSettingsLibrary] = useState<Library | null>(null);
 
   useEffect(() => {
     if (
@@ -151,6 +172,12 @@ export default function LibrariesPaneBody() {
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
   }, [controller]);
+
+  useEffect(() => {
+    if (readyViewerInvites) {
+      setViewerInvites(readyViewerInvites);
+    }
+  }, [readyViewerInvites]);
 
   const loadError =
     controller === null && librariesResource.status === "error"
@@ -189,6 +216,13 @@ export default function LibrariesPaneBody() {
       setLoadingMore(false);
     }
   }, [controller?.nextCursor, librariesRefreshVersion, loadingMore]);
+
+  const inviteLoadError =
+    viewerInvitesResource.status === "error"
+      ? toFeedback(viewerInvitesResource.error, {
+          fallback: "Library invitations could not be loaded.",
+        })
+      : null;
 
   const handleCreateLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,45 +274,21 @@ export default function LibrariesPaneBody() {
     }
   };
 
-  /* ---- Edit dialog handlers ---- */
-
-  const openEditDialog = useCallback(async (library: Library) => {
-    setEditLibrary(library);
-    try {
-      const sharing = await fetchEditableLibrarySharing(library);
-      setEditMembers(sharing.members);
-      setEditInvites(sharing.invites);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, {
-          fallback: "Failed to load library sharing",
-        })
-      );
-    }
-  }, []);
-
-  const closeEditDialog = useCallback(() => {
-    setEditLibrary(null);
-    setEditMembers([]);
-    setEditInvites([]);
-  }, []);
-
   const handleRename = useCallback(
     async (name: string) => {
-      if (!editLibrary) return;
-      await apiFetch(`/api/libraries/${editLibrary.id}`, {
+      if (!settingsLibrary) return;
+      await apiFetch(`/api/libraries/${settingsLibrary.id}`, {
         method: "PATCH",
         body: JSON.stringify({ name }),
       });
-      setEditLibrary((prev) => (prev ? { ...prev, name } : null));
+      setSettingsLibrary((prev) => (prev ? { ...prev, name } : null));
       setController((current) =>
         current === null
           ? current
           : {
               ...current,
               libraries: current.libraries.map((library) =>
-                library.id === editLibrary.id
+                library.id === settingsLibrary.id
                   ? { ...library, name }
                   : library,
               ),
@@ -286,124 +296,160 @@ export default function LibrariesPaneBody() {
       );
       clearAllVisitData();
     },
-    [clearAllVisitData, editLibrary],
+    [clearAllVisitData, settingsLibrary],
   );
 
-  const handleUpdateMemberRole = useCallback(
-    async (userId: string, role: string) => {
-      if (!editLibrary) return;
-      await apiFetch(`/api/libraries/${editLibrary.id}/members/${userId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ role }),
-      });
-      setEditMembers((prev) =>
-        prev.map((m) => (m.user_id === userId ? { ...m, role } : m))
-      );
-      clearAllVisitData();
-    },
-    [clearAllVisitData, editLibrary]
-  );
-
-  const handleRemoveMember = useCallback(
-    async (userId: string) => {
-      if (!editLibrary) return;
-      await apiFetch(`/api/libraries/${editLibrary.id}/members/${userId}`, {
-        method: "DELETE",
-      });
-      setEditMembers((prev) => prev.filter((m) => m.user_id !== userId));
-      clearAllVisitData();
-    },
-    [clearAllVisitData, editLibrary]
-  );
-
-  const handleCreateInvite = useCallback(
-    async (inviteeIdentifier: string, role: string) => {
-      if (!editLibrary) return;
-      // Determine if identifier looks like an email or a UUID
-      const isEmail = inviteeIdentifier.includes("@");
-      const resp = await apiFetch<{ data: LibraryInvite }>(
-        `/api/libraries/${editLibrary.id}/invites`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            ...(isEmail
-              ? { invitee_email: inviteeIdentifier }
-              : { invitee_user_id: inviteeIdentifier }),
-            role,
-          }),
-        }
-      );
-      setEditInvites((prev) => [resp.data, ...prev]);
-      clearAllVisitData();
-    },
-    [clearAllVisitData, editLibrary]
-  );
-
-  const handleSearchUsers = useCallback(
-    async (query: string): Promise<UserSearchResult[]> => {
-      const resp = await apiFetch<{ data: UserSearchResult[] }>(
-        `/api/users/search?q=${encodeURIComponent(query)}`
-      );
-      return resp.data;
-    },
-    []
-  );
-
-  const handleRevokeInvite = useCallback(
-    async (inviteId: string) => {
-      await apiFetch(`/api/libraries/invites/${inviteId}`, {
-        method: "DELETE",
-      });
-      setEditInvites((prev) =>
-        prev.map((inv) =>
-          inv.id === inviteId ? { ...inv, status: "revoked" } : inv
-        )
-      );
-      clearAllVisitData();
-    },
-    [clearAllVisitData]
-  );
-
-  const handleDeleteFromDialog = useCallback(async () => {
-    if (!editLibrary) return;
-    if (!confirm(`Delete "${editLibrary.name}"? This cannot be undone.`))
-      return;
-    await apiFetch(`/api/libraries/${editLibrary.id}`, {
+  const handleDeleteFromSettings = useCallback(async () => {
+    if (!settingsLibrary) return;
+    await apiFetch(`/api/libraries/${settingsLibrary.id}`, {
       method: "DELETE",
     });
-    closeEditDialog();
+    const deletedId = settingsLibrary.id;
+    setSettingsLibrary(null);
     setController((current) =>
       current === null
         ? current
         : {
             ...current,
             libraries: current.libraries.filter(
-              (library) => library.id !== editLibrary.id,
+              (library) => library.id !== deletedId,
             ),
           },
     );
     clearAllVisitData();
-  }, [clearAllVisitData, closeEditDialog, editLibrary]);
+  }, [clearAllVisitData, settingsLibrary]);
 
-  /* ---- Edit dialog library data ---- */
-
-  const editLibraryForDialog: LibraryForEdit | null = editLibrary
-    ? {
-        id: editLibrary.id,
-        name: editLibrary.name,
-        is_default: editLibrary.is_default,
-        role: editLibrary.role,
-        owner_user_id: editLibrary.owner_user_id,
+  const handleInvitation = useCallback(
+    async (invite: ViewerLibraryInvite, action: "accept" | "decline") => {
+      if (busyInvitationHandle !== null) return;
+      setBusyInvitationHandle(invite.invitationHandle);
+      try {
+        if (action === "accept") {
+          await acceptLibraryInvite(invite.invitationHandle);
+          setFeedback({
+            severity: "success",
+            title: "Library invitation accepted.",
+          });
+          refreshLibraries();
+        } else {
+          await declineLibraryInvite(invite.invitationHandle);
+          setFeedback({
+            severity: "success",
+            title: "Library invitation declined.",
+          });
+        }
+        setViewerInvites((current) =>
+          current.filter(
+            (row) => row.invitationHandle !== invite.invitationHandle,
+          ),
+        );
+        setDeclineInvitationHandle(null);
+        setInvitesRefreshVersion((version) => version + 1);
+      } catch (error) {
+        if (handleUnauthenticatedApiError(error)) return;
+        setFeedback(
+          toFeedback(error, {
+            fallback:
+              action === "accept"
+                ? "The invitation could not be accepted."
+                : "The invitation could not be declined.",
+          }),
+        );
+      } finally {
+        setBusyInvitationHandle(null);
       }
-    : null;
+    },
+    [busyInvitationHandle, refreshLibraries],
+  );
 
   return (
     <>
+      {inviteLoadError ? (
+        <div className={styles.invitationInbox}>
+          <FeedbackNotice feedback={inviteLoadError} />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setInvitesRefreshVersion((version) => version + 1)}
+          >
+            Retry invitations
+          </Button>
+        </div>
+      ) : null}
+      {viewerInvites.length > 0 ? (
+        <section
+          className={styles.invitationInbox}
+          aria-labelledby="library-invitations-heading"
+        >
+          <div>
+            <h2 id="library-invitations-heading">Library invitations</h2>
+            <p>Accept to add the library here, or decline the invitation.</p>
+          </div>
+          <div className={styles.invitationRows}>
+            {viewerInvites.map((invite) => (
+              <div className={styles.invitationRow} key={invite.invitationHandle}>
+                <span>
+                  {invite.libraryName} ·{" "}
+                  {invite.role === "admin" ? "Admin" : "Member"}
+                </span>
+                {declineInvitationHandle === invite.invitationHandle ? (
+                  <span className={styles.invitationActions}>
+                    <span>Decline this invitation?</span>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      loading={busyInvitationHandle === invite.invitationHandle}
+                      onClick={() => void handleInvitation(invite, "decline")}
+                    >
+                      Decline
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busyInvitationHandle !== null}
+                      onClick={() => setDeclineInvitationHandle(null)}
+                    >
+                      Keep
+                    </Button>
+                  </span>
+                ) : (
+                  <span className={styles.invitationActions}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      loading={busyInvitationHandle === invite.invitationHandle}
+                      disabled={busyInvitationHandle !== null}
+                      onClick={() => void handleInvitation(invite, "accept")}
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busyInvitationHandle !== null}
+                      onClick={() =>
+                        setDeclineInvitationHandle(invite.invitationHandle)
+                      }
+                    >
+                      Decline
+                    </Button>
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <CollectionView
         returnScope="Libraries.Items"
         rows={libraries.map((library) =>
           presentLibrary(library, {
-            onEdit: () => void openEditDialog(library),
+            onShare: ({ triggerEl }) =>
+              openShare(
+                resourceShareTarget(`library:${library.id}`),
+                paneShareOpenOptions(triggerEl, paneRuntime?.paneId ?? ""),
+              ),
+            onOpenSettings: () => setSettingsLibrary(library),
             onDelete: () => void handleDeleteLibrary(library),
           }),
         )}
@@ -456,22 +502,20 @@ export default function LibrariesPaneBody() {
         }
       />
 
-      {editLibraryForDialog && (
-        <LibraryEditDialog
-          open={!!editLibrary}
-          onClose={closeEditDialog}
-          library={editLibraryForDialog}
-          members={editMembers}
-          invites={editInvites}
+      {settingsLibrary ? (
+        <LibrarySettingsDialog
+          open
+          onClose={() => setSettingsLibrary(null)}
+          library={{
+            id: settingsLibrary.id,
+            name: settingsLibrary.name,
+            canRename: settingsLibrary.canRename,
+            canDelete: settingsLibrary.canDelete,
+          }}
           onRename={handleRename}
-          onUpdateMemberRole={handleUpdateMemberRole}
-          onRemoveMember={handleRemoveMember}
-          onCreateInvite={handleCreateInvite}
-          onRevokeInvite={handleRevokeInvite}
-          onDelete={handleDeleteFromDialog}
-          onSearchUsers={handleSearchUsers}
+          onDelete={handleDeleteFromSettings}
         />
-      )}
+      ) : null}
     </>
   );
 }

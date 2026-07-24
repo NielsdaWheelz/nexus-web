@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
 from nexus.errors import (
+    ApiError,
     ApiErrorCode,
     ConflictError,
     ForbiddenError,
@@ -23,12 +24,23 @@ from nexus.errors import (
 from nexus.schemas.library import (
     AcceptLibraryInviteResponse,
     DeclineLibraryInviteResponse,
+    EmailLibraryInvitee,
     InviteAcceptMembershipOut,
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
+    LibraryInvitee,
     LibraryRole,
+    ViewerLibraryInvitationOut,
 )
 from nexus.services import library_governance as governance
+from nexus.services.sealed_handles import (
+    InvalidSealedHandle,
+    LibraryInvitationHandle,
+    seal_library_invitation,
+    seal_user,
+    unseal_library_invitation,
+    unseal_user,
+)
 
 _INVITATION_COLUMNS = (
     "id, library_id, inviter_user_id, invitee_user_id, role, status, created_at, responded_at"
@@ -39,10 +51,10 @@ def _invitation_row_to_out(row) -> LibraryInvitationOut:
     """Map a name-keyed invitation row to LibraryInvitationOut. Rows that also project
     `email`/`display_name` carry invitee user info; others leave it None."""
     return LibraryInvitationOut(
-        id=row["id"],
+        invitation_handle=seal_library_invitation(row["id"]),
         library_id=row["library_id"],
-        inviter_user_id=row["inviter_user_id"],
-        invitee_user_id=row["invitee_user_id"],
+        inviter_user_handle=seal_user(row["inviter_user_id"]),
+        invitee_user_handle=seal_user(row["invitee_user_id"]),
         role=row["role"],
         status=row["status"],
         created_at=row["created_at"],
@@ -52,30 +64,34 @@ def _invitation_row_to_out(row) -> LibraryInvitationOut:
     )
 
 
+def _viewer_invitation_row_to_out(row) -> ViewerLibraryInvitationOut:
+    return ViewerLibraryInvitationOut(
+        **_invitation_row_to_out(row).model_dump(),
+        library_name=row["library_name"],
+    )
+
+
 def create_library_invite(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
-    invitee_user_id: UUID | None,
+    invitee: LibraryInvitee,
     role: LibraryRole,
-    invitee_email: str | None = None,
 ) -> LibraryInvitationOut:
-    """Create an invitation. Admin-only; default library forbidden. Either
-    invitee_user_id or invitee_email is required (user id wins)."""
+    """Create an invitation from one strict sealed-user or email audience."""
     with transaction(db):
-        ctx = governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
+        ctx = governance.lock_library_for_member(db, viewer_id, library_id)
         governance.require_admin(ctx.role)
         governance.require_non_default(ctx.is_default)
         governance.require_not_system(ctx.system_key)
 
-        normalized_invitee_email = invitee_email.strip() if invitee_email else None
-        if invitee_user_id is None and normalized_invitee_email is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Either invitee_user_id or invitee_email is required",
-            )
-
-        if invitee_user_id is None:
+        if isinstance(invitee, EmailLibraryInvitee):
+            normalized_invitee_email = invitee.email.strip()
+            if not normalized_invitee_email:
+                raise InvalidRequestError(
+                    ApiErrorCode.E_INVALID_REQUEST,
+                    "Invitee email is required",
+                )
             row = db.execute(
                 text("SELECT id FROM users WHERE email = :email"),
                 {"email": normalized_invitee_email},
@@ -84,6 +100,10 @@ def create_library_invite(
                 raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
             invitee_user_id = row[0]
         else:
+            try:
+                invitee_user_id = unseal_user(invitee.user_handle)
+            except InvalidSealedHandle as exc:
+                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
             invitee_exists = db.execute(
                 text("SELECT 1 FROM users WHERE id = :uid"),
                 {"uid": invitee_user_id},
@@ -109,6 +129,14 @@ def create_library_invite(
             raise ConflictError(
                 ApiErrorCode.E_INVITE_ALREADY_EXISTS,
                 "Pending invitation already exists",
+            )
+
+        from nexus.services.billing_entitlements import get_effective_entitlements
+
+        if not get_effective_entitlements(db, viewer_id).can_share:
+            raise ApiError(
+                ApiErrorCode.E_BILLING_REQUIRED,
+                "Sharing requires an eligible plan",
             )
 
         try:
@@ -186,7 +214,7 @@ def list_viewer_invites(
     viewer_id: UUID,
     status: LibraryInvitationStatusValue = "pending",
     limit: int = 100,
-) -> list[LibraryInvitationOut]:
+) -> list[ViewerLibraryInvitationOut]:
     """List invitations addressed to the viewer. Ordered created_at DESC, id DESC."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
@@ -197,9 +225,10 @@ def list_viewer_invites(
             text("""
             SELECT i.id, i.library_id, i.inviter_user_id, i.invitee_user_id,
                    i.role, i.status, i.created_at, i.responded_at,
-                   u.email, u.display_name
+                   u.email, u.display_name, l.name AS library_name
             FROM library_invitations i
             JOIN users u ON u.id = i.invitee_user_id
+            JOIN libraries l ON l.id = i.library_id
             WHERE i.invitee_user_id = :uid AND i.status = :status
             ORDER BY i.created_at DESC, i.id DESC
             LIMIT :limit
@@ -209,15 +238,19 @@ def list_viewer_invites(
         .mappings()
         .all()
     )
-    return [_invitation_row_to_out(row) for row in rows]
+    return [_viewer_invitation_row_to_out(row) for row in rows]
 
 
 def accept_library_invite(
-    db: Session, viewer_id: UUID, invite_id: UUID
+    db: Session, viewer_id: UUID, invitation_handle: LibraryInvitationHandle | str
 ) -> AcceptLibraryInviteResponse:
     """Accept a library invitation: membership upsert → invite update. The
     membership commit alone immediately changes Default list/count/search; no
     follow-up projection work is required."""
+    try:
+        invite_id = unseal_library_invitation(str(invitation_handle))
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found") from exc
     with transaction(db):
         inv = (
             db.execute(
@@ -248,7 +281,7 @@ def accept_library_invite(
                 invite=_invitation_row_to_out(inv),
                 membership=InviteAcceptMembershipOut(
                     library_id=invite_library_id,
-                    user_id=viewer_id,
+                    user_handle=seal_user(viewer_id),
                     role=mem[0] if mem else invite_role,
                 ),
                 idempotent=True,
@@ -298,7 +331,7 @@ def accept_library_invite(
         invite=_invitation_row_to_out(updated),
         membership=InviteAcceptMembershipOut(
             library_id=invite_library_id,
-            user_id=viewer_id,
+            user_handle=seal_user(viewer_id),
             role=invite_role,
         ),
         idempotent=False,
@@ -306,10 +339,14 @@ def accept_library_invite(
 
 
 def decline_library_invite(
-    db: Session, viewer_id: UUID, invite_id: UUID
+    db: Session, viewer_id: UUID, invitation_handle: LibraryInvitationHandle | str
 ) -> DeclineLibraryInviteResponse:
     """Decline a pending invitation. declined → declined is idempotent; accepted/revoked
     → 409."""
+    try:
+        invite_id = unseal_library_invitation(str(invitation_handle))
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found") from exc
     with transaction(db):
         inv = (
             db.execute(
@@ -350,9 +387,17 @@ def decline_library_invite(
     return DeclineLibraryInviteResponse(invite=_invitation_row_to_out(updated), idempotent=False)
 
 
-def revoke_library_invite(db: Session, viewer_id: UUID, invite_id: UUID) -> None:
+def revoke_library_invite(
+    db: Session,
+    viewer_id: UUID,
+    invitation_handle: LibraryInvitationHandle | str,
+) -> None:
     """Revoke a pending invitation. Admin-only; revoked → revoked is idempotent;
     accepted/declined → 409."""
+    try:
+        invite_id = unseal_library_invitation(str(invitation_handle))
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_INVITE_NOT_FOUND, "Invitation not found") from exc
     with transaction(db):
         inv = (
             db.execute(

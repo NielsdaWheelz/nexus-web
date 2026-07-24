@@ -1,0 +1,32 @@
+{
+  "name": "Nexus public resource sharing",
+  "description": "Rate limit anonymous resource-share reads by Vercel-validated source IP.",
+  "active": true,
+  "conditionGroup": [
+    {
+      "conditions": [
+        {
+          "type": "path",
+          "op": "re",
+          "value": "^/api/public/resource-share(?:/.*)?$"
+        }
+      ]
+    }
+  ],
+  "action": {
+    "mitigate": {
+      "action": "rate_limit",
+      "rateLimit": {
+        "algo": "fixed_window",
+        "window": 60,
+        "limit": 120,
+        "keys": [
+          "ip"
+        ],
+        "action": "deny"
+      },
+      "redirect": null,
+      "actionDuration": null
+    }
+  }
+}

@@ -33,7 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    highlight_shared_library_exists_sql,
+    highlight_visibility_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
@@ -517,7 +517,7 @@ def _reference_highlights(
             JOIN media m ON m.id = h.anchor_media_id
             JOIN visible_media vm ON vm.media_id = h.anchor_media_id
             WHERE {_lexical_match_sql("h.exact")}
-              AND {highlight_shared_library_exists_sql("h")}
+              AND {highlight_visibility_sql("h")}
             ORDER BY score DESC, h.updated_at DESC, h.id ASC
             LIMIT :limit
             """

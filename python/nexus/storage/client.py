@@ -86,6 +86,17 @@ class StorageClientBase(ABC):
         ...
 
     @abstractmethod
+    def stream_object_range(
+        self,
+        path: str,
+        *,
+        start: int,
+        end_inclusive: int,
+    ) -> Iterator[bytes]:
+        """Stream one validated inclusive object-byte range."""
+        ...
+
+    @abstractmethod
     def put_object(
         self,
         path: str,
@@ -236,6 +247,45 @@ class StorageClient(StorageClientBase):
                     yield chunk
             except (BotoCoreError, ClientError, OSError) as exc:
                 raise StorageError(f"Failed to stream object {path}") from exc
+        finally:
+            close = getattr(body, "close", None)
+            if close:
+                close()
+
+    def stream_object_range(
+        self,
+        path: str,
+        *,
+        start: int,
+        end_inclusive: int,
+    ) -> Iterator[bytes]:
+        if start < 0 or end_inclusive < start:
+            raise ValueError("invalid inclusive object range")
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket,
+                Key=path,
+                Range=f"bytes={start}-{end_inclusive}",
+            )
+        except ClientError as exc:
+            if _client_error_is_missing(exc):
+                raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
+            raise StorageError(f"Failed to stream object range {path}") from exc
+        except BotoCoreError as exc:
+            raise StorageError(f"Failed to stream object range {path}") from exc
+
+        body = response["Body"]
+        remaining = end_inclusive - start + 1
+        try:
+            try:
+                while remaining > 0:
+                    chunk = body.read(min(8 * 1024 * 1024, remaining))
+                    if not chunk:
+                        raise StorageError("Stored object range ended before persisted metadata")
+                    remaining -= len(chunk)
+                    yield chunk
+            except (BotoCoreError, ClientError, OSError) as exc:
+                raise StorageError(f"Failed to stream object range {path}") from exc
         finally:
             close = getattr(body, "close", None)
             if close:

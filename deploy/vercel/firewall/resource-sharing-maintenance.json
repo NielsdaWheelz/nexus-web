@@ -1,0 +1,29 @@
+{
+  "name": "Nexus cutover maintenance gate",
+  "description": "Temporarily deny production traffic except the exact release-smoke source.",
+  "active": true,
+  "conditionGroup": [
+    {
+      "conditions": [
+        {
+          "type": "path",
+          "op": "re",
+          "value": "^/.*$"
+        },
+        {
+          "type": "ip_address",
+          "op": "neq",
+          "value": "__NEXUS_RELEASE_SMOKE_IP__"
+        }
+      ]
+    }
+  ],
+  "action": {
+    "mitigate": {
+      "action": "deny",
+      "rateLimit": null,
+      "redirect": null,
+      "actionDuration": null
+    }
+  }
+}

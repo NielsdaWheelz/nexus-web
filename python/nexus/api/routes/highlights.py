@@ -17,6 +17,7 @@ from nexus.schemas.highlights import (
     SetHighlightNoteRequest,
     UpdateHighlightRequest,
 )
+from nexus.schemas.reader import ResolvedHighlightReaderTargetResponse
 from nexus.services import highlights as highlights_service
 from nexus.services import notes as notes_service
 from nexus.services import pdf_highlights as pdf_highlights_service
@@ -151,6 +152,25 @@ def get_highlight(
         highlight_id=highlight_id,
     )
     return ok(result)
+
+
+@router.get(
+    "/highlights/{highlight_id}/reader-target",
+    response_model=ResolvedHighlightReaderTargetResponse,
+)
+def get_highlight_reader_target(
+    highlight_id: UUID,
+    viewer: Annotated[Viewer, Depends(get_viewer)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    """Resolve one authenticated highlight to its current reader target."""
+    return ok(
+        highlights_service.get_highlight_reader_target(
+            db,
+            viewer_id=viewer.user_id,
+            highlight_id=highlight_id,
+        )
+    )
 
 
 @router.patch("/highlights/{highlight_id}")

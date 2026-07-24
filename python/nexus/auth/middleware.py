@@ -223,6 +223,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/oracle/plates/"):
             return await call_next(request)
 
+        # Anonymous resource reads remain BFF-only. The internal-header check
+        # above has already succeeded; the route authenticates its bearer link
+        # independently and never receives a fabricated Viewer.
+        if request.url.path == "/public/resource-share" or request.url.path.startswith(
+            "/public/resource-share/"
+        ):
+            return await call_next(request)
+
         # Step 2: Extract bearer token
         token, error_response_obj = self._extract_bearer_token(request)
         if error_response_obj:

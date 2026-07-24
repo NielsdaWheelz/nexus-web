@@ -1037,7 +1037,18 @@ predicates in `auth/permissions.py`; the search/object readers read
   accept response returns `{invite, membership, idempotent}`. The membership
   commit alone is what changes the default library's list and count; there is
   no follow-up backfill worker, projection job, or provenance row to catch up
-  (see [`modules/sharing.md`](modules/sharing.md)).
+  (see [`modules/library.md`](modules/library.md)).
+- **Resource access sharing**: `resource_grants` stores only direct user or
+  anonymous-link grants for canonical media/highlight `ResourceRef` subjects.
+  `services/resource_grants.py` owns lifecycle/token/locking; authenticated
+  projection lives in `services/resource_sharing.py`; the anonymous read-only
+  allowlist lives in `services/public_resource_sharing.py`. Libraries remain
+  membership-only, media grants expose no annotations, and owned-highlight
+  grants expose exactly the parent media plus the named highlight. Public links
+  use a fragment bearer at `/s#share=…`, a token-header BFF, strict format
+  DTOs, masked 404s, private-storage mediation, source-revision-bound handles,
+  and route-specific no-store/no-referrer/noindex/CSP policy. See
+  [`modules/resource-sharing.md`](modules/resource-sharing.md).
 - **Writable destinations**: destination pickers use
   `GET /libraries/writable-destinations`; default libraries, member-only
   libraries, duplicate IDs, and inaccessible IDs are not valid write
@@ -1523,6 +1534,7 @@ The things most likely to bite you, distilled:
 | Universal Dossiers / Media Intelligence                           | `python/nexus/services/artifacts/`, `python/nexus/services/media_intelligence.py`, `python/nexus/api/routes/dossiers.py`                                                                               |
 | Agent tools                                                       | `python/nexus/services/agent_tools/`                                                                                                                                                                   |
 | Libraries / contributors / notes                                  | `python/nexus/services/{library_governance,library_entries,library_invitations,contributors,notes}.py`                                                                                                 |
+| Resource grants / public sharing                                  | [`modules/resource-sharing.md`](modules/resource-sharing.md), `python/nexus/services/{resource_grants,resource_sharing,public_resource_sharing}.py`, `apps/web/src/{components,lib}/sharing/`, `apps/web/src/app/s/` |
 | Podcasts / playback                                               | `python/nexus/services/podcasts/`, `python/nexus/services/consumption/`, `python/nexus/api/routes/{lectern,listening_state}.py`                                                                        |
 | Auth / billing / keys / rate limit                                | `python/nexus/services/{user_keys,billing,billing_entitlements,rate_limit}.py`, `python/nexus/auth/`                                                                                                   |
 | Frontend BFF / auth / SSE                                         | `apps/web/src/lib/{api,auth,supabase}/`                                                                                                                                                                |

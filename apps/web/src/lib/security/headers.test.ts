@@ -24,4 +24,12 @@ describe("STATIC_SECURITY_HEADERS", () => {
     expect(ppHeader?.value).not.toContain("microphone=()");
     expect(ppHeader?.value).not.toContain("microphone=*");
   });
+
+  it("allows Web Share only in the Nexus top-level origin", () => {
+    const ppHeader = STATIC_SECURITY_HEADERS.find(
+      (h) => h.key === "Permissions-Policy",
+    );
+    expect(ppHeader?.value).toContain("web-share=(self)");
+    expect(ppHeader?.value).not.toMatch(/web-share=\([^)]*youtube/i);
+  });
 });

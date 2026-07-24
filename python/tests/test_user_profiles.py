@@ -9,11 +9,32 @@ Tests cover:
 - Invite by email (alternative to user_id)
 """
 
-import pytest
+from uuid import uuid4
 
+import pytest
+from sqlalchemy import text
+
+from nexus.services.sealed_handles import seal_user, unseal_user
 from tests.helpers import auth_headers, create_test_user_id
 
 pytestmark = pytest.mark.integration
+
+
+def _enable_sharing(direct_db, user_id) -> None:
+    with direct_db.session() as db:
+        db.execute(
+            text(
+                "INSERT INTO billing_entitlement_overrides "
+                "(id, user_id, plan_tier, reason) "
+                "VALUES (:id, :user_id, 'plus', 'library invite test')"
+            ),
+            {"id": uuid4(), "user_id": user_id},
+        )
+        db.commit()
+
+
+def _user_invitee(user_id) -> dict:
+    return {"kind": "User", "userHandle": str(seal_user(user_id))}
 
 
 # =============================================================================
@@ -231,8 +252,8 @@ class TestUserSearch:
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) >= 1, "Expected at least 1 result for display_name search"
-        user_ids = [u["user_id"] for u in data]
-        assert str(user_id) in user_ids
+        user_ids = [unseal_user(u["userHandle"]) for u in data]
+        assert user_id in user_ids
 
     def test_search_users_rejects_short_query(self, auth_client):
         """Query shorter than 3 characters returns 400."""
@@ -275,13 +296,13 @@ class TestUserSearch:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        user_ids = [u["user_id"] for u in data]
-        assert str(user_id) not in user_ids, (
+        user_ids = [unseal_user(u["userHandle"]) for u in data]
+        assert user_id not in user_ids, (
             f"Search should exclude self, but found {user_id} in results"
         )
 
     def test_search_users_returns_expected_fields(self, auth_client):
-        """Each result includes user_id, email, and display_name."""
+        """Each result includes user_handle, email, and display_name."""
         user_a = create_test_user_id()
         searcher = create_test_user_id()
         email_a = f"fields-{user_a}@example.com"
@@ -301,9 +322,10 @@ class TestUserSearch:
 
         data = response.json()["data"]
         assert len(data) >= 1
-        result = next(u for u in data if u["user_id"] == str(user_a))
+        result = next(u for u in data if unseal_user(u["userHandle"]) == user_a)
+        assert set(result) == {"userHandle", "email", "displayName"}
         assert result["email"] == email_a
-        assert result["display_name"] == "FieldsTest"
+        assert result["displayName"] == "FieldsTest"
 
 
 # =============================================================================
@@ -338,14 +360,14 @@ class TestMemberResponseEnrichment:
         assert response.status_code == 200
         members = response.json()["data"]
         assert len(members) >= 1
-        owner_member = next(m for m in members if m["user_id"] == str(owner))
+        owner_member = next(m for m in members if unseal_user(m["userHandle"]) == owner)
         assert "email" in owner_member, (
             f"Expected 'email' in member response, got keys: {list(owner_member.keys())}"
         )
         assert owner_member["email"] == owner_email
-        assert owner_member["display_name"] == "OwnerName"
+        assert owner_member["displayName"] == "OwnerName"
 
-    def test_list_invites_includes_invitee_email(self, auth_client):
+    def test_list_invites_includes_invitee_email(self, auth_client, direct_db):
         """GET /libraries/{id}/invites includes invitee email/display_name."""
         owner = create_test_user_id()
         invitee = create_test_user_id()
@@ -358,6 +380,7 @@ class TestMemberResponseEnrichment:
         # Bootstrap both users
         auth_client.get("/me", headers=owner_headers)
         auth_client.get("/me", headers=invitee_headers)
+        _enable_sharing(direct_db, owner)
 
         # Create library
         lib_resp = auth_client.post(
@@ -367,10 +390,16 @@ class TestMemberResponseEnrichment:
         )
         lib_id = lib_resp.json()["data"]["id"]
 
-        # Create invite by user_id
+        # Create invite by sealed user handle.
         auth_client.post(
             f"/libraries/{lib_id}/invites",
-            json={"invitee_user_id": str(invitee), "role": "member"},
+            json={
+                "invitee": {
+                    "kind": "User",
+                    "userHandle": seal_user(invitee),
+                },
+                "role": "member",
+            },
             headers=owner_headers,
         )
 
@@ -384,10 +413,10 @@ class TestMemberResponseEnrichment:
         invites = response.json()["data"]
         assert len(invites) >= 1
         inv = invites[0]
-        assert "invitee_email" in inv, (
+        assert "inviteeEmail" in inv, (
             f"Expected 'invitee_email' in invite response, got keys: {list(inv.keys())}"
         )
-        assert inv["invitee_email"] == invitee_email
+        assert inv["inviteeEmail"] == invitee_email
 
 
 # =============================================================================
@@ -398,7 +427,7 @@ class TestMemberResponseEnrichment:
 class TestInviteByEmail:
     """Tests for creating library invites using email instead of user_id."""
 
-    def test_create_invite_by_email(self, auth_client):
+    def test_create_invite_by_email(self, auth_client, direct_db):
         """POST /libraries/{id}/invites with invitee_email creates invite."""
         owner = create_test_user_id()
         invitee = create_test_user_id()
@@ -410,6 +439,7 @@ class TestInviteByEmail:
         # Bootstrap both
         auth_client.get("/me", headers=owner_headers)
         auth_client.get("/me", headers=auth_headers(invitee, email=invitee_email))
+        _enable_sharing(direct_db, owner)
 
         # Create library
         lib_resp = auth_client.post(
@@ -422,7 +452,10 @@ class TestInviteByEmail:
         # Invite by email
         response = auth_client.post(
             f"/libraries/{lib_id}/invites",
-            json={"invitee_email": invitee_email, "role": "member"},
+            json={
+                "invitee": {"kind": "Email", "email": invitee_email},
+                "role": "member",
+            },
             headers=owner_headers,
         )
 
@@ -430,7 +463,7 @@ class TestInviteByEmail:
             f"Expected 201 for invite-by-email, got {response.status_code}: {response.json()}"
         )
         data = response.json()["data"]
-        assert data["invitee_user_id"] == str(invitee)
+        assert unseal_user(data["inviteeUserHandle"]) == invitee
 
     def test_create_invite_by_nonexistent_email_returns_404(self, auth_client):
         """Invite by email for non-existent user returns 404."""
@@ -447,7 +480,13 @@ class TestInviteByEmail:
 
         response = auth_client.post(
             f"/libraries/{lib_id}/invites",
-            json={"invitee_email": "nonexistent@example.com", "role": "member"},
+            json={
+                "invitee": {
+                    "kind": "Email",
+                    "email": "nonexistent@example.com",
+                },
+                "role": "member",
+            },
             headers=owner_headers,
         )
 
@@ -456,7 +495,7 @@ class TestInviteByEmail:
         )
 
     def test_create_invite_requires_email_or_user_id(self, auth_client):
-        """Invite with neither invitee_user_id nor invitee_email returns 400."""
+        """Invite without the strict invitee union returns 400."""
         owner = create_test_user_id()
         owner_headers = auth_headers(owner, email=f"neither-{owner}@example.com")
         auth_client.get("/me", headers=owner_headers)
@@ -478,3 +517,64 @@ class TestInviteByEmail:
             f"Expected 400 when neither email nor user_id provided, "
             f"got {response.status_code}: {response.json()}"
         )
+
+
+class TestLibraryInviteBilling:
+    def test_free_actor_cannot_create_invitation(self, auth_client):
+        owner = create_test_user_id()
+        invitee = create_test_user_id()
+        owner_headers = auth_headers(owner)
+        auth_client.get("/me", headers=owner_headers)
+        auth_client.get("/me", headers=auth_headers(invitee))
+        library_id = auth_client.post(
+            "/libraries",
+            json={"name": "Free invite gate"},
+            headers=owner_headers,
+        ).json()["data"]["id"]
+
+        response = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json={"invitee": _user_invitee(invitee), "role": "member"},
+            headers=owner_headers,
+        )
+        assert response.status_code == 402
+        assert response.json()["error"]["code"] == "E_BILLING_REQUIRED"
+
+    def test_pending_duplicate_stays_conflict_after_downgrade(
+        self,
+        auth_client,
+        direct_db,
+    ):
+        owner = create_test_user_id()
+        invitee = create_test_user_id()
+        owner_headers = auth_headers(owner)
+        auth_client.get("/me", headers=owner_headers)
+        auth_client.get("/me", headers=auth_headers(invitee))
+        _enable_sharing(direct_db, owner)
+        library_id = auth_client.post(
+            "/libraries",
+            json={"name": "Downgrade invite gate"},
+            headers=owner_headers,
+        ).json()["data"]["id"]
+        body = {"invitee": _user_invitee(invitee), "role": "member"}
+        created = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json=body,
+            headers=owner_headers,
+        )
+        assert created.status_code == 201, created.json()
+
+        with direct_db.session() as db:
+            db.execute(
+                text("DELETE FROM billing_entitlement_overrides WHERE user_id = :user_id"),
+                {"user_id": owner},
+            )
+            db.commit()
+
+        repeated = auth_client.post(
+            f"/libraries/{library_id}/invites",
+            json=body,
+            headers=owner_headers,
+        )
+        assert repeated.status_code == 409
+        assert repeated.json()["error"]["code"] == "E_INVITE_ALREADY_EXISTS"

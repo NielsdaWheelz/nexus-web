@@ -19,6 +19,7 @@ import {
   PaneReturnMementoProvider,
   type PaneReturnMementoCommands,
 } from "@/lib/workspace/paneReturnMemento";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 const LIBRARY_ID = "reading-slate-library";
@@ -35,13 +36,17 @@ function library(id = LIBRARY_ID, name = "Research") {
   return {
     id,
     name,
-    is_default: false,
+    color: null,
+    isDefault: false,
     role: "admin",
-    owner_user_id: "user-1",
-    system_key: null,
-    can_rename: true,
-    can_delete: true,
-    can_edit_entries: true,
+    ownerUserHandle:
+      "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    systemKey: null,
+    canRename: true,
+    canDelete: true,
+    canEditEntries: true,
+    canManageMembers: true,
+    canTransferOwnership: true,
   };
 }
 
@@ -73,26 +78,28 @@ function SwitchingHarness({
           },
         }}
         >
-          <LecternProvider>
-            <PaneRuntimeProvider
-            paneId="pane-library"
-            visitId={TEST_VISIT_ID}
-            isActive={isActive}
-            href={href}
-            routeId={identity.routeId}
-            routeKey={identity.routeKey}
-            pathParams={{ id: libraryId }}
-            canGoBack={false}
-            canGoForward={false}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            >
-              {children}
-            </PaneRuntimeProvider>
-          </LecternProvider>
+          <ShareControllerProvider>
+            <LecternProvider>
+              <PaneRuntimeProvider
+                paneId="pane-library"
+                visitId={TEST_VISIT_ID}
+                isActive={isActive}
+                href={href}
+                routeId={identity.routeId}
+                routeKey={identity.routeKey}
+                pathParams={{ id: libraryId }}
+                canGoBack={false}
+                canGoForward={false}
+                onNavigatePane={vi.fn()}
+                onReplacePane={vi.fn()}
+                onOpenInNewPane={vi.fn()}
+                onGoBackPane={vi.fn()}
+                onGoForwardPane={vi.fn()}
+              >
+                {children}
+              </PaneRuntimeProvider>
+            </LecternProvider>
+          </ShareControllerProvider>
         </ResourceCacheProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,
@@ -213,26 +220,28 @@ function Harness({
           },
         }}
         >
-          <LecternProvider>
-            <PaneRuntimeProvider
-            paneId="pane-library"
-            visitId={TEST_VISIT_ID}
-            isActive={isActive}
-            href={href}
-            routeId={identity.routeId}
-            routeKey={identity.routeKey}
-            pathParams={{ id: LIBRARY_ID }}
-            canGoBack={false}
-            canGoForward={false}
-            onNavigatePane={vi.fn()}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={vi.fn()}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            >
-              {children}
-            </PaneRuntimeProvider>
-          </LecternProvider>
+          <ShareControllerProvider>
+            <LecternProvider>
+              <PaneRuntimeProvider
+                paneId="pane-library"
+                visitId={TEST_VISIT_ID}
+                isActive={isActive}
+                href={href}
+                routeId={identity.routeId}
+                routeKey={identity.routeKey}
+                pathParams={{ id: LIBRARY_ID }}
+                canGoBack={false}
+                canGoForward={false}
+                onNavigatePane={vi.fn()}
+                onReplacePane={vi.fn()}
+                onOpenInNewPane={vi.fn()}
+                onGoBackPane={vi.fn()}
+                onGoForwardPane={vi.fn()}
+              >
+                {children}
+              </PaneRuntimeProvider>
+            </LecternProvider>
+          </ShareControllerProvider>
         </ResourceCacheProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,

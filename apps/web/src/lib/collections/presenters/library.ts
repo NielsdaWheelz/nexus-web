@@ -13,7 +13,8 @@ export interface LibraryPresenterItem extends LibraryActionSubject {
 }
 
 export interface LibraryPresenterContext {
-  onEdit?: () => void;
+  onShare?: Parameters<typeof libraryResourceOptions>[0]["onShare"];
+  onOpenSettings?: () => void;
   onDelete?: () => void;
 }
 
@@ -34,7 +35,7 @@ export function presentLibrary(
     publicationDate: absent(),
     context: present({
       kind: "Text",
-      text: item.is_default ? "Default library" : item.role,
+      text: item.isDefault ? "Default library" : item.role,
     }),
     activity: absent(),
     exceptionalStatus: absent(),

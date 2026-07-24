@@ -65,6 +65,10 @@ from nexus.logging import get_logger
 from nexus.middleware.db_session import RequestDbSessionMiddleware
 from nexus.middleware.request_id import RequestIDMiddleware
 from nexus.middleware.stream_cors import StreamCORSMiddleware
+from nexus.public_resource_security import (
+    PUBLIC_RESOURCE_SHARE_PATH_RE,
+    apply_public_resource_share_headers,
+)
 from nexus.responses import (
     api_error_handler,
     error_response,
@@ -406,6 +410,18 @@ def create_app(
         except Exception as exc:
             response = await unhandled_exception_handler(request, exc)
         response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+    @app.middleware("http")
+    async def public_resource_share_security(request: Request, call_next):
+        """Stamp every route/error outcome in the anonymous public API tree."""
+        if PUBLIC_RESOURCE_SHARE_PATH_RE.fullmatch(request.url.path) is None:
+            return await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            response = await unhandled_exception_handler(request, exc)
+        apply_public_resource_share_headers(response)
         return response
 
     return app

@@ -1,6 +1,8 @@
 import { type NextRequest } from "next/server";
 import {
+  buildPublicApiContentSecurityPolicy,
   buildContentSecurityPolicy,
+  buildPublicReaderContentSecurityPolicy,
   buildReportingEndpoints,
   generateNonce,
 } from "@/lib/security/csp";
@@ -20,9 +22,16 @@ export function middleware(request: NextRequest) {
   // may disable CSP entirely (null policy); never honored in a deployed env.
   const nonce = generateNonce();
   const env = getEnv();
+  const isPublicResourceShareApi =
+    request.nextUrl.pathname === "/api/public/resource-share" ||
+    request.nextUrl.pathname.startsWith("/api/public/resource-share/");
   const csp = env.disableCspForE2E
     ? null
-    : buildCsp(request, nonce, env.connectOrigins);
+    : isPublicResourceShareApi
+      ? buildPublicApiContentSecurityPolicy()
+      : request.nextUrl.pathname === "/s"
+      ? buildPublicReaderCsp(request, nonce)
+      : buildCsp(request, nonce, env.connectOrigins);
 
   const response = updateSession(request, nonce, csp);
 
@@ -33,8 +42,30 @@ export function middleware(request: NextRequest) {
       buildReportingEndpoints(request.nextUrl.origin),
     );
   }
+  if (request.nextUrl.pathname === "/s" || isPublicResourceShareApi) {
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+    response.headers.set("X-Content-Type-Options", "nosniff");
+    response.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+    if (!isPublicResourceShareApi) {
+      response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+    }
+  }
 
   return response;
+}
+
+function buildPublicReaderCsp(request: NextRequest, nonce: string): string {
+  const isDev = isDevBuild();
+  return buildPublicReaderContentSecurityPolicy({
+    nonce,
+    isDev,
+    isHttpsRequest:
+      request.headers.get("x-forwarded-proto") === "https" ||
+      request.nextUrl.protocol === "https:",
+    devWebSocketOrigins: isDev ? devWebSocketOrigins(request) : undefined,
+  });
 }
 
 function buildCsp(

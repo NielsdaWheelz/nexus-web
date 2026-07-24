@@ -9,6 +9,7 @@ import type { ComponentType } from "react";
 import type { BrowseResult } from "@/lib/browse/types";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { ShareTarget } from "@/lib/sharing/types";
 
 export type LauncherLane =
   | "all" // blended default — show all interpretations
@@ -105,7 +106,8 @@ export type LauncherActionTarget =
   | { kind: "browse-acquire"; result: BrowseResult } // open if owned, else add by url
   | { kind: "new-conversation" }
   | { kind: "create-page" } // create an empty page then open it
-  | { kind: "copy-link"; href: string }
+  | { kind: "share"; target: ShareTarget }
+  | { kind: "copy-external-link"; href: string }
   | { kind: "pane-open"; paneId: string } // activate, restoring if minimized
   | { kind: "pane-close"; paneId: string }
   | { kind: "open-today" } // resolve-or-create today's daily page then open it

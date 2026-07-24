@@ -45,6 +45,26 @@ def test_every_resource_scheme_has_one_capability() -> None:
         assert capability_for_scheme(scheme) is RESOURCE_ITEM_CAPABILITIES[scheme]
 
 
+def test_every_resource_scheme_has_the_exact_share_mode() -> None:
+    expected = {
+        "media": "ResourceGrants",
+        "highlight": "HighlightGrants",
+        "library": "LibraryMembership",
+        "podcast": "CopyWithLibraryFiling",
+        "page": "CopyOnly",
+        "note_block": "CopyOnly",
+        "conversation": "CopyOnly",
+        "oracle_reading": "CopyOnly",
+        "artifact": "CopyOnly",
+        "contributor": "CopyOnly",
+    }
+    assert {
+        scheme: capability.sharing
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.sharing != "None"
+    } == expected
+
+
 def test_read_search_and_citation_capabilities_are_owned_together() -> None:
     assert resource_read_policy(_ref("library")) == "scope"
     assert app_search_scope_schemes() == ("media", "library")
@@ -133,7 +153,16 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
         "artifact_revisions",
     }
     user_link_target_modes = {"none", "direct", "materialize_passage"}
+    share_modes = {
+        "None",
+        "CopyOnly",
+        "CopyWithLibraryFiling",
+        "ResourceGrants",
+        "HighlightGrants",
+        "LibraryMembership",
+    }
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items():
+        assert capability.sharing in share_modes, scheme
         assert isinstance(capability.user_relation.user_link_source, bool), scheme
         assert capability.user_relation.user_link_target in user_link_target_modes, scheme
         assert capability.user_relation.note_reference_target is (

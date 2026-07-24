@@ -6,9 +6,11 @@ import {
   type SessionState,
 } from "@/lib/auth/session-cookie";
 import { __resetEnvForTests } from "@/lib/env";
+import { PUBLIC_API_CONTENT_SECURITY_POLICY } from "@/lib/security/csp";
 import {
   proxyExtensionToFastAPI,
   proxyPublicToFastAPIWithDeps,
+  proxyResourceShareToFastAPIWithDeps,
   proxyToFastAPI,
   proxyToFastAPIWithDeps,
 } from "./proxy";
@@ -170,6 +172,20 @@ async function expectUnauthenticated(
       request_id: requestId,
     },
   });
+}
+
+function expectPublicResourceSecurityHeaders(response: Response) {
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("cross-origin-resource-policy")).toBe(
+    "same-origin"
+  );
+  expect(response.headers.get("content-security-policy")).toBe(
+    PUBLIC_API_CONTENT_SECURITY_POLICY
+  );
+  expect(response.headers.get("set-cookie")).toBeNull();
 }
 
 describe("proxyToFastAPI", () => {
@@ -707,6 +723,85 @@ describe("proxyPublicToFastAPI", () => {
     });
     expect(backendFetch).not.toHaveBeenCalled();
     expect(readSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("proxyResourceShareToFastAPI", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each([404, 416, 422, 500])(
+    "applies the complete public header suite to upstream %s responses",
+    async (status) => {
+      const backendFetch = mockBackendFetch(async () =>
+        Response.json(
+          {
+            error: {
+              code: status === 422 ? "E_INVALID_REQUEST" : "E_NOT_FOUND",
+              message: status === 422 ? "Invalid pagination query" : "Share unavailable",
+            },
+          },
+          {
+            status,
+            headers: {
+              "content-security-policy": "default-src https:",
+              "set-cookie": "private=leak",
+            },
+          }
+        )
+      );
+
+      const response = await proxyResourceShareToFastAPIWithDeps(
+        new Request(
+          "http://localhost:3000/api/public/resource-share/fragments?limit=bad",
+          { headers: { "x-nexus-share-token": "opaque" } }
+        ),
+        "/public/resource-share/fragments",
+        deps({ backendFetch })
+      );
+
+      expect(response.status).toBe(status);
+      expectPublicResourceSecurityHeaders(response);
+      if (status === 422) {
+        expect(await response.json()).toEqual({
+          error: {
+            code: "E_INVALID_REQUEST",
+            message: "Invalid pagination query",
+          },
+        });
+      }
+    }
+  );
+
+  it("applies the complete public header suite to local method errors", async () => {
+    const response = await proxyResourceShareToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/public/resource-share", {
+        method: "POST",
+      }),
+      "/public/resource-share",
+      deps()
+    );
+
+    expect(response.status).toBe(405);
+    expectPublicResourceSecurityHeaders(response);
+  });
+
+  it("applies the complete public header suite when the upstream is unavailable", async () => {
+    const backendFetch = mockBackendFetch(async () => {
+      throw new TypeError("connection refused");
+    });
+
+    const response = await proxyResourceShareToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/public/resource-share"),
+      "/public/resource-share",
+      deps({ backendFetch })
+    );
+
+    expect(response.status).toBe(502);
+    expectPublicResourceSecurityHeaders(response);
   });
 });
 

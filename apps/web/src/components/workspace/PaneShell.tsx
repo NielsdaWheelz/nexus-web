@@ -36,8 +36,9 @@ import type {
   PaneBodyMode,
   PaneRouteHeaderContract,
 } from "@/lib/panes/paneRouteModel";
-import { stripCoarseReaderQuery } from "@/lib/reader/readerLocationHref";
-import { copyText } from "@/lib/ui/copyText";
+import type { PaneShareIdentity } from "@/lib/panes/paneResourceLocator";
+import { useShareController } from "@/lib/sharing/controller";
+import { present } from "@/lib/api/presence";
 import type {
   ActionDescriptor,
   PaneHeaderAction,
@@ -52,6 +53,7 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { WorkspaceAttachedSecondaryPaneState } from "@/lib/workspace/schema";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./PaneShell.module.css";
 
 const noopResizeSecondaryPane = () => {};
@@ -68,7 +70,7 @@ interface PaneShellProps {
   paneId: string;
   routeKey: string;
   routeHeader: PaneRouteHeaderContract;
-  href?: string;
+  shareIdentity?: PaneShareIdentity | null;
   label: string;
   labelPending?: boolean;
   returnMementoEnabled: boolean;
@@ -95,7 +97,7 @@ export default function PaneShell({
   paneId,
   routeKey,
   routeHeader,
-  href = "/",
+  shareIdentity = null,
   label,
   labelPending = false,
   returnMementoEnabled,
@@ -155,6 +157,7 @@ export default function PaneShell({
     enabled: returnMementoEnabled,
     scrollportRef: bodyRef,
   });
+  const { openShare } = useShareController();
   const currentRouteKeyRef = useRef(routeKey);
   currentRouteKeyRef.current = routeKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
@@ -263,21 +266,24 @@ export default function PaneShell({
     return () => observer.disconnect();
   }, [effectiveToolbar, isMobile]);
 
-  const copyPaneLink = useCallback(() => {
-    const repaired = stripCoarseReaderQuery(href);
-    const link =
-      typeof window === "undefined"
-        ? repaired
-        : new URL(repaired, window.location.origin).toString();
-    copyText(link);
-  }, [href]);
   const paneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
-    const copyOption: ActionDescriptor = {
-      kind: "command",
-      id: "copy-pane-link",
-      label: "Copy pane link",
-      onSelect: copyPaneLink,
-    };
+    const shareOption: ActionDescriptor[] = shareIdentity
+      ? [
+          {
+            kind: "command",
+            id: "share",
+            label: "Share…",
+            restoreFocusOnClose: false,
+            onSelect: ({ triggerEl }) =>
+              openShare(shareIdentity, {
+                returnFocusTo: () => triggerEl,
+                returnFocusFallback: present(() =>
+                  findPaneChromeFocusTarget(paneId),
+                ),
+              }),
+          },
+        ]
+      : [];
     const contextualOptions: ActionDescriptor[] = effectiveOptions.map(
       (option, index) =>
         index === 0 && option.separatorBefore === undefined
@@ -285,11 +291,11 @@ export default function PaneShell({
           : option,
     );
     const ordinaryOptions: ActionDescriptor[] = [
-      copyOption,
+      ...shareOption,
       ...contextualOptions,
     ];
     return ordinaryOptions;
-  }, [copyPaneLink, effectiveOptions]);
+  }, [effectiveOptions, openShare, paneId, shareIdentity]);
   useEffect(() => {
     if (!isMobile) return;
     // Direct header actions (e.g. the Companion toggle) travel on their own

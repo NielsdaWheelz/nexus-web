@@ -25,6 +25,7 @@ import {
 import { refreshSession } from "@/lib/auth/refresh";
 import { applyRotatedCookies } from "@/lib/auth/rotated-cookies";
 import { isAbortError } from "@/lib/errors";
+import { PUBLIC_API_CONTENT_SECURITY_POLICY } from "@/lib/security/csp";
 import { type CookieToSet } from "@/lib/supabase/types";
 
 const REQUEST_ID_HEADER = "x-request-id";
@@ -102,6 +103,30 @@ const PUBLIC_ASSET_RESPONSE_HEADERS = new Set([
   "x-content-type-options",
   "x-request-id",
 ]);
+
+const PUBLIC_RESOURCE_SHARE_RESPONSE_HEADERS = new Set([
+  "content-type",
+  "content-length",
+  "content-disposition",
+  "accept-ranges",
+  "content-range",
+  "cache-control",
+  "referrer-policy",
+  "x-robots-tag",
+  "x-content-type-options",
+  "cross-origin-resource-policy",
+  "content-security-policy",
+  "x-request-id",
+]);
+
+const PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS = {
+  "Cache-Control": "private, no-store",
+  "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex, nofollow",
+  "X-Content-Type-Options": "nosniff",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Content-Security-Policy": PUBLIC_API_CONTENT_SECURITY_POLICY,
+} as const;
 
 interface ProxyDeps {
   readSession: (request: Request) => SessionState;
@@ -581,6 +606,154 @@ export async function proxyPublicToFastAPIWithDeps(
     }
     console.error("FastAPI public proxy error:", error);
     return upstreamUnavailableResponse(requestId);
+  } finally {
+    ctl.cleanup();
+  }
+}
+
+function securePublicResourceShareResponse(response: Response): Response {
+  for (const [name, value] of Object.entries(
+    PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS
+  )) {
+    response.headers.set(name, value);
+  }
+  response.headers.delete("set-cookie");
+  return response;
+}
+
+export async function proxyResourceShareToFastAPI(
+  request: Request,
+  path: string
+): Promise<Response> {
+  const deps = await createDefaultDeps();
+  return proxyResourceShareToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyResourceShareToFastAPIWithDeps(
+  request: Request,
+  path: string,
+  deps: ProxyDeps
+): Promise<Response> {
+  if (
+    path.includes("?") ||
+    (path !== "/public/resource-share" &&
+      !path.startsWith("/public/resource-share/"))
+  ) {
+    throw new Error("Public resource-share proxy received an invalid path");
+  }
+  const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
+  if (request.method !== "GET") {
+    return securePublicResourceShareResponse(
+      NextResponse.json(
+      {
+        error: {
+          code: "E_INVALID_REQUEST",
+          message: "Method not allowed",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 405,
+        headers: {
+          Allow: "GET",
+          [REQUEST_ID_HEADER]: requestId,
+          "Cache-Control": "private, no-store",
+        },
+      }
+      )
+    );
+  }
+
+  const { fastApiBaseUrl, internalSecret } = deps.config;
+  if (!fastApiBaseUrl || (isDeployed() && !internalSecret)) {
+    return securePublicResourceShareResponse(
+      NextResponse.json(
+      {
+        error: {
+          code: "E_INTERNAL",
+          message: "Backend service is not configured",
+          request_id: requestId,
+        },
+      },
+      {
+        status: 500,
+        headers: {
+          [REQUEST_ID_HEADER]: requestId,
+          "Cache-Control": "private, no-store",
+        },
+      }
+      )
+    );
+  }
+
+  const headers = new Headers({ [REQUEST_ID_HEADER]: requestId });
+  const shareToken = request.headers.get("x-nexus-share-token");
+  if (shareToken) {
+    headers.set("X-Nexus-Share-Token", shareToken);
+  }
+  if (path === "/public/resource-share/file") {
+    const range = request.headers.get("range");
+    if (range) {
+      headers.set("Range", range);
+    }
+  }
+  if (internalSecret) {
+    headers.set("X-Nexus-Internal", internalSecret);
+  }
+
+  const queryString = new URL(request.url).search;
+  const ctl = createTimedFetchController(request.signal, FASTAPI_FETCH_TIMEOUT_MS);
+  try {
+    const response = await deps.fetch(
+      `${fastApiBaseUrl}${path}${queryString}`,
+      {
+        method: "GET",
+        headers,
+        signal: ctl.signal,
+      }
+    );
+    const responseHeaders = new Headers();
+    response.headers.forEach((value, key) => {
+      if (PUBLIC_RESOURCE_SHARE_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders.set(key, value);
+      }
+    });
+    const backendRequestId = response.headers.get(REQUEST_ID_HEADER);
+    responseHeaders.set(
+      REQUEST_ID_HEADER,
+      isValidRequestId(backendRequestId) ? backendRequestId : requestId
+    );
+    const body =
+      response.status === 204 ||
+      response.status === 205 ||
+      response.status === 304
+        ? null
+        : response.body;
+    return securePublicResourceShareResponse(
+      new NextResponse(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders,
+      })
+    );
+  } catch (error) {
+    if (isAbortError(error)) {
+      if (ctl.timedOut()) {
+        return securePublicResourceShareResponse(
+          upstreamTimeoutResponse(requestId)
+        );
+      }
+      return securePublicResourceShareResponse(
+        new Response(null, {
+          status: 499,
+          headers: { [REQUEST_ID_HEADER]: requestId },
+        })
+      );
+    }
+    console.error("FastAPI public resource-share proxy error:", error);
+    return securePublicResourceShareResponse(
+      upstreamUnavailableResponse(requestId)
+    );
   } finally {
     ctl.cleanup();
   }

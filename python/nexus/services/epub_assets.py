@@ -25,6 +25,15 @@ _EPUB_ASSET_CONTENT_TYPES = frozenset(
         "image/webp",
     }
 )
+_PUBLIC_EPUB_ASSET_CONTENT_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/avif",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,54 @@ class _EpubAssetMetadata:
     storage_path: str
     content_type: str
     size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class EpubAssetSource:
+    """Private source facts for one public-allowlisted EPUB image."""
+
+    ordinal: int
+    asset_key: str
+    storage_path: str
+    content_type: str
+    size_bytes: int
+
+
+def list_public_epub_asset_sources(
+    db: Session,
+    *,
+    media_id: UUID,
+) -> list[EpubAssetSource]:
+    """Load deterministically ordered image facts without authorizing access."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT asset_key, storage_path, content_type, size_bytes
+                FROM epub_resources
+                WHERE media_id = :media_id
+                  AND content_type = ANY(:content_types)
+                ORDER BY package_href ASC, asset_key ASC
+                """
+            ),
+            {
+                "media_id": media_id,
+                "content_types": sorted(_PUBLIC_EPUB_ASSET_CONTENT_TYPES),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    return [
+        EpubAssetSource(
+            ordinal=ordinal,
+            asset_key=str(row["asset_key"]),
+            storage_path=str(row["storage_path"]),
+            content_type=str(row["content_type"]),
+            size_bytes=int(row["size_bytes"]),
+        )
+        for ordinal, row in enumerate(rows)
+    ]
 
 
 def get_epub_asset_for_viewer(

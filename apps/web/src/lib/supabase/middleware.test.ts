@@ -247,6 +247,10 @@ describe("updateSession", () => {
       "http://localhost:3000/auth/refresh",
       "http://localhost:3000/auth/signout",
       "http://localhost:3000/extension/connect/start",
+      "http://localhost:3000/pdfjs/pdf.mjs",
+      "http://localhost:3000/pdfjs/pdf_viewer.mjs",
+      "http://localhost:3000/pdfjs/pdf.worker.min.mjs",
+      `http://localhost:3000/s#share=nxshr1_${"A".repeat(43)}`,
     ].map((url) => updateSession(new NextRequest(url), NONCE));
 
     expect(
@@ -399,6 +403,30 @@ describe("middleware CSP", () => {
       'csp="http://localhost:3000/api/csp-report"'
     );
   });
+
+  it.each([
+    ["POST", "/api/public/resource-share"],
+    ["HEAD", "/api/public/resource-share/unknown"],
+  ])(
+    "stamps the closed public API policy on %s %s before route matching",
+    async (method, path) => {
+      const { middleware } = await import("@/middleware");
+      const response = middleware(
+        new NextRequest(`http://localhost:3000${path}`, { method })
+      );
+
+      expect(response.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      );
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+      expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+      expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(response.headers.get("Cross-Origin-Resource-Policy")).toBe(
+        "same-origin"
+      );
+    }
+  );
 
   it("generates a fresh nonce per request", async () => {
     const { middleware } = await import("@/middleware");

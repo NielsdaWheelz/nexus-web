@@ -1611,6 +1611,18 @@ def extract_pdf_artifacts(
         file_size=len(pdf_bytes),
     )
 
+    # Serialize publication of the complete PDF artifact set against anonymous
+    # readers, which hold Media FOR SHARE while resolving a projection.
+    locked_media_id = db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).scalar()
+    if locked_media_id is None:
+        return PdfExtractionError(
+            error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value,
+            error_message="Media row not found before PDF publication",
+        )
+
     if result.has_text:
         validation_err = validate_page_spans(
             result.page_spans,

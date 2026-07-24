@@ -50,6 +50,8 @@ services:
     restart: unless-stopped
     env_file:
       - ${NEXUS_ENV_FILE:-/etc/nexus/nexus.env}
+    environment:
+      CUTOVER_SHA: ${CUTOVER_SHA:?set}
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,6 +80,7 @@ services:
     # (ingest/transcription/LLM), so it must not be killed by the API's
     # web-request timeouts. These override env_file.
     environment:
+      CUTOVER_SHA: ${CUTOVER_SHA:?set}
       DATABASE_STATEMENT_TIMEOUT_MS: "0"
       DATABASE_IDLE_IN_TX_TIMEOUT_MS: "0"
     depends_on:

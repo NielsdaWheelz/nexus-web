@@ -8,6 +8,10 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import { buildHighlightActions } from "./highlightActions";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
+import { useShareController } from "@/lib/sharing/controller";
+import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 
 type ExistingProps = {
   variant: "existing";
@@ -36,6 +40,7 @@ type SelectionProps = {
   onSelectColor: (color: HighlightColor) => void;
   onAddNote?: () => void;
   onLink?: () => void;
+  onShare: (detail: ActionSelectDetail) => void;
   onQuoteToNewChat: () => void;
   onQuoteToExistingChat: () => void;
   className?: string;
@@ -67,6 +72,7 @@ function SelectionActionBar(props: SelectionProps) {
       onSelectColor: props.onSelectColor,
       onAddNote: props.onAddNote,
       onLink: props.onLink,
+      onShare: props.onShare,
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: () => {},
@@ -78,6 +84,7 @@ function SelectionActionBar(props: SelectionProps) {
 
 function ExistingActionBar(props: ExistingProps) {
   const feedback = useFeedback();
+  const { openShare } = useShareController();
   const [deleting, setDeleting] = useState(false);
   const [changingColor, setChangingColor] = useState(false);
 
@@ -119,6 +126,15 @@ function ExistingActionBar(props: ExistingProps) {
       onSelectColor: (color) => void selectColor(color),
       onAddNote: props.onAddNote,
       onLink: props.onLink,
+      onShare: ({ triggerEl }) =>
+        openShare(
+          resourceShareTarget(`highlight:${props.highlight.id}`),
+          anchoredShareOpenOptions(triggerEl, () =>
+            document.querySelector<HTMLElement>(
+              `[data-highlight-anchor="${CSS.escape(props.highlight.id)}"]`,
+            ),
+          ),
+        ),
       onQuoteToNewChat: props.onQuoteToNewChat,
       onQuoteToExistingChat: props.onQuoteToExistingChat,
       onToggleEditBounds: props.onToggleEditBounds,

@@ -128,7 +128,7 @@ def remove_media(
             ApiErrorCode.E_INVALID_REQUEST,
             "Whole-resource media deletion does not accept query parameters",
         )
-    result = media_deletion_service.delete_document_for_viewer(db, viewer.user_id, media_id)
+    result = media_deletion_service.remove_media_for_viewer(db, viewer.user_id, media_id)
     return ok(result, by_alias=True)
 
 

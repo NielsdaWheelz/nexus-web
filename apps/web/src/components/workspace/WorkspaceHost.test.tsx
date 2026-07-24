@@ -152,6 +152,7 @@ function mediaResourceItem(id: string): ResourceItem {
       appSearchScope: true,
       conversationSearchScope: true,
       promptRender: "label",
+      sharing: "ResourceGrants",
       expansionPolicy: "none",
       expandable: false,
       adjacencySource: true,

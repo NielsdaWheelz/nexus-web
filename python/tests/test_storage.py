@@ -648,6 +648,16 @@ class ChunkedStorageClient(StorageClientBase):
     def stream_object(self, path: str) -> Iterator[bytes]:
         yield from self._chunks
 
+    def stream_object_range(
+        self,
+        path: str,
+        *,
+        start: int,
+        end_inclusive: int,
+    ) -> Iterator[bytes]:
+        payload = b"".join(self._chunks)
+        yield payload[start : end_inclusive + 1]
+
     def sign_upload(self, *args, **kwargs) -> SignedUpload:  # pragma: no cover - unused
         raise NotImplementedError
 

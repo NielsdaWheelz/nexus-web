@@ -1955,7 +1955,11 @@ def _supersede_source_media(
         attempt.attempt_no = int(next_attempt_no)
         attempt.updated_at = func.now()
         db.flush()
-    return delete_duplicate_document_media(db, loser_media_id)
+    return delete_duplicate_document_media(
+        db,
+        loser_media_id=loser_media_id,
+        winner_media_id=winner_media_id,
+    )
 
 
 def transfer_source_attempts_to_media(

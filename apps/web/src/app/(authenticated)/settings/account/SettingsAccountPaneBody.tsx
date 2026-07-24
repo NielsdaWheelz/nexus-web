@@ -32,6 +32,7 @@ import { useResource } from "@/lib/api/useResource";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import { changeEmailAction } from "./actions";
 import styles from "./page.module.css";
+import { copyText } from "@/lib/ui/copyText";
 
 interface AccountResponse {
   data: {
@@ -48,13 +49,18 @@ export default function SettingsAccountPaneBody() {
   });
 
   const [ingestAddressCopied, setIngestAddressCopied] = useState(false);
+  const [ingestAddressCopyFailed, setIngestAddressCopyFailed] = useState(false);
 
   const handleCopyIngestAddress = useCallback(
-    (address: string) => {
-      navigator.clipboard.writeText(address).then(() => {
+    async (address: string) => {
+      setIngestAddressCopyFailed(false);
+      try {
+        await copyText(address);
         setIngestAddressCopied(true);
         setTimeout(() => setIngestAddressCopied(false), 2000);
-      });
+      } catch {
+        setIngestAddressCopyFailed(true);
+      }
     },
     []
   );
@@ -255,7 +261,11 @@ export default function SettingsAccountPaneBody() {
                 )
               }
             >
-              {ingestAddressCopied ? "Copied" : "Copy address"}
+              {ingestAddressCopied
+                ? "Copied"
+                : ingestAddressCopyFailed
+                  ? "Copy failed"
+                  : "Copy address"}
             </Button>
             <p className={styles.current}>
               Forward newsletters here. Rotating the address is an env change +

@@ -29,6 +29,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import "./hljs-theme.css";
 import styles from "./MarkdownMessage.module.css";
+import { copyText } from "@/lib/ui/copyText";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
@@ -75,23 +76,32 @@ function CodeBlockWrapper({
   language: string;
   children: ReactNode;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<
+    "idle" | "copied" | "failed"
+  >("idle");
   const contentRef = useRef<HTMLDivElement>(null);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     const text = contentRef.current?.textContent ?? "";
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    try {
+      await copyText(text);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    setTimeout(() => setCopyState("idle"), 1500);
   }, []);
 
   return (
     <div className={styles.codeBlock}>
       <div className={styles.codeBlockHeader}>
         <span>{language}</span>
-        <button type="button" className={styles.copyBtn} onClick={handleCopy}>
-          {copied ? "copied" : "copy"}
+        <button type="button" className={styles.copyBtn} onClick={() => void handleCopy()}>
+          {copyState === "copied"
+            ? "copied"
+            : copyState === "failed"
+              ? "copy failed"
+              : "copy"}
         </button>
       </div>
       <div

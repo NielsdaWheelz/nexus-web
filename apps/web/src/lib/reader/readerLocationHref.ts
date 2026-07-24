@@ -33,7 +33,7 @@ export function buildReaderLocationHref(
 /**
  * Remove only the coarse reader query fields (`loc`, `fragment`) from a
  * pane-relative href. Used when canonical state supersedes a cold coarse
- * query (pane-local replace) and for reader Copy pane link composition; a
+ * query (pane-local replace) and for canonical reader-location composition; a
  * fully bare href would silently discard explicit feature intent.
  */
 export function stripCoarseReaderQuery(href: string): string {

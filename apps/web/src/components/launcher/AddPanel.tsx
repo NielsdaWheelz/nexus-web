@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FileText, Link, Plus, Upload, X } from "lucide-react";
 import LibraryDestinationDisclosure from "@/components/LibraryDestinationDisclosure";
-import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
+import LibraryEntryPanel from "@/components/sharing/LibraryEntryPanel";
 import OpmlImportPanel from "@/components/OpmlImportPanel";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -986,10 +986,10 @@ export default function AddPanel({
         ) : null}
       </Dialog>
 
-      <LibraryMembershipPanel
+      <LibraryEntryPanel
         open={membershipEditor !== null}
         title={membershipEditor?.title ?? "Libraries"}
-        anchorEl={membershipEditor?.anchorEl ?? null}
+        returnFocusTo={() => membershipEditor?.anchorEl ?? null}
         returnFocusFallback={() => headingRef.current}
         libraries={membershipPresentation.libraries}
         loading={membershipPresentation.loading}

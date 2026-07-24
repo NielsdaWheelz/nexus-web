@@ -1,0 +1,154 @@
+.panel {
+  display: grid;
+  width: min(36rem, calc(100vw - 3rem));
+  max-height: min(72vh, 46rem);
+  gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.mobileHeader,
+.sectionHeading,
+.row,
+.actions,
+.confirm,
+.feedback {
+  display: flex;
+  align-items: center;
+}
+
+.mobileHeader,
+.sectionHeading,
+.row {
+  justify-content: space-between;
+}
+
+.mobileHeader {
+  margin-bottom: var(--space-3);
+}
+
+.mobileHeader h2,
+.sectionHeading h3,
+.sectionHeading p,
+.intro,
+.audienceDisclosure,
+.empty,
+.availability,
+.warning p,
+.rights {
+  margin: 0;
+}
+
+.mobileHeader h2,
+.sectionHeading h3 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.intro,
+.sectionHeading p,
+.audienceDisclosure,
+.empty,
+.availability,
+.rights {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+}
+
+.section {
+  display: grid;
+  gap: var(--space-3);
+  border-top: 1px solid var(--edge-subtle);
+  padding-top: var(--space-4);
+}
+
+.sectionHeading {
+  gap: var(--space-4);
+}
+
+.sectionHeading > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.actions,
+.confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.state {
+  flex: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  padding: 3px var(--space-2);
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.error,
+.warning {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.error {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  color: var(--danger);
+}
+
+.warning {
+  border-color: var(--edge);
+  background: var(--surface-2);
+}
+
+.rows {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.row {
+  min-height: 44px;
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rights {
+  padding-top: var(--space-1);
+}
+
+@media (max-width: 768px) {
+  .panel {
+    width: auto;
+    max-height: calc(100dvh - 9rem - env(safe-area-inset-bottom));
+  }
+
+  .sectionHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

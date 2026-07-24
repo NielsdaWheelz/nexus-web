@@ -15,6 +15,9 @@ import type { HighlightColor } from "@/lib/highlights/segmenter";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import styles from "./SelectionPopover.module.css";
+import { useShareController } from "@/lib/sharing/controller";
+import { anchoredShareOpenOptions } from "@/lib/sharing/openOptions";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 
 interface SelectionPopoverProps<H extends { id: string }> {
   selectionRect: DOMRect;
@@ -43,6 +46,7 @@ export default function SelectionPopover<H extends { id: string }>({
   onDismiss,
   isCreating = false,
 }: SelectionPopoverProps<H>) {
+  const { openShare } = useShareController();
   const quoteHighlight = useCallback(
     (quote?: (highlight: H) => void | Promise<void>) => {
       if (isCreating || !quote) return;
@@ -52,6 +56,24 @@ export default function SelectionPopover<H extends { id: string }>({
       })();
     },
     [isCreating, onCreateHighlight],
+  );
+  const shareHighlight = useCallback(
+    (triggerEl: HTMLButtonElement | null) => {
+      if (isCreating) return;
+      void (async () => {
+        const highlight = await onCreateHighlight(DEFAULT_COLOR);
+        if (!highlight) return;
+        openShare(
+          resourceShareTarget(`highlight:${highlight.id}`),
+          anchoredShareOpenOptions(triggerEl, () =>
+            document.querySelector<HTMLElement>(
+              `[data-highlight-anchor="${CSS.escape(highlight.id)}"]`,
+            ),
+          ),
+        );
+      })();
+    },
+    [isCreating, onCreateHighlight, openShare],
   );
 
   return (
@@ -76,6 +98,7 @@ export default function SelectionPopover<H extends { id: string }>({
         onSelectColor={onCreateHighlight}
         onAddNote={onAddNote}
         onLink={onLink}
+        onShare={({ triggerEl }) => shareHighlight(triggerEl)}
         onQuoteToNewChat={() => quoteHighlight(onQuoteToNewChat)}
         onQuoteToExistingChat={() => quoteHighlight(onQuoteToExistingChat)}
       />

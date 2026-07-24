@@ -44,6 +44,7 @@ const PUBLIC_ROUTES = new Set([
   "/auth/signout",
   "/extension/connect/start",
   "/share",
+  "/s",
 ]);
 
 // Clear the auth cookie chunks and redirect to /login — the involuntary-logout
@@ -140,6 +141,7 @@ export function updateSession(
 
   if (
     PUBLIC_ROUTES.has(pathname) ||
+    pathname.startsWith("/pdfjs/") ||
     pathname.startsWith("/_next") ||
     pathname === "/api" ||
     pathname.startsWith("/api/")
