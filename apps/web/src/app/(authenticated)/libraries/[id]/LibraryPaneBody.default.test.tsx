@@ -16,7 +16,7 @@ import LibraryPaneBody from "./LibraryPaneBody";
 // resonance sort offered/forced, and pagination merges are deduped by media id
 // (the server may hand back a different representative entry id for the same
 // media across pages). Every existing LibraryPaneBody fixture uses
-// `is_default: false`; this file is the only is_default:true coverage.
+// `isDefault: false`; this file is the only isDefault:true coverage.
 
 const LIBRARY_ID = "default-library";
 const LIBRARY_NAME = "My Library";
@@ -25,13 +25,17 @@ function seededDefaultLibrary() {
   return {
     id: LIBRARY_ID,
     name: LIBRARY_NAME,
-    is_default: true,
+    color: null,
+    isDefault: true,
     role: "admin",
-    owner_user_id: "user-1",
-    system_key: null,
-    can_rename: false,
-    can_delete: false,
-    can_edit_entries: true,
+    ownerUserHandle:
+      "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    systemKey: null,
+    canRename: false,
+    canDelete: false,
+    canEditEntries: true,
+    canManageMembers: false,
+    canTransferOwnership: false,
   };
 }
 
@@ -136,7 +140,7 @@ describe("LibraryPaneBody (Default library)", () => {
     expect(await screen.findByText("First Default Work")).toBeInTheDocument();
     expect(await screen.findByText("Second Default Work")).toBeInTheDocument();
 
-    // No reorder UX: canReorder = canEditEntries && !library.is_default is
+    // No reorder UX: canReorder = canEditEntries && !library.isDefault is
     // false, so no per-row Move up/down renders even though canEditEntries is
     // true here.
     await userEvent

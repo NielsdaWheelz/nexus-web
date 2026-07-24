@@ -8,7 +8,11 @@ import {
   type PaneResourceStatus,
   type PaneRuntimeLayoutPublication,
 } from "@/lib/panes/paneRuntime";
-import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
+import {
+  resolvePaneResourceLocator,
+  resolvePaneShareIdentity,
+  type PaneShareIdentity,
+} from "@/lib/panes/paneResourceLocator";
 import { PaneSecondaryContext } from "@/components/workspace/PaneSecondary";
 import { PaneFixedChromeContext } from "@/components/workspace/PaneFixedChrome";
 import PaneShell from "@/components/workspace/PaneShell";
@@ -81,6 +85,7 @@ interface WorkspaceHostPane {
   href: string;
   route: ResolvedPaneRoute;
   routeKey: string;
+  shareIdentity: PaneShareIdentity | null;
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
   label: string;
@@ -586,6 +591,7 @@ function buildHostPane(input: {
     href: input.pane.href,
     route,
     routeKey,
+    shareIdentity: resolvePaneShareIdentity(route, label),
     resourceItem: input.resourceItem,
     resourceStatus: input.resourceItem?.missing
       ? "missing"
@@ -1379,7 +1385,7 @@ function WorkspaceHost() {
                       paneId={pane.paneId}
                       routeKey={pane.routeKey}
                       routeHeader={pane.route.header}
-                      href={pane.href}
+                      shareIdentity={pane.shareIdentity}
                       label={pane.label}
                       labelPending={pane.labelState === "pending"}
                       navigation={pane.navigation}

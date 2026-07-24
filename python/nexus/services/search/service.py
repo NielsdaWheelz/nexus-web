@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    highlight_shared_library_exists_sql,
+    highlight_visibility_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
@@ -579,7 +579,7 @@ def get_search_result(
                             )
                         )
                   )
-                  AND {highlight_shared_library_exists_sql("h")}
+                  AND {highlight_visibility_sql("h")}
                 """
             ),
             {"viewer_id": viewer_id, "id": highlight_id},

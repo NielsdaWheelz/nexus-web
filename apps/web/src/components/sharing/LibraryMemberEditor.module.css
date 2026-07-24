@@ -1,0 +1,84 @@
+.editor,
+.rows,
+.pending,
+.stableState {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.stableState,
+.disclosure {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+}
+
+.stableState strong {
+  color: var(--ink);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.invite,
+.row,
+.memberActions,
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.invite {
+  align-items: flex-start;
+}
+
+.row {
+  min-height: 44px;
+  justify-content: space-between;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.role {
+  color: var(--ink-faint);
+}
+
+.memberActions,
+.confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pending h4,
+.disclosure {
+  margin: 0;
+}
+
+.pending h4 {
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 768px) {
+  .invite,
+  .row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .memberActions,
+  .confirm {
+    justify-content: flex-start;
+  }
+}

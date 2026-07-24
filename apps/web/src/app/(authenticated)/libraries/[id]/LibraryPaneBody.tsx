@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
 import { present, type Presence } from "@/lib/api/presence";
@@ -28,14 +27,10 @@ import { parseMediaId } from "@/lib/lectern/contract";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
-import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
-  ensureMediaAbsentFromLibrary,
   ensureMediaInLibraries,
-  fetchMediaLibraryMemberships,
   deleteMedia,
-  patchLibraryMembership,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -43,8 +38,6 @@ import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import {
   addPodcastToLibrary,
-  fetchPodcastLibraries,
-  removePodcastFromLibrary,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
@@ -63,15 +56,7 @@ import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
-import LibraryEditDialog from "@/components/LibraryEditDialog";
-import {
-  fetchEditableLibrarySharing,
-  type LibraryInvite,
-  type LibraryMember,
-  type UserSearchResult,
-} from "@/lib/libraries/sharing";
-import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
-import type { LibraryForEdit } from "@/components/LibraryEditDialog";
+import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -96,6 +81,9 @@ import {
 } from "@/lib/libraries/libraryView";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { useShareController } from "@/lib/sharing/controller";
+import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import {
   decodeLibraryReadingTimeEntry,
@@ -110,13 +98,15 @@ interface Library {
   id: string;
   name: string;
   color: string | null;
-  is_default: boolean;
+  isDefault: boolean;
   role: string;
-  owner_user_id: string;
-  system_key: string | null;
-  can_rename: boolean;
-  can_delete: boolean;
-  can_edit_entries: boolean;
+  ownerUserHandle: string;
+  systemKey: string | null;
+  canRename: boolean;
+  canDelete: boolean;
+  canEditEntries: boolean;
+  canManageMembers: boolean;
+  canTransferOwnership: boolean;
 }
 
 interface LibraryMediaEntry {
@@ -327,6 +317,7 @@ export default function LibraryPaneBody() {
   const { openInNewPane } = paneRuntime ?? {};
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
+  const { openShare } = useShareController();
   const feedback = useFeedback();
   const lectern = useLectern();
 
@@ -445,12 +436,12 @@ export default function LibraryPaneBody() {
       ) as Promise<LibraryPaneResource>,
   });
   const currentLibrary = library?.id === id ? library : null;
-  const isDefaultLibrary = currentLibrary?.is_default === true;
+  const isDefaultLibrary = currentLibrary?.isDefault === true;
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
-  // libraries (e.g. the Oracle Corpus), which report can_edit_entries === false.
+  // libraries (e.g. the Oracle Corpus), which report canEditEntries === false.
   const canEditEntries =
     currentLibrary?.role === "admin" &&
-    currentLibrary.can_edit_entries === true;
+    currentLibrary.canEditEntries === true;
   // Explicit reorder gate: Default has server-defined ordering and no reorder
   // UX/endpoint support, independent of canEditEntries (which stays true for
   // Default's "Add content" capability).
@@ -486,24 +477,7 @@ export default function LibraryPaneBody() {
     },
   );
 
-  const [editOpen, setEditOpen] = useState(false);
-  const [editMembers, setEditMembers] = useState<LibraryMember[]>([]);
-  const [editInvites, setEditInvites] = useState<LibraryInvite[]>([]);
-  const [libraryPanelEntry, setLibraryPanelEntry] =
-    useState<LibraryEntry | null>(null);
-  const [libraryPanelAnchorEl, setLibraryPanelAnchorEl] =
-    useState<HTMLElement | null>(null);
-  const [libraryPanelLibraries, setLibraryPanelLibraries] = useState<
-    LibraryTargetPickerItem[]
-  >([]);
-  const [libraryPanelLoading, setLibraryPanelLoading] = useState(false);
-  const [libraryPanelBusy, setLibraryPanelBusy] = useState(false);
-  const [libraryPanelError, setLibraryPanelError] = useState<string | null>(
-    null,
-  );
-  const libraryPanelRequestIdRef = useRef(0);
-
-  const libraryPanelEntryIdRef = useRef<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
   const entryLoadMoreGenerationRef = useRef(0);
@@ -699,89 +673,6 @@ export default function LibraryPaneBody() {
     }
   }, [isInitialView, viewFetch.error]);
 
-  const closeLibraryPanel = useCallback(() => {
-    libraryPanelRequestIdRef.current += 1;
-    libraryPanelEntryIdRef.current = null;
-    setLibraryPanelEntry(null);
-    setLibraryPanelAnchorEl(null);
-    setLibraryPanelLibraries([]);
-    setLibraryPanelLoading(false);
-    setLibraryPanelBusy(false);
-    setLibraryPanelError(null);
-  }, []);
-
-  const openLibraryPanel = useCallback(
-    async (entry: LibraryEntry, triggerEl: HTMLElement | null) => {
-      const requestId = libraryPanelRequestIdRef.current + 1;
-      libraryPanelRequestIdRef.current = requestId;
-      libraryPanelEntryIdRef.current = entry.id;
-      setLibraryPanelEntry(entry);
-      setLibraryPanelAnchorEl(triggerEl);
-      setLibraryPanelLibraries([]);
-      setLibraryPanelLoading(true);
-      setLibraryPanelBusy(false);
-      setLibraryPanelError(null);
-
-      try {
-        const libraries =
-          entry.kind === "podcast"
-            ? await fetchPodcastLibraries(entry.podcast.id)
-            : await fetchMediaLibraryMemberships(entry.media.id);
-        if (libraryPanelRequestIdRef.current !== requestId) {
-          return;
-        }
-        setLibraryPanelLibraries(libraries);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        if (libraryPanelRequestIdRef.current !== requestId) {
-          return;
-        }
-        setLibraryPanelError(
-          toFeedback(err, { fallback: "Failed to load libraries" }).title,
-        );
-      } finally {
-        if (libraryPanelRequestIdRef.current === requestId) {
-          setLibraryPanelLoading(false);
-        }
-      }
-    },
-    [],
-  );
-
-  const handleAddToLibrary = useCallback(
-    async (libraryId: string) => {
-      if (!libraryPanelEntry || libraryPanelBusy) {
-        return;
-      }
-      setLibraryPanelBusy(true);
-      setLibraryPanelError(null);
-      try {
-        if (libraryPanelEntry.kind === "podcast") {
-          await addPodcastToLibrary(libraryPanelEntry.podcast.id, libraryId);
-        } else {
-          await ensureMediaInLibraries({
-            mediaId: libraryPanelEntry.media.id,
-            libraryIds: [libraryId],
-          });
-        }
-
-        if (libraryPanelEntryIdRef.current === libraryPanelEntry.id) {
-          setLibraryPanelLibraries((current) =>
-            patchLibraryMembership(current, libraryId, true),
-          );
-        }
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        setLibraryPanelError(
-          toFeedback(err, { fallback: "Failed to add item to library" }).title,
-        );
-      } finally {
-        setLibraryPanelBusy(false);
-      }
-    },
-    [libraryPanelBusy, libraryPanelEntry],
-  );
-
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
     (target, options) => {
       const targetId = slateTargetId(target);
@@ -850,89 +741,6 @@ export default function LibraryPaneBody() {
       });
     },
     [currentLibrary?.name, feedback, id],
-  );
-
-  const handleRemoveFromLibrary = useCallback(
-    async (libraryId: string) => {
-      if (!libraryPanelEntry || libraryPanelBusy) {
-        return;
-      }
-      const entry = libraryPanelEntry;
-      const removingCurrentEntry = libraryId === id;
-      const previousEntries = entries;
-      setLibraryPanelBusy(true);
-      setLibraryPanelError(null);
-
-      if (removingCurrentEntry) {
-        removedEntryIds.add(entry.id);
-        flushSync(() => {
-          setEntries((current) =>
-            current.filter((candidate) => {
-              if (candidate.id === entry.id) {
-                return false;
-              }
-              if (
-                entry.kind === "media" &&
-                candidate.kind === "media" &&
-                candidate.media.id === entry.media.id
-              ) {
-                return false;
-              }
-              if (
-                entry.kind === "podcast" &&
-                candidate.kind === "podcast" &&
-                candidate.podcast.id === entry.podcast.id
-              ) {
-                return false;
-              }
-              return true;
-            }),
-          );
-        });
-        closeLibraryPanel();
-      }
-
-      try {
-        if (entry.kind === "podcast") {
-          await removePodcastFromLibrary(entry.podcast.id, libraryId);
-        } else {
-          await ensureMediaAbsentFromLibrary({
-            mediaId: entry.media.id,
-            libraryId,
-          });
-        }
-
-        if (removingCurrentEntry) {
-          return;
-        }
-
-        if (libraryPanelEntryIdRef.current === entry.id) {
-          setLibraryPanelLibraries((current) =>
-            patchLibraryMembership(current, libraryId, false),
-          );
-        }
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        if (removingCurrentEntry) {
-          setEntries(previousEntries);
-          removedEntryIds.remove(entry.id);
-        }
-        setLibraryPanelError(
-          toFeedback(err, { fallback: "Failed to remove item from library" })
-            .title,
-        );
-      } finally {
-        setLibraryPanelBusy(false);
-      }
-    },
-    [
-      closeLibraryPanel,
-      entries,
-      id,
-      libraryPanelBusy,
-      libraryPanelEntry,
-      removedEntryIds,
-    ],
   );
 
   const runMediaProcessingMutation = useCallback(
@@ -1027,7 +835,7 @@ export default function LibraryPaneBody() {
         if (handleUnauthenticatedApiError(err)) return;
         feedback.show({
           ...toFeedback(err, {
-            fallback: "Failed to delete document",
+            fallback: "Failed to remove media",
           }),
         });
       }
@@ -1112,7 +920,7 @@ export default function LibraryPaneBody() {
   );
 
   const handleDeleteLibrary = async () => {
-    if (!currentLibrary || currentLibrary.is_default) {
+    if (!currentLibrary || currentLibrary.isDefault) {
       return;
     }
     if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
@@ -1138,31 +946,6 @@ export default function LibraryPaneBody() {
     }
   };
 
-  const openEditDialog = useCallback(async () => {
-    if (!currentLibrary) return;
-    setEditOpen(true);
-    try {
-      const sharing = await fetchEditableLibrarySharing(currentLibrary);
-      setEditMembers(sharing.members);
-      setEditInvites(sharing.invites);
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      if (isApiError(err)) {
-        setError(
-          toFeedback(err, {
-            fallback: "Failed to load library sharing",
-          }),
-        );
-      }
-    }
-  }, [currentLibrary]);
-
-  const closeEditDialog = useCallback(() => {
-    setEditOpen(false);
-    setEditMembers([]);
-    setEditInvites([]);
-  }, []);
-
   const handleRename = useCallback(
     async (name: string) => {
       if (!currentLibrary) return;
@@ -1175,87 +958,14 @@ export default function LibraryPaneBody() {
     [currentLibrary],
   );
 
-  const handleUpdateMemberRole = useCallback(
-    async (userId: string, role: string) => {
-      if (!currentLibrary) return;
-      await apiFetch(`/api/libraries/${currentLibrary.id}/members/${userId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ role }),
-      });
-      setEditMembers((prev) =>
-        prev.map((member) =>
-          member.user_id === userId ? { ...member, role } : member,
-        ),
-      );
-    },
-    [currentLibrary],
-  );
-
-  const handleRemoveMember = useCallback(
-    async (userId: string) => {
-      if (!currentLibrary) return;
-      await apiFetch(`/api/libraries/${currentLibrary.id}/members/${userId}`, {
-        method: "DELETE",
-      });
-      setEditMembers((prev) =>
-        prev.filter((member) => member.user_id !== userId),
-      );
-    },
-    [currentLibrary],
-  );
-
-  const handleCreateInvite = useCallback(
-    async (inviteeIdentifier: string, role: string) => {
-      if (!currentLibrary) return;
-      const isEmail = inviteeIdentifier.includes("@");
-      const response = await apiFetch<{ data: LibraryInvite }>(
-        `/api/libraries/${currentLibrary.id}/invites`,
-        {
-          method: "POST",
-          body: JSON.stringify(
-            isEmail
-              ? { invitee_email: inviteeIdentifier, role }
-              : { invitee_user_id: inviteeIdentifier, role },
-          ),
-        },
-      );
-      setEditInvites((prev) => [response.data, ...prev]);
-    },
-    [currentLibrary],
-  );
-
-  const handleSearchUsers = useCallback(
-    async (query: string): Promise<UserSearchResult[]> => {
-      const response = await apiFetch<{ data: UserSearchResult[] }>(
-        `/api/users/search?q=${encodeURIComponent(query)}`,
-      );
-      return response.data;
-    },
-    [],
-  );
-
-  const handleRevokeInvite = useCallback(async (inviteId: string) => {
-    await apiFetch(`/api/libraries/invites/${inviteId}`, {
-      method: "DELETE",
-    });
-    setEditInvites((prev) =>
-      prev.map((invite) =>
-        invite.id === inviteId ? { ...invite, status: "revoked" } : invite,
-      ),
-    );
-  }, []);
-
-  const handleDeleteFromDialog = useCallback(async () => {
+  const handleDeleteFromSettings = useCallback(async () => {
     if (!currentLibrary) return;
-    if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
-      return;
-    }
     await apiFetch(`/api/libraries/${currentLibrary.id}`, {
       method: "DELETE",
     });
-    closeEditDialog();
+    setSettingsOpen(false);
     router.push("/libraries");
-  }, [currentLibrary, closeEditDialog, router]);
+  }, [currentLibrary, router]);
 
   const handleOpenMediaChat = useCallback(
     async (media: LibraryMediaEntry) => {
@@ -1380,7 +1090,7 @@ export default function LibraryPaneBody() {
                     seed: {
                       kind: "Content",
                       initialFocus: "Url",
-                      initialDestinations: currentLibrary.is_default
+                      initialDestinations: currentLibrary.isDefault
                         ? []
                         : [
                             {
@@ -1396,7 +1106,7 @@ export default function LibraryPaneBody() {
           : []),
         ...libraryResourceOptions({
           library: currentLibrary,
-          onEdit: () => void openEditDialog(),
+          onOpenSettings: () => setSettingsOpen(true),
           onDelete: () => {
             void handleDeleteLibrary();
           },
@@ -1532,13 +1242,6 @@ export default function LibraryPaneBody() {
     );
   }
 
-  const editLibraryForDialog: LibraryForEdit = {
-    id: currentLibrary.id,
-    name: currentLibrary.name,
-    is_default: currentLibrary.is_default,
-    role: currentLibrary.role,
-    owner_user_id: currentLibrary.owner_user_id,
-  };
   const invalidView = decodedView.kind === "Invalid" || viewInvalid;
   const canReorderVisibleEntries =
     canReorder &&
@@ -1608,9 +1311,11 @@ export default function LibraryPaneBody() {
           connectionSummary: connectionSummaries.get(
             `podcast:${item.podcast.id}`,
           ),
-          onManageLibraries: ({ triggerEl }) => {
-            void openLibraryPanel(item, triggerEl);
-          },
+          onShare: ({ triggerEl }) =>
+            openShare(
+              resourceShareTarget(`podcast:${item.podcast.id}`),
+              paneShareOpenOptions(triggerEl, paneId),
+            ),
         },
       );
       return {
@@ -1620,7 +1325,6 @@ export default function LibraryPaneBody() {
       };
     }
     const row = presentMedia(item.media, {
-      canManageLibraries: canEditEntries,
       readingTimeEstimate: item.readingTimeEstimate,
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
       retryBusy: retryingMediaIds.ids.has(item.media.id),
@@ -1640,11 +1344,11 @@ export default function LibraryPaneBody() {
       onOpenChat: () => {
         void handleOpenMediaChat(item.media);
       },
-      onManageLibraries: canEditEntries
-        ? ({ triggerEl }) => {
-            void openLibraryPanel(item, triggerEl);
-          }
-        : undefined,
+      onShare: ({ triggerEl }) =>
+        openShare(
+          resourceShareTarget(`media:${item.media.id}`),
+          paneShareOpenOptions(triggerEl, paneId),
+        ),
       onDelete:
         canEditEntries && item.media.capabilities.can_delete
           ? () => {
@@ -1783,23 +1487,6 @@ export default function LibraryPaneBody() {
 
   return (
     <>
-      <LibraryMembershipPanel
-        open={libraryPanelEntry !== null}
-        title="Libraries"
-        anchorEl={libraryPanelAnchorEl}
-        libraries={libraryPanelLibraries}
-        loading={libraryPanelLoading}
-        busy={libraryPanelBusy}
-        error={libraryPanelError}
-        emptyMessage="No non-default libraries available."
-        onClose={closeLibraryPanel}
-        onAddToLibrary={(libraryId) => {
-          void handleAddToLibrary(libraryId);
-        }}
-        onRemoveFromLibrary={(libraryId) => {
-          void handleRemoveFromLibrary(libraryId);
-        }}
-      />
       <PaneSurface
         opener={<SectionOpener heading={currentLibrary.name} scale="title" />}
         toolbar={toolbar}
@@ -1825,22 +1512,20 @@ export default function LibraryPaneBody() {
         />
       </PaneSurface>
 
-      {editOpen && (
-        <LibraryEditDialog
-          open={editOpen}
-          onClose={closeEditDialog}
-          library={editLibraryForDialog}
-          members={editMembers}
-          invites={editInvites}
+      {settingsOpen ? (
+        <LibrarySettingsDialog
+          open
+          onClose={() => setSettingsOpen(false)}
+          library={{
+            id: currentLibrary.id,
+            name: currentLibrary.name,
+            canRename: currentLibrary.canRename,
+            canDelete: currentLibrary.canDelete,
+          }}
           onRename={handleRename}
-          onUpdateMemberRole={handleUpdateMemberRole}
-          onRemoveMember={handleRemoveMember}
-          onCreateInvite={handleCreateInvite}
-          onRevokeInvite={handleRevokeInvite}
-          onDelete={handleDeleteFromDialog}
-          onSearchUsers={handleSearchUsers}
+          onDelete={handleDeleteFromSettings}
         />
-      )}
+      ) : null}
     </>
   );
 }

@@ -37,6 +37,7 @@ import type {
   ReaderEvidenceConfidence,
   ReaderEvidenceSourceKind,
 } from "@/lib/reader/documentMap";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import MediaPaneBody from "./MediaPaneBody";
 
 const testState = vi.hoisted(() => ({
@@ -803,37 +804,39 @@ function renderMediaPane(
   render(
     <FeedbackProvider>
       <LecternProvider>
-        <GlobalPlayerProvider>
-          <PaneRuntimeProvider
-            paneId="pane-1"
-            isActive={options.isActive ?? true}
-            href={href}
-            routeId={identity.routeId}
-            routeKey={identity.routeKey}
-            secondaryPane={options.secondaryPane ?? null}
-            canGoBack={false}
-            canGoForward={false}
-            onGoBackPane={vi.fn()}
-            onGoForwardPane={vi.fn()}
-            pathParams={{ id: "media-1" }}
-            onNavigatePane={onNavigatePane}
-            onReplacePane={vi.fn()}
-            onOpenInNewPane={onOpenInNewPane}
-            onSetPaneLabel={onSetPaneLabel}
-            onSetPaneLayout={onSetPaneLayout}
-            onRequestSecondarySurface={onRequestSecondarySurface}
-            onCloseSecondaryPane={onCloseSecondaryPane}
-          >
-            <PaneSecondaryTestHost
-              onSetPaneSecondary={onSetPaneSecondary}
-              renderSurfaceId={options.renderSecondarySurfaceId}
+        <ShareControllerProvider>
+          <GlobalPlayerProvider>
+            <PaneRuntimeProvider
+              paneId="pane-1"
+              isActive={options.isActive ?? true}
+              href={href}
+              routeId={identity.routeId}
+              routeKey={identity.routeKey}
+              secondaryPane={options.secondaryPane ?? null}
+              canGoBack={false}
+              canGoForward={false}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+              pathParams={{ id: "media-1" }}
+              onNavigatePane={onNavigatePane}
+              onReplacePane={vi.fn()}
+              onOpenInNewPane={onOpenInNewPane}
+              onSetPaneLabel={onSetPaneLabel}
+              onSetPaneLayout={onSetPaneLayout}
+              onRequestSecondarySurface={onRequestSecondarySurface}
+              onCloseSecondaryPane={onCloseSecondaryPane}
             >
-              <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
-                <MediaPaneBody />
-              </PaneFixedChromeContext.Provider>
-            </PaneSecondaryTestHost>
-          </PaneRuntimeProvider>
-        </GlobalPlayerProvider>
+              <PaneSecondaryTestHost
+                onSetPaneSecondary={onSetPaneSecondary}
+                renderSurfaceId={options.renderSecondarySurfaceId}
+              >
+                <PaneFixedChromeContext.Provider value={onSetFixedChrome}>
+                  <MediaPaneBody />
+                </PaneFixedChromeContext.Provider>
+              </PaneSecondaryTestHost>
+            </PaneRuntimeProvider>
+          </GlobalPlayerProvider>
+        </ShareControllerProvider>
       </LecternProvider>
     </FeedbackProvider>,
   );
@@ -1085,6 +1088,19 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
+  it("leaves pane-level Share ownership to PaneShell", async () => {
+    testState.mediaKind = "web_article";
+    renderMediaPane();
+
+    await waitFor(() => {
+      const publication = latestPrimaryChrome();
+      expect(publication?.header?.kind).toBe("resource");
+      expect(
+        publication?.options?.filter((option) => option.id === "share") ?? [],
+      ).toHaveLength(0);
+    });
+  });
+
   it("publishes unavailable resource identity after an initial 404", async () => {
     testState.initialMediaFailureStatus = 404;
     renderMediaPane();
@@ -1119,10 +1135,12 @@ describe("MediaPaneBody pane sizing", () => {
     expect(publication.actions?.map((action) => action.id)).toEqual([
       "resource-inspector-companion",
     ]);
-    expect(onSetPaneLabel).toHaveBeenCalledWith({
-      paneId: "pane-1",
-      routeKey,
-      label: "Reader fixture",
+    await waitFor(() => {
+      expect(onSetPaneLabel).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        routeKey,
+        label: "Reader fixture",
+      });
     });
   });
 
@@ -1341,10 +1359,12 @@ describe("MediaPaneBody pane sizing", () => {
         )
         .map((option) => option.label) ?? [];
     expect(creditOptionLabels).toEqual(testCase.expected);
-    expect(onSetPaneLabel).toHaveBeenCalledWith({
-      paneId: "pane-1",
-      routeKey,
-      label: "Reader fixture",
+    await waitFor(() => {
+      expect(onSetPaneLabel).toHaveBeenCalledWith({
+        paneId: "pane-1",
+        routeKey,
+        label: "Reader fixture",
+      });
     });
   });
 
@@ -1911,20 +1931,26 @@ describe("MediaPaneBody pane sizing", () => {
   it("lets bare G close a topmost mobile Companion", async () => {
     testState.mediaKind = "epub";
     testState.includeToc = true;
-    const { onCloseSecondaryPane } = renderMediaPane({
+    const { onCloseSecondaryPane, onSetPaneSecondary } = renderMediaPane({
       secondaryPane: readerContentsSecondaryPane(),
     });
     await getReadyPrimaryChrome();
+    await waitFor(() => {
+      expect(
+        latestSecondaryPublication(onSetPaneSecondary)?.surfaces.some(
+          (surface) => surface.id === "resource-contents",
+        ),
+      ).toBe(true);
+    });
     render(<ReaderInteractionStack />);
 
-    vi.useFakeTimers();
-    try {
-      fireEvent.keyDown(document, { key: "g" });
-      act(() => vi.advanceTimersByTime(500));
+    fireEvent.keyDown(document, { key: "g" });
+    await waitFor(
+      () => {
       expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
-    } finally {
-      vi.useRealTimers();
-    }
+      },
+      { timeout: 1_500 },
+    );
   });
 
   it("does not let bare G mutate Companion beneath a nested modal", async () => {

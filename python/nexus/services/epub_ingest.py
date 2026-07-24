@@ -26,6 +26,7 @@ from xml.etree import ElementTree as ET
 
 from lxml.etree import LxmlError
 from lxml.html import HtmlElement, document_fromstring, tostring
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -649,6 +650,19 @@ def extract_epub_artifacts(
                 )
 
         # ---- atomic DB persistence -----------------------------------------
+        # Public readers hold Media FOR SHARE while resolving one complete
+        # projection. Serialize publication of all new EPUB rows against that
+        # boundary after expensive parsing/storage work, immediately before the
+        # first public source row is written.
+        locked_media_id = db.execute(
+            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+            {"media_id": media_id},
+        ).scalar()
+        if locked_media_id is None:
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_MEDIA_NOT_FOUND.value,
+                error_message="Media row not found before EPUB publication",
+            )
         for frag in fragments:
             db.add(frag)
         db.flush()

@@ -1,5 +1,6 @@
 """Focused ordering and overview-position contracts for Reader locations."""
 
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -8,6 +9,7 @@ from nexus.services.reader_locations import (
     locator_fraction,
     locator_is_current_for_media,
     order_key_from_locator,
+    resolved_highlight_reader_target,
 )
 
 MEDIA_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -94,3 +96,122 @@ def test_locator_currency_is_owned_by_the_open_media_revision(
         )
         is current
     )
+
+
+def test_current_highlight_target_maps_every_text_reader_family() -> None:
+    web = resolved_highlight_reader_target(
+        media_kind="web_article",
+        anchor_kind="fragment_offsets",
+        fragment_id=FRAGMENT_ID,
+        exact="beta",
+        fragment_text="alpha beta gamma",
+        start_offset=6,
+        end_offset=10,
+    )
+    epub = resolved_highlight_reader_target(
+        media_kind="epub",
+        anchor_kind="fragment_offsets",
+        fragment_id=FRAGMENT_ID,
+        section_id="chapter.xhtml#part-1",
+        exact="beta",
+        fragment_text="alpha beta gamma",
+        start_offset=6,
+        end_offset=10,
+    )
+    transcript = resolved_highlight_reader_target(
+        media_kind="video",
+        anchor_kind="fragment_offsets",
+        fragment_id=FRAGMENT_ID,
+        exact="beta",
+        fragment_text="alpha beta gamma",
+        start_offset=6,
+        end_offset=10,
+        t_start_ms=100,
+        t_end_ms=800,
+    )
+
+    assert web is not None and web.kind == "WebTextOffsets"
+    assert epub is not None and epub.kind == "EpubTextOffsets"
+    assert epub.section_id == "chapter.xhtml#part-1"
+    assert transcript is not None and transcript.kind == "TranscriptTextOffsets"
+    assert transcript.time_range.kind == "Present"
+    assert transcript.time_range.value.start_ms == 100
+
+
+def test_current_highlight_target_keeps_valid_transcript_text_without_timing() -> None:
+    target = resolved_highlight_reader_target(
+        media_kind="podcast_episode",
+        anchor_kind="fragment_offsets",
+        fragment_id=FRAGMENT_ID,
+        exact="beta",
+        fragment_text="alpha beta gamma",
+        start_offset=6,
+        end_offset=10,
+    )
+
+    assert target is not None and target.kind == "TranscriptTextOffsets"
+    assert target.time_range.kind == "Absent"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"fragment_text": "changed source"},
+        {"section_id": None},
+        {"end_offset": 99},
+        {"t_start_ms": 100, "t_end_ms": None},
+    ],
+)
+def test_current_highlight_target_rejects_stale_or_partial_text_facts(
+    overrides: dict[str, object],
+) -> None:
+    kwargs: dict[str, Any] = {
+        "media_kind": "epub" if "section_id" in overrides else "video",
+        "anchor_kind": "fragment_offsets",
+        "fragment_id": FRAGMENT_ID,
+        "section_id": "chapter.xhtml",
+        "exact": "beta",
+        "fragment_text": "alpha beta gamma",
+        "start_offset": 6,
+        "end_offset": 10,
+        "t_start_ms": None,
+        "t_end_ms": None,
+    }
+    kwargs.update(overrides)
+
+    assert resolved_highlight_reader_target(**kwargs) is None
+
+
+def test_current_highlight_target_validates_pdf_geometry_against_current_page() -> None:
+    quad = {
+        "x1": 10.0,
+        "y1": 20.0,
+        "x2": 40.0,
+        "y2": 20.0,
+        "x3": 40.0,
+        "y3": 30.0,
+        "x4": 10.0,
+        "y4": 30.0,
+    }
+    target = resolved_highlight_reader_target(
+        media_kind="pdf",
+        anchor_kind="pdf_page_geometry",
+        page_number=2,
+        page_count=3,
+        page_width=100.0,
+        page_height=200.0,
+        pdf_quads=[quad],
+    )
+    out_of_bounds = resolved_highlight_reader_target(
+        media_kind="pdf",
+        anchor_kind="pdf_page_geometry",
+        page_number=2,
+        page_count=3,
+        page_width=20.0,
+        page_height=200.0,
+        pdf_quads=[quad],
+    )
+
+    assert target is not None and target.kind == "PdfPageGeometry"
+    assert target.page_number == 2
+    assert out_of_bounds is None

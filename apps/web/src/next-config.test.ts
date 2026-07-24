@@ -74,3 +74,12 @@ describe("next.config redirects", () => {
     });
   });
 });
+
+describe("next.config public-origin build constant", () => {
+  it("exposes only the validated canonical origin to client link builders", async () => {
+    const config = await loadConfig(deployedEnv);
+    expect(config.env).toEqual({
+      NEXT_PUBLIC_APP_PUBLIC_ORIGIN: "https://app.nexus.test",
+    });
+  });
+});

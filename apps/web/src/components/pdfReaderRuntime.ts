@@ -12,6 +12,7 @@ export interface PdfDocumentLoadingTaskLike {
 
 export interface PdfDocumentSourceLike {
   url: string;
+  httpHeaders?: Record<string, string>;
   withCredentials?: boolean;
   disableRange?: boolean;
   disableStream?: boolean;
@@ -96,6 +97,7 @@ export async function loadPdfJs(): Promise<PdfJsLike> {
 }
 
 export async function loadPdfJsViewer(): Promise<PdfJsViewerLike> {
+  await loadPdfJs();
   const pdfViewerModule = await import(
     /* @vite-ignore */
     /* webpackIgnore: true */

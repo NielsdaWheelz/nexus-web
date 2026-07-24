@@ -453,6 +453,7 @@ function paneResourceItem(ref: string): ResourceItem {
       expandable: false,
       adjacencySource: false,
       adjacencyTarget: true,
+      sharing: "CopyOnly",
     },
     versionByLane: {},
   };

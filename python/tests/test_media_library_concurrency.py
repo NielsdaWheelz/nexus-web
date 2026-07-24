@@ -226,10 +226,7 @@ def test_library_teardown_prelocks_full_dossier_head_union_before_nested_cleanup
             with direct_db.session() as session:
                 try:
                     session.execute(
-                        text(
-                            "SELECT id FROM artifacts WHERE id = :head_id "
-                            "FOR UPDATE NOWAIT"
-                        ),
+                        text("SELECT id FROM artifacts WHERE id = :head_id FOR UPDATE NOWAIT"),
                         {"head_id": lower_head_id},
                     ).one()
                 except OperationalError as exc:
@@ -277,10 +274,13 @@ def test_library_teardown_prelocks_full_dossier_head_union_before_nested_cleanup
     assert sorted(results) == ["delete-ok", "remove-ok"]
 
     with direct_db.session() as session:
-        assert session.execute(
-            text("SELECT count(*) FROM artifacts WHERE id = ANY(:head_ids)"),
-            {"head_ids": [lower_head_id, higher_head_id]},
-        ).scalar_one() == 0
+        assert (
+            session.execute(
+                text("SELECT count(*) FROM artifacts WHERE id = ANY(:head_ids)"),
+                {"head_ids": [lower_head_id, higher_head_id]},
+            ).scalar_one()
+            == 0
+        )
 
 
 def test_same_library_delete_vs_media_removal_has_a_serial_outcome(
@@ -534,7 +534,7 @@ def test_add_reauthorizes_after_waiting_on_concurrent_reachability_teardown(
     try:
         with direct_db.session() as session:
             if teardown == "whole_resource":
-                result = media_deletion.delete_document_for_viewer(session, viewer_id, media_id)
+                result = media_deletion.remove_media_for_viewer(session, viewer_id, media_id)
                 assert result.kind == "Deleting"
             else:
                 library_governance.delete_library(session, viewer_id, source_library_id)
@@ -607,7 +607,7 @@ def test_whole_resource_delete_vs_media_removal_converges_replay_safely(
     def delete_whole_resource() -> object:
         with direct_db.session() as session:
             return _api_outcome(
-                lambda: media_deletion.delete_document_for_viewer(session, viewer_id, media_id)
+                lambda: media_deletion.remove_media_for_viewer(session, viewer_id, media_id)
             )
 
     def remove_visible_entry() -> object:

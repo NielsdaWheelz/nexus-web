@@ -54,6 +54,9 @@ import {
   resolveWorkspacePaneLabel,
   useWorkspaceStore,
 } from "@/lib/workspace/store";
+import { useShareController } from "@/lib/sharing/controller";
+import { present } from "@/lib/api/presence";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import type { BrowseResponse, BrowseResult } from "@/lib/browse/types";
 import {
   resolveAddPanelInitialFocus,
@@ -162,6 +165,7 @@ export function useLauncherController(): LauncherController {
   const { androidShell, platform } = useRenderEnvironment();
   const keybindings = useKeybindings();
   const feedback = useFeedback();
+  const { openShare } = useShareController();
   const warmPane = usePaneWarm();
   // The one Lectern capability (append is stable across renders); dispatch's queue-add
   // case calls it. useLectern requires a LecternProvider ancestor (AuthenticatedShell).
@@ -404,6 +408,18 @@ export function useLauncherController(): LauncherController {
       activatePane,
       restorePane,
       closePane,
+      openShare: (target) => {
+        const returnTarget =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        openShare(target, {
+          returnFocusTo: () => returnTarget,
+          returnFocusFallback: present(() =>
+            findPaneChromeFocusTarget(state.activePrimaryPaneId),
+          ),
+        });
+      },
     }),
     [
       androidShell,
@@ -413,6 +429,8 @@ export function useLauncherController(): LauncherController {
       activatePane,
       restorePane,
       closePane,
+      openShare,
+      state.activePrimaryPaneId,
     ],
   );
 

@@ -1,7 +1,7 @@
 """Tests for authorization predicates module.
 
 Tests cover:
-- can_read_media / visible_media_ids_cte_sql: the single membership-join
+- can_read_media / visible_media_ids_cte_sql: the canonical membership-or-grant
   readability relation (see nexus/auth/permissions.py module docstring)
 - can_read_conversation: owner / public / library-shared visibility
 - can_read_highlight: media visibility + library intersection
@@ -11,11 +11,9 @@ Key invariants tested:
 - No existence leak (non-existent resources return False, not raise)
 - All functions accept explicit Session
 - can_read_media and visible_media_ids_cte_sql are twins of the same relation
-  and must never drift: a media item is readable iff a *current* membership
-  reaches a physical library_entries row for it (default, non-default, or
-  system library — no is_default distinction), minus a viewer tombstone
-  (user_media_deletions) and minus an armed teardown intent
-  (media_teardown_intents).
+  and must never drift: a media item is readable iff a current membership or
+  active incoming/creator grant reaches it, minus a viewer tombstone and an
+  armed teardown intent.
 - Provenance alone (the former default_library_intrinsics /
   default_library_closure_edges tables, dropped in migration 0183) never
   granted access by itself: only a membership-reachable physical
@@ -28,7 +26,7 @@ Key invariants tested:
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
@@ -36,6 +34,7 @@ from nexus.auth.permissions import (
     is_library_member,
     visible_media_ids_cte_sql,
 )
+from nexus.db.models import Highlight
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.library_governance import ensure_system_library
 
@@ -124,6 +123,44 @@ def _arm_teardown_intent(db: Session, media_id) -> None:
         {"id": uuid4(), "media_id": media_id},
     )
     db.flush()
+
+
+def _add_user_grant(
+    db: Session,
+    *,
+    creator_id: UUID,
+    recipient_id: UUID,
+    subject_scheme: str,
+    subject_id: UUID,
+) -> UUID:
+    grant_id = uuid4()
+    db.execute(
+        text("""
+            INSERT INTO resource_grants (
+                id,
+                subject_scheme,
+                subject_id,
+                created_by_user_id,
+                grantee_user_id
+            )
+            VALUES (
+                :id,
+                :subject_scheme,
+                :subject_id,
+                :creator_id,
+                :recipient_id
+            )
+        """),
+        {
+            "id": grant_id,
+            "subject_scheme": subject_scheme,
+            "subject_id": subject_id,
+            "creator_id": creator_id,
+            "recipient_id": recipient_id,
+        },
+    )
+    db.flush()
+    return grant_id
 
 
 def _add_membership(db: Session, library_id, user_id, role="member") -> None:
@@ -326,6 +363,51 @@ class TestCanReadMedia:
         _arm_teardown_intent(db_session, media_id)
 
         assert can_read_media(db_session, user_id, media_id) is False
+
+    def test_direct_grant_incoming_creator_revoke_tombstone_and_teardown(self, db_session: Session):
+        creator_id = uuid4()
+        recipient_id = uuid4()
+        ensure_user_and_default_library(db_session, creator_id)
+        ensure_user_and_default_library(db_session, recipient_id)
+        media_id = _create_media(db_session, "Grant-only media")
+        grant_id = _add_user_grant(
+            db_session,
+            creator_id=creator_id,
+            recipient_id=recipient_id,
+            subject_scheme="media",
+            subject_id=media_id,
+        )
+
+        for viewer_id in (creator_id, recipient_id):
+            assert can_read_media(db_session, viewer_id, media_id) is True
+            assert media_id in _visible_media_ids(db_session, viewer_id)
+
+        _add_tombstone(db_session, recipient_id, media_id)
+        assert can_read_media(db_session, recipient_id, media_id) is False
+        assert media_id not in _visible_media_ids(db_session, recipient_id)
+        db_session.execute(
+            text(
+                "DELETE FROM user_media_deletions WHERE user_id = :user_id AND media_id = :media_id"
+            ),
+            {"user_id": recipient_id, "media_id": media_id},
+        )
+        _arm_teardown_intent(db_session, media_id)
+        for viewer_id in (creator_id, recipient_id):
+            assert can_read_media(db_session, viewer_id, media_id) is False
+            assert media_id not in _visible_media_ids(db_session, viewer_id)
+
+        db_session.execute(
+            text("DELETE FROM media_teardown_intents WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        db_session.execute(
+            text("DELETE FROM resource_grants WHERE id = :grant_id"),
+            {"grant_id": grant_id},
+        )
+        db_session.flush()
+        for viewer_id in (creator_id, recipient_id):
+            assert can_read_media(db_session, viewer_id, media_id) is False
+            assert media_id not in _visible_media_ids(db_session, viewer_id)
 
 
 # =============================================================================
@@ -557,3 +639,84 @@ class TestCanReadHighlightAnchorAware:
         user_id = uuid4()
         ensure_user_and_default_library(db_session, user_id)
         assert can_read_highlight(db_session, user_id, uuid4()) is False
+
+    def test_author_exact_highlight_grant_and_media_grant_are_distinct(self, db_session: Session):
+        from nexus.auth.permissions import can_read_highlight, highlight_visibility_filter
+        from tests.factories import (
+            create_normalized_fragment_highlight,
+            create_test_fragment,
+            create_test_media_in_library,
+            get_user_default_library,
+        )
+
+        author_id = uuid4()
+        highlight_recipient_id = uuid4()
+        media_recipient_id = uuid4()
+        for user_id in (author_id, highlight_recipient_id, media_recipient_id):
+            ensure_user_and_default_library(db_session, user_id)
+        author_library_id = get_user_default_library(db_session, author_id)
+        media_id = create_test_media_in_library(
+            db_session,
+            author_id,
+            author_library_id,
+        )
+        fragment_id = create_test_fragment(db_session, media_id, content="shared quote")
+        highlight_id = create_normalized_fragment_highlight(
+            db_session,
+            author_id,
+            fragment_id,
+            media_id,
+            0,
+            6,
+        )
+        exact_grant_id = _add_user_grant(
+            db_session,
+            creator_id=author_id,
+            recipient_id=highlight_recipient_id,
+            subject_scheme="highlight",
+            subject_id=highlight_id,
+        )
+        _add_user_grant(
+            db_session,
+            creator_id=author_id,
+            recipient_id=media_recipient_id,
+            subject_scheme="media",
+            subject_id=media_id,
+        )
+
+        def visible_highlight_ids(viewer_id: UUID) -> set[UUID]:
+            if not can_read_media(db_session, viewer_id, media_id):
+                return set()
+            return set(
+                db_session.scalars(
+                    select(Highlight.id).where(
+                        Highlight.anchor_media_id == media_id,
+                        highlight_visibility_filter(viewer_id, media_id),
+                    )
+                )
+            )
+
+        for viewer_id in (author_id, highlight_recipient_id):
+            assert can_read_highlight(db_session, viewer_id, highlight_id) is True
+            assert highlight_id in visible_highlight_ids(viewer_id)
+        assert can_read_media(db_session, highlight_recipient_id, media_id) is True
+        assert can_read_highlight(db_session, media_recipient_id, highlight_id) is False
+        assert highlight_id not in visible_highlight_ids(media_recipient_id)
+
+        _add_tombstone(db_session, highlight_recipient_id, media_id)
+        assert can_read_highlight(db_session, highlight_recipient_id, highlight_id) is False
+        assert highlight_id not in visible_highlight_ids(highlight_recipient_id)
+        db_session.execute(
+            text(
+                "DELETE FROM user_media_deletions WHERE user_id = :user_id AND media_id = :media_id"
+            ),
+            {"user_id": highlight_recipient_id, "media_id": media_id},
+        )
+        db_session.execute(
+            text("DELETE FROM resource_grants WHERE id = :grant_id"),
+            {"grant_id": exact_grant_id},
+        )
+        db_session.flush()
+        assert can_read_highlight(db_session, highlight_recipient_id, highlight_id) is False
+        assert can_read_media(db_session, highlight_recipient_id, media_id) is False
+        assert highlight_id not in visible_highlight_ids(highlight_recipient_id)

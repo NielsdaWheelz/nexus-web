@@ -4,7 +4,7 @@
  * old `navigate` + `runAction` switches and replaces the stringly-typed `actionId`
  * escape hatch. It performs the side effect only — the controller owns Launcher
  * open/close state and selection logging. The Android-restricted-route guard and
- * the copy-link toast are centralized here.
+ * clipboard feedback and Share-overlay launch are centralized here.
  */
 
 "use client";
@@ -27,6 +27,7 @@ import { copyText } from "@/lib/ui/copyText";
 import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { LauncherActionTarget } from "./model";
 import type { LauncherPane } from "./providers";
+import type { ShareTarget } from "@/lib/sharing/types";
 
 // True when `href` resolves to an in-app route the Android shell can't open (Local
 // Vault). Shared by dispatch (block + toast) and the controller (skip logging a
@@ -51,9 +52,10 @@ export function targetNavigates(target: LauncherActionTarget): boolean {
     case "open-today":
     case "create-note":
     case "pane-open":
+    case "share":
       return true;
     case "queue-add":
-    case "copy-link":
+    case "copy-external-link":
     case "pane-close":
     case "set-lane":
       return false;
@@ -75,6 +77,7 @@ export interface LauncherDispatchCtx {
   activatePane(paneId: string): void;
   restorePane(paneId: string): void;
   closePane(paneId: string): void;
+  openShare(target: ShareTarget): void;
 }
 
 export async function dispatchTarget(
@@ -227,11 +230,14 @@ export async function dispatchTarget(
       requestOpenInAppPane(`/pages/${created.id}`, { labelHint: created.title });
       return;
     }
-    case "copy-link":
+    case "share":
+      ctx.openShare(target.target);
+      return;
+    case "copy-external-link":
       if (typeof window !== "undefined") {
-        copyText(new URL(target.href, window.location.origin).toString());
+        await copyText(target.href);
       }
-      feedback.show({ severity: "success", title: "Link copied" });
+      feedback.show({ severity: "success", title: "External link copied" });
       return;
     case "pane-open": {
       const pane = ctx.panes.find((entry) => entry.id === target.paneId);

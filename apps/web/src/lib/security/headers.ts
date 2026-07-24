@@ -22,9 +22,9 @@ const YOUTUBE_ORIGINS = YOUTUBE_EMBED_ORIGINS.map((o) => `"${o}"`).join(" ");
 
 /**
  * Deny-by-default powerful features. The media features the YouTube embed delegates via
- * its iframe `allow=""` are granted to `self` + the YouTube origins; `web-share` is
- * delegated to YouTube only (the app does not use it). Everything sensitive the app never
- * uses is disabled with an empty allowlist.
+ * its iframe `allow=""` are granted to `self` + the YouTube origins. `web-share`
+ * is available only to this app's Share overlay. Everything sensitive the app
+ * never uses is disabled with an empty allowlist.
  */
 const PERMISSIONS_POLICY = [
   `accelerometer=(self ${YOUTUBE_ORIGINS})`,
@@ -34,7 +34,7 @@ const PERMISSIONS_POLICY = [
   `fullscreen=(self ${YOUTUBE_ORIGINS})`,
   `gyroscope=(self ${YOUTUBE_ORIGINS})`,
   `picture-in-picture=(self ${YOUTUBE_ORIGINS})`,
-  `web-share=(${YOUTUBE_ORIGINS})`,
+  "web-share=(self)",
   "camera=()",
   "microphone=(self)",
   "geolocation=()",

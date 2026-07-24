@@ -6,7 +6,20 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+
+from nexus.schemas.presence import absent, present
+from nexus.schemas.reader import (
+    EpubTextOffsetsTargetOut,
+    HighlightTargetPdfQuadOut,
+    HighlightTargetTimeRangeOut,
+    PdfPageGeometryTargetOut,
+    ResolvedHighlightReaderTarget,
+    TranscriptTextOffsetsTargetOut,
+    WebTextOffsetsTargetOut,
+)
+
+_TEXT_MEDIA_KINDS = frozenset({"web_article", "epub", "video", "podcast_episode"})
 
 
 def locator_json(
@@ -146,6 +159,110 @@ def highlight_locator(
             "suffix": suffix,
         }
     return locator
+
+
+def resolved_highlight_reader_target(
+    *,
+    media_kind: str,
+    anchor_kind: str,
+    fragment_id: UUID | None = None,
+    section_id: str | None = None,
+    exact: str = "",
+    fragment_text: str | None = None,
+    start_offset: int | None = None,
+    end_offset: int | None = None,
+    t_start_ms: int | None = None,
+    t_end_ms: int | None = None,
+    page_number: int | None = None,
+    page_count: int | None = None,
+    page_width: float | None = None,
+    page_height: float | None = None,
+    pdf_quads: list[Mapping[str, object]] | None = None,
+) -> ResolvedHighlightReaderTarget | None:
+    """Map current owner facts to the one closed highlight reader target.
+
+    This is the canonical format-total target mapper. The locator resolver owns
+    loading current source rows; this owner validates their reader semantics and
+    emits no partial or guessed target.
+    """
+    try:
+        if anchor_kind == "fragment_offsets":
+            if (
+                media_kind not in _TEXT_MEDIA_KINDS
+                or fragment_id is None
+                or fragment_text is None
+                or start_offset is None
+                or end_offset is None
+                or start_offset < 0
+                or end_offset <= start_offset
+                or end_offset > len(fragment_text)
+                or fragment_text[start_offset:end_offset] != exact
+            ):
+                return None
+            if media_kind == "web_article":
+                return WebTextOffsetsTargetOut(
+                    fragment_id=fragment_id,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                )
+            if media_kind == "epub":
+                if not section_id:
+                    return None
+                return EpubTextOffsetsTargetOut(
+                    section_id=section_id,
+                    fragment_id=fragment_id,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                )
+            time_range = absent()
+            if t_start_ms is not None or t_end_ms is not None:
+                if t_start_ms is None or t_end_ms is None:
+                    return None
+                time_range = present(
+                    HighlightTargetTimeRangeOut(
+                        start_ms=t_start_ms,
+                        end_ms=t_end_ms,
+                    )
+                )
+            return TranscriptTextOffsetsTargetOut(
+                fragment_id=fragment_id,
+                start_offset=start_offset,
+                end_offset=end_offset,
+                time_range=time_range,
+            )
+
+        if (
+            anchor_kind != "pdf_page_geometry"
+            or media_kind != "pdf"
+            or page_number is None
+            or page_count is None
+            or page_number < 1
+            or page_number > page_count
+            or page_width is None
+            or page_height is None
+            or page_width <= 0
+            or page_height <= 0
+            or pdf_quads is None
+            or not 1 <= len(pdf_quads) <= 512
+        ):
+            return None
+        quads: list[HighlightTargetPdfQuadOut] = []
+        for raw in pdf_quads:
+            values = {
+                f"{axis}{index}": float(raw[f"{axis}{index}"])
+                for index in range(1, 5)
+                for axis in ("x", "y")
+            }
+            for index in range(1, 5):
+                if not (
+                    0 <= values[f"x{index}"] <= page_width
+                    and 0 <= values[f"y{index}"] <= page_height
+                ):
+                    return None
+            quads.append(HighlightTargetPdfQuadOut(**values))
+        return PdfPageGeometryTargetOut(page_number=page_number, quads=quads)
+    except (KeyError, TypeError, ValueError, ValidationError):
+        return None
 
 
 def locator_page(locator: Mapping[str, object]) -> int | None:

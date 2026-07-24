@@ -9,6 +9,12 @@ import {
 
 const mockUsePaneParam = vi.fn<(paramName: string) => string | null>();
 const subscribeToPodcastMock = vi.fn();
+const primaryChromeMock = vi.hoisted(() => ({
+  publish: vi.fn(),
+}));
+const shareControllerMock = vi.hoisted(() => ({
+  openShare: vi.fn(),
+}));
 
 vi.mock("@/lib/panes/paneRuntime", () => ({
   usePaneParam: (paramName: string) => mockUsePaneParam(paramName),
@@ -19,7 +25,12 @@ vi.mock("@/lib/panes/paneRuntime", () => ({
 }));
 
 vi.mock("@/components/workspace/PanePrimaryChrome", () => ({
-  usePanePrimaryChrome: () => {},
+  usePanePrimaryChrome: (publication: unknown) =>
+    primaryChromeMock.publish(publication),
+}));
+
+vi.mock("@/lib/sharing/controller", () => ({
+  useShareController: () => shareControllerMock,
 }));
 
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
@@ -188,6 +199,8 @@ function transcriptForecast(mediaId = "episode-1") {
 
 describe("PodcastDetailPaneBody subscribe flow", () => {
   beforeEach(() => {
+    primaryChromeMock.publish.mockReset();
+    shareControllerMock.openShare.mockReset();
     subscribeToPodcastMock.mockReset();
     subscribeToPodcastMock.mockResolvedValue({
       podcast_id: "podcast-1",
@@ -271,6 +284,43 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       library_ids: string[];
     };
     expect(payload.library_ids).toEqual(["lib-research", "lib-books"]);
+  });
+
+  it("leaves pane-level Share ownership to PaneShell", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/podcasts/podcast-1") {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+        return jsonResponse({ data: [episodeMedia()] });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/media/transcript/forecasts") {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    expect(await screen.findByText("Episode 1")).toBeInTheDocument();
+    await waitFor(() => {
+      const publication = primaryChromeMock.publish.mock.calls.at(-1)?.[0] as
+        | { options?: Array<{ id: string }> }
+        | undefined;
+      expect(
+        publication?.options?.filter((option) => option.id === "share") ?? [],
+      ).toHaveLength(0);
+    });
   });
 
   it("does not refetch podcast episodes when show notes expand", async () => {

@@ -60,7 +60,7 @@ describe("ActionMenu", () => {
           {
             kind: "command",
             id: "libraries",
-            label: "Libraries…",
+            label: "Move…",
             restoreFocusOnClose: false,
             onSelect: handleSelect,
           },
@@ -70,10 +70,10 @@ describe("ActionMenu", () => {
 
     const trigger = screen.getByRole("button", { name: "Actions" });
     await user.click(trigger);
-    await user.click(screen.getByRole("menuitem", { name: "Libraries…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Move…" }));
 
     await waitFor(() => {
-      expect(screen.queryByRole("menuitem", { name: "Libraries…" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Move…" })).not.toBeInTheDocument();
     });
 
     expect(handleSelect).toHaveBeenCalledWith({ triggerEl: trigger });

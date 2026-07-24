@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.reader import ResolvedHighlightReaderTarget
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services import text_quote
+from nexus.services import reader_locations, text_quote
 from nexus.services.text_quote import QuoteStatus
 
 ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
@@ -39,6 +40,109 @@ class PassageSelectorResolution:
     prefix: str
     suffix: str
     locator: dict[str, Any] | None
+
+
+def resolve_highlight_reader_target(
+    db: Session,
+    *,
+    highlight_id: UUID,
+) -> ResolvedHighlightReaderTarget | None:
+    """Resolve one highlight against current reader-owned source rows.
+
+    This trusted read performs no authorization. Authenticated and public
+    callers must establish their own audience authority before calling it.
+    Missing, incoherent, stale, and unsupported anchor facts return ``None``.
+    """
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT h.anchor_kind,
+                       h.anchor_media_id,
+                       h.exact,
+                       m.kind AS media_kind,
+                       m.page_count,
+                       hfa.fragment_id,
+                       hfa.start_offset,
+                       hfa.end_offset,
+                       f.canonical_text AS fragment_text,
+                       f.t_start_ms,
+                       f.t_end_ms,
+                       nav.location_id AS section_id,
+                       hpa.page_number,
+                       ppts.page_width,
+                       ppts.page_height
+                FROM highlights h
+                JOIN media m ON m.id = h.anchor_media_id
+                LEFT JOIN highlight_fragment_anchors hfa
+                  ON hfa.highlight_id = h.id
+                LEFT JOIN fragments f
+                  ON f.id = hfa.fragment_id
+                 AND f.media_id = h.anchor_media_id
+                LEFT JOIN LATERAL (
+                    SELECT location_id
+                    FROM epub_nav_locations
+                    WHERE media_id = f.media_id
+                      AND fragment_idx = f.idx
+                    ORDER BY ordinal ASC
+                    LIMIT 1
+                ) nav ON TRUE
+                LEFT JOIN highlight_pdf_anchors hpa
+                  ON hpa.highlight_id = h.id
+                 AND hpa.media_id = h.anchor_media_id
+                LEFT JOIN pdf_page_text_spans ppts
+                  ON ppts.media_id = h.anchor_media_id
+                 AND ppts.page_number = hpa.page_number
+                WHERE h.id = :highlight_id
+                """
+            ),
+            {"highlight_id": highlight_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None
+
+    raw_quads: list[dict[str, object]] | None = None
+    if row["anchor_kind"] == "pdf_page_geometry":
+        raw_quads = [
+            dict(quad)
+            for quad in (
+                db.execute(
+                    text(
+                        """
+                        SELECT x1, y1, x2, y2, x3, y3, x4, y4
+                        FROM highlight_pdf_quads
+                        WHERE highlight_id = :highlight_id
+                        ORDER BY quad_idx ASC
+                        """
+                    ),
+                    {"highlight_id": highlight_id},
+                )
+                .mappings()
+                .all()
+            )
+        ]
+
+    fragment_id = row["fragment_id"]
+    return reader_locations.resolved_highlight_reader_target(
+        media_kind=str(row["media_kind"]),
+        anchor_kind=str(row["anchor_kind"]),
+        fragment_id=UUID(str(fragment_id)) if fragment_id is not None else None,
+        section_id=str(row["section_id"]) if row["section_id"] is not None else None,
+        exact=str(row["exact"]),
+        fragment_text=str(row["fragment_text"]) if row["fragment_text"] is not None else None,
+        start_offset=int(row["start_offset"]) if row["start_offset"] is not None else None,
+        end_offset=int(row["end_offset"]) if row["end_offset"] is not None else None,
+        t_start_ms=int(row["t_start_ms"]) if row["t_start_ms"] is not None else None,
+        t_end_ms=int(row["t_end_ms"]) if row["t_end_ms"] is not None else None,
+        page_number=int(row["page_number"]) if row["page_number"] is not None else None,
+        page_count=int(row["page_count"]) if row["page_count"] is not None else None,
+        page_width=float(row["page_width"]) if row["page_width"] is not None else None,
+        page_height=float(row["page_height"]) if row["page_height"] is not None else None,
+        pdf_quads=raw_quads,
+    )
 
 
 def resolve_passage_selector(

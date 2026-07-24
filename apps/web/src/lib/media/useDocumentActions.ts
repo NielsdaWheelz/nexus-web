@@ -63,7 +63,7 @@ export function useDocumentActions({
     }
     if (
       !window.confirm(
-        `Delete "${media.title}" from My Library and libraries you manage? This cannot be undone.`,
+        `Remove "${media.title}" from your libraries and shared access?`,
       )
     ) {
       return;
@@ -80,7 +80,7 @@ export function useDocumentActions({
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
       feedback.show({
-        ...toFeedback(err, { fallback: "Failed to delete document" }),
+        ...toFeedback(err, { fallback: "Failed to remove media" }),
       });
     } finally {
       setDeleteBusy(false);

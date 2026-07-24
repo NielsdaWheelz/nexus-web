@@ -10,6 +10,8 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import styles from "./ReaderCitation.module.css";
+import { copyText as copyToClipboard } from "@/lib/ui/copyText";
+import { useFeedback } from "@/components/feedback/Feedback";
 
 export default function ReaderCitation({
   index,
@@ -28,6 +30,7 @@ export default function ReaderCitation({
     event?: React.MouseEvent,
   ) => void;
 }) {
+  const feedback = useFeedback();
   const href = hrefForResourceActivation(activation);
   const [showPreview, setShowPreview] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -120,10 +123,21 @@ export default function ReaderCitation({
               <button
                 type="button"
                 className={styles.previewAction}
-                onClick={(event) => {
+                onClick={async (event) => {
                   event.stopPropagation();
-                  void navigator.clipboard.writeText(copyText);
-                  closePreview();
+                  try {
+                    await copyToClipboard(copyText);
+                    feedback.show({
+                      severity: "success",
+                      title: "Citation copied",
+                    });
+                    closePreview();
+                  } catch {
+                    feedback.show({
+                      severity: "error",
+                      title: "Citation could not be copied",
+                    });
+                  }
                 }}
               >
                 Copy citation

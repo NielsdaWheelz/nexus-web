@@ -2,6 +2,7 @@
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { librariesResource } from "@/lib/api/resource";
+import { expectUserHandle } from "@/lib/sharing/wireValidation";
 import { isRecord } from "@/lib/validation";
 
 export class LibraryDestinationContractDefect extends Error {
@@ -44,10 +45,21 @@ export interface LibraryDestinationPage {
   };
 }
 
-export interface MemberLibrary extends LibraryDestination {
-  owner_user_id: string;
-  is_default: boolean;
+export interface MemberLibrary {
+  id: string;
+  name: string;
+  color: string | null;
+  ownerUserHandle: string;
+  isDefault: boolean;
   role: "admin" | "member";
+  systemKey: string | null;
+  canRename: boolean;
+  canDelete: boolean;
+  canEditEntries: boolean;
+  canManageMembers: boolean;
+  canTransferOwnership: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface MemberLibrariesResponse {
@@ -68,15 +80,16 @@ export async function listMemberLibraries({
   const libraries: MemberLibrary[] = [];
   let cursor: string | null = null;
   do {
-    const response: MemberLibrariesResponse =
-      await apiFetch<MemberLibrariesResponse>(
+    const response = decodeMemberLibrariesResponse(
+      await apiFetch<unknown>(
         librariesResource.clientPath({
           refreshVersion: 0,
           limit,
           cursor: cursor ?? undefined,
         }),
         { signal },
-      );
+      ),
+    );
     libraries.push(...response.data);
     cursor = response.page.next_cursor;
   } while (cursor !== null);
@@ -113,13 +126,106 @@ export async function createLibrary({
 }: {
   name: string;
   signal?: AbortSignal;
-}): Promise<LibraryDestination> {
+}): Promise<MemberLibrary> {
   const response = await apiFetch<unknown>("/api/libraries", {
     method: "POST",
     body: JSON.stringify({ name }),
     signal,
   });
-  return decodeCreatedLibraryDestination(response);
+  if (!isRecord(response) || !isRecord(response.data)) {
+    return invalidDestinationResponse(
+      "create payload must contain a data object",
+    );
+  }
+  return decodeMemberLibrary(response.data, "data");
+}
+
+export function decodeMemberLibrariesResponse(raw: unknown): MemberLibrariesResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.data) || !isRecord(raw.page)) {
+    return invalidDestinationResponse(
+      "member libraries payload must contain data and page",
+    );
+  }
+  if (
+    typeof raw.page.has_more !== "boolean" ||
+    (raw.page.next_cursor !== null &&
+      (typeof raw.page.next_cursor !== "string" ||
+        raw.page.next_cursor.length === 0))
+  ) {
+    return invalidDestinationResponse("member libraries page is invalid");
+  }
+  return {
+    data: raw.data.map((row, index) =>
+      decodeMemberLibrary(row, `data[${index}]`),
+    ),
+    page: {
+      has_more: raw.page.has_more,
+      next_cursor: raw.page.next_cursor,
+    },
+  };
+}
+
+function decodeMemberLibrary(raw: unknown, field: string): MemberLibrary {
+  const keys = [
+    "id",
+    "name",
+    "color",
+    "ownerUserHandle",
+    "isDefault",
+    "role",
+    "systemKey",
+    "canRename",
+    "canDelete",
+    "canEditEntries",
+    "canManageMembers",
+    "canTransferOwnership",
+    "createdAt",
+    "updatedAt",
+  ] as const;
+  if (
+    !isRecord(raw) ||
+    Object.keys(raw).length !== keys.length ||
+    Object.keys(raw).some((key) => !keys.includes(key as (typeof keys)[number]))
+  ) {
+    return invalidDestinationResponse(`${field} is not an exact LibraryOut`);
+  }
+  if (
+    typeof raw.id !== "string" ||
+    typeof raw.name !== "string" ||
+    (raw.color !== null && typeof raw.color !== "string") ||
+    typeof raw.ownerUserHandle !== "string" ||
+    typeof raw.isDefault !== "boolean" ||
+    (raw.role !== "admin" && raw.role !== "member") ||
+    (raw.systemKey !== null && typeof raw.systemKey !== "string") ||
+    typeof raw.canRename !== "boolean" ||
+    typeof raw.canDelete !== "boolean" ||
+    typeof raw.canEditEntries !== "boolean" ||
+    typeof raw.canManageMembers !== "boolean" ||
+    typeof raw.canTransferOwnership !== "boolean" ||
+    typeof raw.createdAt !== "string" ||
+    typeof raw.updatedAt !== "string"
+  ) {
+    return invalidDestinationResponse(`${field} contains invalid LibraryOut fields`);
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    color: raw.color,
+    ownerUserHandle: expectUserHandle(
+      raw.ownerUserHandle,
+      `${field}.ownerUserHandle`,
+    ),
+    isDefault: raw.isDefault,
+    role: raw.role,
+    systemKey: raw.systemKey,
+    canRename: raw.canRename,
+    canDelete: raw.canDelete,
+    canEditEntries: raw.canEditEntries,
+    canManageMembers: raw.canManageMembers,
+    canTransferOwnership: raw.canTransferOwnership,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
 }
 
 export function decodeWritableLibraryDestinationPage(
@@ -156,17 +262,6 @@ export function decodeWritableLibraryDestinationPage(
     ),
     page: { has_more: hasMore, next_cursor: nextCursor },
   };
-}
-
-export function decodeCreatedLibraryDestination(
-  raw: unknown,
-): LibraryDestination {
-  if (!isRecord(raw) || !isRecord(raw.data)) {
-    return invalidDestinationResponse(
-      "create payload must contain a data object",
-    );
-  }
-  return decodeLibraryDestination(raw.data, "data");
 }
 
 function decodeLibraryDestination(

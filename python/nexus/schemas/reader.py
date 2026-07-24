@@ -1,13 +1,123 @@
 """Reader profile and per-media reader state schemas."""
 
+import math
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from nexus.schemas.presence import Presence
 
 ThemeValue = Literal["light", "dark"]
 FontFamilyValue = Literal["serif", "sans"]
 FocusModeValue = Literal["off", "distraction_free", "paragraph", "sentence"]
 HyphenationValue = Literal["auto", "off"]
+
+
+class ResolvedHighlightTargetModel(BaseModel):
+    """Strict wire base for the one current, format-total highlight target."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class HighlightTargetTimeRangeOut(ResolvedHighlightTargetModel):
+    start_ms: Annotated[int, Field(ge=0, le=2**53 - 1)]
+    end_ms: Annotated[int, Field(ge=0, le=2**53 - 1)]
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "HighlightTargetTimeRangeOut":
+        if self.start_ms >= self.end_ms:
+            raise ValueError("start_ms must be less than end_ms")
+        return self
+
+
+class HighlightTargetPdfQuadOut(ResolvedHighlightTargetModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    x3: float
+    y3: float
+    x4: float
+    y4: float
+
+    @model_validator(mode="after")
+    def validate_finite(self) -> "HighlightTargetPdfQuadOut":
+        if not all(
+            math.isfinite(value)
+            for value in (
+                self.x1,
+                self.y1,
+                self.x2,
+                self.y2,
+                self.x3,
+                self.y3,
+                self.x4,
+                self.y4,
+            )
+        ):
+            raise ValueError("PDF quad coordinates must be finite")
+        return self
+
+
+class WebTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+    kind: Literal["WebTextOffsets"] = "WebTextOffsets"
+    fragment_id: UUID
+    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "WebTextOffsetsTargetOut":
+        if self.start_offset >= self.end_offset:
+            raise ValueError("start_offset must be less than end_offset")
+        return self
+
+
+class EpubTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+    kind: Literal["EpubTextOffsets"] = "EpubTextOffsets"
+    section_id: Annotated[str, Field(min_length=1, max_length=255)]
+    fragment_id: UUID
+    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "EpubTextOffsetsTargetOut":
+        if self.start_offset >= self.end_offset:
+            raise ValueError("start_offset must be less than end_offset")
+        return self
+
+
+class TranscriptTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+    kind: Literal["TranscriptTextOffsets"] = "TranscriptTextOffsets"
+    fragment_id: UUID
+    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+    time_range: Presence[HighlightTargetTimeRangeOut]
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "TranscriptTextOffsetsTargetOut":
+        if self.start_offset >= self.end_offset:
+            raise ValueError("start_offset must be less than end_offset")
+        return self
+
+
+class PdfPageGeometryTargetOut(ResolvedHighlightTargetModel):
+    kind: Literal["PdfPageGeometry"] = "PdfPageGeometry"
+    page_number: Annotated[int, Field(ge=1, le=2**31 - 1)]
+    quads: Annotated[list[HighlightTargetPdfQuadOut], Field(min_length=1, max_length=512)]
+
+
+ResolvedHighlightReaderTarget = Annotated[
+    WebTextOffsetsTargetOut
+    | EpubTextOffsetsTargetOut
+    | TranscriptTextOffsetsTargetOut
+    | PdfPageGeometryTargetOut,
+    Field(discriminator="kind"),
+]
+
+
+class ResolvedHighlightReaderTargetResponse(ResolvedHighlightTargetModel):
+    data: ResolvedHighlightReaderTarget
 
 
 class ReaderProfileOut(BaseModel):

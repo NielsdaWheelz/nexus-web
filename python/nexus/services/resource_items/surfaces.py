@@ -179,6 +179,7 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
         activation=activation,
         missing=resolved.missing,
         capabilities=ResourceItemCapabilitiesOut(
+            sharing=capability.sharing,
             user_relation=ResourceUserRelationPolicyOut(
                 user_link_source=capability.user_relation.user_link_source,
                 user_link_target=capability.user_relation.user_link_target,

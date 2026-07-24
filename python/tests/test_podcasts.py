@@ -10201,6 +10201,15 @@ class TestSubscribeWithLibraryIds:
             )
             session.commit()
 
+        _set_plan(
+            auth_client,
+            user_id,
+            user_id,
+            plan_tier="free",
+            transcription_minutes_limit_monthly=0,
+            initial_episode_window=5,
+        )
+
         # Add a NEW episode to the mocked feed for the next sync run.
         new_episode = {
             "provider_episode_id": "inherit-ep-2",

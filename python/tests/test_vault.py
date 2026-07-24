@@ -715,6 +715,7 @@ def _seed_article_highlight(
             end_offset=end,
         )
     )
+    session.flush()
     set_highlight_note_body_pm_json(
         session,
         user_id,

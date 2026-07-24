@@ -5,6 +5,10 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import HighlightActionBar from "./HighlightActionBar";
 
+vi.mock("@/lib/sharing/controller", () => ({
+  useShareController: () => ({ openShare: vi.fn() }),
+}));
+
 const highlight: AnchoredReaderRow = { id: "h1", exact: "hello", color: "yellow" };
 
 afterEach(() => {
@@ -111,6 +115,7 @@ describe("HighlightActionBar — existing (menu)", () => {
     await user.click(screen.getByRole("button", { name: "Highlight actions" }));
 
     expect(screen.getByRole("group", { name: "Highlight color" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Share…" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Ask in new chat" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Ask in existing chat…" })).toBeInTheDocument();
     expect(
@@ -159,7 +164,7 @@ describe("HighlightActionBar — existing (menu)", () => {
     expect(onAddNote).toHaveBeenCalledTimes(1);
   });
 
-  it("renders no trigger when there are no actions", () => {
+  it("renders no trigger when a read-only highlight has no available actions", () => {
     setupExisting(
       {
         highlight: { id: "h1", exact: "hello", color: "yellow", is_owner: false },
@@ -168,7 +173,9 @@ describe("HighlightActionBar — existing (menu)", () => {
       "menu",
     );
 
-    expect(screen.queryByRole("button", { name: "Highlight actions" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Highlight actions" }),
+    ).toBeNull();
   });
 });
 
@@ -183,6 +190,7 @@ describe("HighlightActionBar — selection", () => {
           selectionColor="yellow"
           canQuoteToChat
           busy={false}
+          onShare={vi.fn()}
           onSelectColor={onSelectColor}
           onQuoteToNewChat={vi.fn()}
           onQuoteToExistingChat={vi.fn()}
@@ -210,6 +218,7 @@ describe("HighlightActionBar — selection", () => {
           canQuoteToChat
           canAddNote
           busy={false}
+          onShare={vi.fn()}
           onSelectColor={vi.fn()}
           onAddNote={onAddNote}
           onQuoteToNewChat={vi.fn()}
@@ -233,6 +242,7 @@ describe("HighlightActionBar — selection", () => {
           selectionColor="yellow"
           canQuoteToChat
           busy
+          onShare={vi.fn()}
           onSelectColor={onSelectColor}
           onQuoteToNewChat={onQuoteToNewChat}
           onQuoteToExistingChat={onQuoteToExistingChat}

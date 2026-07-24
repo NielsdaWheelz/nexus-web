@@ -35,3 +35,15 @@ class TestHealthEndpoint:
         """Health endpoint returns JSON content type."""
         response = client.get("/health")
         assert response.headers["content-type"] == "application/json"
+
+    def test_health_reports_cutover_revision(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        revision = "0123456789abcdef0123456789abcdef01234567"
+        monkeypatch.setenv("CUTOVER_SHA", revision)
+
+        response = client.get("/health")
+
+        assert response.json()["data"]["cutover_sha"] == revision

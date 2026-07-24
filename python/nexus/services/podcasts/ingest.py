@@ -22,7 +22,9 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.library_entries import assign_libraries_for_media_in_current_transaction
+from nexus.services.library_entries import (
+    materialize_subscription_episode_libraries_in_current_transaction,
+)
 from nexus.services.rss_transcript_fetch import fetch_rss_transcript
 from nexus.services.transcript_segments import normalize_transcript_segments
 from nexus.services.transcripts.current import (
@@ -95,18 +97,6 @@ def sync_subscription_ingest(
     author_observations: list[tuple[UUID, ObservedRoleSlices]] = []
     chapter_sync_rows: list[tuple[UUID, list[dict[str, Any]] | None]] = []
     transcript_sync_rows: list[dict[str, Any]] = []
-    subscription_library_rows = db.execute(
-        text(
-            """
-            SELECT library_id
-            FROM podcast_subscription_libraries
-            WHERE subscription_user_id = :user_id
-              AND subscription_podcast_id = :podcast_id
-            """
-        ),
-        {"user_id": viewer_id, "podcast_id": podcast_id},
-    ).fetchall()
-    subscription_library_ids: list[UUID] = [row[0] for row in subscription_library_rows]
     podcast_contributors = load_contributor_credits_for_podcasts(db, [podcast_id]).get(
         podcast_id,
         [],
@@ -158,8 +148,8 @@ def sync_subscription_ingest(
         media_id: UUID
         if existing_media_id is not None:
             media_id = existing_media_id
-            assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, subscription_library_ids
+            materialize_subscription_episode_libraries_in_current_transaction(
+                db, viewer_id, podcast_id, media_id
             )
             db.execute(
                 text(
@@ -331,8 +321,8 @@ def sync_subscription_ingest(
                 author_observations.append((media_id, observation))
             if not author_names:
                 enrichment_media_ids.add(media_id)
-            assign_libraries_for_media_in_current_transaction(
-                db, viewer_id, media_id, subscription_library_ids
+            materialize_subscription_episode_libraries_in_current_transaction(
+                db, viewer_id, podcast_id, media_id
             )
             ingested_episode_count += 1
             enrichment_media_ids.add(media_id)

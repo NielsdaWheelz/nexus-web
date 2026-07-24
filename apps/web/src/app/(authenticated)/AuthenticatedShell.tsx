@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/resourceCache";
 import type { ReaderProfile } from "@/lib/reader/types";
 import type { RenderEnvironment } from "@/lib/renderEnvironment/types";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import styles from "./layout.module.css";
 
 export default function AuthenticatedShell({
@@ -105,19 +106,21 @@ function AuthenticatedWorkspace({ initialState }: { initialState: WorkspaceState
               session (spec §3 architecture): LecternProvider -> leaves ->
               GlobalPlayerProvider -> WorkspaceHost + GlobalPlayerFooter. */}
           <LecternProvider>
-            <Launcher />
-            <div className={styles.layout} data-hydrated={hydrated || undefined}>
-              <AppNav />
-              <main className={styles.main}>
-                <GlobalPlayerProvider>
-                  <WalknoteSessionProvider>
-                    <WorkspaceHost />
-                    <LecternMutationNotice />
-                    <GlobalPlayerFooter />
-                  </WalknoteSessionProvider>
-                </GlobalPlayerProvider>
-              </main>
-            </div>
+            <ShareControllerProvider>
+              <Launcher />
+              <div className={styles.layout} data-hydrated={hydrated || undefined}>
+                <AppNav />
+                <main className={styles.main}>
+                  <GlobalPlayerProvider>
+                    <WalknoteSessionProvider>
+                      <WorkspaceHost />
+                      <LecternMutationNotice />
+                      <GlobalPlayerFooter />
+                    </WalknoteSessionProvider>
+                  </GlobalPlayerProvider>
+                </main>
+              </div>
+            </ShareControllerProvider>
           </LecternProvider>
         </MobileChromeProvider>
       </WorkspaceStoreProvider>

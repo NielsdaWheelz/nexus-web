@@ -16,7 +16,9 @@ import pytest
 from sqlalchemy import text
 
 from nexus.db.models import MediaKind
+from nexus.ids import new_uuid7
 from nexus.services import library_entries, library_governance
+from nexus.services.billing_entitlements import grant_entitlement_override
 from tests.factories import (
     add_library_member,
     create_test_library,
@@ -64,6 +66,91 @@ def _library_entry_ids_for_media(direct_db: DirectSessionManager, media_id: UUID
 
 class TestPostMediaLibrariesEndpoint:
     """Tests for POST /media/{id}/libraries — additive multi-library attach."""
+
+    @pytest.mark.parametrize(
+        "media_kind",
+        [
+            MediaKind.web_article.value,
+            MediaKind.epub.value,
+            MediaKind.pdf.value,
+            MediaKind.video.value,
+            MediaKind.podcast_episode.value,
+        ],
+    )
+    def test_grant_only_reader_can_explicitly_file_without_default_insert(
+        self,
+        auth_client,
+        direct_db: DirectSessionManager,
+        media_kind: str,
+    ) -> None:
+        sharer_id = create_test_user_id()
+        recipient_id = create_test_user_id()
+        sharer_default_id = _bootstrap_user(auth_client, sharer_id)
+        recipient_default_id = _bootstrap_user(auth_client, recipient_id)
+
+        with direct_db.session() as session:
+            media_id = create_test_media(
+                session,
+                title=f"Grant-only {media_kind}",
+                kind=media_kind,
+            )
+            recipient_library_id = create_test_library(
+                session,
+                recipient_id,
+                f"Filed {media_kind}",
+            )
+            library_entries.ensure_media_in_default_library(
+                session,
+                sharer_id,
+                media_id,
+            )
+            session.execute(
+                text("""
+                    INSERT INTO resource_grants (
+                        id,
+                        subject_scheme,
+                        subject_id,
+                        created_by_user_id,
+                        grantee_user_id
+                    )
+                    VALUES (
+                        :id,
+                        'media',
+                        :media_id,
+                        :sharer_id,
+                        :recipient_id
+                    )
+                """),
+                {
+                    "id": new_uuid7(),
+                    "media_id": media_id,
+                    "sharer_id": sharer_id,
+                    "recipient_id": recipient_id,
+                },
+            )
+            session.commit()
+
+        direct_db.register_cleanup("resource_grants", "subject_id", media_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", recipient_library_id)
+        direct_db.register_cleanup("libraries", "id", recipient_library_id)
+
+        response = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(recipient_library_id)]},
+            headers=auth_headers(recipient_id),
+        )
+
+        assert response.status_code == 204, response.text
+        assert _library_entry_ids_for_media(direct_db, media_id) == {
+            sharer_default_id,
+            recipient_library_id,
+        }
+        assert recipient_default_id not in _library_entry_ids_for_media(
+            direct_db,
+            media_id,
+        )
 
     def test_post_media_libraries_adds_set(self, auth_client, direct_db: DirectSessionManager):
         """Posting a set of accessible library ids adds them all in one call."""
@@ -141,6 +228,126 @@ class TestPostMediaLibrariesEndpoint:
 
         memberships = _library_entry_ids_for_media(direct_db, media_id)
         assert memberships == {default_library_id, lib_a, lib_b}
+
+    def test_shared_library_filing_requires_plus_only_for_new_access(
+        self, auth_client, direct_db: DirectSessionManager
+    ) -> None:
+        viewer_id = create_test_user_id()
+        member_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, member_id)
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Shared filing billing")
+            library_id = create_test_library(session, viewer_id, "Shared destination")
+            add_library_member(session, library_id, member_id, role="member")
+        direct_db.register_cleanup("billing_entitlement_overrides", "user_id", viewer_id)
+        direct_db.register_cleanup("billing_entitlement_override_events", "user_id", viewer_id)
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
+
+        blocked = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(library_id)]},
+            headers=auth_headers(viewer_id),
+        )
+        assert blocked.status_code == 402, blocked.text
+        assert blocked.json()["error"]["code"] == "E_BILLING_REQUIRED"
+        assert library_id not in _library_entry_ids_for_media(direct_db, media_id)
+
+        with direct_db.session() as session:
+            grant_entitlement_override(
+                session,
+                user_id=viewer_id,
+                plan_tier="plus",
+                platform_token_quota_mode="plan",
+                platform_token_limit_monthly=None,
+                transcription_quota_mode="plan",
+                transcription_minutes_limit_monthly=None,
+                expires_at=None,
+                reason="shared filing test",
+                actor_label="test",
+            )
+        allowed = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(library_id)]},
+            headers=auth_headers(viewer_id),
+        )
+        assert allowed.status_code == 204, allowed.text
+
+        with direct_db.session() as session:
+            session.execute(
+                text("""
+                    UPDATE billing_entitlement_overrides
+                    SET revoked_at = now()
+                    WHERE user_id = :user_id
+                """),
+                {"user_id": viewer_id},
+            )
+            session.commit()
+        idempotent = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(library_id)]},
+            headers=auth_headers(viewer_id),
+        )
+        assert idempotent.status_code == 204, idempotent.text
+
+    def test_pending_invitation_makes_filing_an_access_increase(
+        self, auth_client, direct_db: DirectSessionManager
+    ) -> None:
+        viewer_id = create_test_user_id()
+        invitee_id = create_test_user_id()
+        _bootstrap_user(auth_client, viewer_id)
+        _bootstrap_user(auth_client, invitee_id)
+        invitation_id = uuid4()
+        with direct_db.session() as session:
+            media_id = create_test_media(session, title="Pending invitation billing")
+            library_id = create_test_library(session, viewer_id, "Pending destination")
+            session.execute(
+                text("""
+                    INSERT INTO library_invitations (
+                        id,
+                        library_id,
+                        inviter_user_id,
+                        invitee_user_id,
+                        role,
+                        status
+                    )
+                    VALUES (
+                        :id,
+                        :library_id,
+                        :viewer_id,
+                        :invitee_id,
+                        'member',
+                        'pending'
+                    )
+                """),
+                {
+                    "id": invitation_id,
+                    "library_id": library_id,
+                    "viewer_id": viewer_id,
+                    "invitee_id": invitee_id,
+                },
+            )
+            session.commit()
+        direct_db.register_cleanup("library_entries", "media_id", media_id)
+        direct_db.register_cleanup("media", "id", media_id)
+        direct_db.register_cleanup("memberships", "library_id", library_id)
+        direct_db.register_cleanup("libraries", "id", library_id)
+        direct_db.register_cleanup("library_invitations", "id", invitation_id)
+        _attach_media_to_default_library(auth_client, direct_db, viewer_id, media_id)
+
+        response = auth_client.post(
+            f"/media/{media_id}/libraries",
+            json={"library_ids": [str(library_id)]},
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 402, response.text
+        assert response.json()["error"]["code"] == "E_BILLING_REQUIRED"
+        assert library_id not in _library_entry_ids_for_media(direct_db, media_id)
 
     def test_post_media_libraries_preserves_existing_and_adds_missing(
         self, auth_client, direct_db: DirectSessionManager

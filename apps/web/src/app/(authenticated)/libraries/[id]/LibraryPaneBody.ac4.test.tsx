@@ -21,6 +21,7 @@ import {
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
 // A pane host whose href is real state, so a pane-router replace (the library
@@ -39,25 +40,27 @@ function StatefulLibraryPane({
   return (
     <FeedbackProvider>
       <ResourceCacheProvider value={resources}>
-        <PaneRuntimeProvider
-          paneId="pane-1"
-          isActive
-          href={href}
-          routeId={identity.routeId}
-          routeKey={identity.routeKey}
-          pathParams={{ id: LIBRARY_ID }}
-          canGoBack={false}
-          canGoForward={false}
-          onNavigatePane={(_paneId: string, next: string) => setHref(next)}
-          onReplacePane={(_paneId: string, next: string) => setHref(next)}
-          onOpenInNewPane={vi.fn()}
-          onGoBackPane={vi.fn()}
-          onGoForwardPane={vi.fn()}
-        >
-          <LecternProvider>
-            <LibraryPaneBody />
-          </LecternProvider>
-        </PaneRuntimeProvider>
+        <ShareControllerProvider>
+          <PaneRuntimeProvider
+            paneId="pane-1"
+            isActive
+            href={href}
+            routeId={identity.routeId}
+            routeKey={identity.routeKey}
+            pathParams={{ id: LIBRARY_ID }}
+            canGoBack={false}
+            canGoForward={false}
+            onNavigatePane={(_paneId: string, next: string) => setHref(next)}
+            onReplacePane={(_paneId: string, next: string) => setHref(next)}
+            onOpenInNewPane={vi.fn()}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+          >
+            <LecternProvider>
+              <LibraryPaneBody />
+            </LecternProvider>
+          </PaneRuntimeProvider>
+        </ShareControllerProvider>
       </ResourceCacheProvider>
     </FeedbackProvider>
   );
@@ -70,11 +73,14 @@ function StatefulLibraryPane({
 // fetch `/api/libraries/<id>`. We exercise the real useResource → apiFetch →
 // global fetch path (apiFetch is NOT mocked) and assert the library GET never
 // fires. `usePanePrimaryChrome` / `usePaneSecondary` no-op without their
-// contexts, so the minimal harness is FeedbackProvider + PaneRuntimeProvider.
+// contexts, so the minimal harness is FeedbackProvider + ShareControllerProvider
+// + PaneRuntimeProvider.
 
 const LIBRARY_ID = "ac4-library";
 const LIBRARY_NAME = "AC-4 Seeded Library";
 const ACTION_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+const OWNER_USER_HANDLE =
+  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
 
 function seededLibrary() {
   // Minimal valid Library in the loader's composed shape. `entries: []` keeps
@@ -84,13 +90,15 @@ function seededLibrary() {
     id: LIBRARY_ID,
     name: LIBRARY_NAME,
     color: "#0ea5e9",
-    is_default: false,
+    isDefault: false,
     role: "admin",
-    owner_user_id: "user-1",
-    system_key: null,
-    can_rename: true,
-    can_delete: true,
-    can_edit_entries: true,
+    ownerUserHandle: OWNER_USER_HANDLE,
+    systemKey: null,
+    canRename: true,
+    canDelete: true,
+    canEditEntries: true,
+    canManageMembers: true,
+    canTransferOwnership: true,
   };
 }
 
@@ -100,13 +108,15 @@ function seededSystemLibraryWithMutableMedia() {
       id: LIBRARY_ID,
       name: "Oracle Corpus",
       color: null,
-      is_default: false,
+      isDefault: false,
       role: "admin",
-      owner_user_id: "user-1",
-      system_key: "oracle_corpus",
-      can_rename: false,
-      can_delete: false,
-      can_edit_entries: false,
+      ownerUserHandle: OWNER_USER_HANDLE,
+      systemKey: "oracle_corpus",
+      canRename: false,
+      canDelete: false,
+      canEditEntries: false,
+      canManageMembers: false,
+      canTransferOwnership: false,
     },
     entries: [
       seededMediaEntry("entry-1", "media-1", "Corpus Work", {
@@ -358,6 +368,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       const add = update?.publication?.options?.find(
         (option) => option.id === "add-content",
       );
+      expect(
+        update?.publication?.options?.filter(
+          (option) => option.id === "share",
+        ) ?? [],
+      ).toHaveLength(0);
       expect(add?.kind).toBe("command");
       if (add?.kind !== "command")
         throw new Error("Add content command was not published");
@@ -420,10 +435,10 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
       screen.queryByRole("menuitem", { name: "Re-enrich metadata" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "Libraries..." }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("menuitem", { name: "Share…" }),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "Delete document" }),
+      screen.queryByRole("menuitem", { name: "Remove media" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1163,12 +1178,11 @@ describe("LibraryPaneBody (AC-4 hydration hit)", () => {
     await waitFor(() =>
       expect(screen.queryByText("First Work")).not.toBeInTheDocument(),
     );
-    await waitFor(() => {
-      const secondRow = screen
-        .getByText("Second Work")
-        .closest("[data-collection-row-id]");
-      expect(secondRow?.contains(document.activeElement)).toBe(true);
-    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Second Work" }),
+      ).toHaveFocus(),
+    );
   });
 
   // Regression: under Hide finished, marking the only visible row(s) on a page

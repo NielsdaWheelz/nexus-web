@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
 from nexus.auth.permissions import (
+    can_read_highlight,
     can_read_media,
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
@@ -35,7 +36,8 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.services import text_quote
+from nexus.schemas.reader import ResolvedHighlightReaderTarget
+from nexus.services import locator_resolver, text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlight_access import (
     get_highlight_for_author_write_or_404,
@@ -780,6 +782,24 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
     return project_highlight_with_links(db, viewer_id, highlight)
 
 
+def get_highlight_reader_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    highlight_id: UUID,
+) -> ResolvedHighlightReaderTarget:
+    """Return the exact current reader target through one masked read boundary."""
+    if not can_read_highlight(db, viewer_id, highlight_id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
+    target = locator_resolver.resolve_highlight_reader_target(
+        db,
+        highlight_id=highlight_id,
+    )
+    if target is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
+    return target
+
+
 def update_highlight(
     db: Session, viewer_id: UUID, highlight_id: UUID, req: UpdateHighlightRequest
 ) -> TypedHighlightOut:
@@ -901,20 +921,48 @@ def update_highlight(
 def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
     """Explicit child-first deletion of one Highlight (no DB cascades remain).
 
-    Order: graph edges with their view states plus the author's protocol state,
-    then PDF quads, then PDF/fragment anchor rows, then the Highlight root —
-    the single-highlight form of media_deletion.py's owner-wide block.
-    Flush-only: runs inside the caller's transaction.
+    Locks parent media then highlight, re-reads the subject, removes grants,
+    graph/protocol state, anchors, and the root, then admits last-reference
+    document teardown. Runs inside the caller's transaction.
     """
-    ref = ResourceRef(scheme="highlight", id=highlight.id)
-    delete_edges_for_deleted_resource(db, ref=ref)
-    delete_resource_protocol_state(db, viewer_id=highlight.user_id, ref=ref)
-    db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == highlight.id))
-    db.execute(delete(HighlightPdfAnchor).where(HighlightPdfAnchor.highlight_id == highlight.id))
-    db.execute(
-        delete(HighlightFragmentAnchor).where(HighlightFragmentAnchor.highlight_id == highlight.id)
+    media_id = highlight.anchor_media_id
+    if media_id is None:
+        # justify-defect: every runtime highlight deletion is reached through
+        # the canonical typed-anchor read boundary.
+        raise AssertionError("typed highlight has no parent media")
+    media_exists = db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
+    if media_exists is None:
+        # justify-defect: the non-cascading highlight parent FK forbids this.
+        raise AssertionError("highlight parent media is missing")
+    locked = db.scalar(
+        select(Highlight)
+        .where(
+            Highlight.id == highlight.id,
+            Highlight.anchor_media_id == media_id,
+        )
+        .with_for_update()
     )
-    db.execute(delete(Highlight).where(Highlight.id == highlight.id))
+    if locked is None:
+        return
+
+    ref = ResourceRef(scheme="highlight", id=locked.id)
+    from nexus.services import resource_grants
+
+    resource_grants.delete_exact_subject(db, ref)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    delete_resource_protocol_state(db, viewer_id=locked.user_id, ref=ref)
+    db.execute(delete(HighlightPdfQuad).where(HighlightPdfQuad.highlight_id == locked.id))
+    db.execute(delete(HighlightPdfAnchor).where(HighlightPdfAnchor.highlight_id == locked.id))
+    db.execute(
+        delete(HighlightFragmentAnchor).where(HighlightFragmentAnchor.highlight_id == locked.id)
+    )
+    db.execute(delete(Highlight).where(Highlight.id == locked.id))
+
+    from nexus.services.media_deletion import (
+        claim_document_teardown_if_unreferenced_locked,
+    )
+
+    claim_document_teardown_if_unreferenced_locked(db, media_id)
 
 
 def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:

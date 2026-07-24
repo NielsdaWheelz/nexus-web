@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiError, ApiErrorCode
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.services.content_indexing import (
     IndexOwner,
@@ -64,12 +64,20 @@ def write_current_transcript(
     """Replace the current transcript and optionally make the media readable.
 
     Runs in the CALLER's transaction (transaction() is non-reentrant). Holds
-    `pg_advisory_xact_lock('transcript-current:{media_id}')` across the whole
-    sequence: remove current transcript fragments/segments, insert the new current
-    rows, rebuild the semantic index, and record the media transcript state.
+    A Media FOR UPDATE lock is the shared publication boundary with public
+    readers; it is acquired before the transcript-specific advisory lock and
+    held across the whole sequence: remove current transcript fragments/segments,
+    insert the new current rows, rebuild the semantic index, and record the media
+    transcript state.
     Source-attempt materializers pass `mark_media_ready=False`; the source owner
     records terminal media success after the adapter returns.
     """
+    locked_media_id = db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+        {"media_id": media_id},
+    ).scalar()
+    if locked_media_id is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
         {"lock_key": f"transcript-current:{media_id}"},

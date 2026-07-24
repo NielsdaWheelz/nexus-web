@@ -23989,3 +23989,94 @@ class TestMigration0190ResourceInspectorAndUniversalDossiers:
             reset_test_schema()
             run_alembic_command("upgrade head")
             engine.dispose()
+
+
+class TestUniversalResourceSharingMigration:
+    def test_0188_to_0191_upgrade_downgrade_upgrade_contract(self):
+        reset_test_schema()
+        assert run_alembic_command("upgrade 0188").returncode == 0
+        engine = create_engine(get_test_database_url())
+        try:
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT to_regclass('resource_grants')")) is None
+
+            result = run_alembic_command("upgrade 0191")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+
+            result = run_alembic_command("downgrade 0190")
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                assert connection.scalar(text("SELECT to_regclass('resource_grants')")) is None
+
+            result = run_alembic_command("upgrade 0191")
+            assert result.returncode == 0, result.stderr
+            self._assert_contract(engine)
+        finally:
+            reset_test_schema()
+            run_alembic_command("upgrade head")
+            engine.dispose()
+
+    @staticmethod
+    def _assert_contract(engine) -> None:
+        with engine.connect() as connection:
+            columns = connection.execute(
+                text(
+                    """
+                    SELECT column_name, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = 'resource_grants'
+                    ORDER BY ordinal_position
+                    """
+                )
+            ).all()
+            assert [row[0] for row in columns] == [
+                "id",
+                "subject_scheme",
+                "subject_id",
+                "created_by_user_id",
+                "grantee_user_id",
+                "share_token",
+                "share_token_hash",
+                "created_at",
+            ]
+            assert columns[0][2] is None
+            assert columns[-1][2] == "now()"
+
+            indexes = set(
+                connection.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename = 'resource_grants'")
+                ).scalars()
+            )
+            assert {
+                "pk_resource_grants",
+                "uq_resource_grants_share_token_hash",
+                "ix_resource_grants_subject",
+                "ix_resource_grants_recipient_subject",
+                "ix_resource_grants_creator_subject",
+            } <= indexes
+
+            foreign_keys = connection.execute(
+                text(
+                    """
+                    SELECT a.attname, confdeltype
+                    FROM pg_constraint c
+                    JOIN pg_attribute a
+                      ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                    WHERE c.conrelid = 'resource_grants'::regclass
+                      AND c.contype = 'f'
+                    ORDER BY a.attname
+                    """
+                )
+            ).all()
+            assert foreign_keys == [
+                ("created_by_user_id", "a"),
+                ("grantee_user_id", "a"),
+            ]
+            checks = connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_constraint "
+                    "WHERE conrelid = 'resource_grants'::regclass AND contype = 'c'"
+                )
+            )
+            assert checks == 0

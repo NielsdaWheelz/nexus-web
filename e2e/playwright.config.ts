@@ -90,7 +90,7 @@ export default defineConfig({
       command: `cd .. && make reader-profile-upstream-proxy-e2e`,
       url: `http://localhost:${READER_PROXY_PORT}/__e2e/health`,
       reuseExistingServer: false,
-      timeout: 30_000,
+      timeout: 180_000,
       env: {
         READER_PROXY_PORT,
         API_PORT,
@@ -115,7 +115,7 @@ export default defineConfig({
       command: `cd .. && make api-e2e`,
       url: `http://localhost:${API_PORT}/health`,
       reuseExistingServer: false,
-      timeout: 30_000,
+      timeout: 180_000,
       env: {
         ...appRuntimeEnv,
         NEXUS_ENV: RUNTIME_ENV,

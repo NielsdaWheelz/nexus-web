@@ -1,83 +1,180 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/lib/api/client";
-import { fetchEditableLibrarySharing } from "./sharing";
+import {
+  acceptLibraryInvite,
+  decodeViewerLibraryInvites,
+  fetchEditableLibrarySharing,
+} from "./sharing";
 
 vi.mock("@/lib/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api/client")>(
     "@/lib/api/client",
   );
-  return {
-    ...actual,
-    apiFetch: vi.fn(),
-  };
+  return { ...actual, apiFetch: vi.fn() };
 });
 
 const apiFetchMock = vi.mocked(apiFetch);
+const OWNER_HANDLE =
+  "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const INVITEE_HANDLE =
+  "nus1.CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
+const INVITATION_HANDLE =
+  "nli1.EEEEEEEEEEEEEEEEEEEEEE.FFFFFFFFFFFFFFFFFFFFFF";
+const library = {
+  id: "library-1",
+  name: "Research",
+  color: null,
+  ownerUserHandle: OWNER_HANDLE,
+  isDefault: false,
+  role: "admin",
+  systemKey: null,
+  canRename: true,
+  canDelete: true,
+  canEditEntries: true,
+  canManageMembers: true,
+  canTransferOwnership: true,
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+};
+const invite = {
+  invitationHandle: INVITATION_HANDLE,
+  libraryId: "library-1",
+  inviterUserHandle: OWNER_HANDLE,
+  inviteeUserHandle: INVITEE_HANDLE,
+  role: "member",
+  status: "pending",
+  inviteeEmail: "invitee@example.test",
+  inviteeDisplayName: "Invitee",
+  createdAt: "2026-01-01T00:00:00Z",
+  respondedAt: null,
+};
+const viewerInvite = { ...invite, libraryName: "Research" };
 
-describe("fetchEditableLibrarySharing", () => {
+describe("library sharing client", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
   });
 
-  it("returns empty sharing for non-admin libraries without fetching", async () => {
-    await expect(
-      fetchEditableLibrarySharing({ id: "library-1", role: "member" }),
-    ).resolves.toEqual({ members: [], invites: [] });
+  it("returns the server-governed role without fetching admin lists", async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      data: { ...library, role: "member", canManageMembers: false, canTransferOwnership: false },
+    });
 
-    expect(apiFetchMock).not.toHaveBeenCalled();
+    await expect(fetchEditableLibrarySharing("library-1")).resolves.toEqual({
+      library: {
+        id: "library-1",
+        name: "Research",
+        ownerUserHandle: OWNER_HANDLE,
+        isDefault: false,
+        systemKey: null,
+        role: "member",
+        canManageMembers: false,
+        canTransferOwnership: false,
+      },
+      members: [],
+      invites: [],
+    });
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("fetches members and invites for admin libraries", async () => {
+  it("decodes sealed member and invitation identities for admins", async () => {
     apiFetchMock
+      .mockResolvedValueOnce({ data: library })
       .mockResolvedValueOnce({
         data: [
           {
-            user_id: "user-1",
+            userHandle: OWNER_HANDLE,
             role: "admin",
-            is_owner: true,
-            created_at: "2026-01-01T00:00:00Z",
+            isOwner: true,
+            email: "owner@example.test",
+            displayName: "Owner",
+            createdAt: "2026-01-01T00:00:00Z",
           },
         ],
       })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            id: "invite-1",
-            library_id: "library-1",
-            inviter_user_id: "user-1",
-            invitee_user_id: "user-2",
-            role: "member",
-            status: "pending",
-            created_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-      });
+      .mockResolvedValueOnce({ data: [invite] });
 
-    await expect(
-      fetchEditableLibrarySharing({ id: "library-1", role: "admin" }),
-    ).resolves.toEqual({
-      members: [
-        {
-          user_id: "user-1",
-          role: "admin",
-          is_owner: true,
-          created_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-      invites: [
-        {
-          id: "invite-1",
-          library_id: "library-1",
-          inviter_user_id: "user-1",
-          invitee_user_id: "user-2",
+    const result = await fetchEditableLibrarySharing("library-1");
+    expect(result.members[0]).toMatchObject({
+      userHandle: OWNER_HANDLE,
+      isOwner: true,
+    });
+    expect(result.invites[0]).toMatchObject({
+      invitationHandle: INVITATION_HANDLE,
+      inviteeUserHandle: INVITEE_HANDLE,
+    });
+    expect(apiFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/libraries/library-1/members",
+      { signal: undefined },
+    );
+    expect(apiFetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/libraries/library-1/invites",
+      { signal: undefined },
+    );
+    expect(apiFetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("decodes the viewer inbox and accepts through the sealed handle", async () => {
+    expect(decodeViewerLibraryInvites({ data: [viewerInvite] })).toEqual([
+      viewerInvite,
+    ]);
+    apiFetchMock.mockResolvedValueOnce({
+      data: {
+        invite: { ...invite, status: "accepted", respondedAt: "2026-01-02T00:00:00Z" },
+        membership: {
+          libraryId: "library-1",
+          userHandle: INVITEE_HANDLE,
           role: "member",
-          status: "pending",
-          created_at: "2026-01-01T00:00:00Z",
         },
-      ],
+        idempotent: false,
+      },
     });
 
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/libraries/library-1/members");
-    expect(apiFetchMock).toHaveBeenCalledWith("/api/libraries/library-1/invites");
+    await expect(acceptLibraryInvite(INVITATION_HANDLE)).resolves.toMatchObject({
+      invitationHandle: INVITATION_HANDLE,
+      status: "accepted",
+    });
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      `/api/libraries/invites/${INVITATION_HANDLE}/accept`,
+      { method: "POST" },
+    );
+  });
+
+  it("rejects a raw user id in accepted membership output", async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      data: {
+        invite: {
+          ...invite,
+          status: "accepted",
+          respondedAt: "2026-01-02T00:00:00Z",
+        },
+        membership: {
+          libraryId: "library-1",
+          userHandle: "raw-user-id",
+          role: "member",
+        },
+        idempotent: false,
+      },
+    });
+
+    await expect(acceptLibraryInvite(INVITATION_HANDLE)).rejects.toThrow(
+      "sealed-handle grammar",
+    );
+  });
+
+  it("rejects legacy raw identity fields", () => {
+    expect(() =>
+      decodeViewerLibraryInvites({
+        data: [
+          {
+            ...viewerInvite,
+            invitationHandle: undefined,
+            id: "raw-id",
+          },
+        ],
+      }),
+    ).toThrow(/expected/);
   });
 });

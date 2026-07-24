@@ -40,6 +40,7 @@ function resourceItem(overrides: Partial<ResourceItem> = {}): ResourceItem {
       expandable: false,
       adjacencySource: false,
       adjacencyTarget: true,
+      sharing: "ResourceGrants",
     },
     versionByLane: {},
     ...overrides,

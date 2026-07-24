@@ -10,6 +10,7 @@ from pydantic.alias_generators import to_camel
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.media import MediaOut
 from nexus.schemas.presence import Presence
+from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
@@ -63,24 +64,38 @@ class UpdateLibraryMemberRequest(BaseModel):
 
 
 class TransferLibraryOwnershipRequest(BaseModel):
-    new_owner_user_id: UUID = Field(..., description="User ID of the new owner")
+    new_owner_user_handle: UserHandle
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        validate_by_alias=True,
+        validate_by_name=False,
+        extra="forbid",
+    )
 
 
 class LibraryOut(BaseModel):
     id: UUID
     name: str
     color: str | None = None
-    owner_user_id: UUID
+    owner_user_handle: UserHandle
     is_default: bool
     role: LibraryRole
     system_key: str | None = None
     can_rename: bool
     can_delete: bool
     can_edit_entries: bool
+    can_manage_members: bool
+    can_transfer_ownership: bool
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class LibraryPageInfo(BaseModel):
@@ -153,21 +168,26 @@ class LibraryEntryOut(BaseModel):
 
 
 class LibraryMemberOut(BaseModel):
-    user_id: UUID
+    user_handle: UserHandle
     role: LibraryRole
     is_owner: bool
     email: str | None = None
     display_name: str | None = None
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class LibraryInvitationOut(BaseModel):
-    id: UUID
+    invitation_handle: LibraryInvitationHandle
     library_id: UUID
-    inviter_user_id: UUID
-    invitee_user_id: UUID
+    inviter_user_handle: UserHandle
+    invitee_user_handle: UserHandle
     role: LibraryRole
     status: LibraryInvitationStatusValue
     invitee_email: str | None = None
@@ -175,29 +195,63 @@ class LibraryInvitationOut(BaseModel):
     created_at: datetime
     responded_at: datetime | None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class ViewerLibraryInvitationOut(LibraryInvitationOut):
+    library_name: str
+
+
+class UserLibraryInvitee(BaseModel):
+    kind: Literal["User"]
+    user_handle: UserHandle
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        validate_by_alias=True,
+        validate_by_name=False,
+        extra="forbid",
+    )
+
+
+class EmailLibraryInvitee(BaseModel):
+    kind: Literal["Email"]
+    email: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+LibraryInvitee = Annotated[
+    UserLibraryInvitee | EmailLibraryInvitee,
+    Field(discriminator="kind"),
+]
 
 
 class CreateLibraryInviteRequest(BaseModel):
-    invitee_user_id: UUID | None = Field(default=None, description="User ID of the invitee")
-    invitee_email: str | None = Field(default=None, description="Email of the invitee")
+    invitee: LibraryInvitee
     role: LibraryRole = Field(
         ..., description="Role to assign to the invitee ('admin' or 'member')"
     )
 
-    @model_validator(mode="after")
-    def require_identifier(self) -> "CreateLibraryInviteRequest":
-        if self.invitee_user_id is None and self.invitee_email is None:
-            raise ValueError("Either invitee_user_id or invitee_email is required")
-        return self
+    model_config = ConfigDict(extra="forbid")
 
 
 class InviteAcceptMembershipOut(BaseModel):
     library_id: UUID
-    user_id: UUID
+    user_handle: UserHandle
     role: LibraryRole
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class AcceptLibraryInviteResponse(BaseModel):
@@ -205,11 +259,21 @@ class AcceptLibraryInviteResponse(BaseModel):
     membership: InviteAcceptMembershipOut
     idempotent: bool
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
 
 
 class DeclineLibraryInviteResponse(BaseModel):
     invite: LibraryInvitationOut
     idempotent: bool
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )

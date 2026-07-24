@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
-    highlight_shared_library_exists_sql,
+    highlight_visibility_sql,
     visible_media_ids_cte_sql,
 )
 from nexus.schemas.retrieval import retrieval_locator_json
@@ -129,7 +129,7 @@ def _search_highlights(
                         )
                     )
               )
-              AND {highlight_shared_library_exists_sql("h")}
+              AND {highlight_visibility_sql("h")}
             {scope_filter}
             ORDER BY score DESC, h.id ASC
             LIMIT :limit

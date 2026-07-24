@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import ok, ok_page
 from nexus.schemas.library import (
     AddPodcastRequest,
@@ -34,6 +34,7 @@ from nexus.schemas.library import (
 )
 from nexus.services import library_entries, library_governance, library_invitations
 from nexus.services.resonance import service as resonance_service
+from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
 
 router = APIRouter(tags=["libraries"])
 
@@ -57,12 +58,12 @@ def list_viewer_invites(
     Returns invites where invitee_user_id = viewer, ordered by created_at DESC.
     """
     result = library_invitations.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
-@router.post("/libraries/invites/{invite_id}/accept")
+@router.post("/libraries/invites/{invitation_handle}/accept")
 def accept_library_invite(
-    invite_id: UUID,
+    invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
@@ -71,13 +72,13 @@ def accept_library_invite(
     Invitee-only. Transactionally creates membership and upserts backfill job.
     Idempotent when already accepted.
     """
-    result = library_invitations.accept_library_invite(db, viewer.user_id, invite_id)
-    return ok(result)
+    result = library_invitations.accept_library_invite(db, viewer.user_id, invitation_handle)
+    return ok(result, by_alias=True)
 
 
-@router.post("/libraries/invites/{invite_id}/decline")
+@router.post("/libraries/invites/{invitation_handle}/decline")
 def decline_library_invite(
-    invite_id: UUID,
+    invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
@@ -85,13 +86,13 @@ def decline_library_invite(
 
     Invitee-only. Idempotent when already declined.
     """
-    result = library_invitations.decline_library_invite(db, viewer.user_id, invite_id)
-    return ok(result)
+    result = library_invitations.decline_library_invite(db, viewer.user_id, invitation_handle)
+    return ok(result, by_alias=True)
 
 
-@router.delete("/libraries/invites/{invite_id}", status_code=204)
+@router.delete("/libraries/invites/{invitation_handle}", status_code=204)
 def revoke_library_invite(
-    invite_id: UUID,
+    invitation_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
@@ -99,7 +100,7 @@ def revoke_library_invite(
 
     Admin/owner of the invite's library only. Idempotent when already revoked.
     """
-    library_invitations.revoke_library_invite(db, viewer.user_id, invite_id)
+    library_invitations.revoke_library_invite(db, viewer.user_id, invitation_handle)
     return Response(status_code=204)
 
 
@@ -120,7 +121,7 @@ def list_libraries(
     Returns libraries ordered by created_at ASC, id ASC.
     """
     result, page = library_governance.list_libraries(db, viewer.user_id, cursor=cursor, limit=limit)
-    return ok_page(result, page)
+    return ok_page(result, page, by_alias=True)
 
 
 @router.get("/libraries/writable-destinations")
@@ -155,7 +156,7 @@ def create_library(
     The viewer becomes the owner and admin of the new library.
     """
     result = library_governance.create_library(db, viewer.user_id, body.name)
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.get("/libraries/{library_id}")
@@ -169,7 +170,7 @@ def get_library(
     Viewer must be a member. Non-members get masked 404.
     """
     result = library_governance.get_library(db, viewer.user_id, library_id)
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.patch("/libraries/{library_id}")
@@ -184,7 +185,7 @@ def rename_library(
     Only admins can rename libraries. Cannot rename default library.
     """
     result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.delete("/libraries/{library_id}", status_code=204)
@@ -219,11 +220,10 @@ def create_library_invite(
         db,
         viewer.user_id,
         library_id,
-        body.invitee_user_id,
+        body.invitee,
         body.role,
-        invitee_email=body.invitee_email,
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 @router.get("/libraries/{library_id}/invites")
@@ -243,7 +243,7 @@ def list_library_invites(
     result = library_invitations.list_library_invites(
         db, viewer.user_id, library_id, status=status, limit=limit
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 # ---- Members ----
@@ -261,13 +261,13 @@ def list_library_members(
     Admin-only. Owner first, then admins, then members, then created_at ASC.
     """
     result = library_governance.list_library_members(db, viewer.user_id, library_id, limit=limit)
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
-@router.patch("/libraries/{library_id}/members/{user_id}")
+@router.patch("/libraries/{library_id}/members/{user_handle}")
 def update_library_member_role(
     library_id: UUID,
-    user_id: UUID,
+    user_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     body: UpdateLibraryMemberRequest,
     db: Annotated[Session, Depends(get_db)],
@@ -277,16 +277,20 @@ def update_library_member_role(
     Admin-only. Cannot change owner role.
     Default library forbidden.
     """
+    try:
+        user_id = unseal_user(user_handle)
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
     result = library_governance.update_library_member_role(
         db, viewer.user_id, library_id, user_id, body.role
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
-@router.delete("/libraries/{library_id}/members/{user_id}", status_code=204)
+@router.delete("/libraries/{library_id}/members/{user_handle}", status_code=204)
 def remove_library_member(
     library_id: UUID,
-    user_id: UUID,
+    user_handle: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
@@ -295,6 +299,10 @@ def remove_library_member(
     Admin-only. Cannot remove owner.
     Default library forbidden. Idempotent for absent targets.
     """
+    try:
+        user_id = unseal_user(user_handle)
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
     library_governance.remove_library_member(db, viewer.user_id, library_id, user_id)
     return Response(status_code=204)
 
@@ -314,10 +322,17 @@ def transfer_library_ownership(
     Owner-only. Target must be existing member. Previous owner stays admin.
     Default library forbidden.
     """
+    try:
+        new_owner_user_id = unseal_user(body.new_owner_user_handle)
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
     result = library_governance.transfer_library_ownership(
-        db, viewer.user_id, library_id, body.new_owner_user_id
+        db,
+        viewer.user_id,
+        library_id,
+        new_owner_user_id,
     )
-    return ok(result)
+    return ok(result, by_alias=True)
 
 
 # ---- Library Entries ----

@@ -1,17 +1,15 @@
 "use client";
 
-import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
-import LibraryMembershipPanel from "@/components/LibraryMembershipPanel";
 import CollectionView from "@/components/collections/CollectionView";
 import { presentEpisode } from "@/lib/collections/presenters/episode";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
-import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
@@ -27,6 +25,10 @@ import {
 } from "./episodeTranscript";
 import type { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
 import styles from "./page.module.css";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { useShareController } from "@/lib/sharing/controller";
+import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
+import { resourceShareTarget } from "@/lib/sharing/targets";
 
 type EpisodeTranscriptController = ReturnType<
   typeof useEpisodeTranscriptController
@@ -102,16 +104,8 @@ export default function PodcastEpisodeList({
   onDelete,
   onTogglePlayed,
 }: PodcastEpisodeListProps) {
-  // The per-episode library picker is lifted here (one panel for the list,
-  // keyed by the active episode) so the presenter ctx's `onManageLibraries`
-  // can anchor it without per-row hook state.
-  const [membershipEpisodeId, setMembershipEpisodeId] = useState<string | null>(
-    null,
-  );
-  const [membershipTriggerEl, setMembershipTriggerEl] =
-    useState<HTMLElement | null>(null);
-  const membership = useLibraryMembership(membershipEpisodeId);
-  const { loadLibraries } = membership;
+  const paneRuntime = usePaneRuntime();
+  const { openShare } = useShareController();
   const connectionSummaries = useConnectionSummaries(
     episodes.map((episode) => `media:${episode.id}`),
   );
@@ -179,11 +173,11 @@ export default function PodcastEpisodeList({
                 }
               }
             : undefined,
-        onManageLibraries: ({ triggerEl }) => {
-          setMembershipEpisodeId(episode.id);
-          setMembershipTriggerEl(triggerEl);
-          void loadLibraries();
-        },
+        onShare: ({ triggerEl }) =>
+          openShare(
+            resourceShareTarget(`media:${episode.id}`),
+            paneShareOpenOptions(triggerEl, paneRuntime?.paneId ?? ""),
+          ),
         onOpenChat: () => {
           onOpenChat(episode);
         },
@@ -359,26 +353,6 @@ export default function PodcastEpisodeList({
         }
       />
 
-      <LibraryMembershipPanel
-        open={membershipEpisodeId !== null}
-        title="Libraries"
-        anchorEl={membershipTriggerEl}
-        libraries={membership.libraries}
-        loading={membership.loading}
-        busy={membership.busy}
-        error={membership.error}
-        emptyMessage="No non-default libraries available."
-        onClose={() => {
-          setMembershipEpisodeId(null);
-          setMembershipTriggerEl(null);
-        }}
-        onAddToLibrary={(libraryId) => {
-          void membership.addToLibrary(libraryId);
-        }}
-        onRemoveFromLibrary={(libraryId) => {
-          void membership.removeFromLibrary(libraryId);
-        }}
-      />
     </div>
   );
 }

@@ -3,13 +3,17 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   NotebookPen,
+  Share2,
   TextSelect,
   Trash2,
 } from "lucide-react";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
-import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
+import type {
+  ActionSelectDetail,
+  PaneHeaderAction,
+} from "@/lib/ui/actionDescriptor";
 import { cx } from "@/lib/ui/cx";
 import styles from "./highlightActions.module.css";
 
@@ -48,6 +52,7 @@ export function buildHighlightActions({
     onSelectColor: (color: HighlightColor) => void;
     onAddNote?: () => void;
     onLink?: () => void;
+    onShare?: (detail: ActionSelectDetail) => void;
     onQuoteToNewChat: () => void;
     onQuoteToExistingChat: () => void;
     onToggleEditBounds: () => void;
@@ -104,6 +109,18 @@ export function buildHighlightActions({
       icon: <Link2 size={14} aria-hidden="true" />,
       disabled: !isExisting && state.changingColor,
       onSelect: handlers.onLink,
+    });
+  }
+
+  if (canEdit && handlers.onShare) {
+    options.push({
+      kind: "command",
+      id: "share",
+      label: "Share…",
+      icon: <Share2 size={14} aria-hidden="true" />,
+      disabled: !isExisting && state.changingColor,
+      restoreFocusOnClose: false,
+      onSelect: handlers.onShare,
     });
   }
 

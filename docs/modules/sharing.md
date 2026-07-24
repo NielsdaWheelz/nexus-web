@@ -1,9 +1,8 @@
-# Sharing
+# Inbound Capture Sharing
 
-Sharing covers inbound capture surfaces, not library membership management.
-The Android share sheet, `/share`, and media ingest services compose to save a
-shared item into the user's default library plus selected writable destination
-libraries.
+This module owns content received from Android or the `/share` web surface.
+Resource access grants and anonymous public reading are separately owned by
+[resource-sharing.md](resource-sharing.md).
 
 ## Owner Boundaries
 
@@ -44,17 +43,6 @@ already accepted source attempt is not duplicated.
 
 For non-URL text, `/share` quick-captures the text to today's daily note and does
 not show a library picker because libraries are media/podcast containers.
-
-## Invitation Acceptance And The Default List
-
-`library_invitations.accept_library_invite` is one transaction: membership
-upsert, then invite status update. The response is
-`{invite, membership, idempotent}`; accepting an already-accepted invite
-returns the same shape with `idempotent: true` and mutates nothing. There is
-no follow-up backfill job or projection step — the membership commit alone is
-what the accepting user's default library's list/count reflects on their
-very next read, because that list is a live query over current memberships,
-not a materialized or catch-up-able set (see [library.md](library.md)).
 
 ## Destination Contract
 

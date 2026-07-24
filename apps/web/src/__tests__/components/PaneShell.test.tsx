@@ -17,9 +17,13 @@ import type {
   PaneHeaderAction,
 } from "@/lib/ui/actionDescriptor";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
+import { routeShareTarget } from "@/lib/sharing/targets";
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
+}));
+const shareControllerMock = vi.hoisted(() => ({
+  openShare: vi.fn(),
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
@@ -34,6 +38,10 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
     onDocumentScroll: () => {},
     acquireVisibleLock: () => () => {},
   }),
+}));
+
+vi.mock("@/lib/sharing/controller", () => ({
+  useShareController: () => shareControllerMock,
 }));
 
 const disabledNavigation = {
@@ -83,7 +91,7 @@ const defaultPaneProps = {
   paneId: "pane-a",
   routeKey: "media:/media/media-1",
   routeHeader: sectionHeader,
-  href: "/libraries",
+  shareIdentity: routeShareTarget({ href: "/libraries", label: "Libraries" }),
   label: "Libraries",
   navigation: disabledNavigation,
   sizing: paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 }),
@@ -422,7 +430,10 @@ describe("PaneShell", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["Copy pane link", "Credits…"]);
+    ).toEqual(["Share…", "Credits…"]);
+    expect(
+      within(menu).getAllByRole("menuitem", { name: "Share…" }),
+    ).toHaveLength(1);
     expect(
       within(menu).queryByRole("menuitem", { name: "Companion" }),
     ).not.toBeInTheDocument();
@@ -479,7 +490,12 @@ describe("PaneShell", () => {
     ]);
     expect(
       publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Copy pane link", "Credits…"]);
+    ).toEqual(["Share…", "Credits…"]);
+    expect(
+      publication?.options.filter(
+        (option: ActionDescriptor) => option.id === "share",
+      ),
+    ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
   });

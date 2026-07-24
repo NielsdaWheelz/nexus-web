@@ -46,6 +46,7 @@ from nexus.services.document_embeds import (
 )
 from nexus.services.pdf_readiness import batch_pdf_quote_text_ready
 from nexus.services.playback_source import derive_playback_source
+from nexus.services.resource_grants import media_grant_path_exists_sql
 
 logger = get_logger(__name__)
 
@@ -163,8 +164,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "COALESCE(mcis.status, 'pending') AS retrieval_status",
     "mcis.status_reason AS retrieval_status_reason",
     f"""(
-        m.kind IN ('pdf', 'epub', 'web_article')
-        AND {non_system_media_ref_exists_sql("m.id")}
+        {non_system_media_ref_exists_sql("m.id")}
+        OR {media_grant_path_exists_sql("m.id")}
     ) AS can_delete""",
     """(
         SELECT ps.default_playback_speed

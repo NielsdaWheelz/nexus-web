@@ -11,6 +11,7 @@ import {
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 
 interface RenderHydratedPaneOptions {
   href: string;
@@ -56,7 +57,8 @@ export function renderHydratedPane({
   const view = render(
     <FeedbackProvider>
       <ResourceCacheProvider value={resources}>
-        <PaneRuntimeProvider
+        <ShareControllerProvider>
+          <PaneRuntimeProvider
           paneId={paneId}
           isActive={true}
           href={href}
@@ -73,13 +75,14 @@ export function renderHydratedPane({
           onGoForwardPane={onGoForwardPane}
           onSetPaneLabel={onSetPaneLabel}
           onSetPaneLayout={onSetPaneLayout}
-        >
-          <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
-            <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
-              {children}
-            </PaneFixedChromeContext.Provider>
-          </PaneSecondaryContext.Provider>
-        </PaneRuntimeProvider>
+          >
+            <PaneSecondaryContext.Provider value={onSetPaneSecondary}>
+              <PaneFixedChromeContext.Provider value={onSetPaneFixedChrome}>
+                {children}
+              </PaneFixedChromeContext.Provider>
+            </PaneSecondaryContext.Provider>
+          </PaneRuntimeProvider>
+        </ShareControllerProvider>
       </ResourceCacheProvider>
     </FeedbackProvider>,
   );
