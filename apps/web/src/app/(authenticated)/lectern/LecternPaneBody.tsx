@@ -236,7 +236,16 @@ export default function LecternPaneBody() {
   const queueRows = items.map((item) =>
     presentLecternItem(
       item,
-      (triggerEl) => handleRemove(item.itemId, triggerEl),
+      {
+        remove: (triggerEl) => handleRemove(item.itemId, triggerEl),
+        playback:
+          item.activation.kind === "FooterAudio"
+            ? {
+                kind: "Available",
+                execute: () => playAudio(descriptorFromLecternItem(item)),
+              }
+            : { kind: "Unavailable" },
+      },
       lecternActivityFacts(item),
     ),
   );

@@ -6,6 +6,35 @@ import { adaptSearchResultRow } from "./searchViewModel";
 // narrows an untrusted payload, adaptSearchResultRow shapes the row view model.
 // A row that survives normalize is the same row the API page would render.
 
+const DEFAULT_RESOURCE_ID = "11111111-1111-4111-8111-111111111111";
+
+function defaultResourceRef(type: unknown): string {
+  const scheme =
+    type === "episode" || type === "video"
+      ? "media"
+      : type === "web_result"
+        ? "external_snapshot"
+        : typeof type === "string" &&
+            [
+              "artifact_revision",
+              "content_chunk",
+              "contributor",
+              "conversation",
+              "evidence_span",
+              "fragment",
+              "highlight",
+              "media",
+              "message",
+              "note_block",
+              "page",
+              "podcast",
+              "reader_apparatus_item",
+            ].includes(type)
+          ? type
+          : "page";
+  return `${scheme}:${DEFAULT_RESOURCE_ID}`;
+}
+
 function adapt(row: Record<string, unknown>) {
   const normalized = normalizeSearchResult(withActivation(row));
   expect(normalized).not.toBeNull();
@@ -19,31 +48,32 @@ function normalize(row: Record<string, unknown>) {
 
 function withActivation(row: Record<string, unknown>) {
   const { activationHref, ...payload } = row;
-  const href = typeof activationHref === "string" ? activationHref : "/resource";
+  const href =
+    typeof activationHref === "string" ? activationHref : "/resource";
   const resourceRef =
     typeof payload.resource_ref === "string"
       ? payload.resource_ref
-      : typeof payload.type === "string" && typeof payload.id === "string"
-        ? `${payload.type}:${payload.id}`
-        : "page:page-1";
+      : defaultResourceRef(payload.type);
   const activation =
     payload.activation && typeof payload.activation === "object"
       ? payload.activation
       : {
-          resourceRef,
+          resource_ref: resourceRef,
           kind:
             href.startsWith("http://") || href.startsWith("https://")
               ? "external"
               : "route",
           href,
-          unresolvedReason: null,
+          unresolved_reason: null,
         };
   return {
     ...payload,
     resource_ref: resourceRef,
     activation,
     citation_target:
-      typeof row.citation_target === "string" ? row.citation_target : resourceRef,
+      typeof row.citation_target === "string"
+        ? row.citation_target
+        : resourceRef,
   };
 }
 
@@ -94,8 +124,13 @@ describe("normalizeSearchResult happy-path adaptation", () => {
     expect(row).toMatchObject({
       key: "content_chunk-chunk-7",
       activation: { href: "/media/media-pdf-1#evidence-span-1" },
-      resourceRef: "content_chunk:chunk-7",
-      citationTarget: "content_chunk:chunk-7",
+      actionTarget: {
+        kind: "Resource",
+        ref: `content_chunk:${DEFAULT_RESOURCE_ID}`,
+        missing: false,
+      },
+      resourceRef: `content_chunk:${DEFAULT_RESOURCE_ID}`,
+      citationTarget: `content_chunk:${DEFAULT_RESOURCE_ID}`,
       type: "content_chunk",
       typeLabel: "p. 12",
       primaryText: "section text",
@@ -392,7 +427,10 @@ describe("normalizeSearchResult happy-path adaptation", () => {
       resource_ref: "external_snapshot:33333333-3333-4333-8333-333333333333",
       citation_target: "external_snapshot:33333333-3333-4333-8333-333333333333",
       activationHref: "https://example.com/calypso",
-      context_ref: { type: "web_result", id: "33333333-3333-4333-8333-333333333333" },
+      context_ref: {
+        type: "web_result",
+        id: "33333333-3333-4333-8333-333333333333",
+      },
       locator: {
         type: "external_url",
         url: "https://example.com/calypso",
@@ -444,8 +482,7 @@ describe("normalizeSearchResult happy-path adaptation", () => {
         source_label: "Example",
         media_id: null,
         media_kind: null,
-        resource_ref:
-          "external_snapshot:33333333-3333-4333-8333-333333333333",
+        resource_ref: "external_snapshot:33333333-3333-4333-8333-333333333333",
         citation_target:
           "external_snapshot:33333333-3333-4333-8333-333333333333",
         activationHref: "https://example.com/calypso",
@@ -546,7 +583,9 @@ describe("normalizeSearchResult artifact handling", () => {
 
   it("rejects an artifact row whose context_ref type drifts from artifact", () => {
     expect(
-      normalize(artifactRow({ context_ref: { type: "page", id: conversationId } })),
+      normalize(
+        artifactRow({ context_ref: { type: "page", id: conversationId } }),
+      ),
     ).toBeNull();
   });
 
@@ -607,14 +646,14 @@ describe("normalizeSearchResult structural rejections", () => {
         source_label: "page",
         media_id: null,
         media_kind: null,
-        resource_ref: "page:page-1",
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
         activation: {
-          resourceRef: "page:page-1",
+          resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
           kind: "none",
           href: null,
-          unresolvedReason: "missing",
+          unresolved_reason: "missing",
         },
-        citation_target: "page:page-1",
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
         activationHref: "/pages/page-1",
         context_ref: { type: "page", id: "page-1" },
         description: "Page",
@@ -622,8 +661,58 @@ describe("normalizeSearchResult structural rejections", () => {
     ).toBeNull();
   });
 
-  it("rejects malformed activation instead of coercing it", () => {
-    expect(
+  it("defects before filtering a contradictory none activation", () => {
+    expect(() =>
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        activation: {
+          resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+          kind: "none",
+          href: `/pages/${DEFAULT_RESOURCE_ID}`,
+          unresolved_reason: "missing",
+        },
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
+        context_ref: { type: "page", id: DEFAULT_RESOURCE_ID },
+      }),
+    ).toThrow(
+      "SearchResult.actionTarget.activation.href must be null for none",
+    );
+  });
+
+  it("defects when search ref and activation identity disagree", () => {
+    expect(() =>
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        activation: {
+          resource_ref: "page:22222222-2222-4222-8222-222222222222",
+          kind: "route",
+          href: "/pages/22222222-2222-4222-8222-222222222222",
+          unresolved_reason: null,
+        },
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
+        context_ref: { type: "page", id: "page-1" },
+      }),
+    ).toThrow("SearchResult.actionTarget.ref must equal");
+  });
+
+  it("defects on malformed activation instead of coercing it", () => {
+    expect(() =>
       normalizeSearchResult({
         type: "page",
         id: "page-1",
@@ -635,19 +724,43 @@ describe("normalizeSearchResult structural rejections", () => {
         media_kind: null,
         resource_ref: "page:page-1",
         activation: {
-          resourceRef: "page:page-1",
+          resource_ref: "page:page-1",
           kind: "missing",
           href: "/pages/page-1",
-          unresolvedReason: null,
+          unresolved_reason: null,
         },
         citation_target: "page:page-1",
         context_ref: { type: "page", id: "page-1" },
       }),
-    ).toBeNull();
+    ).toThrow("SearchResult.activation.kind");
   });
 
-  it("rejects a row that has only the deleted deep_link navigation field", () => {
-    expect(
+  it("defects on the removed camelCase activation compatibility shape", () => {
+    expect(() =>
+      normalizeSearchResult({
+        type: "page",
+        id: "page-1",
+        score: 0.5,
+        snippet: "s",
+        title: "t",
+        source_label: "page",
+        media_id: null,
+        media_kind: null,
+        resource_ref: `page:${DEFAULT_RESOURCE_ID}`,
+        activation: {
+          resourceRef: `page:${DEFAULT_RESOURCE_ID}`,
+          kind: "route",
+          href: `/pages/${DEFAULT_RESOURCE_ID}`,
+          unresolvedReason: null,
+        },
+        citation_target: `page:${DEFAULT_RESOURCE_ID}`,
+        context_ref: { type: "page", id: DEFAULT_RESOURCE_ID },
+      }),
+    ).toThrow("must contain exactly");
+  });
+
+  it("defects when a row has only the deleted deep_link navigation field", () => {
+    expect(() =>
       normalizeSearchResult({
         type: "page",
         id: "page-1",
@@ -662,7 +775,7 @@ describe("normalizeSearchResult structural rejections", () => {
         deep_link: "/pages/page-1",
         context_ref: { type: "page", id: "page-1" },
       }),
-    ).toBeNull();
+    ).toThrow("SearchResult.activation must be an object");
   });
 });
 
@@ -713,7 +826,11 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         },
         activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
-        context_ref: { type: "fragment", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        context_ref: {
+          type: "fragment",
+          id: "chunk-7",
+          evidence_span_ids: ["span-1"],
+        },
         locator: PDF_GEOMETRY_LOCATOR,
       }),
     ).toBeNull();
@@ -739,7 +856,11 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         },
         activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
-        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: [] },
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-7",
+          evidence_span_ids: [],
+        },
         locator: PDF_GEOMETRY_LOCATOR,
       }),
     ).toBeNull();
@@ -768,9 +889,13 @@ describe("normalizeSearchResult locator / type-mismatch rejections", () => {
         media_id: null,
         media_kind: null,
         resource_ref: "external_snapshot:44444444-4444-4444-8444-444444444444",
-        citation_target: "external_snapshot:44444444-4444-4444-8444-444444444444",
+        citation_target:
+          "external_snapshot:44444444-4444-4444-8444-444444444444",
         activationHref: "https://example.com/calypso",
-        context_ref: { type: "web_result", id: "44444444-4444-4444-8444-444444444444" },
+        context_ref: {
+          type: "web_result",
+          id: "44444444-4444-4444-8444-444444444444",
+        },
         locator: {
           type: "note_block_offsets",
           block_id: "note-1",
@@ -804,7 +929,11 @@ describe("normalizeSearchResult legacy artifact identity rejections", () => {
         activationHref: "/media/media-pdf-1#evidence-span-1",
         source_version: "pdf-source:v1",
         citation_label: "p. 12",
-        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-7",
+          evidence_span_ids: ["span-1"],
+        },
         locator: PDF_GEOMETRY_LOCATOR,
       }),
     ).toBeNull();
@@ -850,7 +979,11 @@ describe("normalizeSearchResult malformed-locator-geometry rejections", () => {
         },
         activationHref: "/media/media-pdf-1#evidence-span-1",
         citation_label: "p. 12",
-        context_ref: { type: "content_chunk", id: "chunk-7", evidence_span_ids: ["span-1"] },
+        context_ref: {
+          type: "content_chunk",
+          id: "chunk-7",
+          evidence_span_ids: ["span-1"],
+        },
         locator: { ...PDF_GEOMETRY_LOCATOR, quads: [{ x1: 1 }] },
       }),
     ).toBeNull();

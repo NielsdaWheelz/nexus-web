@@ -10,7 +10,13 @@ import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
-import type { ConnectionOut } from "./connections";
+import { decodeConnectionOut, type ConnectionOut } from "./connections";
+import {
+  expectBoolean,
+  expectExactRecord,
+  expectNullableString,
+  expectString,
+} from "@/lib/validation";
 
 export interface LinkResourceSource {
   kind: "resource";
@@ -37,9 +43,7 @@ export interface LinkPdfSelectionSource {
 }
 
 export type LinkSource =
-  | LinkResourceSource
-  | LinkFragmentSelectionSource
-  | LinkPdfSelectionSource;
+  LinkResourceSource | LinkFragmentSelectionSource | LinkPdfSelectionSource;
 
 export interface LinkResourceTarget {
   kind: "resource";
@@ -64,20 +68,36 @@ export interface CreateLinkOut {
   connection: ConnectionOut;
 }
 
-interface CreateLinkResponse {
-  data: CreateLinkOut;
-}
-
-export async function createLink(input: CreateLinkInput): Promise<CreateLinkOut> {
-  const response = await apiFetch<CreateLinkResponse>("/api/resource-graph/links", {
-    method: "POST",
-    body: JSON.stringify({
-      client_mutation_id: createRandomId("link"),
-      source: input.source,
-      target: input.target,
-    }),
-  });
-  return response.data;
+export async function createLink(
+  input: CreateLinkInput,
+): Promise<CreateLinkOut> {
+  const response = await apiFetch<{ data: unknown }>(
+    "/api/resource-graph/links",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        client_mutation_id: createRandomId("link"),
+        source: input.source,
+        target: input.target,
+      }),
+    },
+  );
+  const value = expectExactRecord(
+    response.data,
+    ["created", "created_source_ref", "connection"],
+    "CreateLinkOut",
+  );
+  return {
+    created: expectBoolean(value.created, "CreateLinkOut.created"),
+    created_source_ref: expectNullableString(
+      value.created_source_ref,
+      "CreateLinkOut.created_source_ref",
+    ),
+    connection: decodeConnectionOut(
+      value.connection,
+      "CreateLinkOut.connection",
+    ),
+  };
 }
 
 export async function deleteLink(linkId: string): Promise<void> {
@@ -96,15 +116,11 @@ export interface LinkNoteOut {
   connection: ConnectionOut;
 }
 
-interface LinkNoteResponse {
-  data: LinkNoteOut;
-}
-
 export async function putLinkNote(
   linkId: string,
   body: PutLinkNoteInput,
 ): Promise<LinkNoteOut> {
-  const response = await apiFetch<LinkNoteResponse>(
+  const response = await apiFetch<{ data: unknown }>(
     `/api/resource-graph/links/${linkId}/note` as ApiPath,
     {
       method: "PUT",
@@ -115,7 +131,18 @@ export async function putLinkNote(
       }),
     },
   );
-  return response.data;
+  const value = expectExactRecord(
+    response.data,
+    ["note_block_id", "connection"],
+    "LinkNoteOut",
+  );
+  return {
+    note_block_id: expectString(
+      value.note_block_id,
+      "LinkNoteOut.note_block_id",
+    ),
+    connection: decodeConnectionOut(value.connection, "LinkNoteOut.connection"),
+  };
 }
 
 export async function deleteLinkNote(linkId: string): Promise<void> {

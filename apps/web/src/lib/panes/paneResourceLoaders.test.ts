@@ -122,6 +122,8 @@ describe("Library pane resource loader", () => {
 
 describe("Author pane resource loader", () => {
   it("uses the shared strict work decoder for first-paint seeds", async () => {
+    const contributorId = "11111111-1111-4111-8111-111111111111";
+    const mediaId = "22222222-2222-4222-8222-222222222222";
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
     ): Promise<T> => {
@@ -133,6 +135,17 @@ describe("Author pane resource loader", () => {
             displayName: "Ursula K. Le Guin",
             otherNames: [],
             canRename: false,
+            actionTarget: {
+              kind: "Resource",
+              ref: `contributor:${contributorId}`,
+              activation: {
+                resourceRef: `contributor:${contributorId}`,
+                kind: "route",
+                href: "/authors/ursula-le-guin",
+                unresolvedReason: null,
+              },
+              missing: false,
+            },
           },
         } as T;
       }
@@ -152,6 +165,17 @@ describe("Author pane resource loader", () => {
                     rawRole: null,
                   },
                 ],
+                actionTarget: {
+                  kind: "Resource",
+                  ref: `media:${mediaId}`,
+                  activation: {
+                    resourceRef: `media:${mediaId}`,
+                    kind: "route",
+                    href: `/media/${mediaId}`,
+                    unresolvedReason: null,
+                  },
+                  missing: false,
+                },
               },
             ],
             nextCursor: null,
@@ -173,10 +197,14 @@ describe("Author pane resource loader", () => {
         },
       ],
       worksNextCursor: null,
+      detail: {
+        actionTarget: { ref: `contributor:${contributorId}` },
+      },
     });
   });
 
   it("defects when the first-paint work contract is incomplete", async () => {
+    const contributorId = "11111111-1111-4111-8111-111111111111";
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
     ): Promise<T> => {
@@ -186,6 +214,19 @@ describe("Author pane resource loader", () => {
             handle: "ursula-le-guin",
             href: "/authors/ursula-le-guin",
             displayName: "Ursula K. Le Guin",
+            otherNames: [],
+            canRename: false,
+            actionTarget: {
+              kind: "Resource",
+              ref: `contributor:${contributorId}`,
+              activation: {
+                resourceRef: `contributor:${contributorId}`,
+                kind: "route",
+                href: "/authors/ursula-le-guin",
+                unresolvedReason: null,
+              },
+              missing: false,
+            },
           },
         } as T;
       }

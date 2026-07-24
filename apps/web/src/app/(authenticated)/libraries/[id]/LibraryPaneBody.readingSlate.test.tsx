@@ -22,8 +22,8 @@ import {
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import LibraryPaneBody from "./LibraryPaneBody";
 
-const LIBRARY_ID = "reading-slate-library";
-const SECOND_LIBRARY_ID = "reading-slate-library-b";
+const LIBRARY_ID = "00000000-0000-4000-8000-000000000202";
+const SECOND_LIBRARY_ID = "00000000-0000-4000-8000-000000000203";
 const EXISTING_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const SUGGESTED_MEDIA_ID = "22222222-2222-4222-8222-222222222222";
 const SECOND_MEDIA_ID = "33333333-3333-4333-8333-333333333333";

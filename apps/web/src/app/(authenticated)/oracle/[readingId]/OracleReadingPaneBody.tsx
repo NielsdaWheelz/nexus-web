@@ -11,7 +11,6 @@ import ReaderCitation from "@/components/ui/ReaderCitation";
 import { apiFetch } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
-import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
@@ -35,6 +34,9 @@ import {
   usePaneRouter,
 } from "@/lib/panes/paneRuntime";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
+import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { OracleCreateResponse } from "../types";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
@@ -411,7 +413,6 @@ export default function OracleReadingPaneBody() {
   const [state, setState] = useState<ReadingState>(initialState);
   const [loadError, setLoadError] = useState<FeedbackContent | null>(null);
   const [retryError, setRetryError] = useState<FeedbackContent | null>(null);
-  const [chatError, setChatError] = useState<FeedbackContent | null>(null);
   const [committedReadingId, setCommittedReadingId] = useState<string | null>(
     null,
   );
@@ -529,22 +530,22 @@ export default function OracleReadingPaneBody() {
     [],
   );
 
-  const openReadingChat = useCallback(async () => {
-    setChatError(null);
-    try {
-      const conversationId = await startResourceContextChat(
-        `oracle_reading:${readingId}`,
-      );
-      requestOpenInAppPane(`/conversations/${conversationId}`);
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setChatError(
-        toFeedback(error, {
-          fallback: "A conversation about this reading could not begin.",
-        }),
-      );
-    }
-  }, [readingId]);
+  usePanePrimaryChrome({
+    menu:
+      (detailResource.status === "ready" &&
+        detailResource.data.id === readingId) ||
+      committedReadingId === readingId
+        ? {
+            kind: "ResourceMenu",
+            target: routeResourceActionSubject({
+              scheme: "oracle_reading",
+              id: readingId,
+              href: `/oracle/${readingId}`,
+            }),
+            groups: emptyResourceMenuGroups(),
+          }
+        : undefined,
+  });
 
   const showSkeletons =
     state.status === "pending" ||
@@ -693,21 +694,6 @@ export default function OracleReadingPaneBody() {
                 {" "}Set in EB Garamond, IM Fell English, and UnifrakturMaguntia.
               </p>
             </>
-          )}
-
-          {state.status === "complete" && (
-            <div className={styles.readingActions}>
-              <button
-                type="button"
-                className={styles.chatAction}
-                onClick={openReadingChat}
-              >
-                Chat about this reading
-              </button>
-              {chatError !== null && (
-                <FeedbackNotice feedback={chatError} className={styles.oracleFeedback} />
-              )}
-            </div>
           )}
 
           {state.status === "failed" && (

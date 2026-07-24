@@ -1,54 +1,84 @@
 /**
  * Typed client for the `/conversations/{id}/context-refs` BFF routes
  * (spec §10.1) — conversation context edges, replacing the old conversation
- * references client. `ContextRefOut` mirrors the backend
- * `nexus/schemas/resource_graph.py:ContextRefOut`; `resource_ref` is a
- * `<scheme>:<uuid>` string.
+ * references client. `ContextRefOut` is the decoded frontend contract for the
+ * backend `nexus/schemas/resource_graph.py:ContextRefOut`; the decoder adds the
+ * explicit resource-action subject from the wire ref, activation, and missing
+ * facts.
  */
 
 import { apiFetch } from "@/lib/api/client";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
 import {
-  normalizeResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
-import { isRecord } from "@/lib/validation";
+  expectBoolean,
+  expectExactRecord,
+  expectString,
+} from "@/lib/validation";
 import { formatResourceRef, type ResourceRef } from "./resourceRef";
 
 export interface ContextRefOut {
   id: string;
   conversation_id: string;
   resource_ref: string;
-  activation: ResourceActivation;
+  activation: ResourceActionSubject["activation"];
+  actionTarget: ResourceActionSubject;
   label: string;
   summary: string;
   missing: boolean;
   created_at: string;
 }
 
-function normalizeContextRef(raw: unknown): ContextRefOut | null {
-  if (!isRecord(raw)) return null;
-  const activation = normalizeResourceActivation(raw.activation);
-  if (
-    typeof raw.id !== "string" ||
-    typeof raw.conversation_id !== "string" ||
-    typeof raw.resource_ref !== "string" ||
-    !activation ||
-    typeof raw.label !== "string" ||
-    typeof raw.summary !== "string" ||
-    typeof raw.missing !== "boolean" ||
-    typeof raw.created_at !== "string"
-  ) {
-    return null;
+export function decodeContextRef(
+  raw: unknown,
+  name = "ContextRef",
+): ContextRefOut {
+  const value = expectExactRecord(
+    raw,
+    [
+      "id",
+      "conversation_id",
+      "resource_ref",
+      "activation",
+      "label",
+      "summary",
+      "missing",
+      "created_at",
+    ],
+    name,
+  );
+  const resourceRef = expectString(
+    value.resource_ref,
+    `${name}.resource_ref`,
+  );
+  const missing = expectBoolean(value.missing, `${name}.missing`);
+  const target = decodeStandingActionTarget(
+    {
+      kind: "Resource",
+      ref: resourceRef,
+      activation: value.activation,
+      missing,
+    },
+    `${name}.actionTarget`,
+  );
+  if (target.kind !== "Resource") {
+    // justify-defect: this decoder constructs the Resource discriminator
+    // itself, so an External result means its shared decoder contract broke.
+    throw new TypeError(`${name}.actionTarget must be Resource`);
   }
   return {
-    id: raw.id,
-    conversation_id: raw.conversation_id,
-    resource_ref: raw.resource_ref,
-    activation,
-    label: raw.label,
-    summary: raw.summary,
-    missing: raw.missing,
-    created_at: raw.created_at,
+    id: expectString(value.id, `${name}.id`),
+    conversation_id: expectString(
+      value.conversation_id,
+      `${name}.conversation_id`,
+    ),
+    resource_ref: resourceRef,
+    activation: target.activation,
+    actionTarget: target,
+    label: expectString(value.label, `${name}.label`),
+    summary: expectString(value.summary, `${name}.summary`),
+    missing,
+    created_at: expectString(value.created_at, `${name}.created_at`),
   };
 }
 
@@ -60,11 +90,9 @@ export async function listContextRefs(
     `/api/conversations/${conversationId}/context-refs`,
     { cache: "no-store", signal: options.signal },
   );
-  return response.data.map((row) => {
-    const contextRef = normalizeContextRef(row);
-    if (!contextRef) throw new Error("Invalid context ref payload");
-    return contextRef;
-  });
+  return response.data.map((row, index) =>
+    decodeContextRef(row, `ContextRef[${index}]`),
+  );
 }
 
 export async function addContextRef(
@@ -78,9 +106,7 @@ export async function addContextRef(
       body: JSON.stringify({ resource_ref: formatResourceRef(target) }),
     },
   );
-  const contextRef = normalizeContextRef(response.data);
-  if (!contextRef) throw new Error("Invalid context ref payload");
-  return contextRef;
+  return decodeContextRef(response.data);
 }
 
 export async function removeContextRef(

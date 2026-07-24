@@ -3,6 +3,8 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { episodeResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
+import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -16,6 +18,7 @@ import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 
 export interface EpisodePresenterItem {
   id: string;
@@ -36,9 +39,10 @@ export interface EpisodePresenterItem {
 
 export type EpisodePresenterContext = Omit<
   Parameters<typeof episodeResourceOptions>[0],
-  "media" | "played"
+  "media"
 > & {
   connectionSummary?: ConnectionSummaryOut;
+  view: readonly ActionDescriptor[];
 };
 
 function episodeActivity(
@@ -92,19 +96,19 @@ export function presentEpisode(
   item: EpisodePresenterItem,
   ctx: EpisodePresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, ...actionCtx } = ctx;
-  const actions = episodeResourceOptions({
+  const { connectionSummary, view, ...actionCtx } = ctx;
+  const rich = episodeResourceOptions({
     media: item,
-    played: item.episode_state === "played",
     ...actionCtx,
   });
+  const href = `/media/${item.id}`;
 
   return {
     id: item.id,
     kind: "podcast_episode",
     primary: {
       kind: "link",
-      href: `/media/${item.id}`,
+      href,
       paneLabelHint: item.title,
       viewTransition: "media-reader",
     },
@@ -116,7 +120,15 @@ export function presentEpisode(
     exceptionalStatus: exceptionalStatus(item.processing_status),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
-    actions,
+    actionPublication: publishResourceRowActions({
+      target: routeResourceActionSubject({
+        scheme: "media",
+        id: item.id,
+        href,
+      }),
+      rich,
+      view,
+    }),
     selected: false,
   };
 }

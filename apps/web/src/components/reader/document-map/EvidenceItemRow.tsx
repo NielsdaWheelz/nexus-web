@@ -1,20 +1,50 @@
 "use client";
 
-import { useId, type FocusEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type FocusEvent,
+} from "react";
 import {
   ChevronDown,
   ExternalLink,
   LocateFixed,
   MessageSquare,
-  X,
 } from "lucide-react";
+import {
+  FeedbackNotice,
+  toFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import HighlightActionBar from "@/components/highlights/HighlightActionBar";
 import type { HighlightActionTarget } from "@/components/highlights/highlightActions";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import ActionMenu from "@/components/ui/ActionMenu";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
+import {
+  composeResourceMenu,
+  projectResourceActionToMenu,
+  resolveResourceCoreActions,
+  RESOURCE_ACTION_CATALOG,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
+import { absent } from "@/lib/api/presence";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
+import {
+  executeResourceChat,
+  executeResourceOpen,
+  executeResourceShare,
+} from "@/lib/resources/resourceActionExecution";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
 import {
   highlightNoteAssociations,
@@ -31,6 +61,7 @@ import type {
   ReaderEvidenceSourceTarget,
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
+import { useShareController } from "@/lib/sharing/controller";
 import { anchoredRowForEvidenceItem } from "@/lib/reader/marginItems";
 import type { AnchoredReaderRow } from "../useAnchoredReaderProjection";
 import styles from "./EvidencePaneSurface.module.css";
@@ -73,7 +104,7 @@ export interface EvidenceHighlightActions {
  */
 export interface EvidenceLinkActions {
   editingLinkId: string | null;
-  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => void;
+  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
   onEditLink: (linkId: string | null) => void;
   onSaveLinkNote: (
     linkId: string,
@@ -121,7 +152,7 @@ export function EvidenceItemRow({
   onActivateObject: ActivateEvidenceObject;
   onActivateSourceTarget: ActivateEvidenceSourceTarget;
   onHoverItem: HoverEvidenceItem;
-  onDismissSynapse: (edgeId: string) => void;
+  onDismissSynapse: (edgeId: string) => Promise<void>;
   linkActions: EvidenceLinkActions;
 }) {
   const removableLink = isReaderEvidenceUserLink(item) ? item : null;
@@ -231,15 +262,28 @@ export function EvidenceItemRow({
               onActivate={onActivateObject}
             />
           ) : null}
-          {item.kind === "Synapse" ? (
-            <button
-              type="button"
-              className={styles.iconButton}
-              aria-label={`Dismiss Synapse ${item.label}`}
-              onClick={() => onDismissSynapse(item.edge_id)}
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
+          {item.kind === "Link" || item.kind === "Synapse" ? (
+            <EvidenceResourceActionMenu
+              target={item.object.actionTarget}
+              label={item.object.label}
+              onOpen={(newPane) =>
+                onActivateObject(item.object, { newPane })
+              }
+              relationship={
+                item.kind === "Synapse"
+                  ? {
+                      kind: "Dismiss",
+                      execute: () => onDismissSynapse(item.edge_id),
+                    }
+                  : removableLink
+                    ? {
+                        kind: "Unlink",
+                        execute: () =>
+                          linkActions.onRemoveUserEdge(removableLink),
+                      }
+                    : { kind: "None" }
+              }
+            />
           ) : null}
           {annotatableLink ? (
             <button
@@ -254,16 +298,6 @@ export function EvidenceItemRow({
               }
             >
               <MessageSquare size={14} aria-hidden="true" />
-            </button>
-          ) : null}
-          {removableLink ? (
-            <button
-              type="button"
-              className={styles.iconButton}
-              aria-label={`Remove link ${removableLink.label}`}
-              onClick={() => linkActions.onRemoveUserEdge(removableLink)}
-            >
-              <X size={14} aria-hidden="true" />
             </button>
           ) : null}
         </div>
@@ -447,16 +481,21 @@ function AssociationRow({
           <span>{association.object.label}</span>
           <ExternalLink size={12} aria-hidden="true" />
         </button>
-        {removableAssociation ? (
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label={`Remove connection to ${association.object.label}`}
-            onClick={() => onRemoveUserEdge(removableAssociation)}
-          >
-            <X size={14} aria-hidden="true" />
-          </button>
-        ) : null}
+        <EvidenceResourceActionMenu
+          target={association.object.actionTarget}
+          label={association.object.label}
+          onOpen={(newPane) =>
+            onActivateObject(association.object, { newPane })
+          }
+          relationship={
+            removableAssociation
+              ? {
+                  kind: "Unlink",
+                  execute: () => onRemoveUserEdge(removableAssociation),
+                }
+              : { kind: "None" }
+          }
+        />
       </div>
       {association.object.excerpt.kind === "Present" ? (
         <p className={styles.relationshipExcerpt}>
@@ -464,6 +503,134 @@ function AssociationRow({
         </p>
       ) : null}
     </div>
+  );
+}
+
+type EvidenceRelationshipAction =
+  | { kind: "None" }
+  | { kind: "Unlink"; execute: () => Promise<void> }
+  | { kind: "Dismiss"; execute: () => Promise<void> };
+
+function EvidenceResourceActionMenu({
+  target,
+  label,
+  onOpen,
+  relationship,
+}: {
+  target: ResourceActionSubject;
+  label: string;
+  onOpen: (newPane: boolean) => void;
+  relationship: EvidenceRelationshipAction;
+}) {
+  const { openShare } = useShareController();
+  const busyRef = useRef<Set<ResourceActionId>>(new Set());
+  const [busyIds, setBusyIds] = useState<ReadonlySet<ResourceActionId>>(
+    () => new Set(),
+  );
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+
+  async function runAction({
+    id,
+    execute,
+    failure,
+  }: {
+    id: ResourceActionId;
+    execute: () => Promise<void>;
+    failure: string;
+  }) {
+    if (busyRef.current.has(id)) return;
+    busyRef.current.add(id);
+    setBusyIds(new Set(busyRef.current));
+    setFeedback(null);
+    try {
+      await execute();
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      setFeedback(toFeedback(error, { fallback: failure }));
+    } finally {
+      busyRef.current.delete(id);
+      setBusyIds(new Set(busyRef.current));
+    }
+  }
+
+  const core = resolveResourceCoreActions({
+    target,
+    projection: "Representation",
+    busyIds,
+    executors: {
+      open: (subject: ResourceActionSubject) =>
+        executeResourceOpen({
+          target: subject,
+          resourceNavigation: {
+            labelHint: label,
+            navigate: () => onOpen(false),
+            openInNewPane: () => onOpen(true),
+          },
+        }),
+      share: (subject, { triggerEl }) =>
+        executeResourceShare({
+          subject,
+          openShare,
+          options: {
+            returnFocusTo: () => triggerEl,
+            returnFocusFallback: absent(),
+          },
+        }),
+      chat: (subject: ResourceActionSubject) =>
+        runAction({
+          id: RESOURCE_ACTION_CATALOG.Chat.id,
+          execute: () =>
+            executeResourceChat({
+              ref: subject.ref,
+              openConversation: (conversationId) => {
+                requestOpenInAppPane(`/conversations/${conversationId}`, {
+                  labelHint: "Chat",
+                });
+              },
+            }),
+          failure: "Chat could not be started.",
+        }),
+    },
+  });
+  const relationshipDescriptor =
+    relationship.kind === "None"
+      ? null
+      : projectResourceActionToMenu({
+          kind: "command",
+          catalogKey:
+            relationship.kind === "Unlink"
+              ? "UnlinkConnection"
+              : "DismissConnection",
+          busy: busyIds.has(
+            relationship.kind === "Unlink"
+              ? RESOURCE_ACTION_CATALOG.UnlinkConnection.id
+              : RESOURCE_ACTION_CATALOG.DismissConnection.id,
+          ),
+          onSelect: () => {
+            void runAction({
+              id:
+                relationship.kind === "Unlink"
+                  ? RESOURCE_ACTION_CATALOG.UnlinkConnection.id
+                  : RESOURCE_ACTION_CATALOG.DismissConnection.id,
+              execute: relationship.execute,
+              failure:
+                relationship.kind === "Unlink"
+                  ? "Connection could not be unlinked."
+                  : "Connection could not be dismissed.",
+            });
+          },
+        });
+  const options = composeResourceMenu({
+    ...core,
+    relationships: relationshipDescriptor ? [relationshipDescriptor] : [],
+  });
+  if (options.length === 0) return null;
+  return (
+    <>
+      <ActionMenu options={options} label={`Actions for ${label}`} />
+      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+    </>
   );
 }
 
@@ -527,6 +694,12 @@ function SourceTargetRow({
           <ExternalLink size={12} aria-hidden="true" />
         )}
       </button>
+      <EvidenceResourceActionMenu
+        target={target.actionTarget}
+        label={label}
+        onOpen={(newPane) => onActivate(target, { newPane })}
+        relationship={{ kind: "None" }}
+      />
       {target.body.kind === "Present" ? (
         <p className={styles.relationshipExcerpt}>{target.body.value}</p>
       ) : null}

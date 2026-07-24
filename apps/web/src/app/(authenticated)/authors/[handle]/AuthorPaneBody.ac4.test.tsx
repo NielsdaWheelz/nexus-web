@@ -18,6 +18,8 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
 
   it("paints the seeded contributor and work without any client fetch", async () => {
     const handle = "seeded-author";
+    const contributorId = "11111111-1111-4111-8111-111111111111";
+    const mediaId = "22222222-2222-4222-8222-222222222222";
     const fetchSpy = stubFetch(async (path) => {
       const requestPath = path instanceof Request ? path.url : path.toString();
       throw new Error(`unexpected client fetch on a hydration hit: ${requestPath}`);
@@ -33,6 +35,17 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
             displayName: "Hydrated Author",
             otherNames: [],
             canRename: false,
+            actionTarget: {
+              kind: "Resource",
+              ref: `contributor:${contributorId}` as never,
+              activation: {
+                resourceRef: `contributor:${contributorId}`,
+                kind: "route",
+                href: `/authors/${handle}`,
+                unresolvedReason: null,
+              },
+              missing: false,
+            },
           },
           works: [
             {
@@ -43,6 +56,17 @@ describe("AuthorPaneBody (AC-4 hydration hit)", () => {
               roleFacts: [
                 { creditedName: "Hydrated Author", role: "author", rawRole: null },
               ],
+              actionTarget: {
+                kind: "Resource",
+                ref: `media:${mediaId}` as never,
+                activation: {
+                  resourceRef: `media:${mediaId}`,
+                  kind: "route",
+                  href: "/media/work-seed-1",
+                  unresolvedReason: null,
+                },
+                missing: false,
+              },
             },
           ],
           worksNextCursor: null,

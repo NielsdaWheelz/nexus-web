@@ -5,7 +5,6 @@ import {
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
 import {
-  resourceShareTarget,
   routeShareTarget,
 } from "@/lib/sharing/targets";
 import type { ShareTarget } from "@/lib/sharing/types";
@@ -14,7 +13,7 @@ export type PaneResourceLocator =
   | { kind: "resource_ref"; ref: string }
   | { kind: "contributor_handle"; handle: string };
 
-export type PaneShareIdentity = ShareTarget;
+export type PaneRouteShareIdentity = Extract<ShareTarget, { kind: "Route" }>;
 
 function resourceRefLocator(
   scheme: ResourceScheme,
@@ -62,22 +61,36 @@ const INTERNAL_ROUTE_IDS = new Set([
   "settingsIdentities",
   "settingsKeybindings",
 ]);
+const RESOURCE_ROUTE_IDS = new Set([
+  "library",
+  "media",
+  "conversation",
+  "podcastDetail",
+  "page",
+  "note",
+  "oracleReading",
+  "author",
+]);
 
 /**
- * Synchronous pane identity for Share. Resource panes use their canonical
- * ResourceRef immediately; stable non-resource routes use the route owner's
- * canonical pathname and never wait for hydrated resource state.
+ * Route-only Share identity. Resource panes publish their explicit decoded
+ * action target through pane chrome; stable non-resource routes use the route
+ * owner's canonical pathname.
  */
-export function resolvePaneShareIdentity(
+export function resolvePaneRouteShareIdentity(
   route: ResolvedPaneRouteModel,
   label: string,
-): PaneShareIdentity | null {
+): PaneRouteShareIdentity | null {
   if (route.id === "unsupported" || INTERNAL_ROUTE_IDS.has(route.id)) {
     return null;
   }
-  const locator = resolvePaneResourceLocator(route);
-  if (locator?.kind === "resource_ref") {
-    return resourceShareTarget(locator.ref);
+  if (RESOURCE_ROUTE_IDS.has(route.id)) {
+    return null;
   }
-  return routeShareTarget({ href: route.pathname, label });
+  const target = routeShareTarget({ href: route.pathname, label });
+  if (target.kind !== "Route") {
+    // justify-defect: routeShareTarget must preserve its route-only contract.
+    throw new Error("Route Share target factory returned a resource target");
+  }
+  return target;
 }

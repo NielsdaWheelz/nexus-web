@@ -32,6 +32,26 @@ export type MediaDeleteResult =
     }
   | { kind: "Deleting" };
 
+export type MediaRemovalOutcome =
+  | { kind: "Cancelled" }
+  | { kind: "Completed"; result: MediaDeleteResult };
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  context: string,
+): void {
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key) => !expectedKeys.includes(key))
+  ) {
+    throw new MediaLibraryContractDefect(
+      `Invalid ${context}: expected exactly [${expectedKeys.join(", ")}]`,
+    );
+  }
+}
+
 // Same-system strict decode: the backend produces exactly this camelCase tagged
 // union; any other shape is a code/schema-mismatch defect.
 function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
@@ -40,18 +60,26 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
       "Invalid MediaDeleteResult envelope: expected { data: {...} }",
     );
   }
+  requireExactKeys(raw, ["data"], "MediaDeleteResult envelope");
   const data = raw.data;
   if (data.kind === "Deleting") {
+    requireExactKeys(data, ["kind"], "MediaDeleteResult.Deleting");
     return { kind: "Deleting" };
   }
   if (data.kind === "Removed" || data.kind === "Hidden") {
+    requireExactKeys(
+      data,
+      ["kind", "removedFromLibraryIds", "remainingReferenceCount"],
+      `MediaDeleteResult.${data.kind}`,
+    );
     const ids = data.removedFromLibraryIds;
     const count = data.remainingReferenceCount;
     if (
       !Array.isArray(ids) ||
       !ids.every((id): id is string => typeof id === "string") ||
       typeof count !== "number" ||
-      !Number.isInteger(count)
+      !Number.isInteger(count) ||
+      count < 0
     ) {
       throw new MediaLibraryContractDefect(
         `Invalid MediaDeleteResult.${data.kind}: bad fields`,
@@ -68,11 +96,33 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
   );
 }
 
-export async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
+async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
   const response = await apiFetch<unknown>(`/api/media/${mediaId}`, {
     method: "DELETE",
   });
   return decodeMediaDeleteResult(response);
+}
+
+export async function confirmAndDeleteMedia({
+  mediaId,
+  mediaTitle,
+  confirmRemoval,
+}: {
+  mediaId: string;
+  mediaTitle: string;
+  confirmRemoval: (message: string) => boolean;
+}): Promise<MediaRemovalOutcome> {
+  if (
+    !confirmRemoval(
+      `Delete "${mediaTitle}" from My Library and libraries you manage? This cannot be undone.`,
+    )
+  ) {
+    return { kind: "Cancelled" };
+  }
+  return {
+    kind: "Completed",
+    result: await deleteMedia(mediaId),
+  };
 }
 
 interface FetchMediaLibraryMembershipsOptions {

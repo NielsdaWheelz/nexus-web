@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
+import type { ActionPublication } from "@/lib/actions/resourceActions";
 import {
   arePaneFixedChromePublicationsEqual,
   arePanePrimaryChromePublicationsEqual,
@@ -11,6 +12,14 @@ import {
   type PaneSecondaryPublication,
   type PanePrimaryChromePublication,
 } from "@/lib/panes/panePublications";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+
+const RESOURCE_ID = "00000000-0000-4000-8000-000000000001";
+const RESOURCE_REF = assumeCanonicalResourceRef(`media:${RESOURCE_ID}`);
+const OTHER_RESOURCE_REF = assumeCanonicalResourceRef(
+  "media:00000000-0000-4000-8000-000000000002",
+);
 
 describe("panePublications", () => {
   it("compares primary chrome structurally except for React and callback identities", () => {
@@ -43,12 +52,15 @@ describe("panePublications", () => {
         },
         onSelect,
       }],
-      options: [{
-        kind: "command",
-        id: "credits",
-        label: "Credits…",
-        onSelect,
-      }],
+      menu: {
+        kind: "FlatMenu",
+        actions: [{
+          kind: "command",
+          id: "credits",
+          label: "Credits…",
+          onSelect,
+        }],
+      },
     };
 
     expect(arePanePrimaryChromePublicationsEqual(publication, {
@@ -65,7 +77,9 @@ describe("panePublications", () => {
         },
       },
       actions: publication.actions ? [...publication.actions] : undefined,
-      options: publication.options ? [...publication.options] : undefined,
+      menu: publication.menu?.kind === "FlatMenu"
+        ? { kind: "FlatMenu", actions: [...publication.menu.actions] }
+        : publication.menu,
     })).toBe(true);
     expect(arePanePrimaryChromePublicationsEqual(publication, {
       ...publication,
@@ -77,12 +91,179 @@ describe("panePublications", () => {
     })).toBe(false);
     expect(arePanePrimaryChromePublicationsEqual(publication, {
       ...publication,
-      options: [{
-        kind: "command",
-        id: "credits",
-        label: "Credits…",
-        onSelect: () => {},
-      }],
+      menu: {
+        kind: "FlatMenu",
+        actions: [{
+          kind: "command",
+          id: "credits",
+          label: "Credits…",
+          onSelect: () => {},
+        }],
+      },
+    })).toBe(false);
+  });
+
+  it("compares FlatMenu disabled reasons as semantic descriptor state", () => {
+    const onSelect = () => {};
+    const action = {
+      kind: "command",
+      id: "busy",
+      label: "Starting...",
+      disabled: true,
+      disabledReason: "A request is already in progress",
+      onSelect,
+    } as const;
+    const left: PanePrimaryChromePublication = {
+      menu: {
+        kind: "FlatMenu",
+        actions: [action],
+      },
+    };
+    expect(arePanePrimaryChromePublicationsEqual(left, {
+      menu: {
+        kind: "FlatMenu",
+        actions: [{
+          ...action,
+          disabledReason: "Waiting for another request",
+        }],
+      },
+    })).toBe(false);
+  });
+
+  it("compares ResourceMenu target identity, activation, missing state, and all four groups", () => {
+    const onSelect = () => {};
+    const target: ResourceActionSubject = {
+      kind: "Resource",
+      ref: RESOURCE_REF,
+      activation: {
+        resourceRef: RESOURCE_REF,
+        kind: "route",
+        href: `/media/${RESOURCE_ID}`,
+        unresolvedReason: null,
+      },
+      missing: false,
+    };
+    const menu: Extract<ActionPublication, { kind: "ResourceMenu" }> = {
+      kind: "ResourceMenu",
+      target,
+      groups: {
+        core: [{ kind: "command", id: "core", label: "Core", onSelect }],
+        operations: [{
+          kind: "command",
+          id: "operation",
+          label: "Operation",
+          onSelect,
+        }],
+        relationships: [{
+          kind: "command",
+          id: "relationship",
+          label: "Relationship",
+          onSelect,
+        }],
+        view: [{ kind: "command", id: "view", label: "View", onSelect }],
+      },
+    };
+    const publication: PanePrimaryChromePublication = { menu };
+
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      menu: {
+        kind: "ResourceMenu",
+        target: {
+          ...target,
+          activation: { ...target.activation },
+        },
+        groups: {
+          core: [...menu.groups.core],
+          operations: [...menu.groups.operations],
+          relationships: [...menu.groups.relationships],
+          view: [...menu.groups.view],
+        },
+      },
+    })).toBe(true);
+    const unequalTargets: ResourceActionSubject[] = [
+      { ...target, ref: OTHER_RESOURCE_REF },
+      { ...target, missing: true },
+      {
+        ...target,
+        activation: {
+          ...target.activation,
+          resourceRef: OTHER_RESOURCE_REF,
+        },
+      },
+      {
+        ...target,
+        activation: {
+          ...target.activation,
+          kind: "external",
+        },
+      },
+      {
+        ...target,
+        activation: {
+          ...target.activation,
+          href: `/media/${RESOURCE_ID}?other=1`,
+        },
+      },
+      {
+        ...target,
+        activation: {
+          ...target.activation,
+          unresolvedReason: "Unavailable",
+        },
+      },
+    ];
+    for (const unequalTarget of unequalTargets) {
+      expect(arePanePrimaryChromePublicationsEqual(publication, {
+        menu: { ...menu, target: unequalTarget },
+      })).toBe(false);
+    }
+
+    for (const groupName of [
+      "core",
+      "operations",
+      "relationships",
+      "view",
+    ] as const) {
+      expect(arePanePrimaryChromePublicationsEqual(publication, {
+        menu: {
+          ...menu,
+          groups: {
+            ...menu.groups,
+            [groupName]: [{
+              ...menu.groups[groupName][0]!,
+              label: `Changed ${groupName}`,
+            }],
+          },
+        },
+      })).toBe(false);
+    }
+  });
+
+  it("compares External ResourceMenu targets by href", () => {
+    const menu: Extract<ActionPublication, { kind: "ResourceMenu" }> = {
+      kind: "ResourceMenu",
+      target: { kind: "External", href: "https://example.com/work" },
+      groups: {
+        core: [],
+        operations: [],
+        relationships: [],
+        view: [],
+      },
+    };
+    const publication: PanePrimaryChromePublication = {
+      menu,
+    };
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      menu: {
+        ...menu,
+        target: { kind: "External", href: "https://example.com/work" },
+      },
+    })).toBe(true);
+    expect(arePanePrimaryChromePublicationsEqual(publication, {
+      menu: {
+        ...menu,
+        target: { kind: "External", href: "https://example.com/other" },
+      },
     })).toBe(false);
   });
 

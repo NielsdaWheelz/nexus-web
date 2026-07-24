@@ -572,6 +572,22 @@ def test_contributor_detail_reports_fresh_author(auth_client, direct_db):
     assert data["href"] == f"/authors/{handle}"
     assert data["otherNames"] == []
     assert data["canRename"] is False
+    with direct_db.session() as session:
+        contributor_id = session.scalar(
+            text("SELECT id FROM contributors WHERE handle = :handle"),
+            {"handle": handle},
+        )
+    assert data["actionTarget"] == {
+        "kind": "Resource",
+        "ref": f"contributor:{contributor_id}",
+        "activation": {
+            "resourceRef": f"contributor:{contributor_id}",
+            "kind": "route",
+            "href": f"/authors/{handle}",
+            "unresolvedReason": None,
+        },
+        "missing": False,
+    }
 
 
 @pytest.mark.integration
@@ -588,6 +604,17 @@ def test_contributor_works_reports_role_facts(auth_client, direct_db):
     assert len(data["works"]) == 1
     work = data["works"][0]
     assert work["href"] == f"/media/{media_id}"
+    assert work["actionTarget"] == {
+        "kind": "Resource",
+        "ref": f"media:{media_id}",
+        "activation": {
+            "resourceRef": f"media:{media_id}",
+            "kind": "route",
+            "href": f"/media/{media_id}",
+            "unresolvedReason": None,
+        },
+        "missing": False,
+    }
     assert {"creditedName": credited, "role": "author", "rawRole": None} in work["roleFacts"]
 
 

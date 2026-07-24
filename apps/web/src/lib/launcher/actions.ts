@@ -1,26 +1,73 @@
 /**
  * The small, navigation-oriented action set for a drilled item. Pure; the first action
  * is the item's default (what Enter/select runs). Each action carries a LauncherActionTarget
- * so the controller dispatches it through the one `dispatchTarget` owner. This is NOT the
- * canonical resource menu (PaneShell paneMenuOptions).
+ * so the controller dispatches it through the one `dispatchTarget` owner.
+ * Resource items consume the same canonical core policy and catalog metadata
+ * as standing menus, projected into Launcher-specific targets.
  */
 
 import { ArrowUpRight, Link as LinkIcon, PanelLeft, Share2, Sparkles, X } from "lucide-react";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resourceCapabilityForScheme } from "@/lib/resources/resourceCapabilities";
 import {
-  resourceShareTarget,
-  routeShareTarget,
-} from "@/lib/sharing/targets";
-import type { LauncherAction, LauncherItem } from "./model";
+  RESOURCE_ACTION_CATALOG,
+  type ResourceActionCatalogKey,
+  type ResourceCoreCatalogKey,
+  resolveResourceCoreCatalogKeys,
+} from "@/lib/actions/resourceActions";
+import { routeShareTarget } from "@/lib/sharing/targets";
+import type {
+  LauncherAction,
+  LauncherActionTarget,
+  LauncherItem,
+} from "./model";
+
+type ResourceOpenTarget = Extract<
+  LauncherActionTarget,
+  { kind: "ResourceOpen" }
+>;
+
+function projectResourceActionToLauncher(
+  catalogKey: ResourceActionCatalogKey,
+  target: LauncherAction["target"],
+): LauncherAction {
+  const entry = RESOURCE_ACTION_CATALOG[catalogKey];
+  return {
+    id: entry.id,
+    label: entry.label,
+    icon: entry.icon,
+    target,
+  };
+}
+
+function projectResourceCoreActionToLauncher(
+  item: LauncherItem,
+  target: ResourceOpenTarget,
+  catalogKey: ResourceCoreCatalogKey,
+): LauncherAction {
+  switch (catalogKey) {
+    case "Open":
+      return projectResourceActionToLauncher("Open", {
+        ...target,
+        labelHint: target.labelHint ?? item.title,
+      });
+    case "Share":
+      return projectResourceActionToLauncher("Share", {
+        kind: "ResourceShare",
+        subject: target.subject,
+      });
+    case "Chat":
+      return projectResourceActionToLauncher("Chat", {
+        kind: "ResourceChat",
+        ref: target.subject.ref,
+      });
+  }
+}
 
 export function buildItemActions(item: LauncherItem): LauncherAction[] {
   const ask: LauncherAction = {
     id: "ask",
     label: "Ask AI about this",
     icon: Sparkles,
-    target: { kind: "ask", text: item.title },
+    target: { kind: "Ask", text: item.title },
   };
 
   if (item.target.kind === "pane-open") {
@@ -41,21 +88,15 @@ export function buildItemActions(item: LauncherItem): LauncherAction[] {
           icon: LinkIcon,
           target: { kind: "copy-external-link", href },
         }
-      : (() => {
-          try {
-            return {
-              id: "share",
-              label: "Share…",
-              icon: Share2,
-              target: {
-                kind: "share",
-                target: routeShareTarget({ href, label: item.title }),
-              },
-            };
-          } catch {
-            return null;
-          }
-        })();
+      : {
+          id: "share",
+          label: "Share…",
+          icon: Share2,
+          target: {
+            kind: "share",
+            target: routeShareTarget({ href, label: item.title }),
+          },
+        };
     return [
       {
         id: "open",
@@ -68,39 +109,14 @@ export function buildItemActions(item: LauncherItem): LauncherAction[] {
     ];
   }
 
-  if (item.target.kind === "resource") {
-    const href = hrefForResourceActivation(item.target.activation);
-    if (!href) return [ask];
-    const ref = parseResourceRef(item.target.activation.resourceRef);
-    const canShare =
-      ref !== null &&
-      resourceCapabilityForScheme(ref.scheme).sharing !== "None";
-    return [
-      {
-        id: "open",
-        label: "Open",
-        icon: ArrowUpRight,
-        target: {
-          kind: "resource",
-          activation: item.target.activation,
-          labelHint: item.target.labelHint ?? item.title,
-        },
-      },
-      ask,
-      ...(canShare
-        ? [
-            {
-              id: "share",
-              label: "Share…",
-              icon: Share2,
-              target: {
-                kind: "share" as const,
-                target: resourceShareTarget(item.target.activation.resourceRef),
-              },
-            },
-          ]
-        : []),
-    ];
+  if (item.target.kind === "ResourceOpen") {
+    const target = item.target;
+    return resolveResourceCoreCatalogKeys(
+      target.subject,
+      "Representation",
+    ).map((catalogKey) =>
+      projectResourceCoreActionToLauncher(item, target, catalogKey),
+    );
   }
 
   return [];

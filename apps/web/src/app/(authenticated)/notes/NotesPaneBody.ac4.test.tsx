@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { stubFetch, wasFetchPathCalled } from "@/__tests__/helpers/fetch";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import NotesPaneBody from "./NotesPaneBody";
+
+const TODAY_PAGE_ID = "11111111-0000-4000-8000-000000000001";
+const HYDRATED_PAGE_ID = "22222222-0000-4000-8000-000000000002";
 
 // AC-4 hydration-hit guard: when the bootstrap seeds the normalized note-page
 // summaries as a BARE array under the cacheKey the pane reads ("notes:pages"),
@@ -26,7 +30,7 @@ describe("NotesPaneBody — Today button", () => {
           JSON.stringify({
             data: {
               page: {
-                id: "today-page-id",
+                id: TODAY_PAGE_ID,
                 title: "Today",
                 updated_at: "2026-07-07T00:00:00.000Z",
                 daily_note: { local_date: "2026-07-07" },
@@ -74,7 +78,7 @@ describe("NotesPaneBody — Today button", () => {
           | Array<{ href: string }>
           | undefined) ?? [];
       const allHrefs = [...hrefs, ...queue.map((d) => d.href)];
-      expect(allHrefs).toContain("/pages/today-page-id");
+      expect(allHrefs).toContain(`/pages/${TODAY_PAGE_ID}`);
     });
 
     postMessageSpy.mockRestore();
@@ -97,10 +101,15 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
       resources: {
         "notes:pages": [
           {
-            id: "p1",
+            id: HYDRATED_PAGE_ID,
             title: "Hydrated Note Page",
             description: null,
             updatedAt: "2026-06-02T12:00:00.000Z",
+            actionTarget: routeResourceActionSubject({
+              scheme: "page",
+              id: HYDRATED_PAGE_ID,
+              href: `/pages/${HYDRATED_PAGE_ID}`,
+            }),
           },
         ],
       },
@@ -120,7 +129,7 @@ describe("NotesPaneBody (AC-4 hydration hit)", () => {
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return row identity is a DOM data contract with no semantic query
     expect(pageLink.closest("[data-collection-row-id]")).toHaveAttribute(
       "data-collection-row-id",
-      "p1",
+      HYDRATED_PAGE_ID,
     );
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: pane-return scope is a DOM data contract with no semantic query
     expect(pageLink.closest("[data-pane-return-scope]")).toHaveAttribute(

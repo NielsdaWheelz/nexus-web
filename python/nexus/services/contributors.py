@@ -76,10 +76,12 @@ from nexus.schemas.contributors import (
     ContributorWorkItemOut,
     ContributorWorkPageOut,
     ExistingAuthorBinding,
+    ExternalActionTargetOut,
     ManualMediaAuthorsRequest,
     MediaAuthorCreditOut,
     MediaAuthorsOut,
     MediaAuthorsPutRequest,
+    ResourceActionSubjectOut,
 )
 from nexus.services._contributor_credit_writes import (
     CreditTarget as CreditTarget,
@@ -135,6 +137,7 @@ from nexus.services.contributor_taxonomy import (
     contributor_match_key,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_items.routing import resource_activation_for_ref
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
@@ -260,7 +263,12 @@ def get_contributor_detail(
     capability truthfully false for role-less callers.
     """
     contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
-    return _contributor_detail_out(db, contributor, can_rename=can_rename_contributor(viewer_roles))
+    return _contributor_detail_out(
+        db,
+        contributor,
+        viewer_id=viewer_id,
+        can_rename=can_rename_contributor(viewer_roles),
+    )
 
 
 def list_contributor_works(
@@ -310,7 +318,15 @@ def list_contributor_works(
         text(
             f"""
             WITH works AS ({distinct_visible_works_sql()})
-            SELECT w.title, w.href, w.content_kind, w.date_key, w.role_facts
+            SELECT
+                w.title,
+                w.href,
+                w.content_kind,
+                w.date_key,
+                w.role_facts,
+                w.media_id,
+                w.podcast_id,
+                w.project_gutenberg_catalog_ebook_id
             FROM works w
             WHERE w.contributor_id = :contributor_id
             {keyset_sql}
@@ -341,10 +357,52 @@ def list_contributor_works(
                 )
                 for fact in row.role_facts
             ],
+            actionTarget=_contributor_work_action_target(
+                db,
+                viewer_id=viewer_id,
+                media_id=row.media_id,
+                podcast_id=row.podcast_id,
+                gutenberg_ebook_id=row.project_gutenberg_catalog_ebook_id,
+                href=row.href,
+            ),
         )
         for row in page
     ]
     return ContributorWorkPageOut(works=works, nextCursor=next_cursor)
+
+
+def _contributor_work_action_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID | None,
+    podcast_id: UUID | None,
+    gutenberg_ebook_id: int | None,
+    href: str,
+) -> ResourceActionSubjectOut | ExternalActionTargetOut:
+    populated = sum(
+        target_id is not None for target_id in (media_id, podcast_id, gutenberg_ebook_id)
+    )
+    if populated != 1:
+        # justify-defect: contributor_credits has a database check constraint
+        # requiring exactly one target identity. Reaching this branch means the
+        # canonical read relation no longer reflects that invariant.
+        raise AssertionError("contributor work must carry exactly one target identity")
+
+    if media_id is not None:
+        ref = ResourceRef(scheme="media", id=UUID(str(media_id)))
+    elif podcast_id is not None:
+        ref = ResourceRef(scheme="podcast", id=UUID(str(podcast_id)))
+    else:
+        # Project Gutenberg works are not canonical Nexus resources. Their
+        # bridge route is explicit target data, never parsed for identity.
+        return ExternalActionTargetOut(href=href)
+
+    return ResourceActionSubjectOut(
+        ref=ref.uri,
+        activation=resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref),
+        missing=False,
+    )
 
 
 def resolve_contributor_ref_by_handle(
@@ -893,7 +951,12 @@ def _ensure_display_name_op(
         _ensure_alias(db, contributor_id=contributor.id, alias=old_display, resolves_identity=True)
         _ensure_alias(db, contributor_id=contributor.id, alias=new_display, resolves_identity=True)
 
-    response = _contributor_detail_out(db, contributor, can_rename=True)
+    response = _contributor_detail_out(
+        db,
+        contributor,
+        viewer_id=viewer.user_id,
+        can_rename=True,
+    )
     # changed_lanes is intentionally empty: author mutations do not participate
     # in the resource-item lane-version protocol.
     record_replay(
@@ -913,6 +976,7 @@ def _contributor_detail_out(
     db: Session,
     contributor: Contributor,
     *,
+    viewer_id: UUID,
     can_rename: bool,
 ) -> ContributorDetailOut:
     other_names = list(
@@ -925,12 +989,22 @@ def _contributor_detail_out(
             .order_by(ContributorAlias.alias.asc())
         )
     )
+    ref = ResourceRef(scheme="contributor", id=contributor.id)
     return ContributorDetailOut(
         handle=contributor.handle,
         href=f"/authors/{contributor.handle}",
         displayName=contributor.display_name,
         otherNames=other_names,
         canRename=can_rename,
+        actionTarget=ResourceActionSubjectOut(
+            ref=ref.uri,
+            activation=resource_activation_for_ref(
+                db,
+                viewer_id=viewer_id,
+                ref=ref,
+            ),
+            missing=False,
+        ),
     )
 
 

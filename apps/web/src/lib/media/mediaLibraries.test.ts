@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  confirmAndDeleteMedia,
   decodeMediaLibraryMemberships,
   ensureMediaAbsentFromLibrary,
   ensureMediaInLibraries,
@@ -8,6 +9,111 @@ import {
 } from "./mediaLibraries";
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("confirmAndDeleteMedia", () => {
+  it("owns the canonical confirmation copy and does not execute when cancelled", async () => {
+    const confirmRemoval = vi.fn(() => false);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      confirmAndDeleteMedia({
+        mediaId: "media-1",
+        mediaTitle: "A Work",
+        confirmRemoval,
+      }),
+    ).resolves.toEqual({ kind: "Cancelled" });
+
+    expect(confirmRemoval).toHaveBeenCalledWith(
+      'Delete "A Work" from My Library and libraries you manage? This cannot be undone.',
+    );
+    expect(confirmRemoval).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("executes and strictly decodes the canonical delete command after confirmation", async () => {
+    const confirmRemoval = vi.fn(() => true);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        data: {
+          kind: "Hidden",
+          removedFromLibraryIds: ["library-1"],
+          remainingReferenceCount: 1,
+        },
+      }),
+    );
+
+    await expect(
+      confirmAndDeleteMedia({
+        mediaId: "media-1",
+        mediaTitle: "A Work",
+        confirmRemoval,
+      }),
+    ).resolves.toEqual({
+      kind: "Completed",
+      result: {
+        kind: "Hidden",
+        removedFromLibraryIds: ["library-1"],
+        remainingReferenceCount: 1,
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/media/media-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(confirmRemoval).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      name: "unknown discriminator",
+      body: { data: { kind: "removed" } },
+      defect: "Invalid MediaDeleteResult.kind",
+    },
+    {
+      name: "extra envelope key",
+      body: { data: { kind: "Deleting" }, legacy: true },
+      defect: "Invalid MediaDeleteResult envelope",
+    },
+    {
+      name: "extra Deleting arm key",
+      body: { data: { kind: "Deleting", legacy: true } },
+      defect: "Invalid MediaDeleteResult.Deleting",
+    },
+    {
+      name: "extra completed arm key",
+      body: {
+        data: {
+          kind: "Removed",
+          removedFromLibraryIds: [],
+          remainingReferenceCount: 0,
+          legacy: true,
+        },
+      },
+      defect: "Invalid MediaDeleteResult.Removed",
+    },
+    {
+      name: "negative remaining reference count",
+      body: {
+        data: {
+          kind: "Hidden",
+          removedFromLibraryIds: [],
+          remainingReferenceCount: -1,
+        },
+      },
+      defect: "Invalid MediaDeleteResult.Hidden",
+    },
+  ])("defects on $name", async ({ body, defect }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(body));
+
+    await expect(
+      confirmAndDeleteMedia({
+        mediaId: "media-1",
+        mediaTitle: "A Work",
+        confirmRemoval: () => true,
+      }),
+    ).rejects.toThrow(defect);
+  });
+});
 
 describe("decodeMediaLibraryMemberships", () => {
   it("decodes the canonical non-default membership projection", () => {

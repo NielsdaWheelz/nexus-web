@@ -16,6 +16,17 @@ function viewModel(
       href: "/media/media-1#evidence-span-1",
       unresolvedReason: null,
     },
+    actionTarget: {
+      kind: "Resource",
+      ref: resourceRef as never,
+      activation: {
+        resourceRef,
+        kind: "route",
+        href: "/media/media-1#evidence-span-1",
+        unresolvedReason: null,
+      },
+      missing: false,
+    },
     citationTarget: resourceRef,
     paneLabelHint: "before match after",
     type: "content_chunk",

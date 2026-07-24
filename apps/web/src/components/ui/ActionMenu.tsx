@@ -67,8 +67,8 @@ interface ActionMenuProps {
 }
 
 const MENU_ITEM_SELECTOR =
-  '[role="menuitem"]:not([aria-disabled="true"]):not([disabled]), ' +
-  '[role="menuitemcheckbox"]:not([aria-disabled="true"]):not([disabled])';
+  '[role="menuitem"]:not([disabled]), ' +
+  '[role="menuitemcheckbox"]:not([disabled])';
 const TABBABLE_SELECTOR = [
   'a[href]:not([aria-disabled="true"])',
   "button:not([disabled])",
@@ -301,6 +301,12 @@ export default function ActionMenu({
             option.label,
             option.kind === "command" ? option.state : undefined,
           );
+          const disabledReasonId =
+            option.kind !== "custom" &&
+            option.disabled &&
+            option.disabledReason
+              ? `${menuId}-disabled-reason-${index}`
+              : undefined;
           const itemClassName = `${styles.menuItem} ${
             option.tone === "danger" ? styles.menuItemDanger : ""
           }`;
@@ -323,10 +329,11 @@ export default function ActionMenu({
                 <li role="none">
                   {option.kind === "link" ? (
                     <a
-                      href={option.href}
+                      href={option.disabled ? undefined : option.href}
                       role="menuitem"
                       className={itemClassName}
                       aria-disabled={option.disabled || undefined}
+                      aria-describedby={disabledReasonId}
                       tabIndex={option.disabled ? -1 : undefined}
                       onKeyDown={(event: ReactKeyboardEvent<HTMLAnchorElement>) => {
                         if (
@@ -354,10 +361,23 @@ export default function ActionMenu({
                       type="button"
                       role={control.menuRole}
                       aria-checked={control.menuChecked}
+                      aria-disabled={option.disabled || undefined}
+                      aria-describedby={disabledReasonId}
                       className={itemClassName}
-                      disabled={option.disabled}
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onKeyDown={(event) => {
+                        if (
+                          option.disabled &&
+                          (event.key === "Enter" || event.key === " ")
+                        ) {
+                          event.preventDefault();
+                        }
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (option.disabled) {
+                          event.preventDefault();
+                          return;
+                        }
                         const triggerEl = toggleRef.current;
                         closeMenu(option.restoreFocusOnClose !== false);
                         option.onSelect({ triggerEl });
@@ -366,6 +386,11 @@ export default function ActionMenu({
                       {control.menuLabel}
                     </button>
                   )}
+                  {disabledReasonId ? (
+                    <span id={disabledReasonId} className="sr-only">
+                      {option.disabledReason}
+                    </span>
+                  ) : null}
                 </li>
               )}
             </Fragment>

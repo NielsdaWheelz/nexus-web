@@ -22,8 +22,14 @@ import {
 } from "@/lib/panes/paneHeaderModel";
 import {
   usePaneRouter,
+  usePaneRuntime,
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
+import {
+  RESOURCE_ACTION_CATALOG,
+  composeResourceMenu,
+  resolveResourceCoreActions,
+} from "@/lib/actions/resourceActions";
 import {
   arePanePrimaryChromePublicationsEqual,
   secondaryPublicationIncludesSurface,
@@ -36,7 +42,14 @@ import type {
   PaneBodyMode,
   PaneRouteHeaderContract,
 } from "@/lib/panes/paneRouteModel";
-import type { PaneShareIdentity } from "@/lib/panes/paneResourceLocator";
+import type { PaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
+import {
+  executeResourceChat,
+  executeResourceShare,
+} from "@/lib/resources/resourceActionExecution";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import type {
@@ -70,7 +83,7 @@ interface PaneShellProps {
   paneId: string;
   routeKey: string;
   routeHeader: PaneRouteHeaderContract;
-  shareIdentity?: PaneShareIdentity | null;
+  routeShareIdentity?: PaneRouteShareIdentity | null;
   label: string;
   labelPending?: boolean;
   returnMementoEnabled: boolean;
@@ -97,7 +110,7 @@ export default function PaneShell({
   paneId,
   routeKey,
   routeHeader,
-  shareIdentity = null,
+  routeShareIdentity = null,
   label,
   labelPending = false,
   returnMementoEnabled,
@@ -120,6 +133,12 @@ export default function PaneShell({
     throw new Error("ShellScroll PaneShell must use bodyMode standard");
   }
   const paneRouter = usePaneRouter();
+  const paneRuntime = usePaneRuntime();
+  if (!paneRuntime) {
+    // justify-defect: PaneShell execution requires pane-scoped navigation.
+    throw new Error("PaneShell must be used inside PaneRuntimeProvider");
+  }
+  const feedback = useFeedback();
   const recordNavigationModality = useRecordPaneNavigationModality();
   const canGoBack = paneRouter.canGoBack;
   const canGoForward = paneRouter.canGoForward;
@@ -219,7 +238,7 @@ export default function PaneShell({
   const effectiveToolbar = acceptedPrimaryChrome?.toolbar;
   const effectiveActions =
     acceptedPrimaryChrome?.actions ?? EMPTY_HEADER_ACTIONS;
-  const effectiveOptions = acceptedPrimaryChrome?.options ?? EMPTY_OPTIONS;
+  const effectiveMenu = acceptedPrimaryChrome?.menu;
   const mobileChromeHidden = isMobile && hidden;
   const secondaryPresentation =
     secondaryPane &&
@@ -266,16 +285,20 @@ export default function PaneShell({
     return () => observer.disconnect();
   }, [effectiveToolbar, isMobile]);
 
+  const chatBusyRefs = useRef(new Set<string>());
+  const [chatBusySubjects, setChatBusySubjects] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const paneMenuOptions = useMemo<readonly ActionDescriptor[]>(() => {
-    const shareOption: ActionDescriptor[] = shareIdentity
+    const routeShareOption: ActionDescriptor[] = routeShareIdentity
       ? [
           {
             kind: "command",
-            id: "share",
+            id: "RouteAction.Share",
             label: "Share…",
             restoreFocusOnClose: false,
             onSelect: ({ triggerEl }) =>
-              openShare(shareIdentity, {
+              openShare(routeShareIdentity, {
                 returnFocusTo: () => triggerEl,
                 returnFocusFallback: present(() =>
                   findPaneChromeFocusTarget(paneId),
@@ -284,18 +307,93 @@ export default function PaneShell({
           },
         ]
       : [];
-    const contextualOptions: ActionDescriptor[] = effectiveOptions.map(
-      (option, index) =>
-        index === 0 && option.separatorBefore === undefined
+    if (!effectiveMenu) {
+      return routeShareOption.length > 0 ? routeShareOption : EMPTY_OPTIONS;
+    }
+    if (effectiveMenu.kind === "FlatMenu") {
+      const contextualOptions = effectiveMenu.actions.map((option, index) =>
+        routeShareOption.length > 0 &&
+        index === 0 &&
+        option.separatorBefore === undefined
           ? { ...option, separatorBefore: true }
           : option,
-    );
-    const ordinaryOptions: ActionDescriptor[] = [
-      ...shareOption,
-      ...contextualOptions,
-    ];
-    return ordinaryOptions;
-  }, [effectiveOptions, openShare, paneId, shareIdentity]);
+      );
+      return [...routeShareOption, ...contextualOptions];
+    }
+    if (routeShareIdentity) {
+      // justify-defect: a resource pane must not retain the route-share path.
+      throw new Error("Resource pane received a route Share identity");
+    }
+    if (effectiveMenu.target.kind !== "Resource") {
+      // justify-defect: external targets are representations, never current panes.
+      throw new Error("Pane ResourceMenu target must be Resource");
+    }
+    if (effectiveMenu.groups.core.length > 0) {
+      // justify-defect: PaneShell is the sole owner of current-pane core policy.
+      throw new Error("Pane ResourceMenu must publish an empty core group");
+    }
+    const target = effectiveMenu.target;
+    const busyIds = chatBusySubjects.has(target.ref)
+      ? new Set([RESOURCE_ACTION_CATALOG.Chat.id])
+      : new Set<never>();
+    const core = resolveResourceCoreActions({
+      target,
+      projection: "CurrentPane",
+      busyIds,
+      executors: {
+        share: (subject, detail) => {
+          executeResourceShare({
+            subject,
+            openShare,
+            options: {
+              returnFocusTo: () => detail.triggerEl,
+              returnFocusFallback: present(() =>
+                findPaneChromeFocusTarget(paneId),
+              ),
+            },
+          });
+        },
+        chat: async (subject) => {
+          if (chatBusyRefs.current.has(subject.ref)) return;
+          chatBusyRefs.current.add(subject.ref);
+          setChatBusySubjects(new Set(chatBusyRefs.current));
+          try {
+            await executeResourceChat({
+              ref: subject.ref,
+              openConversation: (conversationId) =>
+                paneRuntime.openInNewPane(
+                  `/conversations/${conversationId}`,
+                  "Chat",
+                ),
+            });
+          } catch (error: unknown) {
+            if (handleUnauthenticatedApiError(error)) return;
+            if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+            feedback.show(
+              toFeedback(error, {
+                fallback: "A conversation about this resource could not begin.",
+              }),
+            );
+          } finally {
+            chatBusyRefs.current.delete(subject.ref);
+            setChatBusySubjects(new Set(chatBusyRefs.current));
+          }
+        },
+      },
+    }).core;
+    return composeResourceMenu({
+      ...effectiveMenu.groups,
+      core,
+    });
+  }, [
+    chatBusySubjects,
+    effectiveMenu,
+    feedback,
+    openShare,
+    paneId,
+    paneRuntime,
+    routeShareIdentity,
+  ]);
   useEffect(() => {
     if (!isMobile) return;
     // Direct header actions (e.g. the Companion toggle) travel on their own

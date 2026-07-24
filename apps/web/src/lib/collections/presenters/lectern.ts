@@ -1,6 +1,10 @@
 /** Pure semantic projection for one Lectern row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
+import {
+  projectResourceActionToMenu,
+  type ExecutableResourceAction,
+} from "@/lib/actions/resourceActions";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -11,6 +15,7 @@ import type {
   LecternActivityFacts,
   LecternItem,
 } from "@/lib/lectern/contract";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 
 function modalityFor(item: LecternItem): ConsumptionModality {
   if (item.activation.kind === "FooterAudio") return "Listen";
@@ -63,9 +68,26 @@ export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | 
 
 export function presentLecternItem(
   item: LecternItem,
-  onRemove: (triggerEl: HTMLButtonElement | null) => void,
+  actions: {
+    readonly remove: (triggerEl: HTMLButtonElement | null) => void;
+    readonly playback: ExecutableResourceAction;
+  },
   activityFacts: LecternActivityFacts,
 ): CollectionRowView {
+  const playback = actions.playback;
+  const view =
+    playback.kind === "Available"
+      ? [
+          {
+            kind: "command" as const,
+            id: "ViewAction.Lectern.Playback",
+            label: playbackVerb(item.consumption),
+            onSelect: (detail: ActionSelectDetail) => {
+              void playback.execute(detail);
+            },
+          },
+        ]
+      : [];
   return {
     id: item.itemId,
     kind: item.kind === "podcast_episode" ? "podcast_episode" : "media",
@@ -81,16 +103,22 @@ export function presentLecternItem(
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: [
-      {
-        kind: "command",
-        id: "remove-from-lectern",
-        label: "Remove from Lectern",
-        tone: "danger",
-        restoreFocusOnClose: false,
-        onSelect: ({ triggerEl }) => onRemove(triggerEl),
+    actionPublication: {
+      kind: "ResourceMenu",
+      target: item.actionTarget,
+      groups: {
+        core: [],
+        operations: [],
+        relationships: [
+          projectResourceActionToMenu({
+            kind: "command",
+            catalogKey: "RemoveFromLectern",
+            onSelect: ({ triggerEl }) => actions.remove(triggerEl),
+          }),
+        ],
+        view,
       },
-    ],
+    },
     selected: false,
   };
 }

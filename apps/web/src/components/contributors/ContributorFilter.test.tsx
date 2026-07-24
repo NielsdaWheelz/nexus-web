@@ -3,6 +3,26 @@ import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
 import ContributorFilter from "./ContributorFilter";
 
+const CONTRIBUTOR_IDS = {
+  "ursula-le-guin": "11111111-1111-4111-8111-111111111111",
+  "octavia-butler": "22222222-2222-4222-8222-222222222222",
+} as const;
+
+function actionTarget(handle: keyof typeof CONTRIBUTOR_IDS) {
+  const ref = `contributor:${CONTRIBUTOR_IDS[handle]}`;
+  return {
+    kind: "Resource",
+    ref,
+    activation: {
+      resourceRef: ref,
+      kind: "route",
+      href: `/authors/${handle}`,
+      unresolvedReason: null,
+    },
+    missing: false,
+  };
+}
+
 function searchItem(handle: string, displayName: string) {
   return {
     handle,
@@ -28,6 +48,7 @@ describe("ContributorFilter", () => {
               displayName: "Ursula K. Le Guin",
               otherNames: [],
               canRename: false,
+              actionTarget: actionTarget("ursula-le-guin"),
             },
           });
         }
@@ -106,6 +127,7 @@ describe("ContributorFilter", () => {
             displayName: "Ursula K. Le Guin",
             otherNames: [],
             canRename: false,
+            actionTarget: actionTarget("ursula-le-guin"),
           },
         }),
       );
@@ -125,6 +147,7 @@ describe("ContributorFilter", () => {
             displayName: "Octavia E. Butler",
             otherNames: [],
             canRename: false,
+            actionTarget: actionTarget("octavia-butler"),
           },
         }),
       );

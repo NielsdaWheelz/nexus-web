@@ -26,6 +26,7 @@ function consumption(
 }
 
 function queueItem(overrides: Partial<LecternItem> = {}): LecternItem {
+  const ref = `media:${MEDIA_ID}` as never;
   return {
     itemId: ITEM_ID,
     mediaId: MEDIA_ID,
@@ -35,12 +36,30 @@ function queueItem(overrides: Partial<LecternItem> = {}): LecternItem {
     href: assumeAppHref(`/media/${MEDIA_ID}`),
     consumption: consumption("Unread"),
     activation: { kind: "Readable" },
+    actionTarget: {
+      kind: "Resource",
+      ref,
+      activation: {
+        resourceRef: ref,
+        kind: "route",
+        href: `/media/${MEDIA_ID}`,
+        unresolvedReason: null,
+      },
+      missing: false,
+    },
     ...overrides,
   };
 }
 
 function present(item: LecternItem, onRemove = vi.fn()) {
-  return presentLecternItem(item, onRemove, lecternActivityFacts(item));
+  return presentLecternItem(
+    item,
+    {
+      remove: onRemove,
+      playback: { kind: "Unavailable" },
+    },
+    lecternActivityFacts(item),
+  );
 }
 
 describe("Lectern collection presenters", () => {
@@ -83,12 +102,15 @@ describe("Lectern collection presenters", () => {
     const view = present(queueItem(), onRemove);
 
     expect(view.relatedMediaId).toEqual({ kind: "Absent" });
-    expect(view.actions[0]).toMatchObject({
-      id: "remove-from-lectern",
+    expect(view.actionPublication.kind).toBe("ResourceMenu");
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(view.actionPublication.groups.relationships[0]).toMatchObject({
+      id: "RelationshipAction.Lectern.Remove",
       label: "Remove from Lectern",
-      tone: "danger",
     });
-    const action = view.actions[0];
+    const action = view.actionPublication.groups.relationships[0];
     if (action.kind !== "command") throw new Error("Expected command action");
     action.onSelect({ triggerEl: null });
     expect(onRemove).toHaveBeenCalledOnce();

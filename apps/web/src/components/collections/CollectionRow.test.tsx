@@ -1,17 +1,23 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ResourceList from "@/components/ui/ResourceList";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { decodePublicationDate } from "@/lib/dates/publicationDate";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import CollectionRow from "./CollectionRow";
+
+const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 
 function baseRow(): CollectionRowView {
   return {
-    id: "media-1",
+    id: MEDIA_ID,
     kind: "media",
-    primary: { kind: "link", href: "/media/media-1" },
+    primary: { kind: "link", href: `/media/${MEDIA_ID}` },
     title: { text: "Canonical title" },
     contributors: [],
     publicationDate: absent(),
@@ -20,9 +26,25 @@ function baseRow(): CollectionRowView {
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: [],
+    actionPublication: {
+      kind: "ResourceMenu",
+      target: routeResourceActionSubject({
+        scheme: "media",
+        id: MEDIA_ID,
+        href: `/media/${MEDIA_ID}`,
+      }),
+      groups: { core: [], operations: [], relationships: [], view: [] },
+    },
     selected: false,
   };
+}
+
+function renderRow(ui: ReactNode) {
+  return render(
+    <FeedbackProvider>
+      <ShareControllerProvider>{ui}</ShareControllerProvider>
+    </FeedbackProvider>,
+  );
 }
 
 describe("CollectionRow", () => {
@@ -69,7 +91,7 @@ describe("CollectionRow", () => {
       }),
     };
 
-    render(
+    renderRow(
       <ResourceList ariaLabel="Documents">
         <CollectionRow row={row} />
       </ResourceList>,
@@ -94,7 +116,7 @@ describe("CollectionRow", () => {
   it("keeps exceptional status singular and domain actions in the overflow", async () => {
     const user = userEvent.setup();
     const onArchive = vi.fn();
-    render(
+    renderRow(
       <ResourceList ariaLabel="Documents">
         <CollectionRow
           row={{
@@ -104,14 +126,17 @@ describe("CollectionRow", () => {
               kind: "PodcastSync",
               status: "partial",
             }),
-            actions: [
-              {
-                kind: "command",
-                id: "archive",
-                label: "Archive",
-                onSelect: onArchive,
-              },
-            ],
+            actionPublication: {
+              kind: "FlatMenu",
+              actions: [
+                {
+                  kind: "command",
+                  id: "archive",
+                  label: "Archive",
+                  onSelect: onArchive,
+                },
+              ],
+            },
           }}
         />
       </ResourceList>,
@@ -139,12 +164,12 @@ describe("CollectionRow", () => {
       }),
     );
     try {
-      render(
+    renderRow(
         <ResourceList ariaLabel="Documents">
           <CollectionRow
             row={{
               ...baseRow(),
-              relatedMediaId: present("media-1"),
+              relatedMediaId: present(MEDIA_ID),
             }}
           />
         </ResourceList>,
@@ -162,7 +187,7 @@ describe("CollectionRow", () => {
         }),
       );
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
-      expect(fetchSpy.mock.calls[0]?.[0]).toBe("/api/media/media-1/related");
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe(`/api/media/${MEDIA_ID}/related`);
     } finally {
       fetchSpy.mockRestore();
     }

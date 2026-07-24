@@ -11,6 +11,7 @@ import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 
@@ -140,29 +141,31 @@ function withProviders(node: ReactNode) {
   return withRenderEnvironment(
     <PaneReturnMementoProvider>
       <FeedbackProvider>
-        <LecternProvider>
-          <GlobalPlayerProvider>
-            <PaneRuntimeProvider
-              paneId="pane-1"
-              visitId={TEST_VISIT_ID}
-              isActive
-              href={href}
-              routeId="lectern"
-              routeKey={resolvePaneRouteIdentity(href).routeKey}
-              canGoBack={false}
-              canGoForward={false}
-              onGoBackPane={vi.fn()}
-              onGoForwardPane={vi.fn()}
-              onNavigatePane={vi.fn()}
-              onReplacePane={vi.fn()}
-              onOpenInNewPane={vi.fn()}
-              onSetPaneLabel={vi.fn()}
-            >
-              <LecternMutationNotice />
-              {node}
-            </PaneRuntimeProvider>
-          </GlobalPlayerProvider>
-        </LecternProvider>
+        <ShareControllerProvider>
+          <LecternProvider>
+            <GlobalPlayerProvider>
+              <PaneRuntimeProvider
+                paneId="pane-1"
+                visitId={TEST_VISIT_ID}
+                isActive
+                href={href}
+                routeId="lectern"
+                routeKey={resolvePaneRouteIdentity(href).routeKey}
+                canGoBack={false}
+                canGoForward={false}
+                onGoBackPane={vi.fn()}
+                onGoForwardPane={vi.fn()}
+                onNavigatePane={vi.fn()}
+                onReplacePane={vi.fn()}
+                onOpenInNewPane={vi.fn()}
+                onSetPaneLabel={vi.fn()}
+              >
+                <LecternMutationNotice />
+                {node}
+              </PaneRuntimeProvider>
+            </GlobalPlayerProvider>
+          </LecternProvider>
+        </ShareControllerProvider>
       </FeedbackProvider>
     </PaneReturnMementoProvider>,
   );

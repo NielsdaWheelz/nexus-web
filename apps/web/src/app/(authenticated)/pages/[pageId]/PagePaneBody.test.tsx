@@ -27,10 +27,27 @@ import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import PagePaneBody from "./PagePaneBody";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
 );
+
+function paneMenuIds(
+  publication: PanePrimaryChromePublication,
+): readonly string[] {
+  const menu = publication.menu;
+  if (!menu) return [];
+  if (menu.kind === "FlatMenu") {
+    return menu.actions.map((action) => action.id);
+  }
+  return [
+    ...menu.groups.core,
+    ...menu.groups.operations,
+    ...menu.groups.relationships,
+    ...menu.groups.view,
+  ].map((action) => action.id);
+}
 
 describe("readDraftBlocksForPersistence", () => {
   it("keeps focused nested note siblings under the focused block's original parent", () => {
@@ -474,12 +491,12 @@ describe("PagePaneBody daily-note chrome options", () => {
 
     await waitFor(() => {
       expect(
-        captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
-      ).toContain("daily-open-yesterday");
+        captured.flatMap(paneMenuIds),
+      ).toContain("ViewAction.Page.OpenYesterday");
     });
     expect(
-      captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
-    ).toContain("daily-open-tomorrow");
+      captured.flatMap(paneMenuIds),
+    ).toContain("ViewAction.Page.OpenTomorrow");
   });
 
   it("omits open-yesterday and open-tomorrow options when the page has no daily note", async () => {
@@ -492,8 +509,8 @@ describe("PagePaneBody daily-note chrome options", () => {
 
     await waitFor(() => {
       expect(
-        captured.flatMap((c) => c.options?.map((o) => o.id) ?? []),
-      ).not.toContain("daily-open-yesterday");
+        captured.flatMap(paneMenuIds),
+      ).not.toContain("ViewAction.Page.OpenYesterday");
     });
   });
 });
@@ -628,6 +645,11 @@ function activationPage(pageId: string, blockId: string): NotePage {
   return {
     id: pageId,
     title: "Cited page",
+    actionTarget: routeResourceActionSubject({
+      scheme: "page",
+      id: pageId,
+      href: `/pages/${pageId}`,
+    }),
     surface: null,
     updatedAt: "2026-01-01T00:00:00Z",
     dailyNote: null,

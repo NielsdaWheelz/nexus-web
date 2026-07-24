@@ -35,7 +35,10 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: item.actions ?? [],
+    actionPublication: {
+      kind: "FlatMenu",
+      actions: item.actions ?? [],
+    },
     selected: false,
   };
 }

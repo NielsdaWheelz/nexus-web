@@ -9,6 +9,7 @@ import {
 } from "@/__tests__/helpers/fetch";
 import { ApiError } from "@/lib/api/client";
 import type { SlateItem, SlateSnapshot } from "@/lib/resonance/contract";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   useReadingSlate,
   type AcceptResult,
@@ -29,7 +30,15 @@ async function slateHttpResponse(
   response: Promise<SlateSnapshot>,
 ): Promise<Response> {
   try {
-    return jsonResponse({ data: await response });
+    const snapshot = await response;
+    return jsonResponse({
+      data: {
+        items: snapshot.items.map(({ target, reason }) => {
+          const { actionTarget: _actionTarget, ...wireTarget } = target;
+          return { target: wireTarget, reason };
+        }),
+      },
+    });
   } catch (error) {
     if (
       error instanceof ApiError &&
@@ -86,6 +95,11 @@ function item(index: number): SlateItem {
       subtitle: { kind: "Absent" },
       imageUrl: { kind: "Absent" },
       href: `/media/${id}` as SlateItem["target"]["href"],
+      actionTarget: routeResourceActionSubject({
+        scheme: "media",
+        id,
+        href: `/media/${id}`,
+      }),
     },
     reason: {
       kind: "AddedToNexus",

@@ -8,6 +8,7 @@ import type {
   ConversationTreeResponse,
   ForkOption,
 } from "@/lib/conversations/types";
+import { decodeContextRef } from "@/lib/resourceGraph/contextRefs";
 
 // Mock the streaming spine at its boundary: useConversation is the only caller
 // of useChatRunTail, and the SSE transport is out of scope for the engine.
@@ -365,7 +366,7 @@ describe("useConversation", () => {
 
   it("forwards context_ref_added events from the tail to the context-ref owner", async () => {
     const onContextRefAdded = vi.fn();
-    const contextRefAdded: SSEContextRefAddedEvent["data"] = {
+    const contextRef = decodeContextRef({
       id: "ref-1",
       conversation_id: "conversation-1",
       resource_ref: "content_chunk:33333333-3333-4333-8333-333333333333",
@@ -379,6 +380,9 @@ describe("useConversation", () => {
       summary: "Relevant context",
       missing: false,
       created_at: timestamp,
+    });
+    const contextRefAdded: SSEContextRefAddedEvent["data"] = {
+      ...contextRef,
       citation_edge_id: "edge-1",
     };
 

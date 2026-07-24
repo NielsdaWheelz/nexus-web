@@ -1,33 +1,35 @@
 /** Pure semantic projection for one library row. */
 
 import { absent, present } from "@/lib/api/presence";
-import {
-  libraryResourceOptions,
-  type LibraryActionSubject,
-} from "@/lib/actions/resourceActions";
+import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { CollectionRowView } from "@/lib/collections/types";
 
-export interface LibraryPresenterItem extends LibraryActionSubject {
+export interface LibraryPresenterItem {
   id: string;
   name: string;
+  isDefault: boolean;
+  role: string;
+  canRename: boolean;
+  canDelete: boolean;
 }
 
-export interface LibraryPresenterContext {
-  onShare?: Parameters<typeof libraryResourceOptions>[0]["onShare"];
-  onOpenSettings?: () => void;
-  onDelete?: () => void;
-}
+export type LibraryPresenterContext = Parameters<
+  typeof libraryResourceOptions
+>[0];
 
 export function presentLibrary(
   item: LibraryPresenterItem,
   ctx: LibraryPresenterContext,
 ): CollectionRowView {
+  const href = `/libraries/${item.id}`;
   return {
     id: item.id,
     kind: "library",
     primary: {
       kind: "link",
-      href: `/libraries/${item.id}`,
+      href,
       paneLabelHint: item.name,
     },
     title: { text: item.name },
@@ -41,7 +43,15 @@ export function presentLibrary(
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: libraryResourceOptions({ library: item, ...ctx }),
+    actionPublication: publishResourceRowActions({
+      target: routeResourceActionSubject({
+        scheme: "library",
+        id: item.id,
+        href,
+      }),
+      rich: libraryResourceOptions(ctx),
+      view: [],
+    }),
     selected: false,
   };
 }

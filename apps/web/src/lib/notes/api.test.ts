@@ -7,6 +7,12 @@ import {
   saveResourceSurface,
 } from "./api";
 import type { NotePageSummary } from "./normalize";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+
+const DAILY_PAGE_ID = "11111111-0000-4000-8000-000000000001";
+const PLAIN_PAGE_ID = "22222222-0000-4000-8000-000000000002";
+const TODAY_PAGE_ID = "33333333-0000-4000-8000-000000000003";
+const PAGE_ID = "44444444-0000-4000-8000-000000000004";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -25,7 +31,7 @@ describe("notes api", () => {
       jsonResponse({
         data: {
           page: {
-            id: "page-daily-1",
+            id: DAILY_PAGE_ID,
             title: "July 7, 2026",
             surface: null,
             blocks: [],
@@ -43,7 +49,7 @@ describe("notes api", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         data: {
-          id: "page-plain-1",
+          id: PLAIN_PAGE_ID,
           title: "Plain page",
           surface: null,
           blocks: [],
@@ -52,12 +58,21 @@ describe("notes api", () => {
     );
 
     const { fetchNotePage } = await import("./api");
-    const page = await fetchNotePage("page-plain-1");
+    const page = await fetchNotePage(PLAIN_PAGE_ID);
     expect(page.dailyNote).toBeNull();
   });
 
   it("NotePageSummary shape is not widened with dailyNote", () => {
-    const summary: NotePageSummary = { id: "s1", title: "Summary" };
+    const id = "55555555-5555-4555-8555-555555555555";
+    const summary: NotePageSummary = {
+      id,
+      title: "Summary",
+      actionTarget: routeResourceActionSubject({
+        scheme: "page",
+        id,
+        href: `/pages/${id}`,
+      }),
+    };
     expect(Object.keys(summary)).not.toContain("dailyNote");
   });
 
@@ -77,7 +92,7 @@ describe("notes api", () => {
             data: {
               localDate: "2026-05-06",
               page: {
-                id: "page-today",
+                id: TODAY_PAGE_ID,
                 title: "May 6, 2026",
                 surface: null,
                 blocks: [],
@@ -108,7 +123,7 @@ describe("notes api", () => {
     await expect(
       fetchDailyNotePage("2026-05-06", { timeZone: "America/Los_Angeles" }),
     ).resolves.toMatchObject({
-      id: "page-today",
+      id: TODAY_PAGE_ID,
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/notes/daily/2026-05-06?time_zone=America%2FLos_Angeles",
@@ -198,10 +213,10 @@ describe("notes api", () => {
       if (url.pathname.endsWith("/adjacency")) {
         return jsonResponse({ data: { changedEdgeIds: ["edge-1"] } });
       }
-      if (url.pathname === "/api/notes/pages/page-1") {
+      if (url.pathname === `/api/notes/pages/${PAGE_ID}`) {
         return jsonResponse({
           data: {
-            id: "page-1",
+            id: PAGE_ID,
             title: "Page",
             surface: null,
             blocks: [
@@ -221,9 +236,9 @@ describe("notes api", () => {
       return jsonResponse({ data: {} });
     });
 
-    const result = await saveResourceSurface("page-1", {
+    const result = await saveResourceSurface(PAGE_ID, {
       clientMutationId: "mutation-1",
-      baseVersions: [{ ref: "page:page-1", lane: "title", version: 1 }],
+      baseVersions: [{ ref: `page:${PAGE_ID}`, lane: "title", version: 1 }],
       focusBlockId: null,
       blocks: [
         {
@@ -233,7 +248,7 @@ describe("notes api", () => {
       ],
       adjacency: [
         {
-          parent: { scheme: "page", id: "page-1" },
+          parent: { scheme: "page", id: PAGE_ID },
           children: [
             {
               blockId: "block-1",
@@ -248,8 +263,8 @@ describe("notes api", () => {
 
     expect(calls.map((call) => [call.method, call.path])).toEqual([
       ["PATCH", "/api/resource-items/note_block%3Ablock-1/body"],
-      ["PUT", "/api/resource-items/page%3Apage-1/adjacency"],
-      ["GET", "/api/notes/pages/page-1"],
+      ["PUT", `/api/resource-items/page%3A${PAGE_ID}/adjacency`],
+      ["GET", `/api/notes/pages/${PAGE_ID}`],
     ]);
     expect(calls[0]?.body).toEqual({
       client_mutation_id: "mutation-1",
@@ -342,6 +357,7 @@ function resourceItem(
         user_link_target: "direct",
         note_reference_target: true,
       },
+      sharing: "CopyOnly",
       attachable: true,
       chat_subject: "label",
       readable: "body",

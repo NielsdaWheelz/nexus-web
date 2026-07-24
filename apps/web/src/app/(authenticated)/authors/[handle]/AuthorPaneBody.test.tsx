@@ -24,11 +24,14 @@ import AuthorPaneBody from "./AuthorPaneBody";
 const HANDLE = "ursula-le-guin";
 const CANONICAL = "Ursula K. Le Guin";
 const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
+const WORK_ID = "22222222-2222-4222-8222-222222222222";
+const SECOND_WORK_ID = "33333333-3333-4333-8333-333333333333";
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
 );
 const AUTHOR_HREF = `/authors/${HANDLE}`;
 const AUTHOR_ROUTE_KEY = resolvePaneRouteIdentity(AUTHOR_HREF).routeKey;
+let workSequence = 0;
 
 describe("AuthorPaneBody", () => {
   afterEach(() => {
@@ -42,12 +45,14 @@ describe("AuthorPaneBody", () => {
         work({
           title: "A Wizard of Earthsea",
           href: "/media/earthsea",
+          actionTarget: workTarget("/media/earthsea", WORK_ID),
           date: "1968",
           roleFacts: [fact({ creditedName: CANONICAL, role: "author" })],
         }),
         work({
           title: "Kalpa Imperial",
           href: "/media/kalpa",
+          actionTarget: workTarget("/media/kalpa", SECOND_WORK_ID),
           date: "1983-11",
           roleFacts: [fact({ creditedName: "U. K. Le Guin", role: "translator" })],
         }),
@@ -555,6 +560,17 @@ function detail(over: Record<string, unknown>): Response {
       displayName: CANONICAL,
       otherNames: [],
       canRename: false,
+      actionTarget: {
+        kind: "Resource",
+        ref: `contributor:${CONTRIBUTOR_ID}`,
+        activation: {
+          resourceRef: `contributor:${CONTRIBUTOR_ID}`,
+          kind: "route",
+          href: `/authors/${HANDLE}`,
+          unresolvedReason: null,
+        },
+        missing: false,
+      },
       ...over,
     },
   });
@@ -565,13 +581,31 @@ function worksPage(works: unknown[], nextCursor: string | null = null): Response
 }
 
 function work(over: Record<string, unknown>) {
+  const href = typeof over.href === "string" ? over.href : "/media/w1";
+  workSequence += 1;
+  const id = `22222222-2222-4222-8222-${String(workSequence).padStart(12, "0")}`;
   return {
     title: "A Work",
-    href: "/media/w1",
+    href,
     contentKind: "epub",
     date: null,
     roleFacts: [fact({ creditedName: CANONICAL, role: "author" })],
+    actionTarget: workTarget(href, id),
     ...over,
+  };
+}
+
+function workTarget(href: string, id: string) {
+  return {
+    kind: "Resource",
+    ref: `media:${id}`,
+    activation: {
+      resourceRef: `media:${id}`,
+      kind: "route",
+      href,
+      unresolvedReason: null,
+    },
+    missing: false,
   };
 }
 

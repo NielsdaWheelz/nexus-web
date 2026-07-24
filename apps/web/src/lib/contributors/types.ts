@@ -13,6 +13,7 @@
 import type { ContributorHandle } from "@/lib/contributors/handle";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { Presence } from "@/lib/api/presence";
+import type { StandingActionTarget } from "@/lib/resources/resourceActionTarget";
 
 // ---------------------------------------------------------------------------
 // Embedded snake credit (narrowed, D-33)
@@ -59,6 +60,7 @@ export interface ContributorDetail {
   displayName: string;
   otherNames: string[];
   canRename: boolean;
+  actionTarget: Extract<StandingActionTarget, { kind: "Resource" }>;
 }
 
 export interface ContributorRoleFact {
@@ -73,6 +75,7 @@ export interface ContributorWorkItem {
   contentKind: string;
   date: Presence<PublicationDate>;
   roleFacts: ContributorRoleFact[];
+  actionTarget: StandingActionTarget;
 }
 
 export interface ContributorWorkPage {

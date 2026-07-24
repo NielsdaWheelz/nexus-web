@@ -7,7 +7,8 @@
 
 import type { ApiPath } from "@/lib/api/client";
 import { apiFetch } from "@/lib/api/client";
-import type { ConnectionOut } from "./connections";
+import { decodeConnectionOut, type ConnectionOut } from "./connections";
+import { expectExactRecord } from "@/lib/validation";
 
 export interface PutStanceInput {
   sourceRef: string;
@@ -19,20 +20,22 @@ export interface StanceOut {
   connection: ConnectionOut;
 }
 
-interface StanceResponse {
-  data: StanceOut;
-}
-
 export async function putStance(input: PutStanceInput): Promise<StanceOut> {
-  const response = await apiFetch<StanceResponse>("/api/resource-graph/stances", {
-    method: "PUT",
-    body: JSON.stringify({
-      source_ref: input.sourceRef,
-      target_ref: input.targetRef,
-      kind: input.kind,
-    }),
-  });
-  return response.data;
+  const response = await apiFetch<{ data: unknown }>(
+    "/api/resource-graph/stances",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        source_ref: input.sourceRef,
+        target_ref: input.targetRef,
+        kind: input.kind,
+      }),
+    },
+  );
+  const value = expectExactRecord(response.data, ["connection"], "StanceOut");
+  return {
+    connection: decodeConnectionOut(value.connection, "StanceOut.connection"),
+  };
 }
 
 export async function deleteStance(stanceId: string): Promise<void> {

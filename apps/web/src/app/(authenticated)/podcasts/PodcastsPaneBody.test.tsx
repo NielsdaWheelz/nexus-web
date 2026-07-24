@@ -55,7 +55,7 @@ function renderPodcastsPane() {
 }
 
 function podcastSubscription(index: number) {
-  const id = `podcast-${index}`;
+  const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
   return {
     podcast_id: id,
     status: "active",

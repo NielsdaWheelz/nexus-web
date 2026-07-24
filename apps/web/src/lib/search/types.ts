@@ -1,6 +1,7 @@
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { Presence } from "@/lib/api/presence";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 
@@ -45,6 +46,7 @@ export interface SearchBaseResult {
   media_kind: string | null;
   resource_ref: string;
   activation: ResourceActivation;
+  actionTarget: ResourceActionSubject;
   citation_target: string | null;
   context_ref: {
     type: SearchType;
@@ -184,6 +186,7 @@ export interface SearchResultRowViewModel {
   key: string;
   resourceRef: string;
   activation: ResourceActivation;
+  actionTarget: ResourceActionSubject;
   citationTarget: string | null;
   paneLabelHint: string;
   type: SearchType;

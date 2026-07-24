@@ -66,3 +66,31 @@ describe("buildHighlightActions — Link verb", () => {
     expect(onLink).toHaveBeenCalledOnce();
   });
 });
+
+describe("buildHighlightActions — shared Share projection", () => {
+  it("uses the catalog id, copy, and behavior", () => {
+    const onShare = vi.fn();
+    const share = buildHighlightActions({
+      target: { kind: "existing", highlight: existingHighlight },
+      canQuoteToChat: false,
+      canAddNote: false,
+      isReflowable: true,
+      state: { isEditingBounds: false, deleting: false, changingColor: false },
+      handlers: {
+        onSelectColor: vi.fn(),
+        onShare,
+        onQuoteToNewChat: vi.fn(),
+        onQuoteToExistingChat: vi.fn(),
+        onToggleEditBounds: vi.fn(),
+        onDelete: vi.fn(),
+      },
+    }).find((option) => option.id === "ResourceAction.Share");
+
+    expect(share).toMatchObject({
+      label: "Share…",
+      restoreFocusOnClose: false,
+    });
+    share?.onSelect?.({ triggerEl: null });
+    expect(onShare).toHaveBeenCalledOnce();
+  });
+});

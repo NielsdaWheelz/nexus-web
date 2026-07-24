@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
@@ -39,6 +40,9 @@ export function usePodcastSubscriptionActions(
         return await fetchPodcastLibraries(podcastId);
       } catch (loadError) {
         if (handleUnauthenticatedApiError(loadError)) return null;
+        if (!isApiError(loadError) || isSameSystemApiDefect(loadError)) {
+          throw loadError;
+        }
         onError(
           toFeedback(loadError, { fallback: "Failed to load podcast libraries" }),
         );
@@ -61,6 +65,9 @@ export function usePodcastSubscriptionActions(
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
+        if (!isApiError(mutationError) || isSameSystemApiDefect(mutationError)) {
+          throw mutationError;
+        }
         onError(
           toFeedback(mutationError, {
             fallback: "Failed to add podcast to library",
@@ -86,6 +93,9 @@ export function usePodcastSubscriptionActions(
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
+        if (!isApiError(mutationError) || isSameSystemApiDefect(mutationError)) {
+          throw mutationError;
+        }
         onError(
           toFeedback(mutationError, {
             fallback: "Failed to remove podcast from library",
@@ -112,6 +122,9 @@ export function usePodcastSubscriptionActions(
         onSuccess(getPodcastSubscriptionSyncPatch(result), result);
       } catch (refreshError) {
         if (handleUnauthenticatedApiError(refreshError)) return;
+        if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
+          throw refreshError;
+        }
         onError(
           toFeedback(refreshError, { fallback: "Failed to refresh podcast sync" }),
         );
@@ -148,6 +161,12 @@ export function usePodcastSubscriptionActions(
         return true;
       } catch (unsubscribeError) {
         if (handleUnauthenticatedApiError(unsubscribeError)) return false;
+        if (
+          !isApiError(unsubscribeError) ||
+          isSameSystemApiDefect(unsubscribeError)
+        ) {
+          throw unsubscribeError;
+        }
         onError(
           toFeedback(unsubscribeError, {
             fallback: "Failed to unsubscribe from podcast",

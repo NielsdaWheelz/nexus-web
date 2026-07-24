@@ -18,7 +18,7 @@ import MediaPaneBody from "./MediaPaneBody";
 // fetch `/api/media/<id>`. We exercise the real useResource → apiFetch → global
 // fetch path (apiFetch is NOT mocked) and assert the media GET never fires.
 
-const MEDIA_ID = "ac4-media";
+const MEDIA_ID = "00000000-0000-4000-8000-000000000301";
 const MEDIA_TITLE = "AC-4 Seeded Media";
 
 const primaryChromeMocks = vi.hoisted(() => ({

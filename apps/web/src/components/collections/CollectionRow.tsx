@@ -1,18 +1,46 @@
 "use client";
 
-import { Fragment, useId, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  Fragment,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import ContributorCreditList from "@/components/contributors/ContributorCreditList";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Pill from "@/components/ui/Pill";
 import ResourceRow from "@/components/ui/ResourceRow";
+import {
+  composeResourceMenu,
+  RESOURCE_ACTION_CATALOG,
+  resolveResourceCoreActions,
+  type ActionPublication,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import type {
   CollectionContext,
   CollectionRowView,
   EmphasisSegment,
   ExceptionalStatus,
 } from "@/lib/collections/types";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
+import {
+  executeResourceChat,
+  executeResourceOpen,
+  executeResourceShare,
+} from "@/lib/resources/resourceActionExecution";
 import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
+import { useShareController } from "@/lib/sharing/controller";
+import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import ConnectionRail from "./ConnectionRail";
 import {
@@ -89,13 +117,209 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
   }
 }
 
-function separateActionGroup(
-  existing: readonly ActionDescriptor[],
-  next: readonly ActionDescriptor[],
-): ActionDescriptor[] {
-  if (next.length === 0) return [...existing];
-  if (existing.length === 0) return [...next];
-  return [...existing, { ...next[0], separatorBefore: true }, ...next.slice(1)];
+function RowActionMenu({
+  options,
+  label,
+  reorder,
+  reorderHintId,
+}: {
+  readonly options: readonly ActionDescriptor[];
+  readonly label: string;
+  readonly reorder?: SortableActivatorProps;
+  readonly reorderHintId: string;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <>
+      {reorder && !reorder.disabled ? (
+        <span id={reorderHintId} className="sr-only">
+          Drag to reorder. Use Move up or Move down in this menu, or press Alt
+          plus Arrow Up or Alt plus Arrow Down.
+        </span>
+      ) : null}
+      <ActionMenu
+        options={options}
+        label={label}
+        triggerRef={reorder?.setActivatorNodeRef}
+        renderTrigger={
+          reorder
+            ? (triggerProps) => (
+                <button
+                  {...triggerProps}
+                  aria-describedby={reorder.disabled ? undefined : reorderHintId}
+                  aria-keyshortcuts={
+                    reorder.disabled
+                      ? undefined
+                      : "Alt+ArrowUp Alt+ArrowDown"
+                  }
+                  data-sortable-activator="true"
+                  onMouseDown={
+                    reorder.disabled ? undefined : reorder.listeners.onMouseDown
+                  }
+                  onTouchStart={
+                    reorder.disabled ? undefined : reorder.listeners.onTouchStart
+                  }
+                  onClick={(event) => {
+                    if (reorder.consumeClickSuppression()) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      return;
+                    }
+                    triggerProps.onClick(event);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.altKey &&
+                      !event.ctrlKey &&
+                      !event.metaKey &&
+                      (event.key === "ArrowUp" || event.key === "ArrowDown")
+                    ) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (event.key === "ArrowUp" && reorder.canMoveUp) {
+                        reorder.moveUp();
+                      }
+                      if (event.key === "ArrowDown" && reorder.canMoveDown) {
+                        reorder.moveDown();
+                      }
+                      return;
+                    }
+                    triggerProps.onKeyDown(event);
+                  }}
+                >
+                  &hellip;
+                </button>
+              )
+            : undefined
+        }
+      />
+    </>
+  );
+}
+
+const EMPTY_BUSY_IDS: ReadonlySet<ResourceActionId> = new Set();
+
+function ResourceCollectionRowActionMenu({
+  publication,
+  rendererView,
+  label,
+  title,
+  reorder,
+  reorderHintId,
+}: {
+  readonly publication: Extract<ActionPublication, { kind: "ResourceMenu" }>;
+  readonly rendererView: readonly ActionDescriptor[];
+  readonly label: string;
+  readonly title: string;
+  readonly reorder?: SortableActivatorProps;
+  readonly reorderHintId: string;
+}) {
+  const paneRuntime = usePaneRuntime();
+  const { openShare } = useShareController();
+  const feedback = useFeedback();
+  const busyIdsRef = useRef<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
+  const [busyIds, setBusyIds] =
+    useState<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
+
+  if (publication.groups.core.length > 0) {
+    // justify-defect: CollectionRow is the sole universal-core owner at this
+    // boundary; accepting published core would create a second policy path.
+    throw new Error("Collection resource publications must not publish core actions");
+  }
+
+  const requirePaneRuntime = () => {
+    if (paneRuntime === null) {
+      // justify-defect: standing collection actions execute only inside a pane;
+      // no alternate navigation contract exists at this surface.
+      throw new Error("Collection resource action requires pane runtime");
+    }
+    return paneRuntime;
+  };
+
+  const openResource = (
+    target: Extract<typeof publication.target, { kind: "Resource" }>,
+  ) => {
+    const runtime = requirePaneRuntime();
+    executeResourceOpen({
+      target,
+      resourceNavigation: {
+        labelHint: title,
+        navigate: (href) => runtime.router.push(href, { labelHint: title }),
+        openInNewPane: runtime.openInNewPane,
+      },
+    });
+  };
+  const groups =
+    publication.target.kind === "External"
+      ? resolveResourceCoreActions({
+          target: publication.target,
+          projection: "Representation",
+        })
+      : resolveResourceCoreActions({
+          target: publication.target,
+          projection: "Representation",
+          busyIds,
+          executors: {
+            open: openResource,
+            share: (subject, detail) => {
+              const runtime = requirePaneRuntime();
+              executeResourceShare({
+                subject,
+                openShare,
+                options: paneShareOpenOptions(detail.triggerEl, runtime.paneId),
+              });
+            },
+            chat: async (subject) => {
+              const actionId = RESOURCE_ACTION_CATALOG.Chat.id;
+              if (busyIdsRef.current.has(actionId)) return;
+              const nextBusyIds = new Set(busyIdsRef.current).add(actionId);
+              busyIdsRef.current = nextBusyIds;
+              setBusyIds(nextBusyIds);
+              try {
+                const runtime = requirePaneRuntime();
+                await executeResourceChat({
+                  ref: subject.ref,
+                  openConversation: (conversationId) =>
+                    runtime.openInNewPane(
+                      `/conversations/${conversationId}`,
+                      "Chat",
+                    ),
+                });
+              } catch (error) {
+                if (handleUnauthenticatedApiError(error)) return;
+                if (!isApiError(error) || isSameSystemApiDefect(error)) {
+                  throw error;
+                }
+                feedback.show(
+                  toFeedback(error, {
+                    fallback: "Failed to start resource chat",
+                  }),
+                );
+              } finally {
+                const remainingBusyIds = new Set(busyIdsRef.current);
+                remainingBusyIds.delete(actionId);
+                busyIdsRef.current = remainingBusyIds;
+                setBusyIds(remainingBusyIds);
+              }
+            },
+          },
+        });
+
+  const options = composeResourceMenu({
+    core: groups.core,
+    operations: publication.groups.operations,
+    relationships: publication.groups.relationships,
+    view: [...publication.groups.view, ...rendererView],
+  });
+
+  return (
+    <RowActionMenu
+      options={options}
+      label={label}
+      reorder={reorder}
+      reorderHintId={reorderHintId}
+    />
+  );
 }
 
 /** Canonical semantic renderer for every media-like collection row. */
@@ -187,30 +411,36 @@ export default function CollectionRow({
       ? renderExceptionalStatus(row.exceptionalStatus.value)
       : undefined;
 
-  let options: ActionDescriptor[] = [];
+  const rendererView: ActionDescriptor[] = [];
   if (reorder) {
-    options = [
+    rendererView.push(
       {
         kind: "command",
-        id: "move-up",
+        id: "ViewAction.Collection.MoveUp",
         label: "Move up",
         disabled: !reorder.canMoveUp,
+        disabledReason: !reorder.canMoveUp
+          ? "This item is already first"
+          : undefined,
         onSelect: reorder.moveUp,
       },
       {
         kind: "command",
-        id: "move-down",
+        id: "ViewAction.Collection.MoveDown",
         label: "Move down",
         disabled: !reorder.canMoveDown,
+        disabledReason: !reorder.canMoveDown
+          ? "This item is already last"
+          : undefined,
         onSelect: reorder.moveDown,
       },
-    ];
+    );
   }
   if (hasPeerAffordance) {
-    options = separateActionGroup(options, [
+    rendererView.push(
       {
         kind: "command",
-        id: "connections-related",
+        id: "ViewAction.Collection.Related",
         label: "Connections and related",
         state: showPeers
           ? {
@@ -229,80 +459,40 @@ export default function CollectionRow({
                 collapsed: "Show connections and related",
                 expanded: "Hide connections and related",
               },
-            },
+        },
         onSelect: () => setShowPeers((visible) => !visible),
       },
-    ]);
+    );
   }
-  options = separateActionGroup(options, row.actions);
 
-  const actions =
-    options.length > 0 ? (
-      <>
-        {reorder && !reorder.disabled ? (
-          <span id={reorderHintId} className="sr-only">
-            Drag to reorder. Use Move up or Move down in this menu, or press Alt
-            plus Arrow Up or Alt plus Arrow Down.
-          </span>
-        ) : null}
-        <ActionMenu
-          options={options}
-          label={`More actions for ${row.title.text}`}
-          triggerRef={reorder?.setActivatorNodeRef}
-          renderTrigger={
-            reorder
-              ? (triggerProps) => (
-                  <button
-                    {...triggerProps}
-                    aria-describedby={reorder.disabled ? undefined : reorderHintId}
-                    aria-keyshortcuts={
-                      reorder.disabled
-                        ? undefined
-                        : "Alt+ArrowUp Alt+ArrowDown"
-                    }
-                    data-sortable-activator="true"
-                    onMouseDown={
-                      reorder.disabled ? undefined : reorder.listeners.onMouseDown
-                    }
-                    onTouchStart={
-                      reorder.disabled ? undefined : reorder.listeners.onTouchStart
-                    }
-                    onClick={(event) => {
-                      if (reorder.consumeClickSuppression()) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        return;
-                      }
-                      triggerProps.onClick(event);
-                    }}
-                    onKeyDown={(event) => {
-                      if (
-                        event.altKey &&
-                        !event.ctrlKey &&
-                        !event.metaKey &&
-                        (event.key === "ArrowUp" || event.key === "ArrowDown")
-                      ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        if (event.key === "ArrowUp" && reorder.canMoveUp) {
-                          reorder.moveUp();
-                        }
-                        if (event.key === "ArrowDown" && reorder.canMoveDown) {
-                          reorder.moveDown();
-                        }
-                        return;
-                      }
-                      triggerProps.onKeyDown(event);
-                    }}
-                  >
-                    &hellip;
-                  </button>
-                )
-              : undefined
-          }
-        />
-      </>
-    ) : undefined;
+  let actions: ReactNode;
+  const menuLabel = `More actions for ${row.title.text}`;
+  if (row.actionPublication.kind === "ResourceMenu") {
+    actions = (
+      <ResourceCollectionRowActionMenu
+        publication={row.actionPublication}
+        rendererView={rendererView}
+        label={menuLabel}
+        title={row.title.text}
+        reorder={reorder}
+        reorderHintId={reorderHintId}
+      />
+    );
+  } else {
+    if (rendererView.length > 0) {
+      // justify-defect: renderer-owned resource view actions require the
+      // enforcing resource composer; a FlatMenu target cannot represent them.
+      throw new Error("Flat collection menus cannot publish resource view actions");
+    }
+    actions = (
+      <RowActionMenu
+        options={row.actionPublication.actions}
+        label={menuLabel}
+        reorder={reorder}
+        reorderHintId={reorderHintId}
+      />
+    );
+  }
 
   const expanded =
     (showPeers && hasPeerAffordance) || panel ? (

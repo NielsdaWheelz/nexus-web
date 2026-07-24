@@ -84,7 +84,9 @@ function buildSourceMeta(result: SearchApiResult): string | null {
   }
 
   if (result.type === "web_result") {
-    return result.source_name ?? result.display_url ?? result.source_label ?? "web";
+    return (
+      result.source_name ?? result.display_url ?? result.source_label ?? "web"
+    );
   }
 
   if (result.source_label) {
@@ -168,7 +170,11 @@ function buildPrimaryText(result: SearchApiResult): string {
 }
 
 function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
-  if (result.type === "media" || result.type === "episode" || result.type === "video") {
+  if (
+    result.type === "media" ||
+    result.type === "episode" ||
+    result.type === "video"
+  ) {
     return result.source.contributors;
   }
   if (result.type === "podcast") {
@@ -177,7 +183,10 @@ function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
   if (result.type === "content_chunk" || result.type === "fragment") {
     return result.source.contributors;
   }
-  if (result.type === "evidence_span" || result.type === "reader_apparatus_item") {
+  if (
+    result.type === "evidence_span" ||
+    result.type === "reader_apparatus_item"
+  ) {
     return result.source.contributors;
   }
   if (result.type === "highlight") {
@@ -199,6 +208,7 @@ export function adaptSearchResultRow(
     key: `${result.type}-${result.id}`,
     resourceRef: result.resource_ref,
     activation: result.activation,
+    actionTarget: result.actionTarget,
     citationTarget: result.citation_target,
     paneLabelHint: primaryText,
     type: result.type,
@@ -216,19 +226,19 @@ export function adaptSearchResultRow(
         ? result.citation_label
         : result.type === "episode"
           ? "episode"
-        : result.type === "contributor"
-          ? "author"
-          : result.type === "page"
-            ? "page"
-            : result.type === "evidence_span"
-              ? result.citation_label
-            : result.type === "conversation"
-              ? "conversation"
-            : result.type === "artifact"
-              ? "artifact"
-            : result.type === "web_result"
-              ? "web result"
-            : result.type,
+          : result.type === "contributor"
+            ? "author"
+            : result.type === "page"
+              ? "page"
+              : result.type === "evidence_span"
+                ? result.citation_label
+                : result.type === "conversation"
+                  ? "conversation"
+                  : result.type === "artifact"
+                    ? "artifact"
+                    : result.type === "web_result"
+                      ? "web result"
+                      : result.type,
     primaryText,
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),
@@ -238,7 +248,9 @@ export function adaptSearchResultRow(
   };
 }
 
-export function adaptSearchResults(results: unknown[]): SearchResultRowViewModel[] {
+export function adaptSearchResults(
+  results: unknown[],
+): SearchResultRowViewModel[] {
   return results.map((result) => {
     const normalized = normalizeSearchResult(result);
     if (!normalized) {

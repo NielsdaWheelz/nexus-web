@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
 import type {
+  ActionPublication,
+  ResourceMenuGroups,
+} from "@/lib/actions/resourceActions";
+import type { StandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import type {
   PaneHeaderAction,
   ActionControlState,
   ActionDescriptor,
@@ -19,7 +24,7 @@ export interface PanePrimaryChromePublication {
   readonly header?: PaneHeaderPublication;
   readonly toolbar?: ReactNode;
   readonly actions?: readonly PaneHeaderAction[];
-  readonly options?: readonly ActionDescriptor[];
+  readonly menu?: ActionPublication;
 }
 
 export interface PanePrimaryChromePublicationUpdate {
@@ -64,6 +69,7 @@ function areActionDescriptorsEqual(
     left.label !== right.label ||
     left.icon !== right.icon ||
     left.disabled !== right.disabled ||
+    left.disabledReason !== right.disabledReason ||
     left.tone !== right.tone ||
     left.separatorBefore !== right.separatorBefore
   ) {
@@ -87,6 +93,66 @@ function areActionDescriptorsEqual(
     case "custom":
       return right.kind === "custom" && left.render === right.render;
   }
+}
+
+function areResourceActivationsEqual(
+  left: Extract<StandingActionTarget, { kind: "Resource" }>["activation"],
+  right: Extract<StandingActionTarget, { kind: "Resource" }>["activation"],
+): boolean {
+  return (
+    left.resourceRef === right.resourceRef &&
+    left.kind === right.kind &&
+    left.href === right.href &&
+    left.unresolvedReason === right.unresolvedReason
+  );
+}
+
+function areStandingActionTargetsEqual(
+  left: StandingActionTarget,
+  right: StandingActionTarget,
+): boolean {
+  if (left === right) return true;
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "External") {
+    return right.kind === "External" && left.href === right.href;
+  }
+  return (
+    right.kind === "Resource" &&
+    left.ref === right.ref &&
+    left.missing === right.missing &&
+    areResourceActivationsEqual(left.activation, right.activation)
+  );
+}
+
+function areResourceMenuGroupsEqual(
+  left: ResourceMenuGroups,
+  right: ResourceMenuGroups,
+): boolean {
+  return (
+    areActionDescriptorListsEqual(left.core, right.core) &&
+    areActionDescriptorListsEqual(left.operations, right.operations) &&
+    areActionDescriptorListsEqual(left.relationships, right.relationships) &&
+    areActionDescriptorListsEqual(left.view, right.view)
+  );
+}
+
+function areActionPublicationsEqual(
+  left: ActionPublication | undefined,
+  right: ActionPublication | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.kind !== right.kind) return false;
+  if (left.kind === "FlatMenu") {
+    return (
+      right.kind === "FlatMenu" &&
+      areActionDescriptorListsEqual(left.actions, right.actions)
+    );
+  }
+  return (
+    right.kind === "ResourceMenu" &&
+    areStandingActionTargetsEqual(left.target, right.target) &&
+    areResourceMenuGroupsEqual(left.groups, right.groups)
+  );
 }
 
 function areActionDescriptorListsEqual(
@@ -179,7 +245,7 @@ export function arePanePrimaryChromePublicationsEqual(
     arePaneHeaderPublicationsEqual(left.header, right.header) &&
     left.toolbar === right.toolbar &&
     areActionDescriptorListsEqual(left.actions, right.actions) &&
-    areActionDescriptorListsEqual(left.options, right.options)
+    areActionPublicationsEqual(left.menu, right.menu)
   );
 }
 

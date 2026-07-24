@@ -7,7 +7,7 @@ import {
   type DehydratedResources,
 } from "@/lib/api/resourceCache";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
-import { resolvePaneShareIdentity } from "@/lib/panes/paneResourceLocator";
+import { resolvePaneRouteShareIdentity } from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -188,7 +188,10 @@ export function PaneShellReturnJourneyHarness({
               paneId={paneId}
               routeKey={identity.routeKey}
               routeHeader={route.definition.header}
-              shareIdentity={resolvePaneShareIdentity(route, route.defaultLabel)}
+              routeShareIdentity={resolvePaneRouteShareIdentity(
+                route,
+                route.defaultLabel,
+              )}
               label={route.defaultLabel}
               returnMementoEnabled
               sizing={RETURN_JOURNEY_PANE_SIZING}

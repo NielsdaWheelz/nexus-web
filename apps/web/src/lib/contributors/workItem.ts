@@ -3,6 +3,7 @@ import type {
   ContributorRoleFact,
   ContributorWorkItem,
 } from "@/lib/contributors/types";
+import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
 import {
   expectArray,
   expectExactRecord,
@@ -28,7 +29,7 @@ function decodeRoleFact(raw: unknown, index: number): ContributorRoleFact {
 export function decodeContributorWorkItem(raw: unknown): ContributorWorkItem {
   const item = expectExactRecord(
     raw,
-    ["title", "href", "contentKind", "date", "roleFacts"],
+    ["title", "href", "contentKind", "date", "roleFacts", "actionTarget"],
     "ContributorWorkItem",
   );
   const date = expectNullableString(item.date, "ContributorWorkItem.date");
@@ -41,6 +42,10 @@ export function decodeContributorWorkItem(raw: unknown): ContributorWorkItem {
       item.roleFacts,
       decodeRoleFact,
       "ContributorWorkItem.roleFacts",
+    ),
+    actionTarget: decodeStandingActionTarget(
+      item.actionTarget,
+      "ContributorWorkItem.actionTarget",
     ),
   };
 }

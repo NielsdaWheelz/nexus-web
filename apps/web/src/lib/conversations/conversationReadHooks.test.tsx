@@ -1,7 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useConversationContextRefs } from "./useConversationContextRefs";
-import type { ContextRefOut } from "@/lib/resourceGraph/contextRefs";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -23,15 +22,19 @@ function urlOf(input: RequestInfo | URL): URL {
   return new URL(String(input), "http://localhost");
 }
 
-function contextRef(id: string, conversationId: string): ContextRefOut {
+function contextRef(id: string, conversationId: string) {
+  const mediaId =
+    id === "ref-a"
+      ? "11111111-1111-4111-8111-111111111111"
+      : "22222222-2222-4222-8222-222222222222";
   return {
     id,
     conversation_id: conversationId,
-    resource_ref: `media:${id}`,
+    resource_ref: `media:${mediaId}`,
     activation: {
-      resourceRef: `media:${id}`,
+      resourceRef: `media:${mediaId}`,
       kind: "route",
-      href: `/media/${id}`,
+      href: `/media/${mediaId}`,
       unresolvedReason: null,
     },
     label: id,

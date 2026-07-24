@@ -8,6 +8,8 @@ import {
 } from "@/lib/dates/publicationDate";
 import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import { isRecord } from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
@@ -42,6 +44,7 @@ interface SlateTargetBase {
   subtitle: Presence<string>;
   imageUrl: Presence<string>;
   href: AppHref;
+  actionTarget: ResourceActionSubject;
 }
 
 export type SlateTarget =
@@ -174,6 +177,24 @@ function decodeResourceRefUri(
   return value as ResourceRefUri;
 }
 
+function slateActionTarget(
+  ref: ResourceRefUri,
+  href: AppHref,
+): ResourceActionSubject {
+  const canonicalRef = assumeCanonicalResourceRef(ref);
+  return {
+    kind: "Resource",
+    ref: canonicalRef,
+    activation: {
+      resourceRef: canonicalRef,
+      kind: "route",
+      href,
+      unresolvedReason: null,
+    },
+    missing: false,
+  };
+}
+
 function decodeAnchor(raw: unknown): SlateAnchor {
   const value = asRecord(raw, "SlateAnchorOut");
   exactKeys(value, ["ref", "label"], "SlateAnchorOut");
@@ -192,9 +213,17 @@ function decodeTarget(raw: unknown): SlateTarget {
       ["kind", "ref", "mediaKind", "title", "subtitle", "imageUrl", "href"],
       "SlateTargetOut.Media",
     );
+    const ref = decodeResourceRefUri(
+      value.ref,
+      "SlateTargetOut.Media.ref",
+      "media",
+    );
+    const href = assumeAppHref(
+      asString(value.href, "SlateTargetOut.Media.href"),
+    );
     return {
       kind,
-      ref: decodeResourceRefUri(value.ref, "SlateTargetOut.Media.ref", "media"),
+      ref,
       mediaKind: asLiteral(
         value.mediaKind,
         MEDIA_KINDS,
@@ -207,7 +236,8 @@ function decodeTarget(raw: unknown): SlateTarget {
       imageUrl: decodePresence(value.imageUrl, (imageUrl) =>
         asString(imageUrl, "SlateTargetOut.Media.imageUrl"),
       ),
-      href: assumeAppHref(asString(value.href, "SlateTargetOut.Media.href")),
+      href,
+      actionTarget: slateActionTarget(ref, href),
     };
   }
   exactKeys(
@@ -215,9 +245,17 @@ function decodeTarget(raw: unknown): SlateTarget {
     ["kind", "ref", "title", "subtitle", "imageUrl", "href"],
     "SlateTargetOut.Podcast",
   );
+  const ref = decodeResourceRefUri(
+    value.ref,
+    "SlateTargetOut.Podcast.ref",
+    "podcast",
+  );
+  const href = assumeAppHref(
+    asString(value.href, "SlateTargetOut.Podcast.href"),
+  );
   return {
     kind,
-    ref: decodeResourceRefUri(value.ref, "SlateTargetOut.Podcast.ref", "podcast"),
+    ref,
     title: asString(value.title, "SlateTargetOut.Podcast.title"),
     subtitle: decodePresence(value.subtitle, (subtitle) =>
       asString(subtitle, "SlateTargetOut.Podcast.subtitle"),
@@ -225,7 +263,8 @@ function decodeTarget(raw: unknown): SlateTarget {
     imageUrl: decodePresence(value.imageUrl, (imageUrl) =>
       asString(imageUrl, "SlateTargetOut.Podcast.imageUrl"),
     ),
-    href: assumeAppHref(asString(value.href, "SlateTargetOut.Podcast.href")),
+    href,
+    actionTarget: slateActionTarget(ref, href),
   };
 }
 

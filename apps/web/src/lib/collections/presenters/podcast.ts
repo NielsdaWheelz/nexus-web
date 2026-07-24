@@ -3,6 +3,8 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { podcastResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
+import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type {
   CollectionRowView,
   ExceptionalStatus,
@@ -40,13 +42,14 @@ export function presentPodcast(
   ctx: PodcastPresenterContext,
 ): CollectionRowView {
   const { connectionSummary, ...actionCtx } = ctx;
+  const href = `/podcasts/${item.id}`;
 
   return {
     id: item.id,
     kind: "podcast",
     primary: {
       kind: "link",
-      href: `/podcasts/${item.id}`,
+      href,
       paneLabelHint: item.title,
     },
     title: { text: item.title },
@@ -60,7 +63,15 @@ export function presentPodcast(
     exceptionalStatus: exceptionalStatus(item.syncStatus),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: absent(),
-    actions: podcastResourceOptions(actionCtx),
+    actionPublication: publishResourceRowActions({
+      target: routeResourceActionSubject({
+        scheme: "podcast",
+        id: item.id,
+        href,
+      }),
+      rich: podcastResourceOptions(actionCtx),
+      view: [],
+    }),
     selected: false,
   };
 }

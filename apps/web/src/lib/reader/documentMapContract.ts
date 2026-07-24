@@ -10,6 +10,10 @@ import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import {
+  decodeStandingActionTarget,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
+import {
   expectArray,
   expectBoolean,
   expectExactRecord,
@@ -424,8 +428,10 @@ function decodeSourceTarget(
     ],
     name,
   );
+  const ref = expectResourceRef(value.ref, `${name}.ref`);
+  const activation = decodeActivation(value.activation, `${name}.activation`);
   return {
-    ref: expectResourceRef(value.ref, `${name}.ref`),
+    ref,
     stable_key: expectString(value.stable_key, `${name}.stable_key`),
     apparatus_kind: decodeApparatusKind(
       value.apparatus_kind,
@@ -433,7 +439,8 @@ function decodeSourceTarget(
     ),
     label: decodeStringPresence(value.label, `${name}.label`),
     body: decodeStringPresence(value.body, `${name}.body`),
-    activation: decodeActivation(value.activation, `${name}.activation`),
+    activation,
+    actionTarget: evidenceActionTarget(ref, activation, name),
     resolution: decodeResolution(value.resolution, `${name}.resolution`),
   };
 }
@@ -498,12 +505,17 @@ function decodeEvidenceObject(
 ): ReaderEvidenceObject {
   const value = expectRecord(raw, name);
   const commonKeys = ["ref", "kind", "label", "excerpt", "activation"];
-  const base = () => ({
-    ref: expectResourceRef(value.ref, `${name}.ref`),
-    label: expectString(value.label, `${name}.label`),
-    excerpt: decodeStringPresence(value.excerpt, `${name}.excerpt`),
-    activation: decodeActivation(value.activation, `${name}.activation`),
-  });
+  const base = () => {
+    const ref = expectResourceRef(value.ref, `${name}.ref`);
+    const activation = decodeActivation(value.activation, `${name}.activation`);
+    return {
+      ref,
+      label: expectString(value.label, `${name}.label`),
+      excerpt: decodeStringPresence(value.excerpt, `${name}.excerpt`),
+      activation,
+      actionTarget: evidenceActionTarget(ref, activation, name),
+    };
+  };
   switch (value.kind) {
     case "Chat":
       expectExactRecord(
@@ -573,6 +585,26 @@ function decodeActivation(raw: unknown, name: string): ResourceActivation {
       `${name}.unresolved_reason`,
     ),
   };
+}
+
+function evidenceActionTarget(
+  ref: string,
+  activation: ResourceActivation,
+  name: string,
+): ResourceActionSubject {
+  const target = decodeStandingActionTarget(
+    {
+      kind: "Resource",
+      ref,
+      activation,
+      missing: activation.unresolvedReason === "missing",
+    },
+    `${name}.actionTarget`,
+  );
+  if (target.kind !== "Resource") {
+    defect(`${name}.actionTarget must be Resource`);
+  }
+  return target;
 }
 
 function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
@@ -683,5 +715,7 @@ function expectResourceRef(raw: unknown, name: string): string {
 }
 
 function defect(message: string): never {
+  // justify-defect: this decoder consumes same-system transport whose exact
+  // schema and resource-identity invariants are owned by Nexus.
   throw new TypeError(`Invalid reader document map response: ${message}`);
 }

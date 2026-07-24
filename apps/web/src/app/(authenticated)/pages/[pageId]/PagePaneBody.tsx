@@ -675,20 +675,20 @@ export default function PagePaneBody({
   );
 
   const dailyLocalDate = page?.dailyNote?.localDate ?? null;
-  const paneOptions = useMemo<ActionDescriptor[]>(
+  const paneViewActions = useMemo<ActionDescriptor[]>(
     () => [
       ...(dailyLocalDate
         ? [
             {
               kind: "command" as const,
-              id: "daily-open-yesterday",
+              id: "ViewAction.Page.OpenYesterday",
               label: "Open yesterday",
               onSelect: () =>
                 void openDatedPage(shiftLocalDate(dailyLocalDate, -1)),
             },
             {
               kind: "command" as const,
-              id: "daily-open-tomorrow",
+              id: "ViewAction.Page.OpenTomorrow",
               label: "Open tomorrow",
               onSelect: () =>
                 void openDatedPage(shiftLocalDate(dailyLocalDate, 1)),
@@ -719,7 +719,18 @@ export default function PagePaneBody({
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
-    options: paneOptions,
+    menu: page
+      ? {
+          kind: "ResourceMenu",
+          target: page.actionTarget,
+          groups: {
+            core: [],
+            operations: [],
+            relationships: [],
+            view: paneViewActions,
+          },
+        }
+      : undefined,
   });
 
   // Dawn write: fetch for daily note pages only (not focused-block views).

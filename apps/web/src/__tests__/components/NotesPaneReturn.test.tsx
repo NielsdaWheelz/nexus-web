@@ -15,6 +15,7 @@ import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import type { PaneReturnMementoCommands } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 
 const AWAY_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000092",
@@ -47,6 +48,11 @@ function page(blocks: NoteBlock[], updatedAt: string): NotePage {
   return {
     id: PAGE_ID,
     title: "Return journey page",
+    actionTarget: routeResourceActionSubject({
+      scheme: "page",
+      id: PAGE_ID,
+      href: `/pages/${PAGE_ID}`,
+    }),
     surface: null,
     updatedAt,
     dailyNote: null,

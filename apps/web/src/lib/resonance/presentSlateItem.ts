@@ -1,4 +1,5 @@
 import { absent, present } from "@/lib/api/presence";
+import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import type {
   CollectionActivity,
   CollectionRowView,
@@ -84,7 +85,11 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: [],
+    actionPublication: {
+      kind: "ResourceMenu",
+      target: target.actionTarget,
+      groups: emptyResourceMenuGroups(),
+    },
     selected: false,
   };
 }

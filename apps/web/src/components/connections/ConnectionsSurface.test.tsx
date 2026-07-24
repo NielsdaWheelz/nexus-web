@@ -3,22 +3,35 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type {
+  ConnectionActionEndpointOut,
   ConnectionEndpointOut,
   ConnectionOut,
 } from "@/lib/resourceGraph/connections";
+import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import ConnectionsSurfaceImpl from "./ConnectionsSurface";
 import { useConnectionsComposerController } from "./connectionsComposerController";
 
 function ConnectionsSurface(
-  props: Omit<ComponentProps<typeof ConnectionsSurfaceImpl>, "composerController">,
+  props: Omit<
+    ComponentProps<typeof ConnectionsSurfaceImpl>,
+    "composerController" | "onOpenRoute"
+  > & {
+    onOpenRoute?: ComponentProps<typeof ConnectionsSurfaceImpl>["onOpenRoute"];
+  },
 ) {
-  const composerController = useConnectionsComposerController(props.resourceRef);
+  const composerController = useConnectionsComposerController(
+    props.resourceRef,
+  );
   return (
-    <ConnectionsSurfaceImpl
-      {...props}
-      composerController={composerController}
-    />
+    <ShareControllerProvider>
+      <ConnectionsSurfaceImpl
+        {...props}
+        composerController={composerController}
+        onOpenRoute={props.onOpenRoute ?? (() => {})}
+      />
+    </ShareControllerProvider>
   );
 }
 
@@ -56,25 +69,34 @@ function endpoint(
   label: string,
   missing = false,
   href: string | null = `/${ref.replace(":", "s/")}`,
-): ConnectionEndpointOut {
+): ConnectionActionEndpointOut {
   const [scheme, id] = ref.split(":") as [
     ConnectionEndpointOut["scheme"],
     string,
   ];
+  const activation = {
+    resourceRef: ref,
+    kind: href ? ("route" as const) : ("none" as const),
+    href,
+    unresolvedReason: href ? null : "missing",
+  };
+  const actionTarget = decodeStandingActionTarget(
+    { kind: "Resource", ref, activation, missing },
+    "ConnectionEndpointFixture.actionTarget",
+  );
+  if (actionTarget.kind !== "Resource") {
+    throw new Error("Connection endpoint fixture must be Resource");
+  }
   return {
     ref,
     scheme,
     id,
     label,
     description: null,
-    activation: {
-      resourceRef: ref,
-      kind: href ? "route" : "none",
-      href,
-      unresolvedReason: href ? null : "missing",
-    },
+    activation,
     href,
     missing,
+    actionTarget,
   };
 }
 
@@ -106,6 +128,7 @@ function connection(overrides: Partial<ConnectionOut> = {}): ConnectionOut {
     target,
     other: target,
     citation: null,
+    link_note: null,
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
@@ -139,6 +162,7 @@ function rawResourceTarget(overrides: Partial<Record<string, unknown>> = {}) {
       },
       missing: false,
       capabilities: {
+        sharing: "ResourceGrants",
         userRelation: {
           userLinkSource: true,
           userLinkTarget: "direct",
@@ -165,12 +189,40 @@ function rawResourceTarget(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function wireConnection(conn: ConnectionOut) {
+  const wireActivation = (
+    activation: ConnectionActionEndpointOut["activation"],
+  ) => ({
+    resource_ref: activation.resourceRef,
+    kind: activation.kind,
+    href: activation.href,
+    unresolved_reason: activation.unresolvedReason,
+  });
+  const stripTarget = ({
+    actionTarget: _actionTarget,
+    ...wire
+  }: ConnectionActionEndpointOut) => ({
+    ...wire,
+    activation: wireActivation(wire.activation),
+  });
+  return {
+    ...conn,
+    source: stripTarget(conn.source),
+    target: stripTarget(conn.target),
+    other: stripTarget(conn.other),
+  };
+}
+
 function createLinkOut(conn: ConnectionOut) {
-  return { created: true, created_source_ref: null, connection: conn };
+  return {
+    created: true,
+    created_source_ref: null,
+    connection: wireConnection(conn),
+  };
 }
 
 function stanceOut(conn: ConnectionOut) {
-  return { connection: conn };
+  return { connection: wireConnection(conn) };
 }
 
 const connectionReads = (requests: PendingRequest[]) =>
@@ -188,7 +240,12 @@ const scanStatusReads = (requests: PendingRequest[]) =>
 const scanPosts = (requests: PendingRequest[]) =>
   requests.filter((request) => request.path === "/api/synapse/scans");
 const connectionResponse = (items: ConnectionOut[]) =>
-  Response.json({ data: { items, next_cursor: null } });
+  Response.json({
+    data: {
+      items: items.map((item) => wireConnection(item)),
+      next_cursor: null,
+    },
+  });
 const idleStatusResponse = () => Response.json({ data: { status: "idle" } });
 
 function TabSwitchHarness({
@@ -202,7 +259,7 @@ function TabSwitchHarness({
   const composerController = useConnectionsComposerController(resourceRef);
   const target = rawResourceTarget() as unknown as ResourceTarget;
   return (
-    <>
+    <ShareControllerProvider>
       <button
         type="button"
         onClick={() =>
@@ -220,11 +277,12 @@ function TabSwitchHarness({
         <ConnectionsSurfaceImpl
           resourceRef={resourceRef}
           composerController={composerController}
+          onOpenRoute={() => {}}
         />
       ) : (
         <div>Dossier tab</div>
       )}
-    </>
+    </ShareControllerProvider>
   );
 }
 
@@ -408,8 +466,11 @@ describe("ConnectionsSurface", () => {
     );
 
     expect(await screen.findByText("Neutral link")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Actions for Neutral link" }),
+    );
     expect(
-      screen.getByRole("button", { name: "Delete connection to Neutral link" }),
+      screen.getByRole("menuitem", { name: "Unlink connection" }),
     ).toBeInTheDocument();
   });
 
@@ -426,6 +487,7 @@ describe("ConnectionsSurface", () => {
           : connectionResponse([
               connection({
                 edge_id: "edge-artifact-revision",
+                target_ref: revisionRef,
                 target: endpoint(
                   revisionRef,
                   "Historical Dossier",
@@ -451,7 +513,9 @@ describe("ConnectionsSurface", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: /Historical Dossier/ }),
+      await screen.findByRole("button", {
+        name: "Historical Dossier context",
+      }),
     );
 
     expect(onOpenRoute).toHaveBeenCalledWith(
@@ -511,9 +575,7 @@ describe("ConnectionsSurface", () => {
       ),
     );
 
-    const { rerender } = render(
-      <TabSwitchHarness showConnections />,
-    );
+    const { rerender } = render(<TabSwitchHarness showConnections />);
     await screen.findByText(SCANNABLE_EMPTY_COPY);
     await user.click(
       screen.getByRole("button", { name: "Seed connection draft" }),
@@ -530,13 +592,11 @@ describe("ConnectionsSurface", () => {
     expect(
       screen.getByRole("combobox", { name: "Connection target" }),
     ).toHaveValue("Linked media");
-    expect(screen.getByRole("combobox", { name: "Connection kind" })).toHaveValue(
-      "supports",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Connection kind" }),
+    ).toHaveValue("supports");
 
-    rerender(
-      <TabSwitchHarness showConnections resourceId={BLOCK_B} />,
-    );
+    rerender(<TabSwitchHarness showConnections resourceId={BLOCK_B} />);
     expect(screen.getByRole("button", { name: "＋ Link" })).toHaveAttribute(
       "aria-expanded",
       "false",
@@ -998,9 +1058,7 @@ describe("ConnectionsSurface", () => {
       <TabSwitchHarness showConnections={false} resourceId={BLOCK_A} />,
     );
     expect(screen.getByText("Dossier tab")).toBeVisible();
-    view.rerender(
-      <TabSwitchHarness showConnections resourceId={BLOCK_A} />,
-    );
+    view.rerender(<TabSwitchHarness showConnections resourceId={BLOCK_A} />);
     expect(
       await screen.findByRole("button", { name: "Retry attachment" }),
     ).toBeInTheDocument();
@@ -1016,9 +1074,7 @@ describe("ConnectionsSurface", () => {
     view.rerender(
       <TabSwitchHarness showConnections={false} resourceId={BLOCK_A} />,
     );
-    view.rerender(
-      <TabSwitchHarness showConnections resourceId={BLOCK_A} />,
-    );
+    view.rerender(<TabSwitchHarness showConnections resourceId={BLOCK_A} />);
     expect(
       await screen.findByText(
         "File was saved, but its connection could not be created.",
@@ -1245,6 +1301,7 @@ describe("ConnectionsSurface", () => {
   });
 
   it("marks synapse connections with rationale and dismiss control", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) =>
@@ -1296,12 +1353,19 @@ describe("ConnectionsSurface", () => {
     // eslint-disable-next-line testing-library/no-node-access -- justify-eslint-override: asserting a user-origin row has NO machine-origin ancestor
     expect(bodyLink.closest("[data-machine-origin]")).toBeNull();
     expect(
-      screen.getByRole("button", {
-        name: "Dismiss connection to Resonant page",
-      }),
+      screen.getByRole("button", { name: "Actions for Resonant page" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Resonant page" }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Dismiss connection" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Dismiss connection to Body link" }),
+      screen.getByRole("button", { name: "Actions for Body link" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Unlink connection" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1401,12 +1465,18 @@ describe("ConnectionsSurface", () => {
     expect(await screen.findByText("Manual link")).toBeInTheDocument();
     expect(screen.getByText("Body link")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Delete connection to Body link" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Actions for Body link" }),
+    ).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: "Delete connection to Manual link" }),
+      screen.getByRole("button", { name: "Actions for Manual link" }),
     );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Unlink connection" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Delete connection to Body link" }),
+    ).not.toBeInTheDocument();
     const deletes = () =>
       requests.filter(
         (request) =>
@@ -1414,6 +1484,13 @@ describe("ConnectionsSurface", () => {
           request.init?.method === "DELETE",
       );
     await waitFor(() => expect(deletes()).toHaveLength(1));
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Manual link" }),
+    );
+    const unlinking = screen.getByRole("menuitem", { name: "Unlinking..." });
+    expect(unlinking).toHaveAttribute("aria-disabled", "true");
+    await user.click(unlinking);
+    expect(deletes()).toHaveLength(1);
     deletes()[0].resolve(new Response(null, { status: 204 }));
 
     await waitFor(() => expect(connectionReads(requests)).toHaveLength(2));
@@ -1451,9 +1528,10 @@ describe("ConnectionsSurface", () => {
 
     expect(await screen.findByText("Supported page")).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", {
-        name: "Delete connection to Supported page",
-      }),
+      screen.getByRole("button", { name: "Actions for Supported page" }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Unlink connection" }),
     );
 
     const stanceDeletes = () =>

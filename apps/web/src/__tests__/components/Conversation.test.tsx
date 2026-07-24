@@ -2,10 +2,14 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Conversation from "@/components/chat/Conversation";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { __resetChatProfilesCacheForTests } from "@/components/chat/useChatProfiles";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import PaneShell from "@/components/workspace/PaneShell";
+import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import {
@@ -135,7 +139,7 @@ function message(
         ? {
             schema_version: "assistant_trust_trail.v1",
             assistant_message_id: id,
-            conversation_id: "conversation-1",
+            conversation_id: "00000000-0000-4000-8000-000000000101",
             chat_run_id: null,
             status,
             run: null,
@@ -238,7 +242,7 @@ function treeResponse({
   ];
   return {
     conversation: {
-      id: "conversation-1",
+      id: "00000000-0000-4000-8000-000000000101",
       title: "Branch chat",
       sharing: "private",
       message_count: 6,
@@ -272,7 +276,7 @@ function activeBranchBRun(): ChatRunResponse["data"] {
     run: {
       id: "run-branch-b",
       status: "running",
-      conversation_id: "conversation-1",
+      conversation_id: "00000000-0000-4000-8000-000000000101",
       user_message_id: "branch-b-user",
       assistant_message_id: "branch-b-assistant",
       profile_id: "balanced",
@@ -321,7 +325,7 @@ function failedRootRetryTree(): ConversationTreeResponse {
   };
   return {
     conversation: {
-      id: "conversation-1",
+      id: "00000000-0000-4000-8000-000000000101",
       title: "Retry chat",
       sharing: "private",
       message_count: 2,
@@ -358,7 +362,7 @@ function failedRootResendTree(): ConversationTreeResponse {
   };
   return {
     conversation: {
-      id: "conversation-1",
+      id: "00000000-0000-4000-8000-000000000101",
       title: "Resend chat",
       sharing: "private",
       message_count: 2,
@@ -394,7 +398,7 @@ function retryRun(): ChatRunResponse["data"] {
     run: {
       id: "retry-run",
       status: "queued",
-      conversation_id: "conversation-1",
+      conversation_id: "00000000-0000-4000-8000-000000000101",
       user_message_id: "retry-user",
       assistant_message_id: "retry-assistant",
       profile_id: "balanced",
@@ -439,9 +443,11 @@ function renderPane(
     ) => void;
   } = {},
 ) {
-  const href = options.href ?? "/conversations/conversation-1";
+  const href = options.href ?? "/conversations/00000000-0000-4000-8000-000000000101";
   const routeKey = resolvePaneRouteIdentity(href).routeKey;
   const onReplacePane = options.onReplacePane ?? vi.fn();
+  const publishPrimaryChrome =
+    vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
   render(
     <PaneRuntimeProvider
       paneId="pane-1"
@@ -454,16 +460,18 @@ function renderPane(
       canGoForward={false}
       onGoBackPane={vi.fn()}
       onGoForwardPane={vi.fn()}
-      pathParams={options.pathParams ?? { id: "conversation-1" }}
+      pathParams={options.pathParams ?? { id: "00000000-0000-4000-8000-000000000101" }}
       onNavigatePane={vi.fn()}
       onReplacePane={onReplacePane}
       onOpenInNewPane={vi.fn()}
       onSetPaneLabel={vi.fn()}
     >
-      <Conversation />
+      <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+        <Conversation />
+      </PanePrimaryChromeProvider>
     </PaneRuntimeProvider>,
   );
-  return { onReplacePane };
+  return { onReplacePane, publishPrimaryChrome };
 }
 
 let restoreChatGeometry = () => undefined;
@@ -562,10 +570,10 @@ describe("Conversation", () => {
     const rerunData = retryRun();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse({ data: failedRootRetryTree() });
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -610,10 +618,10 @@ describe("Conversation", () => {
   it("shows a failure card with no Run again action for a non-rerunnable failed root", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse({ data: failedRootResendTree() });
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -650,10 +658,10 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -663,7 +671,7 @@ describe("Conversation", () => {
           return jsonResponse({ data: [] });
         }
         if (
-          path === "/api/conversations/conversation-1/active-path" &&
+          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           return activePathPromise;
@@ -727,11 +735,11 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           treeCalls += 1;
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -739,7 +747,7 @@ describe("Conversation", () => {
         }
         if (path === "/api/chat-runs") return jsonResponse({ data: [] });
         if (
-          path === "/api/conversations/conversation-1/active-path" &&
+          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           activePathCalls += 1;
@@ -755,7 +763,7 @@ describe("Conversation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane({
-      href: "/conversations/conversation-1?message=branch-b-user",
+      href: "/conversations/00000000-0000-4000-8000-000000000101?message=branch-b-user",
     });
 
     expect(await screen.findByText("Answer B")).toBeVisible();
@@ -790,13 +798,13 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           treeCalls += 1;
           return jsonResponse({
             data: treeResponse({ selected: treeCalls === 1 ? "a" : "b" }),
           });
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -804,7 +812,7 @@ describe("Conversation", () => {
         }
         if (path === "/api/chat-runs") return jsonResponse({ data: [] });
         if (
-          path === "/api/conversations/conversation-1/active-path" &&
+          path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
           init?.method === "POST"
         ) {
           activePathCalls += 1;
@@ -827,7 +835,7 @@ describe("Conversation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane({
-      href: "/conversations/conversation-1?message=branch-b-user",
+      href: "/conversations/00000000-0000-4000-8000-000000000101?message=branch-b-user",
     });
 
     expect(await screen.findByText("Failed to switch fork")).toBeVisible();
@@ -851,11 +859,11 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           treeCalls += 1;
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -870,7 +878,7 @@ describe("Conversation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderPane({
-      href: "/conversations/conversation-1?message=missing-message",
+      href: "/conversations/00000000-0000-4000-8000-000000000101?message=missing-message",
     });
 
     expect(
@@ -890,7 +898,7 @@ describe("Conversation", () => {
     expect(
       fetchMock.mock.calls.filter(
         ([input]) =>
-          pathOf(input) === "/api/conversations/conversation-1/active-path",
+          pathOf(input) === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path",
       ),
     ).toHaveLength(0);
   });
@@ -902,7 +910,7 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           treeCalls += 1;
           return treeCalls === 1
             ? jsonResponse({ data: treeResponse() })
@@ -916,7 +924,7 @@ describe("Conversation", () => {
                 500,
               );
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -928,7 +936,7 @@ describe("Conversation", () => {
     );
 
     renderPane({
-      href: "/conversations/conversation-1?message=missing-message",
+      href: "/conversations/00000000-0000-4000-8000-000000000101?message=missing-message",
     });
     await user.click(await screen.findByRole("button", { name: "Retry" }));
 
@@ -944,10 +952,10 @@ describe("Conversation", () => {
     });
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathOf(input);
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse({ data: treeResponse({ branchBStatus: "pending" }) });
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -957,7 +965,7 @@ describe("Conversation", () => {
         return jsonResponse({ data: [activeBranchBRun()] });
       }
       if (
-        path === "/api/conversations/conversation-1/active-path" &&
+        path === "/api/conversations/00000000-0000-4000-8000-000000000101/active-path" &&
         init?.method === "POST"
       ) {
         return activePathPromise;
@@ -1008,11 +1016,11 @@ describe("Conversation", () => {
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
       }
-      if (path === "/api/conversations/new-conv-id/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000102/tree") {
         return jsonResponse({
           data: {
             ...treeResponse(),
-            conversation: { ...treeResponse().conversation, id: "new-conv-id" },
+            conversation: { ...treeResponse().conversation, id: "00000000-0000-4000-8000-000000000102" },
           },
         });
       }
@@ -1023,7 +1031,7 @@ describe("Conversation", () => {
             run: {
               id: "run-1",
               status: "complete",
-              conversation_id: "new-conv-id",
+              conversation_id: "00000000-0000-4000-8000-000000000102",
               user_message_id: "user-message-1",
               assistant_message_id: "assistant-message-1",
               profile_id: body.profile_id,
@@ -1036,7 +1044,7 @@ describe("Conversation", () => {
               updated_at: timestamp,
             },
             conversation: {
-              id: "new-conv-id",
+              id: "00000000-0000-4000-8000-000000000102",
               title: "New chat",
               sharing: "private",
               message_count: 2,
@@ -1097,7 +1105,7 @@ describe("Conversation", () => {
     await waitFor(() => {
       expect(onReplacePane).toHaveBeenCalledWith(
         "pane-1",
-        "/conversations/new-conv-id",
+        "/conversations/00000000-0000-4000-8000-000000000102",
         { modality: "Programmatic" },
       );
     });
@@ -1108,10 +1116,10 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathOf(input);
       const method = init?.method ?? "GET";
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse({ data: treeResponse() });
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -1126,7 +1134,7 @@ describe("Conversation", () => {
         const bodyConversationId =
           destination.kind === "Existing"
             ? destination.conversation_id
-            : "conversation-1";
+            : "00000000-0000-4000-8000-000000000101";
         const bodyParentMessageId =
           destination.kind === "Existing" &&
           destination.insertion.kind === "Reply"
@@ -1205,7 +1213,7 @@ describe("Conversation", () => {
     expect(body.content).toBe("Continue from the leaf");
     expect(body.destination).toMatchObject({
       kind: "Existing",
-      conversation_id: "conversation-1",
+      conversation_id: "00000000-0000-4000-8000-000000000101",
       insertion: {
         kind: "Reply",
         parent_message_id: "branch-a-assistant",
@@ -1221,12 +1229,12 @@ describe("Conversation", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = pathOf(input);
       const method = init?.method ?? "GET";
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse({
           data: treeResponse({ selected: "b", branchBStatus: "pending" }),
         });
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/llm-profiles") {
@@ -1263,10 +1271,10 @@ describe("Conversation", () => {
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
       }
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return new Promise<Response>(() => {});
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -1292,13 +1300,13 @@ describe("Conversation", () => {
       if (path === "/api/llm-profiles") {
         return jsonResponse({ data: LLM_PROFILES });
       }
-      if (path === "/api/conversations/conversation-1/tree") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
         return jsonResponse(
           { error: { code: "E_NOT_FOUND", message: "Conversation not found" } },
           404,
         );
       }
-      if (path === "/api/conversations/conversation-1/context-refs") {
+      if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
         return jsonResponse({ data: [] });
       }
       if (path === "/api/chat-runs") {
@@ -1308,7 +1316,7 @@ describe("Conversation", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderPane();
+    const { publishPrimaryChrome } = renderPane();
 
     expect(
       await screen.findByText("Failed to load conversation"),
@@ -1317,6 +1325,11 @@ describe("Conversation", () => {
     expect(
       screen.queryByRole("textbox", { name: "Ask anything" }),
     ).toBeNull();
+    expect(
+      publishPrimaryChrome.mock.calls.some(
+        ([update]) => update.publication?.menu?.kind === "ResourceMenu",
+      ),
+    ).toBe(false);
   });
 
   it("renders the composer immediately on the new route (no loading gate)", async () => {
@@ -1368,10 +1381,10 @@ describe("Conversation", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = pathOf(input);
-        if (path === "/api/conversations/conversation-1/tree") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/tree") {
           return jsonResponse({ data: treeResponse() });
         }
-        if (path === "/api/conversations/conversation-1/context-refs") {
+        if (path === "/api/conversations/00000000-0000-4000-8000-000000000101/context-refs") {
           return jsonResponse({ data: [] });
         }
         if (path === "/api/llm-profiles") {
@@ -1385,49 +1398,63 @@ describe("Conversation", () => {
     );
 
     const tree = (secondaryPane: WorkspaceAttachedSecondaryPaneState | null) => (
-      <PaneReturnMementoProvider>
-        <PaneRuntimeProvider
-        paneId="pane-1"
-        visitId={TEST_VISIT_ID}
-        isActive={true}
-        href="/conversations/conversation-1"
-        routeId="conversation"
-        routeKey={
-          resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
-        }
-        canGoBack={false}
-        canGoForward={false}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-        pathParams={{ id: "conversation-1" }}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneLabel={vi.fn()}
-        secondaryPane={secondaryPane}
-        onRequestSecondarySurface={onRequestSecondarySurface}
-        onCloseSecondaryPane={vi.fn()}
-      >
-          <PaneShell
-          paneId="pane-1"
-          routeKey={
-            resolvePaneRouteIdentity("/conversations/conversation-1").routeKey
-          }
-          routeHeader={{
-            kind: "section",
-            destinationId: "chats",
-            defaultFolio: "none",
-          }}
-          label="Chat"
-          returnMementoEnabled={false}
-          sizing={paneSizing({ widthPx: 480, minWidthPx: 320, maxWidthPx: 1400 })}
-          bodyMode="contained"
-          onResizePrimaryPane={vi.fn()}
-        >
-          <Conversation />
-          </PaneShell>
-        </PaneRuntimeProvider>
-      </PaneReturnMementoProvider>
+      <FeedbackProvider>
+        <ShareControllerProvider>
+          <PaneReturnMementoProvider>
+            <PaneRuntimeProvider
+              paneId="pane-1"
+              visitId={TEST_VISIT_ID}
+              isActive={true}
+              href="/conversations/00000000-0000-4000-8000-000000000101"
+              routeId="conversation"
+              routeKey={
+                resolvePaneRouteIdentity(
+                  "/conversations/00000000-0000-4000-8000-000000000101",
+                ).routeKey
+              }
+              canGoBack={false}
+              canGoForward={false}
+              onGoBackPane={vi.fn()}
+              onGoForwardPane={vi.fn()}
+              pathParams={{
+                id: "00000000-0000-4000-8000-000000000101",
+              }}
+              onNavigatePane={vi.fn()}
+              onReplacePane={vi.fn()}
+              onOpenInNewPane={vi.fn()}
+              onSetPaneLabel={vi.fn()}
+              secondaryPane={secondaryPane}
+              onRequestSecondarySurface={onRequestSecondarySurface}
+              onCloseSecondaryPane={vi.fn()}
+            >
+              <PaneShell
+                paneId="pane-1"
+                routeKey={
+                  resolvePaneRouteIdentity(
+                    "/conversations/00000000-0000-4000-8000-000000000101",
+                  ).routeKey
+                }
+                routeHeader={{
+                  kind: "section",
+                  destinationId: "chats",
+                  defaultFolio: "none",
+                }}
+                label="Chat"
+                returnMementoEnabled={false}
+                sizing={paneSizing({
+                  widthPx: 480,
+                  minWidthPx: 320,
+                  maxWidthPx: 1400,
+                })}
+                bodyMode="contained"
+                onResizePrimaryPane={vi.fn()}
+              >
+                <Conversation />
+              </PaneShell>
+            </PaneRuntimeProvider>
+          </PaneReturnMementoProvider>
+        </ShareControllerProvider>
+      </FeedbackProvider>
     );
 
     render(tree(null));

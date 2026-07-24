@@ -7,6 +7,24 @@ import {
   putMediaAuthors,
 } from "./api";
 
+const CONTRIBUTOR_ID = "11111111-1111-4111-8111-111111111111";
+const MEDIA_ID = "22222222-2222-4222-8222-222222222222";
+
+function resourceTarget(scheme: "contributor" | "media", id: string, href: string) {
+  const ref = `${scheme}:${id}`;
+  return {
+    kind: "Resource",
+    ref,
+    activation: {
+      resourceRef: ref,
+      kind: "route",
+      href,
+      unresolvedReason: null,
+    },
+    missing: false,
+  };
+}
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -90,6 +108,11 @@ describe("contributor api decode boundary", () => {
           displayName: "Ursula K. Le Guin",
           otherNames: ["U. K. Le Guin"],
           canRename: true,
+          actionTarget: resourceTarget(
+            "contributor",
+            CONTRIBUTOR_ID,
+            "/authors/ursula-le-guin",
+          ),
         },
       });
     });
@@ -98,6 +121,7 @@ describe("contributor api decode boundary", () => {
     expect(detail.handle).toBe("ursula-le-guin");
     expect(detail.otherNames).toEqual(["U. K. Le Guin"]);
     expect(detail.canRename).toBe(true);
+    expect(detail.actionTarget.ref).toBe(`contributor:${CONTRIBUTOR_ID}`);
   });
 
   it("decodes a works page with role facts and an opaque cursor", async () => {
@@ -112,6 +136,7 @@ describe("contributor api decode boundary", () => {
               contentKind: "epub",
               date: "1968",
               roleFacts: [{ creditedName: "Ursula K. Le Guin", role: "author", rawRole: null }],
+              actionTarget: resourceTarget("media", MEDIA_ID, `/media/${MEDIA_ID}`),
             },
           ],
           nextCursor: null,
@@ -136,6 +161,7 @@ describe("contributor api decode boundary", () => {
               contentKind: "epub",
               date: "2025-02-29",
               roleFacts: [],
+              actionTarget: resourceTarget("media", MEDIA_ID, `/media/${MEDIA_ID}`),
             },
           ],
           nextCursor: null,
@@ -204,6 +230,11 @@ describe("contributor api decode boundary", () => {
           displayName: "Ursula Le Guin",
           otherNames: [],
           canRename: true,
+          actionTarget: resourceTarget(
+            "contributor",
+            CONTRIBUTOR_ID,
+            "/authors/ursula-le-guin",
+          ),
         },
       });
     });

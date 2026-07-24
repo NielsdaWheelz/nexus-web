@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -11,13 +13,19 @@ import {
   type SetStateAction,
 } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { pluralize } from "@/lib/text/pluralize";
 import { useResource } from "@/lib/api/useResource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import { podcastResourceOptions } from "@/lib/actions/resourceActions";
-import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
+import { retryMediaMetadata } from "@/lib/media/ingestionClient";
+import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
+import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
+import {
+  RESOURCE_ACTION_CATALOG,
+  podcastResourceOptions,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
@@ -33,7 +41,11 @@ import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryMode
 import { useBillingAccount } from "@/lib/billing/useBillingAccount";
 import { useGlobalPlayer } from "@/lib/player/globalPlayer";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { assumeMediaId, type Placement } from "@/lib/lectern/contract";
+import {
+  assumeMediaId,
+  type LecternItemId,
+  type Placement,
+} from "@/lib/lectern/contract";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import PodcastSummaryCard from "./PodcastSummaryCard";
 import PodcastEpisodeList from "./PodcastEpisodeList";
@@ -73,10 +85,23 @@ import {
   type EpisodeStateFilter,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
+import {
+  EPISODE_PLAY_NEXT_ACTION_ID,
+  episodeActionBusyKey,
+  type EpisodeActionId,
+} from "./episodeActionBusy";
 import styles from "./page.module.css";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { ContributorCredit, MediaAuthors } from "@/lib/contributors/types";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 
 const EPISODES_PAGE_SIZE = 100;
 const EPISODE_SEARCH_DEBOUNCE_MS = 300;
+
+const MediaAuthorsEditor = lazy(
+  () =>
+    import(/* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"),
+);
 
 interface PodcastDetailLoadResult {
   detail: PodcastDetailResponse;
@@ -91,8 +116,9 @@ interface PodcastDetailSnapshot {
   readonly podcastLibraries: readonly PodcastLibraryMembership[];
 }
 
-const PODCAST_DETAIL_VISIT_DATA =
-  definePaneVisitDataKey<PodcastDetailSnapshot>("PodcastDetail.Episodes");
+const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
+  "PodcastDetail.Episodes",
+);
 const EMPTY_PODCAST_EPISODES: PodcastEpisodeMedia[] = [];
 const EMPTY_PODCAST_LIBRARIES: PodcastLibraryMembership[] = [];
 
@@ -107,23 +133,19 @@ export default function PodcastDetailPaneBody() {
   const lectern = useLectern();
   const committedSnapshotRef = useRef<PodcastDetailSnapshot | null>(null);
   const reconciliationPendingRef = useRef(false);
-  const captureCommitted = useCallback(
-    () => committedSnapshotRef.current,
-    [],
-  );
+  const captureCommitted = useCallback(() => committedSnapshotRef.current, []);
   const restored = usePaneVisitData(
     PODCAST_DETAIL_VISIT_DATA,
     captureCommitted,
   );
-  const [controller, setController] =
-    useState<PodcastDetailSnapshot | null>(restored);
+  const [controller, setController] = useState<PodcastDetailSnapshot | null>(
+    restored,
+  );
   const clearAllVisitData = useClearAllPaneVisitData();
   const detail = controller?.detail ?? null;
   const episodes = useMemo(
     () =>
-      controller === null
-        ? EMPTY_PODCAST_EPISODES
-        : [...controller.episodes],
+      controller === null ? EMPTY_PODCAST_EPISODES : [...controller.episodes],
     [controller],
   );
   const hasMoreEpisodes = controller?.hasMoreEpisodes ?? false;
@@ -194,7 +216,20 @@ export default function PodcastDetailPaneBody() {
     () => paneSearchParams.get("q") ?? "",
   );
   const [loadingMoreEpisodes, setLoadingMoreEpisodes] = useState(false);
-  const busyMediaIds = useStringIdSet();
+  const busyEpisodeActionKeys = useStringIdSet();
+  const beginEpisodeAction = useCallback(
+    (mediaId: string, actionId: EpisodeActionId): string | null => {
+      const key = episodeActionBusyKey(mediaId, actionId);
+      if (busyEpisodeActionKeys.has(key)) return null;
+      busyEpisodeActionKeys.add(key);
+      return key;
+    },
+    [busyEpisodeActionKeys],
+  );
+  const finishEpisodeAction = useCallback(
+    (key: string) => busyEpisodeActionKeys.remove(key),
+    [busyEpisodeActionKeys],
+  );
   const markingEpisodeIds = useStringIdSet();
   const [markAllAsPlayedBusy, setMarkAllAsPlayedBusy] = useState(false);
   const expandedShowNotesMediaIds = useStringIdSet();
@@ -242,22 +277,75 @@ export default function PodcastDetailPaneBody() {
       clearAllVisitData();
     },
   });
+  const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
+  const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
+  const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<
+    string | null
+  >(null);
+  const [authorsEditorTrigger, setAuthorsEditorTrigger] =
+    useState<HTMLButtonElement | null>(null);
+  const authorsEditorEpisode =
+    episodes.find((episode) => episode.id === authorsEditorMediaId) ?? null;
+  const openEpisodeAuthorsEditor = useCallback(
+    (episode: PodcastEpisodeMedia, { triggerEl }: ActionSelectDetail) => {
+      setAuthorsEditorMediaId(episode.id);
+      setAuthorsEditorTrigger(triggerEl);
+      setAuthorsEditorMounted(true);
+      setAuthorsEditorOpen(true);
+    },
+    [],
+  );
+  const handleEpisodeAuthorsSaved = useCallback(
+    (result: MediaAuthors) => {
+      if (authorsEditorMediaId === null) return;
+      const authorCredits: ContributorCredit[] = result.authors.map(
+        (author, index) => ({
+          contributor_handle: author.contributorHandle,
+          contributor_display_name: author.displayName,
+          credited_name: author.creditedName,
+          role: "author",
+          href: author.href,
+          ordinal: index,
+        }),
+      );
+      setEpisodes((current) =>
+        current.map((episode) =>
+          episode.id === authorsEditorMediaId
+            ? {
+                ...episode,
+                contributors: [
+                  ...authorCredits,
+                  ...episode.contributors.filter(
+                    (credit) => credit.role !== "author",
+                  ),
+                ],
+                author_mode: result.authorMode,
+              }
+            : episode,
+        ),
+      );
+      setAuthorsEditorOpen(false);
+      clearAllVisitData();
+    },
+    [authorsEditorMediaId, clearAllVisitData, setEpisodes],
+  );
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
   const closeSettingsModal = settingsModal.close;
-  const podcastDetailCacheKey = podcastId && !suppressInitialLoad
-    ? [
-        "podcast-detail",
-        podcastId,
-        episodeStateFilter,
-        episodeSort,
-        episodeSearchQuery.trim(),
-        reloadNonce,
-      ].join(":")
-    : null;
+  const podcastDetailCacheKey =
+    podcastId && !suppressInitialLoad
+      ? [
+          "podcast-detail",
+          podcastId,
+          episodeStateFilter,
+          episodeSort,
+          episodeSearchQuery.trim(),
+          reloadNonce,
+        ].join(":")
+      : null;
   const reload = useCallback(() => {
     reconciliationPendingRef.current = true;
     committedSnapshotRef.current = null;
@@ -379,9 +467,7 @@ export default function PodcastDetailPaneBody() {
       : controller;
   }, [controller]);
 
-  usePaneReturnReady(
-    (!loading && controller !== null) || error !== null,
-  );
+  usePaneReturnReady((!loading && controller !== null) || error !== null);
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
@@ -441,8 +527,7 @@ export default function PodcastDetailPaneBody() {
           : {
               ...current,
               episodes: [...current.episodes, ...response.data],
-              hasMoreEpisodes:
-                response.data.length === EPISODES_PAGE_SIZE,
+              hasMoreEpisodes: response.data.length === EPISODES_PAGE_SIZE,
             },
       );
     } catch (loadError) {
@@ -496,11 +581,11 @@ export default function PodcastDetailPaneBody() {
     }
   }, [detail, reload, selectedDestinations]);
 
-  const refreshPodcastSync = useCallback(() => {
-    if (!podcastId || !detail?.subscription) {
+  const refreshPodcastSync = useCallback(async () => {
+    if (!podcastId || detail?.subscription?.status !== "active") {
       return;
     }
-    void actions.refreshSync(podcastId, (patch) => {
+    await actions.refreshSync(podcastId, (patch) => {
       setDetail((prev) =>
         prev && prev.subscription
           ? { ...prev, subscription: { ...prev.subscription, ...patch } }
@@ -510,11 +595,11 @@ export default function PodcastDetailPaneBody() {
     });
   }, [actions, detail?.subscription, podcastId, reload, setDetail]);
 
-  const unsubscribePodcast = useCallback(() => {
-    if (!podcastId || !detail?.subscription) {
+  const unsubscribePodcast = useCallback(async () => {
+    if (!podcastId || detail?.subscription?.status !== "active") {
       return;
     }
-    void actions.unsubscribe(podcastId, detail.podcast.title, (libraries) => {
+    await actions.unsubscribe(podcastId, detail.podcast.title, (libraries) => {
       const retainedLibraries = libraries.filter(
         (library) => library.isInLibrary && !library.canRemove,
       );
@@ -532,31 +617,19 @@ export default function PodcastDetailPaneBody() {
   ]);
 
   const openSettingsModal = useCallback(() => {
-    if (!detail?.subscription) {
+    if (detail?.subscription?.status !== "active") {
       return;
     }
     settingsModal.open(detail.subscription);
   }, [detail, settingsModal]);
 
-  const handleOpenEpisodeChat = useCallback(
-    async (episode: PodcastEpisodeMedia) => {
-      try {
-        const conversationId = await startResourceContextChat(`media:${episode.id}`);
-        clearAllVisitData();
-        openInNewPane?.(`/conversations/${conversationId}`, episode.title);
-      } catch (chatError) {
-        if (handleUnauthenticatedApiError(chatError)) return;
-        setError(
-          toFeedback(chatError, { fallback: "Failed to open episode chat" }),
-        );
-      }
-    },
-    [clearAllVisitData, openInNewPane],
-  );
-
   const handleRetryEpisodeProcessing = useCallback(
     async (mediaId: string) => {
-      busyMediaIds.add(mediaId);
+      const busyKey = beginEpisodeAction(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.RetryProcessing.id,
+      );
+      if (busyKey === null) return;
       setError(null);
       try {
         const projection = await runSourceProcessingAction({
@@ -588,21 +661,28 @@ export default function PodcastDetailPaneBody() {
         clearAllVisitData();
       } catch (retryError) {
         if (handleUnauthenticatedApiError(retryError)) return;
+        if (!isApiError(retryError) || isSameSystemApiDefect(retryError)) {
+          throw retryError;
+        }
         setError(
           toFeedback(retryError, {
             fallback: "Failed to retry episode processing",
           }),
         );
       } finally {
-        busyMediaIds.remove(mediaId);
+        finishEpisodeAction(busyKey);
       }
     },
-    [busyMediaIds, clearAllVisitData, setEpisodes],
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
   );
 
   const handleRefreshEpisodeSource = useCallback(
     async (mediaId: string) => {
-      busyMediaIds.add(mediaId);
+      const busyKey = beginEpisodeAction(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.RefreshSource.id,
+      );
+      if (busyKey === null) return;
       setError(null);
       try {
         const projection = await runSourceProcessingAction({
@@ -634,46 +714,88 @@ export default function PodcastDetailPaneBody() {
         clearAllVisitData();
       } catch (refreshError) {
         if (handleUnauthenticatedApiError(refreshError)) return;
+        if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
+          throw refreshError;
+        }
         setError(
           toFeedback(refreshError, {
             fallback: "Failed to refresh episode source",
           }),
         );
       } finally {
-        busyMediaIds.remove(mediaId);
+        finishEpisodeAction(busyKey);
       }
     },
-    [busyMediaIds, clearAllVisitData, setEpisodes],
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
+  );
+
+  const handleRetryEpisodeMetadata = useCallback(
+    async (mediaId: string) => {
+      const busyKey = beginEpisodeAction(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.RetryMetadata.id,
+      );
+      if (busyKey === null) return;
+      setError(null);
+      try {
+        await retryMediaMetadata(mediaId);
+        setError({
+          severity: "success",
+          title: "Metadata re-enrichment started.",
+        });
+        clearAllVisitData();
+      } catch (metadataError) {
+        if (handleUnauthenticatedApiError(metadataError)) return;
+        if (
+          !isApiError(metadataError) ||
+          isSameSystemApiDefect(metadataError)
+        ) {
+          throw metadataError;
+        }
+        setError(
+          toFeedback(metadataError, {
+            fallback: "Failed to re-enrich episode metadata",
+          }),
+        );
+      } finally {
+        finishEpisodeAction(busyKey);
+      }
+    },
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction],
   );
 
   const handleDeleteEpisode = useCallback(
     async (episode: PodcastEpisodeMedia) => {
-      if (
-        !confirm(
-          `Delete "${episode.title}" from My Library and libraries you manage? This cannot be undone.`,
-        )
-      ) {
-        return;
-      }
-
-      busyMediaIds.add(episode.id);
+      const busyKey = beginEpisodeAction(
+        episode.id,
+        RESOURCE_ACTION_CATALOG.RemoveMedia.id,
+      );
+      if (busyKey === null) return;
       setError(null);
       try {
-        await apiFetch(`/api/media/${episode.id}`, { method: "DELETE" });
+        const outcome = await confirmAndDeleteMedia({
+          mediaId: episode.id,
+          mediaTitle: episode.title,
+          confirmRemoval: (message) => window.confirm(message),
+        });
+        if (outcome.kind === "Cancelled") return;
         setEpisodes((prev) =>
           prev.filter((candidate) => candidate.id !== episode.id),
         );
         clearAllVisitData();
       } catch (deleteError) {
         if (handleUnauthenticatedApiError(deleteError)) return;
+        if (!isApiError(deleteError) || isSameSystemApiDefect(deleteError)) {
+          throw deleteError;
+        }
         setError(
           toFeedback(deleteError, { fallback: "Failed to delete episode" }),
         );
       } finally {
-        busyMediaIds.remove(episode.id);
+        finishEpisodeAction(busyKey);
       }
     },
-    [busyMediaIds, clearAllVisitData, setEpisodes],
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction, setEpisodes],
   );
 
   const applyEpisodeCompletionState = useCallback(
@@ -742,6 +864,9 @@ export default function PodcastDetailPaneBody() {
       } catch (markError) {
         setEpisodes(previousEpisodes);
         if (handleUnauthenticatedApiError(markError)) return;
+        if (!isApiError(markError) || isSameSystemApiDefect(markError)) {
+          throw markError;
+        }
         setError(
           toFeedback(markError, {
             fallback: isCompleted
@@ -844,12 +969,16 @@ export default function PodcastDetailPaneBody() {
 
   // Which episodes are already On Lectern, from the canonical Lectern snapshot
   // (replaces the deleted player queue). Empty until the snapshot is Ready.
-  const lecternMediaIds = useMemo<Set<string>>(() => {
+  const lecternItemsByMediaId = useMemo<
+    ReadonlyMap<string, LecternItemId>
+  >(() => {
     const snapshot = lectern.resource;
     if (snapshot.status !== "ready") {
-      return new Set<string>();
+      return new Map<string, LecternItemId>();
     }
-    return new Set<string>(snapshot.data.items.map((item) => item.mediaId));
+    return new Map(
+      snapshot.data.items.map((item) => [item.mediaId, item.itemId]),
+    );
   }, [lectern.resource]);
 
   // "Play next" is disabled/no-op for the media that is the active Lectern
@@ -867,43 +996,101 @@ export default function PodcastDetailPaneBody() {
 
   // Play next: place After the exact Lectern origin item, else at the head
   // (spec §5.1). Add to Lectern: append Last.
+  const runEpisodeLecternMutation = useCallback(
+    async (
+      mediaId: string,
+      actionId: EpisodeActionId,
+      execute: () => Promise<unknown>,
+      failure: string,
+    ) => {
+      const busyKey = beginEpisodeAction(mediaId, actionId);
+      if (busyKey === null) return;
+      setError(null);
+      try {
+        await execute();
+        clearAllVisitData();
+      } catch (lecternError) {
+        if (handleUnauthenticatedApiError(lecternError)) return;
+        if (!isApiError(lecternError) || isSameSystemApiDefect(lecternError)) {
+          throw lecternError;
+        }
+        setError(toFeedback(lecternError, { fallback: failure }));
+      } finally {
+        finishEpisodeAction(busyKey);
+      }
+    },
+    [beginEpisodeAction, clearAllVisitData, finishEpisodeAction],
+  );
+
   const handlePlayNext = useCallback(
-    (mediaId: string) => {
+    async (mediaId: string) => {
       const state = player.state;
       const session = state.kind === "Absent" ? undefined : state.session;
       const placement: Placement =
         session && session.origin.kind === "Lectern"
           ? { kind: "After", itemId: session.origin.itemId }
           : { kind: "First" };
-      void lectern
-        .placeItems({
-          mediaIds: [assumeMediaId(mediaId)],
-          placement,
-        })
-        .then(clearAllVisitData);
+      await runEpisodeLecternMutation(
+        mediaId,
+        EPISODE_PLAY_NEXT_ACTION_ID,
+        () =>
+          lectern.placeItems({
+            mediaIds: [assumeMediaId(mediaId)],
+            placement,
+          }),
+        "Failed to place episode next on Lectern",
+      );
     },
-    [clearAllVisitData, lectern, player.state],
+    [lectern, player.state, runEpisodeLecternMutation],
   );
 
   const handleAddToLectern = useCallback(
-    (mediaId: string) => {
-      void lectern
-        .placeItems({
-          mediaIds: [assumeMediaId(mediaId)],
-          placement: { kind: "Last" },
-        })
-        .then(clearAllVisitData);
+    async (mediaId: string) => {
+      await runEpisodeLecternMutation(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.AddToLectern.id,
+        () =>
+          lectern.placeItems({
+            mediaIds: [assumeMediaId(mediaId)],
+            placement: { kind: "Last" },
+          }),
+        "Failed to add episode to Lectern",
+      );
     },
-    [clearAllVisitData, lectern],
+    [lectern, runEpisodeLecternMutation],
   );
-  const activeSubscription = detail?.subscription ?? null;
+
+  const handleRemoveFromLectern = useCallback(
+    async (mediaId: string, itemId: LecternItemId) => {
+      await runEpisodeLecternMutation(
+        mediaId,
+        RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
+        () => lectern.removeItem(itemId),
+        "Failed to remove episode from Lectern",
+      );
+    },
+    [lectern, runEpisodeLecternMutation],
+  );
+  const activeSubscription =
+    detail?.subscription?.status === "active" ? detail.subscription : null;
+  const paneBusyIds = new Set<ResourceActionId>();
+  if (refreshSyncBusy) {
+    paneBusyIds.add(RESOURCE_ACTION_CATALOG.RefreshPodcast.id);
+  }
+  if (unsubscribeBusy) {
+    paneBusyIds.add(RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id);
+  }
   const paneOptions = podcastResourceOptions({
-    canUsePodcastActions: Boolean(activeSubscription),
-    refreshBusy: refreshSyncBusy,
-    unsubscribeBusy,
-    onOpenSettings: () => openSettingsModal(),
-    onRefreshSync: refreshPodcastSync,
-    onUnsubscribe: unsubscribePodcast,
+    settings: activeSubscription
+      ? { kind: "Available", execute: openSettingsModal }
+      : { kind: "Unavailable" },
+    refreshSync: activeSubscription
+      ? { kind: "Available", execute: refreshPodcastSync }
+      : { kind: "Unavailable" },
+    subscription: activeSubscription
+      ? { kind: "Subscribed", execute: unsubscribePodcast }
+      : { kind: "Unavailable" },
+    busyIds: paneBusyIds,
   });
 
   const openConnectionRoute = useCallback(
@@ -938,7 +1125,22 @@ export default function PodcastDetailPaneBody() {
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
-    options: paneOptions,
+    menu:
+      podcastId && detail
+        ? {
+            kind: "ResourceMenu",
+            target: routeResourceActionSubject({
+              scheme: "podcast",
+              id: podcastId,
+              href: `/podcasts/${podcastId}`,
+            }),
+            groups: {
+              core: [],
+              ...paneOptions,
+              view: [],
+            },
+          }
+        : undefined,
     header: {
       kind: "section",
       folio: { kind: "count", value: episodes.length, unit: "episode" },
@@ -962,10 +1164,10 @@ export default function PodcastDetailPaneBody() {
       setEpisodeSearchInput={setEpisodeSearchInput}
       transcript={transcript}
       transcriptionAllowed={transcriptionAllowed}
-      busyMediaIds={busyMediaIds}
+      busyEpisodeActionKeys={busyEpisodeActionKeys}
       markingEpisodeIds={markingEpisodeIds}
       expandedShowNotesMediaIds={expandedShowNotesMediaIds}
-      lecternMediaIds={lecternMediaIds}
+      lecternItemsByMediaId={lecternItemsByMediaId}
       playNextDisabledMediaId={playNextDisabledMediaId}
       lecternReady={lectern.resource.status === "ready"}
       visibleUnplayedEpisodeIds={visibleUnplayedEpisodeIds}
@@ -979,21 +1181,13 @@ export default function PodcastDetailPaneBody() {
       onToggleShowNotes={toggleEpisodeShowNotesExpansion}
       onPlayNext={handlePlayNext}
       onAddToLectern={handleAddToLectern}
-      onOpenChat={(episode) => {
-        void handleOpenEpisodeChat(episode);
-      }}
-      onRetry={(mediaId) => {
-        void handleRetryEpisodeProcessing(mediaId);
-      }}
-      onRefreshSource={(mediaId) => {
-        void handleRefreshEpisodeSource(mediaId);
-      }}
-      onDelete={(episode) => {
-        void handleDeleteEpisode(episode);
-      }}
-      onTogglePlayed={(episode, isCompleted) => {
-        void handleMarkEpisodeCompletion(episode, isCompleted);
-      }}
+      onRemoveFromLectern={handleRemoveFromLectern}
+      onRetry={handleRetryEpisodeProcessing}
+      onRefreshSource={handleRefreshEpisodeSource}
+      onRetryMetadata={handleRetryEpisodeMetadata}
+      onEditAuthors={openEpisodeAuthorsEditor}
+      onDelete={handleDeleteEpisode}
+      onTogglePlayed={handleMarkEpisodeCompletion}
     />
   );
 
@@ -1077,6 +1271,24 @@ export default function PodcastDetailPaneBody() {
         }
         settingsModal={settingsModal}
       />
+      {authorsEditorMounted && authorsEditorEpisode ? (
+        <Suspense fallback={null}>
+          <MediaAuthorsEditor
+            mediaId={authorsEditorEpisode.id}
+            open={authorsEditorOpen}
+            authors={mapMediaAuthorCredits(authorsEditorEpisode.contributors)}
+            authorMode={authorsEditorEpisode.author_mode}
+            returnFocusTo={() => authorsEditorTrigger}
+            returnFocusFallback={() =>
+              document.querySelector<HTMLButtonElement>(
+                'button[aria-label="Episode actions"]',
+              )
+            }
+            onClose={() => setAuthorsEditorOpen(false)}
+            onSaved={handleEpisodeAuthorsSaved}
+          />
+        </Suspense>
+      ) : null}
     </>
   );
 }

@@ -4,6 +4,7 @@ import type {
   ReaderEvidenceItem,
   ReaderEvidencePassageGroup,
 } from "./documentMap";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   MARGIN_MAX_ITEMS,
   anchoredRowForEvidenceItem,
@@ -20,6 +21,23 @@ const ALL_ON: EvidenceFilterState = {
   synapse: true,
 };
 const absent = { kind: "Absent" } as const;
+const LINKED_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
+
+function mediaObject(label: string) {
+  const actionTarget = routeResourceActionSubject({
+    scheme: "media",
+    id: LINKED_MEDIA_ID,
+    href: `/media/${LINKED_MEDIA_ID}`,
+  });
+  return {
+    ref: actionTarget.ref,
+    kind: "Media" as const,
+    label,
+    excerpt: absent,
+    activation: actionTarget.activation,
+    actionTarget,
+  };
+}
 
 function item(
   kind: ReaderEvidenceItem["kind"],
@@ -64,18 +82,7 @@ function item(
         edge_id: id,
         role: "context",
         origin: "user",
-        object: {
-          ref: `media:${id}`,
-          kind: "Media",
-          label: "Linked media",
-          excerpt: absent,
-          activation: {
-            resourceRef: `media:${id}`,
-            kind: "route",
-            href: `/media/${id}`,
-            unresolvedReason: null,
-          },
-        },
+        object: mediaObject("Linked media"),
       };
     case "Synapse":
       return {
@@ -84,18 +91,7 @@ function item(
         edge_id: id,
         role: "context",
         rationale: "These passages resonate.",
-        object: {
-          ref: `media:${id}`,
-          kind: "Media",
-          label: "Resonant media",
-          excerpt: absent,
-          activation: {
-            resourceRef: `media:${id}`,
-            kind: "route",
-            href: `/media/${id}`,
-            unresolvedReason: null,
-          },
-        },
+        object: mediaObject("Resonant media"),
       };
   }
 }
@@ -172,18 +168,7 @@ describe("buildMarginItems", () => {
     sourceHighlight.associations = [
       {
         relationship: "DirectlyAttached",
-        object: {
-          ref: "media:media-1",
-          kind: "Media",
-          label: "This document",
-          excerpt: absent,
-          activation: {
-            resourceRef: "media:media-1",
-            kind: "route",
-            href: "/media/media-1",
-            unresolvedReason: null,
-          },
-        },
+        object: mediaObject("This document"),
         edge_id: "edge-stance",
         role: "contradicts",
         origin: "user",
@@ -207,18 +192,7 @@ describe("buildMarginItems", () => {
     sourceHighlight.associations = [
       {
         relationship: "DirectlyAttached",
-        object: {
-          ref: "media:media-1",
-          kind: "Media",
-          label: "This document",
-          excerpt: absent,
-          activation: {
-            resourceRef: "media:media-1",
-            kind: "route",
-            href: "/media/media-1",
-            unresolvedReason: null,
-          },
-        },
+        object: mediaObject("This document"),
         edge_id: "edge-stance",
         role: "supports",
         origin: "user",

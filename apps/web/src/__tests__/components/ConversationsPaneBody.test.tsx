@@ -7,9 +7,11 @@ import {
   RETURN_JOURNEY_VISIT_ID,
 } from "@/__tests__/helpers/paneReturnJourney";
 import ConversationsPaneBody from "@/app/(authenticated)/conversations/ConversationsPaneBody";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import PaneRouteBoundary from "@/components/workspace/PaneRouteBoundary";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import {
   PaneReturnMementoProvider,
@@ -38,24 +40,28 @@ function withPaneRuntime(node: ReactNode, onNavigatePane = vi.fn()) {
   const href = "/conversations";
   return (
     <PaneReturnMementoProvider>
-      <PaneRuntimeProvider
-        paneId="pane-1"
-        visitId={TEST_VISIT_ID}
-        isActive={true}
-        href={href}
-        routeId="conversations"
-        routeKey={resolvePaneRouteIdentity(href).routeKey}
-        canGoBack={false}
-        canGoForward={false}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-        onNavigatePane={onNavigatePane}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-        onSetPaneLabel={vi.fn()}
-      >
-        {node}
-      </PaneRuntimeProvider>
+      <FeedbackProvider>
+        <ShareControllerProvider>
+          <PaneRuntimeProvider
+            paneId="pane-1"
+            visitId={TEST_VISIT_ID}
+            isActive={true}
+            href={href}
+            routeId="conversations"
+            routeKey={resolvePaneRouteIdentity(href).routeKey}
+            canGoBack={false}
+            canGoForward={false}
+            onGoBackPane={vi.fn()}
+            onGoForwardPane={vi.fn()}
+            onNavigatePane={onNavigatePane}
+            onReplacePane={vi.fn()}
+            onOpenInNewPane={vi.fn()}
+            onSetPaneLabel={vi.fn()}
+          >
+            {node}
+          </PaneRuntimeProvider>
+        </ShareControllerProvider>
+      </FeedbackProvider>
     </PaneReturnMementoProvider>
   );
 }
@@ -74,7 +80,7 @@ describe("ConversationsPaneBody", () => {
           return jsonResponse({
             data: [
               {
-                id: "conversation-1",
+                id: "11111111-0000-4000-8000-000000000001",
                 title: "Untitled chat",
                 sharing: "private",
                 message_count: 2,
@@ -93,7 +99,10 @@ describe("ConversationsPaneBody", () => {
 
     const link = await screen.findByRole("link", { name: /untitled chat/i });
     expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute("href", "/conversations/conversation-1");
+    expect(link).toHaveAttribute(
+      "href",
+      "/conversations/11111111-0000-4000-8000-000000000001",
+    );
     expect(screen.getByRole("link", { name: "New chat" })).toHaveAttribute(
       "href",
       "/conversations/new",
@@ -149,7 +158,7 @@ describe("ConversationsPaneBody", () => {
           return jsonResponse({
             data: [
               {
-                id: "conversation-a",
+                id: "22222222-0000-4000-8000-000000000002",
                 title: "First chat",
                 sharing: "private",
                 message_count: 12,
@@ -157,7 +166,7 @@ describe("ConversationsPaneBody", () => {
                 updated_at: "2026-05-25T12:00:00Z",
               },
               {
-                id: "conversation-b",
+                id: "33333333-0000-4000-8000-000000000003",
                 title: "Second chat",
                 sharing: "private",
                 message_count: 2,
@@ -208,10 +217,16 @@ describe("ConversationsPaneBody", () => {
   });
 
   it("restores the appended conversation extent without another page-one request or duplication", async () => {
-    const first = conversation("conversation-first", "First-page chat");
-    const second = conversation("conversation-second", "Second-page chat");
+    const first = conversation(
+      "44444444-0000-4000-8000-000000000004",
+      "First-page chat",
+    );
+    const second = conversation(
+      "55555555-0000-4000-8000-000000000005",
+      "Second-page chat",
+    );
     const replacement = conversation(
-      "conversation-replacement",
+      "66666666-0000-4000-8000-000000000006",
       "Replacement first-page chat",
     );
     let firstPageRequestCount = 0;

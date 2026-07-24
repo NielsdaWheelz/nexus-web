@@ -1,15 +1,29 @@
 "use client";
 
-import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { FeedbackNotice, type FeedbackContent } from "@/components/feedback/Feedback";
+import {
+  useMemo,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
+import {
+  FeedbackNotice,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import CollectionView from "@/components/collections/CollectionView";
 import { presentEpisode } from "@/lib/collections/presenters/episode";
+import {
+  RESOURCE_ACTION_CATALOG,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { requireDocumentProcessingStatus } from "@/lib/media/documentReadiness";
+import type { LecternItemId } from "@/lib/lectern/contract";
+import type { ActionSelectDetail } from "@/lib/ui/actionDescriptor";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
@@ -24,11 +38,11 @@ import {
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
 import type { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
+import {
+  EPISODE_PLAY_NEXT_ACTION_ID,
+  episodeActionBusyKey,
+} from "./episodeActionBusy";
 import styles from "./page.module.css";
-import { usePaneRuntime } from "@/lib/panes/paneRuntime";
-import { useShareController } from "@/lib/sharing/controller";
-import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
-import { resourceShareTarget } from "@/lib/sharing/targets";
 
 type EpisodeTranscriptController = ReturnType<
   typeof useEpisodeTranscriptController
@@ -48,10 +62,10 @@ interface PodcastEpisodeListProps {
   setEpisodeSearchInput: Dispatch<SetStateAction<string>>;
   transcript: EpisodeTranscriptController;
   transcriptionAllowed: boolean;
-  busyMediaIds: StringIdSet;
+  busyEpisodeActionKeys: StringIdSet;
   markingEpisodeIds: StringIdSet;
   expandedShowNotesMediaIds: StringIdSet;
-  lecternMediaIds: Set<string>;
+  lecternItemsByMediaId: ReadonlyMap<string, LecternItemId>;
   playNextDisabledMediaId: string | null;
   /** Whether the Lectern snapshot is Ready; its mutations defect until then. */
   lecternReady: boolean;
@@ -62,13 +76,24 @@ interface PodcastEpisodeListProps {
   onMarkAllVisibleUnplayedAsPlayed: () => void;
   onLoadMoreEpisodes: () => void;
   onToggleShowNotes: (mediaId: string) => void;
-  onPlayNext: (mediaId: string) => void;
-  onAddToLectern: (mediaId: string) => void;
-  onOpenChat: (episode: PodcastEpisodeMedia) => void;
-  onRetry: (mediaId: string) => void;
-  onRefreshSource: (mediaId: string) => void;
-  onDelete: (episode: PodcastEpisodeMedia) => void;
-  onTogglePlayed: (episode: PodcastEpisodeMedia, isCompleted: boolean) => void;
+  onPlayNext: (mediaId: string) => Promise<void>;
+  onAddToLectern: (mediaId: string) => Promise<void>;
+  onRemoveFromLectern: (
+    mediaId: string,
+    itemId: LecternItemId,
+  ) => Promise<void>;
+  onRetry: (mediaId: string) => Promise<void>;
+  onRefreshSource: (mediaId: string) => Promise<void>;
+  onRetryMetadata: (mediaId: string) => Promise<void>;
+  onEditAuthors: (
+    episode: PodcastEpisodeMedia,
+    detail: ActionSelectDetail,
+  ) => void;
+  onDelete: (episode: PodcastEpisodeMedia) => Promise<void>;
+  onTogglePlayed: (
+    episode: PodcastEpisodeMedia,
+    isCompleted: boolean,
+  ) => Promise<void>;
 }
 
 export default function PodcastEpisodeList({
@@ -83,10 +108,10 @@ export default function PodcastEpisodeList({
   setEpisodeSearchInput,
   transcript,
   transcriptionAllowed,
-  busyMediaIds,
+  busyEpisodeActionKeys,
   markingEpisodeIds,
   expandedShowNotesMediaIds,
-  lecternMediaIds,
+  lecternItemsByMediaId,
   playNextDisabledMediaId,
   lecternReady,
   visibleUnplayedEpisodeIds,
@@ -98,21 +123,21 @@ export default function PodcastEpisodeList({
   onToggleShowNotes,
   onPlayNext,
   onAddToLectern,
-  onOpenChat,
+  onRemoveFromLectern,
   onRetry,
   onRefreshSource,
+  onRetryMetadata,
+  onEditAuthors,
   onDelete,
   onTogglePlayed,
 }: PodcastEpisodeListProps) {
-  const paneRuntime = usePaneRuntime();
-  const { openShare } = useShareController();
   const connectionSummaries = useConnectionSummaries(
     episodes.map((episode) => `media:${episode.id}`),
   );
 
-  // A podcast-episode row is audio-playable when its decoded playerDescriptor is
-  // Present (spec §4). That presence gates the Lectern placement affordances
-  // ("Play next" / "Add to Lectern"); an Absent descriptor hides them.
+  // Playback presence gates playback-only view actions. Lectern relationship
+  // applicability comes exclusively from the ready membership snapshot, just
+  // as it does in the opened media pane.
   const audioEpisodeIds = useMemo(
     () =>
       new Set(
@@ -130,6 +155,9 @@ export default function PodcastEpisodeList({
     const showNotesExpanded = expandedShowNotesMediaIds.ids.has(episode.id);
     const transcriptPanelExpanded =
       transcript.expandedTranscriptMediaIds.ids.has(episode.id);
+    const lecternItemId = lecternItemsByMediaId.get(episode.id);
+    const actionBusy = (actionId: ResourceActionId) =>
+      busyEpisodeActionKeys.has(episodeActionBusyKey(episode.id, actionId));
     return presentEpisode(
       {
         id: episode.id,
@@ -147,66 +175,206 @@ export default function PodcastEpisodeList({
       },
       {
         connectionSummary: connectionSummaries.get(`media:${episode.id}`),
-        busy: busyMediaIds.ids.has(episode.id),
-        retryBusy: busyMediaIds.ids.has(episode.id),
-        refreshBusy: busyMediaIds.ids.has(episode.id),
-        deleteBusy: busyMediaIds.ids.has(episode.id),
-        markingBusy: markingEpisodeIds.ids.has(episode.id),
-        episodePanelId: panelId,
-        showNotesExpanded,
-        onToggleShowNotes: episode.description_text?.trim()
-          ? () => onToggleShowNotes(episode.id)
-          : undefined,
-        playNextDisabled:
-          !lecternReady || episode.id === playNextDisabledMediaId,
-        onPlayNext: audioEpisodeIds.has(episode.id)
-          ? () => onPlayNext(episode.id)
-          : undefined,
-        transcriptPanelExpanded,
-        onRequestTranscript:
-          transcriptionAllowed && canRequestTranscriptForEpisode(episode)
-            ? () => {
-                if (transcriptPanelExpanded) {
-                  transcript.expandedTranscriptMediaIds.remove(episode.id);
-                } else {
-                  transcript.expandedTranscriptMediaIds.add(episode.id);
-                }
+        retryProcessing: episode.capabilities.can_retry
+          ? {
+              kind: "Available",
+              execute: async () => {
+                if (actionBusy(RESOURCE_ACTION_CATALOG.RetryProcessing.id))
+                  return;
+                await onRetry(episode.id);
+              },
+            }
+          : { kind: "Unavailable" },
+        refreshSource: episode.capabilities.can_refresh_source
+          ? {
+              kind: "Available",
+              execute: async () => {
+                if (actionBusy(RESOURCE_ACTION_CATALOG.RefreshSource.id))
+                  return;
+                await onRefreshSource(episode.id);
+              },
+            }
+          : { kind: "Unavailable" },
+        retryMetadata: episode.capabilities.can_retry_metadata
+          ? {
+              kind: "Available",
+              execute: async () => {
+                if (actionBusy(RESOURCE_ACTION_CATALOG.RetryMetadata.id))
+                  return;
+                await onRetryMetadata(episode.id);
+              },
+            }
+          : { kind: "Unavailable" },
+        editAuthors: episode.capabilities.can_edit_authors
+          ? {
+              kind: "Available",
+              execute: (detail) => onEditAuthors(episode, detail),
+            }
+          : { kind: "Unavailable" },
+        removeMedia: episode.capabilities.can_delete
+          ? {
+              kind: "Available",
+              execute: async () => {
+                if (actionBusy(RESOURCE_ACTION_CATALOG.RemoveMedia.id)) return;
+                await onDelete(episode);
+              },
+            }
+          : { kind: "Unavailable" },
+        playedState:
+          deriveEpisodeState(episode) === "played"
+            ? {
+                kind: "MarkUnplayed",
+                execute: async () => {
+                  if (markingEpisodeIds.has(episode.id)) return;
+                  await onTogglePlayed(episode, false);
+                },
               }
-            : undefined,
-        onShare: ({ triggerEl }) =>
-          openShare(
-            resourceShareTarget(`media:${episode.id}`),
-            paneShareOpenOptions(triggerEl, paneRuntime?.paneId ?? ""),
-          ),
-        onOpenChat: () => {
-          onOpenChat(episode);
-        },
-        onRetry: episode.capabilities.can_retry
-          ? () => {
-              onRetry(episode.id);
-            }
-          : undefined,
-        onRefreshSource: episode.capabilities.can_refresh_source
-          ? () => {
-              onRefreshSource(episode.id);
-            }
-          : undefined,
-        onDelete: episode.capabilities.can_delete
-          ? () => {
-              onDelete(episode);
-            }
-          : undefined,
-        onTogglePlayed: () => {
-          onTogglePlayed(episode, deriveEpisodeState(episode) !== "played");
-        },
-        onAddToLectern:
-          audioEpisodeIds.has(episode.id) &&
-          lecternReady &&
-          !lecternMediaIds.has(episode.id)
-            ? () => {
-                onAddToLectern(episode.id);
+            : {
+                kind: "MarkPlayed",
+                execute: async () => {
+                  if (markingEpisodeIds.has(episode.id)) return;
+                  await onTogglePlayed(episode, true);
+                },
+              },
+        lecternMembership: !lecternReady
+          ? { kind: "Unavailable" }
+          : lecternItemId
+            ? {
+                kind: "Remove",
+                itemId: lecternItemId,
+                execute: async () => {
+                  if (
+                    actionBusy(RESOURCE_ACTION_CATALOG.RemoveFromLectern.id)
+                  ) {
+                    return;
+                  }
+                  await onRemoveFromLectern(episode.id, lecternItemId);
+                },
               }
-            : undefined,
+            : {
+                kind: "Add",
+                execute: async () => {
+                  if (actionBusy(RESOURCE_ACTION_CATALOG.AddToLectern.id)) {
+                    return;
+                  }
+                  await onAddToLectern(episode.id);
+                },
+              },
+        busyIds: new Set<ResourceActionId>([
+          ...[
+            RESOURCE_ACTION_CATALOG.RetryProcessing.id,
+            RESOURCE_ACTION_CATALOG.RefreshSource.id,
+            RESOURCE_ACTION_CATALOG.RetryMetadata.id,
+            RESOURCE_ACTION_CATALOG.RemoveMedia.id,
+            RESOURCE_ACTION_CATALOG.AddToLectern.id,
+            RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
+          ].filter(actionBusy),
+          ...(markingEpisodeIds.ids.has(episode.id)
+            ? [
+                RESOURCE_ACTION_CATALOG.MarkPlayed.id,
+                RESOURCE_ACTION_CATALOG.MarkUnplayed.id,
+              ]
+            : []),
+        ]),
+        view: [
+          ...(episode.description_text?.trim()
+            ? [
+                {
+                  kind: "command" as const,
+                  id: "ViewAction.Episode.ShowNotes",
+                  label: showNotesExpanded ? "Hide notes" : "Show notes",
+                  state: showNotesExpanded
+                    ? {
+                        kind: "disclosure" as const,
+                        expanded: true as const,
+                        controls: panelId,
+                        menuLabels: {
+                          collapsed: "Show notes",
+                          expanded: "Hide notes",
+                        },
+                      }
+                    : {
+                        kind: "disclosure" as const,
+                        expanded: false as const,
+                        menuLabels: {
+                          collapsed: "Show notes",
+                          expanded: "Hide notes",
+                        },
+                      },
+                  onSelect: () => onToggleShowNotes(episode.id),
+                },
+              ]
+            : []),
+          ...(audioEpisodeIds.has(episode.id)
+            ? [
+                {
+                  kind: "command" as const,
+                  id: "ViewAction.Episode.PlayNext",
+                  label: "Play next",
+                  disabled:
+                    !lecternReady ||
+                    episode.id === playNextDisabledMediaId ||
+                    busyEpisodeActionKeys.has(
+                      episodeActionBusyKey(
+                        episode.id,
+                        EPISODE_PLAY_NEXT_ACTION_ID,
+                      ),
+                    ),
+                  disabledReason: !lecternReady
+                    ? "Lectern is still loading"
+                    : episode.id === playNextDisabledMediaId
+                      ? "This episode is already next"
+                      : busyEpisodeActionKeys.has(
+                            episodeActionBusyKey(
+                              episode.id,
+                              EPISODE_PLAY_NEXT_ACTION_ID,
+                            ),
+                          )
+                        ? "Placing episode next"
+                        : undefined,
+                  onSelect: () => {
+                    void onPlayNext(episode.id);
+                  },
+                },
+              ]
+            : []),
+          ...(transcriptionAllowed && canRequestTranscriptForEpisode(episode)
+            ? [
+                {
+                  kind: "command" as const,
+                  id: "ViewAction.Episode.Transcript",
+                  label: transcriptPanelExpanded
+                    ? "Hide transcript request"
+                    : "Request transcript...",
+                  state: transcriptPanelExpanded
+                    ? {
+                        kind: "disclosure" as const,
+                        expanded: true as const,
+                        controls: panelId,
+                        menuLabels: {
+                          collapsed: "Request transcript...",
+                          expanded: "Hide transcript request",
+                        },
+                      }
+                    : {
+                        kind: "disclosure" as const,
+                        expanded: false as const,
+                        menuLabels: {
+                          collapsed: "Request transcript...",
+                          expanded: "Hide transcript request",
+                        },
+                      },
+                  onSelect: () => {
+                    if (transcriptPanelExpanded) {
+                      transcript.expandedTranscriptMediaIds.remove(episode.id);
+                    } else {
+                      transcript.expandedTranscriptMediaIds.add(episode.id);
+                    }
+                  },
+                },
+              ]
+            : []),
+        ],
       },
     );
   });
@@ -219,7 +387,11 @@ export default function PodcastEpisodeList({
       const transcriptInFlight =
         transcript.requestingTranscriptMediaIds.ids.has(episode.id) ||
         shouldPollTranscriptProvisioningForEpisode(episode);
-      if (!showNotesExpanded && !transcriptPanelExpanded && !transcriptInFlight) {
+      if (
+        !showNotesExpanded &&
+        !transcriptPanelExpanded &&
+        !transcriptInFlight
+      ) {
         return panels;
       }
       panels[episode.id] = (
@@ -353,7 +525,6 @@ export default function PodcastEpisodeList({
           ) : undefined
         }
       />
-
     </div>
   );
 }

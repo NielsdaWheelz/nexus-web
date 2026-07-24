@@ -1,4 +1,5 @@
 import { type ApiPath, apiFetch } from "@/lib/api/client";
+import { decodeContributorDetail } from "@/lib/contributors/detail";
 import { parseContributorHandle } from "@/lib/contributors/handle";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import { expectArray, expectNullableString } from "@/lib/validation";
@@ -43,23 +44,6 @@ function decodeSearchItem(raw: unknown): ContributorSearchItem {
       ? item.workExamples.map((example) => ({ title: example.title, href: example.href }))
       : [],
     matchedAlias: item.matchedAlias ?? null,
-  };
-}
-
-function decodeDetail(raw: unknown): ContributorDetail {
-  const detail = raw as {
-    handle: string;
-    href: string;
-    displayName: string;
-    otherNames?: string[] | null;
-    canRename: boolean;
-  };
-  return {
-    handle: parseContributorHandle(detail.handle),
-    href: detail.href,
-    displayName: detail.displayName,
-    otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
-    canRename: Boolean(detail.canRename),
   };
 }
 
@@ -123,7 +107,7 @@ export async function fetchContributorDetail(handle: string): Promise<Contributo
     `/api/contributors/${encode(handle)}` as ApiPath,
     { cache: "no-store" },
   );
-  return decodeDetail(response.data);
+  return decodeContributorDetail(response.data);
 }
 
 export interface ContributorWorksOptions {
@@ -175,5 +159,5 @@ export async function patchContributorDisplayName(
     `/api/contributors/${encode(handle)}` as ApiPath,
     { method: "PATCH", body: JSON.stringify(body) },
   );
-  return decodeDetail(response.data);
+  return decodeContributorDetail(response.data);
 }

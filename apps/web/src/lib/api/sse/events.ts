@@ -15,9 +15,9 @@ import {
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
-  normalizeResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+  decodeContextRef,
+  type ContextRefOut,
+} from "@/lib/resourceGraph/contextRefs";
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import {
   isCitationEventData,
@@ -159,15 +159,7 @@ export interface SSECitationIndexEvent {
 /** A citation-materialized context edge (`ContextRefOut` shape). */
 export interface SSEContextRefAddedEvent {
   type: "context_ref_added";
-  data: {
-    id: string;
-    conversation_id: string;
-    resource_ref: string;
-    activation: ResourceActivation;
-    label: string;
-    summary: string;
-    missing: boolean;
-    created_at: string;
+  data: ContextRefOut & {
     citation_edge_id: string | null;
   };
 }
@@ -515,9 +507,6 @@ function parseCitationIndexItem(item: unknown): SSECitationIndexItem {
 function parseContextRefAddedData(
   data: unknown,
 ): SSEContextRefAddedEvent["data"] {
-  const activation = isRecord(data)
-    ? normalizeResourceActivation(data.activation)
-    : null;
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
@@ -531,29 +520,18 @@ function parseContextRefAddedData(
       "created_at",
       "citation_edge_id",
     ]) ||
-    typeof data.id !== "string" ||
-    typeof data.conversation_id !== "string" ||
-    typeof data.resource_ref !== "string" ||
-    activation === null ||
-    typeof data.label !== "string" ||
-    typeof data.summary !== "string" ||
-    typeof data.missing !== "boolean" ||
-    typeof data.created_at !== "string" ||
     !("citation_edge_id" in data) ||
     !(typeof data.citation_edge_id === "string" || data.citation_edge_id === null)
   ) {
     throw new Error("Invalid SSE payload for context_ref_added");
   }
+  const {
+    citation_edge_id,
+    ...contextRef
+  } = data;
   return {
-    id: data.id,
-    conversation_id: data.conversation_id,
-    resource_ref: data.resource_ref,
-    activation,
-    label: data.label,
-    summary: data.summary,
-    missing: data.missing,
-    created_at: data.created_at,
-    citation_edge_id: data.citation_edge_id,
+    ...decodeContextRef(contextRef, "context_ref_added.data"),
+    citation_edge_id,
   };
 }
 

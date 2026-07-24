@@ -87,7 +87,7 @@ export default function NotesPaneBody() {
     try {
       const page = await createNotePage({ title: nextTitle });
       setLocalPages((current) => [
-        { id: page.id, title: page.title, updatedAt: page.updatedAt },
+        page,
         ...(current ?? resourcePages ?? []),
       ]);
       setTitle("");

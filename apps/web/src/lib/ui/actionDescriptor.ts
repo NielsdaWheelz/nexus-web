@@ -91,6 +91,7 @@ interface ActionDescriptorBase {
   readonly label: string;
   readonly icon?: ReactElement;
   readonly disabled?: boolean;
+  readonly disabledReason?: string;
   readonly tone?: "default" | "danger";
   readonly separatorBefore?: boolean;
 }

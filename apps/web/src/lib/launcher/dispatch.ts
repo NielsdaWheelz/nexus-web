@@ -21,13 +21,20 @@ import { setPendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
 import { paragraphFromText } from "@/lib/notes/prosemirror/schema";
 import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
-import { activateResource } from "@/lib/resources/activation";
+import {
+  executeResourceChat,
+  executeResourceOpen,
+  executeResourceShare,
+} from "@/lib/resources/resourceActionExecution";
 import { requestSearchInputFocus } from "@/lib/search/pendingSearchFocus";
 import { copyText } from "@/lib/ui/copyText";
 import { subscribeToPodcast } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import type { LauncherActionTarget } from "./model";
 import type { LauncherPane } from "./providers";
-import type { ShareTarget } from "@/lib/sharing/types";
+import type {
+  ShareOpenOptions,
+  ShareTarget,
+} from "@/lib/sharing/types";
 
 // True when `href` resolves to an in-app route the Android shell can't open (Local
 // Vault). Shared by dispatch (block + toast) and the controller (skip logging a
@@ -43,8 +50,10 @@ export function isAndroidShellRestrictedHref(href: string, androidShell: boolean
 export function targetNavigates(target: LauncherActionTarget): boolean {
   switch (target.kind) {
     case "href":
-    case "resource":
-    case "ask":
+    case "ResourceOpen":
+    case "ResourceShare":
+    case "ResourceChat":
+    case "Ask":
     case "add-url":
     case "browse-acquire":
     case "new-conversation":
@@ -77,7 +86,8 @@ export interface LauncherDispatchCtx {
   activatePane(paneId: string): void;
   restorePane(paneId: string): void;
   closePane(paneId: string): void;
-  openShare(target: ShareTarget): void;
+  openShare(target: ShareTarget, options: ShareOpenOptions): void;
+  shareOptions(): ShareOpenOptions;
 }
 
 export async function dispatchTarget(
@@ -112,27 +122,49 @@ export async function dispatchTarget(
       if (resolvePaneRoute(target.href).id === "search") requestSearchInputFocus();
       requestOpenInAppPane(target.href, target.labelHint ? { labelHint: target.labelHint } : undefined);
       return;
-    case "resource":
-      // activateResource owns the external-redirect path; we only pre-guard in-app routes
-      // the Android shell can't open.
+    case "ResourceOpen":
+      // The shared executor owns route/external activation; Launcher only
+      // supplies its workspace navigation boundary and Android preflight.
       if (
-        target.activation.kind === "route" &&
-        target.activation.href &&
-        blockedByAndroid(target.activation.href)
+        target.subject.activation.kind === "route" &&
+        target.subject.activation.href &&
+        blockedByAndroid(target.subject.activation.href)
       ) {
         return;
       }
-      activateResource(target.activation, {
-        labelHint: target.labelHint,
-        navigate: (href) => requestOpenInAppPane(href, { labelHint: target.labelHint }),
-        openInNewPane: (href, labelHint, secondaryActivation) =>
-          requestOpenInAppPane(href, {
-            labelHint: labelHint ?? target.labelHint,
-            secondaryActivation,
-          }),
+      executeResourceOpen({
+        target: target.subject,
+        resourceNavigation: {
+          labelHint: target.labelHint,
+          navigate: (href) =>
+            requestOpenInAppPane(href, { labelHint: target.labelHint }),
+          openInNewPane: (href, labelHint, secondaryActivation) =>
+            requestOpenInAppPane(href, {
+              labelHint: labelHint ?? target.labelHint,
+              secondaryActivation,
+            }),
+        },
       });
       return;
-    case "ask":
+    case "ResourceShare":
+      executeResourceShare({
+        subject: target.subject,
+        openShare: ctx.openShare,
+        options: ctx.shareOptions(),
+      });
+      return;
+    case "ResourceChat": {
+      await executeResourceChat({
+        ref: target.ref,
+        openConversation: (conversationId) => {
+          requestOpenInAppPane(`/conversations/${conversationId}`, {
+            labelHint: "Chat",
+          });
+        },
+      });
+      return;
+    }
+    case "Ask":
       requestOpenInAppPane(`/conversations/new?draft=${encodeURIComponent(target.text)}`, {
         labelHint: "New chat",
       });
@@ -231,7 +263,7 @@ export async function dispatchTarget(
       return;
     }
     case "share":
-      ctx.openShare(target.target);
+      ctx.openShare(target.target, ctx.shareOptions());
       return;
     case "copy-external-link":
       if (typeof window !== "undefined") {

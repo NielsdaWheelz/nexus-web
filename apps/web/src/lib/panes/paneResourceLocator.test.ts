@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolvePaneResourceLocator } from "@/lib/panes/paneResourceLocator";
+import {
+  resolvePaneResourceLocator,
+  resolvePaneRouteShareIdentity,
+} from "@/lib/panes/paneResourceLocator";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 
 const LIBRARY_ID = "11111111-1111-4111-8111-111111111111";
@@ -11,6 +14,11 @@ const CONVERSATION_ID = "66666666-6666-4666-8666-666666666666";
 
 function locatorFor(href: string) {
   return resolvePaneResourceLocator(resolvePaneRouteModel(href));
+}
+
+function routeShareFor(href: string) {
+  const route = resolvePaneRouteModel(href);
+  return resolvePaneRouteShareIdentity(route, route.defaultLabel);
 }
 
 describe("pane resource locator", () => {
@@ -69,4 +77,26 @@ describe("pane resource locator", () => {
     }
   });
 
+  it("never falls back to route Share for resource panes", () => {
+    for (const href of [
+      `/libraries/${LIBRARY_ID}`,
+      `/media/${MEDIA_ID}`,
+      `/podcasts/${PODCAST_ID}`,
+      `/pages/${PAGE_ID}`,
+      `/notes/${BLOCK_ID}`,
+      `/conversations/${CONVERSATION_ID}`,
+      "/authors/ursula-k-le-guin",
+      "/media/not-a-uuid",
+    ]) {
+      expect(routeShareFor(href), href).toBeNull();
+    }
+  });
+
+  it("retains namespaced route Share inputs for non-resource section panes", () => {
+    expect(routeShareFor("/libraries")).toEqual({
+      kind: "Route",
+      href: "/libraries",
+      label: "Libraries",
+    });
+  });
 });

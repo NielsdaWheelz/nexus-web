@@ -249,12 +249,25 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("composes the author pane resource with the detail + first works page", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/authors/jane");
+    const contributorId = "11111111-1111-4111-8111-111111111111";
+    const mediaId = "22222222-2222-4222-8222-222222222222";
     const detail = {
       handle: "jane",
       href: "/authors/jane",
       displayName: "Jane Doe",
       otherNames: ["J. Doe"],
       canRename: true,
+      actionTarget: {
+        kind: "Resource",
+        ref: `contributor:${contributorId}`,
+        activation: {
+          resourceRef: `contributor:${contributorId}`,
+          kind: "route",
+          href: "/authors/jane",
+          unresolvedReason: null,
+        },
+        missing: false,
+      },
     };
     const work = {
       title: "A Book",
@@ -262,6 +275,17 @@ describe("loadWorkspaceBootstrap", () => {
       contentKind: "epub",
       date: "2020-01-01",
       roleFacts: [{ creditedName: "Jane Doe", role: "author", rawRole: null }],
+      actionTarget: {
+        kind: "Resource",
+        ref: `media:${mediaId}`,
+        activation: {
+          resourceRef: `media:${mediaId}`,
+          kind: "route",
+          href: "/media/work-1",
+          unresolvedReason: null,
+        },
+        missing: false,
+      },
     };
     respondWith({
       "/me/reader-profile": PROFILE_OK,
@@ -280,6 +304,7 @@ describe("loadWorkspaceBootstrap", () => {
         displayName: "Jane Doe",
         otherNames: ["J. Doe"],
         canRename: true,
+        actionTarget: detail.actionTarget,
       },
       works: [
         {

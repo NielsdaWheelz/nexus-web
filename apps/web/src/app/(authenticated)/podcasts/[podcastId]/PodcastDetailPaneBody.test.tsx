@@ -32,9 +32,26 @@ vi.mock("@/components/workspace/PanePrimaryChrome", async () => {
   return {
     ...actual,
     usePanePrimaryChrome: (publication: {
-      readonly options?: typeof panePrimaryChromeState.options;
+      readonly menu?: {
+        readonly kind: "ResourceMenu" | "FlatMenu";
+        readonly actions?: typeof panePrimaryChromeState.options;
+        readonly groups?: {
+          readonly operations: typeof panePrimaryChromeState.options;
+          readonly relationships: typeof panePrimaryChromeState.options;
+          readonly view: typeof panePrimaryChromeState.options;
+        };
+      };
     }) => {
-      panePrimaryChromeState.options = publication.options ?? [];
+      panePrimaryChromeState.options =
+        publication.menu?.kind === "FlatMenu"
+          ? (publication.menu.actions ?? [])
+          : publication.menu?.groups
+            ? [
+                ...publication.menu.groups.operations,
+                ...publication.menu.groups.relationships,
+                ...publication.menu.groups.view,
+              ]
+            : [];
       primaryChromeMock.publish(publication);
     },
   };
@@ -108,9 +125,7 @@ import {
 } from "@/lib/workspace/paneReturnMemento";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 // Render the pane under the real Lectern + global-player providers (the pane
 // reads both via useLectern()/useGlobalPlayer()). The fetch boundary below
@@ -165,7 +180,7 @@ function deferredResponse() {
 }
 
 function podcastDetailResponse({
-  id = "podcast-1",
+  id = "00000000-0000-4000-8000-000000000011",
   title = "Systems Podcast",
   subscription = null,
 }: {
@@ -194,18 +209,36 @@ function podcastDetailResponse({
 }
 
 function episodeMedia({
-  id = "episode-1",
+  id = "00000000-0000-4000-8000-000000000111",
   title = "Episode 1",
   descriptionText = null,
   transcriptState = "ready",
   transcriptCoverage = "full",
+  canRetryMetadata = false,
+  canEditAuthors = false,
+  audioPlayable = false,
 }: {
   id?: string;
   title?: string;
   descriptionText?: string | null;
   transcriptState?: string;
   transcriptCoverage?: string;
+  canRetryMetadata?: boolean;
+  canEditAuthors?: boolean;
+  audioPlayable?: boolean;
 } = {}) {
+  const footerAudio = {
+    kind: "FooterAudio" as const,
+    streamUrl: "https://cdn.example.test/episode.mp3",
+    sourceUrl: "https://example.test/episode",
+    positionMs: 0,
+    writeRevision: 0,
+    resetEpoch: 0,
+    playbackSpeed: 1,
+    durationMs: { kind: "Present" as const, value: 60_000 },
+    artworkUrl: { kind: "Absent" as const },
+    chapters: [],
+  };
   return {
     id,
     kind: "podcast_episode",
@@ -220,7 +253,17 @@ function episodeMedia({
     failure_stage: null,
     last_error_code: null,
     playback_source: null,
-    playerDescriptor: { kind: "Absent" },
+    playerDescriptor: audioPlayable
+      ? {
+          kind: "Present",
+          value: {
+            mediaId: id,
+            title,
+            subtitle: { kind: "Absent" },
+            activation: footerAudio,
+          },
+        }
+      : { kind: "Absent" },
     capabilities: {
       can_read: true,
       can_highlight: true,
@@ -228,8 +271,11 @@ function episodeMedia({
       can_search: true,
       can_play: true,
       can_download_file: false,
+      can_retry_metadata: canRetryMetadata,
+      can_edit_authors: canEditAuthors,
     },
     contributors: [],
+    author_mode: "automatic",
     published_date: null,
     publisher: null,
     language: null,
@@ -241,7 +287,7 @@ function episodeMedia({
   };
 }
 
-function transcriptForecast(mediaId = "episode-1") {
+function transcriptForecast(mediaId = "00000000-0000-4000-8000-000000000111") {
   return {
     media_id: mediaId,
     processing_status: "ready_for_reading",
@@ -261,7 +307,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     shareControllerMock.openShare.mockReset();
     subscribeToPodcastMock.mockReset();
     subscribeToPodcastMock.mockResolvedValue({
-      podcast_id: "podcast-1",
+      podcast_id: "00000000-0000-4000-8000-000000000011",
       subscription_created: true,
       sync_status: "pending",
       sync_enqueued: true,
@@ -272,7 +318,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       window_size: 0,
     });
     mockUsePaneParam.mockImplementation((paramName) =>
-      paramName === "podcastId" ? "podcast-1" : null
+      paramName === "podcastId" ? "00000000-0000-4000-8000-000000000011" : null,
     );
   });
 
@@ -283,10 +329,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
   it("sends selected library_ids on subscribe", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         return jsonResponse(podcastDetailResponse());
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         return jsonResponse({ data: [] });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -351,13 +402,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     let episodeCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         detailCalls += 1;
         if (detailCalls === 2) return pendingDetail.promise;
         return jsonResponse(
           podcastDetailResponse({
             subscription: {
-              podcast_id: "podcast-1",
+              podcast_id: "00000000-0000-4000-8000-000000000011",
               user_id: "user-1",
               status: "active",
               default_playback_speed: null,
@@ -378,7 +431,10 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
           }),
         );
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         episodeCalls += 1;
         if (episodeCalls === 2) return pendingEpisodes.promise;
         return jsonResponse({
@@ -393,12 +449,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         });
       }
       if (
-        url.pathname === "/api/podcasts/subscriptions/podcast-1/sync" &&
+        url.pathname ===
+          "/api/podcasts/subscriptions/00000000-0000-4000-8000-000000000011/sync" &&
         init?.method === "POST"
       ) {
         return jsonResponse({
           data: {
-            podcast_id: "podcast-1",
+            podcast_id: "00000000-0000-4000-8000-000000000011",
             sync_status: "pending",
             sync_error_code: null,
             sync_error_message: null,
@@ -423,7 +480,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       commands = next;
     };
     let resourceGeneration = 0;
-    const href = "/podcasts/podcast-1";
+    const href = "/podcasts/00000000-0000-4000-8000-000000000011";
     const routeKey = resolvePaneRouteIdentity(href).routeKey;
     const journey = () => (
       <PaneReturnJourneyHarness
@@ -445,7 +502,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(await screen.findByText("Before refresh episode")).toBeVisible();
     await waitFor(() => expect(commands).toBeDefined());
     const refreshSync = panePrimaryChromeState.options.find(
-      (option) => option.id === "refresh-podcast-sync",
+      (option) => option.id === "ResourceOperation.Podcast.Refresh",
     );
     expect(refreshSync?.kind).toBe("command");
     refreshSync?.onSelect?.({ triggerEl: null });
@@ -463,20 +520,23 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     resourceGeneration += 1;
     view.rerender(journey());
 
-    expect(
-      await screen.findByText("After refresh episode"),
-    ).toBeVisible();
+    expect(await screen.findByText("After refresh episode")).toBeVisible();
     expect(detailCalls).toBe(3);
     expect(episodeCalls).toBe(3);
   });
 
-  it("leaves pane-level Share ownership to PaneShell", async () => {
+  it("publishes a grouped resource target and leaves core ownership to PaneShell", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         return jsonResponse(podcastDetailResponse());
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         return jsonResponse({ data: [episodeMedia()] });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -499,11 +559,81 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     expect(await screen.findByText("Episode 1")).toBeInTheDocument();
     await waitFor(() => {
       const publication = primaryChromeMock.publish.mock.calls.at(-1)?.[0] as
-        | { options?: Array<{ id: string }> }
+        | {
+            menu?: {
+              kind: string;
+              target?: { ref: string };
+              groups?: { core: Array<{ id: string }> };
+            };
+          }
         | undefined;
+      expect(publication?.menu?.kind).toBe("ResourceMenu");
+      expect(publication?.menu?.target?.ref).toBe(
+        "podcast:00000000-0000-4000-8000-000000000011",
+      );
+      expect(publication?.menu?.groups?.core).toEqual([]);
+    });
+  });
+
+  it("treats an unsubscribed detail row as unavailable for subscription operations", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(
+          podcastDetailResponse({
+            subscription: {
+              podcast_id: "00000000-0000-4000-8000-000000000011",
+              user_id: "user-1",
+              status: "unsubscribed",
+              default_playback_speed: null,
+              auto_queue: false,
+              sync_status: "complete",
+              sync_error_code: null,
+              sync_error_message: null,
+              sync_attempts: 1,
+              sync_started_at: null,
+              sync_completed_at: null,
+              last_synced_at: null,
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+          }),
+        );
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    expect(
+      await screen.findByRole("button", { name: "Subscribe" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
       expect(
-        publication?.options?.filter((option) => option.id === "share") ?? [],
-      ).toHaveLength(0);
+        panePrimaryChromeState.options.map((option) => option.id),
+      ).not.toEqual(
+        expect.arrayContaining([
+          "ResourceOperation.Podcast.Settings",
+          "ResourceOperation.Podcast.Refresh",
+          "RelationshipAction.Podcast.Unsubscribe",
+        ]),
+      );
     });
   });
 
@@ -512,10 +642,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       calls.push(`${url.pathname}${url.search}`);
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         return jsonResponse(podcastDetailResponse());
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         return jsonResponse({
           data: [
             episodeMedia({
@@ -543,24 +678,322 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
         name: "More actions for Episode 1",
       }),
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Show notes" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Show notes" }),
+    );
     expect(await screen.findByText("Detailed show notes")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "More actions for Episode 1" }),
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Hide notes" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Hide notes" }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByText("Detailed show notes")).not.toBeInTheDocument();
     });
-    expect(calls.filter((call) => call === "/api/podcasts/podcast-1")).toHaveLength(
-      1,
-    );
     expect(
-      calls.filter((call) =>
-        call.startsWith("/api/podcasts/podcast-1/episodes"),
+      calls.filter(
+        (call) => call === "/api/podcasts/00000000-0000-4000-8000-000000000011",
       ),
     ).toHaveLength(1);
+    expect(
+      calls.filter((call) =>
+        call.startsWith(
+          "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes",
+        ),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("re-enriches metadata from a capable episode row without consuming the server capability", async () => {
+    const calls: Array<{ path: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      calls.push({ path: url.pathname, init });
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({
+          data: [episodeMedia({ canRetryMetadata: true })],
+        });
+      }
+      if (
+        url.pathname === "/api/media/00000000-0000-4000-8000-000000000111/retry"
+      ) {
+        return jsonResponse({ data: { accepted: true } });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "Re-enrich metadata",
+      }),
+    );
+
+    await waitFor(() => {
+      const retry = calls.find(
+        (call) =>
+          call.path === "/api/media/00000000-0000-4000-8000-000000000111/retry",
+      );
+      expect(retry?.init).toMatchObject({
+        method: "POST",
+        body: JSON.stringify({ from_stage: "metadata" }),
+      });
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Re-enrich metadata" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keys episode busy state by action and derives Lectern Add from ready membership", async () => {
+    const metadataResponse = deferredResponse();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({
+          data: [episodeMedia({ canRetryMetadata: true })],
+        });
+      }
+      if (
+        url.pathname === "/api/media/00000000-0000-4000-8000-000000000111/retry"
+      ) {
+        return metadataResponse.promise;
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "Re-enrich metadata",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("menuitem", { name: "Re-enriching..." }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitem", { name: "Add to Lectern" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+
+    act(() => {
+      metadataResponse.resolve(jsonResponse({ data: { accepted: true } }));
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("menuitem", { name: "Re-enrich metadata" }),
+      ).not.toHaveAttribute("aria-disabled", "true");
+    });
+  });
+
+  it("opens the shared authors editor from a capable episode row", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({
+          data: [episodeMedia({ canEditAuthors: true })],
+        });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (url.pathname === "/api/lectern") {
+        return jsonResponse({ data: { items: [] } });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit authors…" }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Edit authors" }),
+    ).toBeVisible();
+  });
+
+  it("projects Remove from ready Lectern membership without a player descriptor", async () => {
+    const itemId = "aaaaaaaa-0000-4000-8000-000000000001";
+    const mediaId = "00000000-0000-4000-8000-000000000111";
+    const commandBodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(String(input), "http://localhost");
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
+        return jsonResponse(podcastDetailResponse());
+      }
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
+        return jsonResponse({
+          data: [episodeMedia()],
+        });
+      }
+      if (url.pathname === "/api/libraries/writable-destinations") {
+        return jsonResponse({
+          data: [],
+          page: { has_more: false, next_cursor: null },
+        });
+      }
+      if (
+        url.pathname === "/api/lectern" &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                itemId,
+                mediaId,
+                kind: "podcast_episode",
+                title: "Episode 1",
+                subtitle: { kind: "Absent" },
+                href: `/media/${mediaId}`,
+                consumption: {
+                  state: "Unread",
+                  progress: { kind: "Absent" },
+                },
+                activation: {
+                  kind: "FooterAudio",
+                  streamUrl: "https://cdn.example.test/episode.mp3",
+                  sourceUrl: "https://example.test/episode",
+                  positionMs: 0,
+                  writeRevision: 0,
+                  resetEpoch: 0,
+                  playbackSpeed: 1,
+                  durationMs: { kind: "Present", value: 60_000 },
+                  artworkUrl: { kind: "Absent" },
+                  chapters: [],
+                },
+              },
+            ],
+          },
+        });
+      }
+      if (url.pathname === "/api/lectern/commands" && init?.method === "POST") {
+        commandBodies.push(
+          JSON.parse(String(init.body)) as Record<string, unknown>,
+        );
+        return jsonResponse({
+          data: {
+            outcome: { kind: "Removed", itemId },
+            lectern: { items: [] },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${url.pathname}${url.search}`);
+    });
+
+    render(<Wrapped />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Remove from Lectern" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Add to Lectern" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Remove from Lectern" }),
+    );
+
+    await waitFor(() =>
+      expect(commandBodies).toEqual([
+        expect.objectContaining({
+          kind: "RemoveItem",
+          itemId,
+        }),
+      ]),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for Episode 1",
+      }),
+    );
+    expect(
+      screen.getByRole("menuitem", { name: "Add to Lectern" }),
+    ).toBeInTheDocument();
   });
 
   it("restores the captured episode controller without initial load overwriting it", async () => {
@@ -571,11 +1004,16 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     let detailCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         detailCalls += 1;
         return jsonResponse(podcastDetailResponse());
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         const offset = url.searchParams.get("offset") ?? "0";
         episodeRequests.push({
           offset,
@@ -586,13 +1024,13 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
             offset === "100"
               ? [
                   episodeMedia({
-                    id: "episode-101",
+                    id: "00000000-0000-4000-8000-000000000113",
                     title: "Restored Episode Second Page",
                   }),
                 ]
               : Array.from({ length: 100 }, (_, index) =>
                   episodeMedia({
-                    id: `episode-${index + 1}`,
+                    id: `00000000-0000-4000-8001-${String(index + 1).padStart(12, "0")}`,
                     title:
                       index === 0
                         ? "Restored Episode First"
@@ -617,7 +1055,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       commands = next;
     };
     let resourceGeneration = 0;
-    let href = "/podcasts/podcast-1";
+    let href = "/podcasts/00000000-0000-4000-8000-000000000011";
     const journey = () => (
       <PaneReturnJourneyHarness
         href={href}
@@ -637,16 +1075,16 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     );
     const view = render(journey());
     expect(await screen.findByText("Restored Episode First")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Load more episodes" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Load more episodes" }));
     expect(
       await screen.findByText("Restored Episode Second Page"),
     ).toBeVisible();
     commands.capturePane({
       paneId: "pane-1",
       visitId: RETURN_JOURNEY_VISIT_ID,
-      routeKey: resolvePaneRouteIdentity("/podcasts/podcast-1").routeKey,
+      routeKey: resolvePaneRouteIdentity(
+        "/podcasts/00000000-0000-4000-8000-000000000011",
+      ).routeKey,
       modality: "Programmatic",
     });
 
@@ -654,9 +1092,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     view.rerender(journey());
 
     expect(screen.getAllByText("Restored Episode First")).toHaveLength(1);
-    expect(
-      screen.getAllByText("Restored Episode Second Page"),
-    ).toHaveLength(1);
+    expect(screen.getAllByText("Restored Episode Second Page")).toHaveLength(1);
     await waitFor(() => {
       expect(episodeRequests).toEqual([
         { offset: "0", sort: "newest" },
@@ -665,7 +1101,8 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       expect(detailCalls).toBe(1);
     });
 
-    href = "/podcasts/podcast-1?state=all&sort=oldest";
+    href =
+      "/podcasts/00000000-0000-4000-8000-000000000011?state=all&sort=oldest";
     view.rerender(journey());
 
     await waitFor(() => {
@@ -679,7 +1116,7 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
   });
 
   it("ignores older podcast loads that resolve after a newer route load", async () => {
-    let currentPodcastId = "podcast-1";
+    let currentPodcastId = "00000000-0000-4000-8000-000000000011";
     mockUsePaneParam.mockImplementation((paramName) =>
       paramName === "podcastId" ? currentPodcastId : null,
     );
@@ -689,20 +1126,38 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       calls.push(`${url.pathname}${url.search}`);
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         return oldDetail.promise;
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         return oldEpisodes.promise;
       }
-      if (url.pathname === "/api/podcasts/podcast-2") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000022"
+      ) {
         return jsonResponse(
-          podcastDetailResponse({ id: "podcast-2", title: "Current Podcast" }),
+          podcastDetailResponse({
+            id: "00000000-0000-4000-8000-000000000022",
+            title: "Current Podcast",
+          }),
         );
       }
-      if (url.pathname === "/api/podcasts/podcast-2/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000022/episodes"
+      ) {
         return jsonResponse({
-          data: [episodeMedia({ id: "episode-2", title: "Current Episode" })],
+          data: [
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000112",
+              title: "Current Episode",
+            }),
+          ],
         });
       }
       if (url.pathname === "/api/libraries/writable-destinations") {
@@ -719,10 +1174,12 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
 
     const { rerender } = render(<Wrapped />);
     await waitFor(() => {
-      expect(calls).toContain("/api/podcasts/podcast-1");
+      expect(calls).toContain(
+        "/api/podcasts/00000000-0000-4000-8000-000000000011",
+      );
     });
 
-    currentPodcastId = "podcast-2";
+    currentPodcastId = "00000000-0000-4000-8000-000000000022";
     rerender(<Wrapped />);
 
     expect(await screen.findByText("Current Episode")).toBeInTheDocument();
@@ -731,7 +1188,12 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
       oldDetail.resolve(jsonResponse(podcastDetailResponse()));
       oldEpisodes.resolve(
         jsonResponse({
-          data: [episodeMedia({ id: "episode-old", title: "Old Episode" })],
+          data: [
+            episodeMedia({
+              id: "00000000-0000-4000-8000-000000000099",
+              title: "Old Episode",
+            }),
+          ],
         }),
       );
     });
@@ -749,10 +1211,15 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
       calls.push(`${url.pathname}${url.search}`);
-      if (url.pathname === "/api/podcasts/podcast-1") {
+      if (
+        url.pathname === "/api/podcasts/00000000-0000-4000-8000-000000000011"
+      ) {
         return jsonResponse(podcastDetailResponse());
       }
-      if (url.pathname === "/api/podcasts/podcast-1/episodes") {
+      if (
+        url.pathname ===
+        "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes"
+      ) {
         return jsonResponse({
           data: [
             episodeMedia({
@@ -791,9 +1258,11 @@ describe("PodcastDetailPaneBody subscribe flow", () => {
     });
     await waitFor(() => {
       expect(
-        calls.some((call) =>
-          call.includes("/api/podcasts/podcast-1/episodes?") &&
-          call.includes("sort=oldest"),
+        calls.some(
+          (call) =>
+            call.includes(
+              "/api/podcasts/00000000-0000-4000-8000-000000000011/episodes?",
+            ) && call.includes("sort=oldest"),
         ),
       ).toBe(true);
     });

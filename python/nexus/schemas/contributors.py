@@ -25,6 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.contributor_taxonomy import clean_contributor_display
 
 # Bounds are inlined literals (matching migration D-32 / observation value types):
@@ -236,20 +237,43 @@ class ContributorSearchPageOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
+class ContributorRoleFactOut(BaseModel):
+    credited_name: str = Field(alias="creditedName")
+    role: ContributorRole
+    raw_role: str | None = Field(default=None, alias="rawRole")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ResourceActionSubjectOut(BaseModel):
+    kind: Literal["Resource"] = "Resource"
+    ref: str
+    activation: ResourceActivationOut
+    missing: bool
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ExternalActionTargetOut(BaseModel):
+    kind: Literal["External"] = "External"
+    href: str
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+StandingActionTargetOut = Annotated[
+    ResourceActionSubjectOut | ExternalActionTargetOut,
+    Field(discriminator="kind"),
+]
+
+
 class ContributorDetailOut(BaseModel):
     handle: str
     href: str
     display_name: str = Field(alias="displayName")
     other_names: list[str] = Field(alias="otherNames")
     can_rename: bool = Field(alias="canRename")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ContributorRoleFactOut(BaseModel):
-    credited_name: str = Field(alias="creditedName")
-    role: ContributorRole
-    raw_role: str | None = Field(default=None, alias="rawRole")
+    action_target: ResourceActionSubjectOut = Field(alias="actionTarget")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -260,6 +284,7 @@ class ContributorWorkItemOut(BaseModel):
     content_kind: str = Field(alias="contentKind")
     date: str | None = None
     role_facts: list[ContributorRoleFactOut] = Field(alias="roleFacts")
+    action_target: StandingActionTargetOut = Field(alias="actionTarget")
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

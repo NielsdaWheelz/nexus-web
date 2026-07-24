@@ -18,6 +18,7 @@ import { GlobalPlayerProvider, useGlobalPlayer } from "@/lib/player/globalPlayer
 import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { absent } from "@/lib/api/presence";
 import type { LecternItem } from "@/lib/lectern/contract";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   buildFooterDescriptor,
   jsonResponse,
@@ -51,6 +52,11 @@ function audioItem(itemId: string, mediaId: string, title: string): LecternItem 
       artworkUrl: absent(),
       chapters: [],
     },
+    actionTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: mediaId,
+      href: `/media/${mediaId}`,
+    }),
   };
 }
 

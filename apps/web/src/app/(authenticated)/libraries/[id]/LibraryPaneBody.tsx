@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -11,7 +13,12 @@ import {
   type SetStateAction,
 } from "react";
 import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
-import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import {
+  ApiError,
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { present, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
@@ -20,7 +27,10 @@ import {
   type LibraryEntriesResourceParams,
 } from "@/lib/api/resource";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
-import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
+import {
+  retryMediaMetadata,
+  type MediaActionCapabilities,
+} from "@/lib/media/ingestionClient";
 import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
 import {
   FeedbackNotice,
@@ -30,16 +40,22 @@ import {
 } from "@/components/feedback/Feedback";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
-import { libraryResourceOptions } from "@/lib/actions/resourceActions";
+import {
+  RESOURCE_ACTION_CATALOG,
+  libraryResourceOptions,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import { useLectern } from "@/lib/lectern/LecternProvider";
-import { parseMediaId } from "@/lib/lectern/contract";
+import {
+  parseMediaId,
+  type LecternItemId,
+} from "@/lib/lectern/contract";
 import { presentMedia } from "@/lib/collections/presenters/media";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
-import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
+  confirmAndDeleteMedia,
   ensureMediaInLibraries,
-  deleteMedia,
 } from "@/lib/media/mediaLibraries";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -47,7 +63,14 @@ import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import {
   addPodcastToLibrary,
+  buildPodcastUnsubscribeConfirmation,
+  fetchPodcastLibraries,
+  refreshPodcastSubscriptionSync,
+  unsubscribeFromPodcast,
+  type PodcastSubscriptionSettingsResponse,
 } from "@/app/(authenticated)/podcasts/podcastSubscriptions";
+import PodcastSubscriptionSettingsModal from "@/app/(authenticated)/podcasts/PodcastSubscriptionSettingsModal";
+import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
 import Button from "@/components/ui/Button";
 import Select from "@/components/ui/Select";
 import Toggle from "@/components/ui/Toggle";
@@ -62,7 +85,10 @@ import type {
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
-import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
+import {
+  decodePodcastSyncStatus,
+  type PodcastSyncStatus,
+} from "@/lib/status/podcastSync";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
@@ -92,12 +118,17 @@ import {
   type LibraryEntryView,
   type LibraryOrderPresetId,
 } from "@/lib/libraries/libraryView";
-import type { ContributorCredit } from "@/lib/contributors/types";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import { useShareController } from "@/lib/sharing/controller";
-import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
-import { resourceShareTarget } from "@/lib/sharing/targets";
+import type {
+  ContributorCredit,
+  MediaAuthors,
+} from "@/lib/contributors/types";
+import type {
+  ActionDescriptor,
+  ActionSelectDetail,
+} from "@/lib/ui/actionDescriptor";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { isAbortError } from "@/lib/errors";
+import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import {
   decodeLibraryReadingTimeEntry,
   type LibraryMediaKind,
@@ -106,6 +137,12 @@ import {
 import { slateTargetId } from "@/lib/resonance/contract";
 import type { ReadingSlateAccept } from "@/lib/resonance/useReadingSlate";
 import styles from "./LibraryPaneBody.module.css";
+
+const MediaAuthorsEditor = lazy(() =>
+  import(
+    /* @vite-ignore */ "@/components/contributors/MediaAuthorsEditor"
+  ),
+);
 
 interface Library {
   id: string;
@@ -131,6 +168,7 @@ interface LibraryMediaEntry {
   // row keys by media rather than by physical library entry.
   created_at: string;
   contributors: ContributorCredit[];
+  author_mode: "automatic" | "manual";
   published_date: string | null;
   publicationDate: Presence<PublicationDate>;
   publisher: string | null;
@@ -165,6 +203,8 @@ interface LibraryPodcastEntry {
 
 interface LibraryPodcastSubscription {
   status: "active" | "unsubscribed";
+  default_playback_speed: number | null;
+  auto_queue: boolean;
   sync_status:
     | "pending"
     | "running"
@@ -340,7 +380,6 @@ export default function LibraryPaneBody() {
   const { openInNewPane } = paneRuntime ?? {};
   const isPaneActive = paneRuntime?.isActive ?? true;
   const paneId = paneRuntime?.paneId ?? `library-${id}`;
-  const { openShare } = useShareController();
   const feedback = useFeedback();
   const lectern = useLectern();
 
@@ -451,6 +490,13 @@ export default function LibraryPaneBody() {
   const removedEntryIds = useStringIdSet();
   const retryingMediaIds = useStringIdSet();
   const refreshingMediaIds = useStringIdSet();
+  const retryingMetadataMediaIds = useStringIdSet();
+  const deletingMediaIds = useStringIdSet();
+  const updatingConsumptionMediaIds = useStringIdSet();
+  const addingToLecternMediaIds = useStringIdSet();
+  const removingFromLecternMediaIds = useStringIdSet();
+  const refreshingPodcastIds = useStringIdSet();
+  const unsubscribingPodcastIds = useStringIdSet();
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
   const libraryEntriesStaleRef = useRef(false);
@@ -462,7 +508,52 @@ export default function LibraryPaneBody() {
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
   const consumptionOperationTokensRef = useRef(new Map<string, symbol>());
-
+  const handlePodcastSettingsSaved = useCallback(
+    (response: PodcastSubscriptionSettingsResponse) => {
+      setEntries((current) =>
+        current.map((candidate) =>
+          candidate.kind === "podcast" &&
+          candidate.podcast.id === response.podcast_id &&
+          candidate.subscription !== null
+            ? {
+                ...candidate,
+                subscription: {
+                  ...candidate.subscription,
+                  default_playback_speed: response.default_playback_speed,
+                  auto_queue: response.auto_queue,
+                },
+              }
+            : candidate,
+        ),
+      );
+      clearAllVisitData();
+    },
+    [clearAllVisitData, setEntries],
+  );
+  const podcastSettingsModal = usePodcastSubscriptionSettingsModal({
+    onSaved: handlePodcastSettingsSaved,
+  });
+  const [authorsEditorMounted, setAuthorsEditorMounted] = useState(false);
+  const [authorsEditorOpen, setAuthorsEditorOpen] = useState(false);
+  const [authorsEditorMediaId, setAuthorsEditorMediaId] = useState<string | null>(
+    null,
+  );
+  const [authorsEditorTrigger, setAuthorsEditorTrigger] =
+    useState<HTMLButtonElement | null>(null);
+  const authorsEditorMedia =
+    entries.find(
+      (entry): entry is LibraryMediaListEntry =>
+        entry.kind === "media" && entry.media.id === authorsEditorMediaId,
+    )?.media ?? null;
+  const openAuthorsEditor = useCallback(
+    (mediaId: string, { triggerEl }: ActionSelectDetail) => {
+      setAuthorsEditorMediaId(mediaId);
+      setAuthorsEditorTrigger(triggerEl);
+      setAuthorsEditorMounted(true);
+      setAuthorsEditorOpen(true);
+    },
+    [],
+  );
   // Focus continuity: when an action removes the focused row, move focus to the
   // next visible row, else the previous, else the "Sort by" select.
   const listRegionRef = useRef<HTMLDivElement | null>(null);
@@ -503,6 +594,34 @@ export default function LibraryPaneBody() {
       );
     },
     [setEntries],
+  );
+  const handleAuthorsSaved = useCallback(
+    (result: MediaAuthors) => {
+      if (authorsEditorMediaId === null) return;
+      patchMediaInViews(authorsEditorMediaId, (media) => {
+        const authorCredits: ContributorCredit[] = result.authors.map(
+          (author, index) => ({
+            contributor_handle: author.contributorHandle,
+            contributor_display_name: author.displayName,
+            credited_name: author.creditedName,
+            role: "author",
+            href: author.href,
+            ordinal: index,
+          }),
+        );
+        return {
+          ...media,
+          contributors: [
+            ...authorCredits,
+            ...media.contributors.filter((credit) => credit.role !== "author"),
+          ],
+          author_mode: result.authorMode,
+        };
+      });
+      setAuthorsEditorOpen(false);
+      clearAllVisitData();
+    },
+    [authorsEditorMediaId, clearAllVisitData, patchMediaInViews],
   );
   const libraryResource = useResource<LibraryPaneResource, { id: string }>({
     descriptor: libraryResourceDescriptor,
@@ -558,6 +677,8 @@ export default function LibraryPaneBody() {
   );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const deletingLibraryRef = useRef(false);
+  const [deletingLibrary, setDeletingLibrary] = useState(false);
 
   const entryLoadMoreAbortRef = useRef<AbortController | null>(null);
   const entryLoadMoreGenerationRef = useRef(0);
@@ -893,7 +1014,7 @@ export default function LibraryPaneBody() {
       successTitle: string;
       errorFallback: string;
     }) => {
-      if (args.busySet.ids.has(args.mediaId)) return;
+      if (args.busySet.has(args.mediaId)) return;
       args.busySet.add(args.mediaId);
       try {
         const projection = await runSourceProcessingAction({
@@ -913,6 +1034,7 @@ export default function LibraryPaneBody() {
         clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         feedback.show({
           ...toFeedback(err, { fallback: args.errorFallback }),
         });
@@ -947,18 +1069,54 @@ export default function LibraryPaneBody() {
     [refreshingMediaIds, runMediaProcessingMutation],
   );
 
+  const handleRetryMetadata = useCallback(
+    async (mediaId: string) => {
+      if (retryingMetadataMediaIds.has(mediaId)) return;
+      retryingMetadataMediaIds.add(mediaId);
+      try {
+        await retryMediaMetadata(mediaId);
+        feedback.show({
+          severity: "success",
+          title: "Metadata re-enrichment started.",
+        });
+        clearAllVisitData();
+      } catch (metadataError) {
+        if (handleUnauthenticatedApiError(metadataError)) return;
+        if (
+          !isApiError(metadataError) ||
+          isSameSystemApiDefect(metadataError)
+        ) {
+          throw metadataError;
+        }
+        feedback.show(
+          toFeedback(metadataError, {
+            fallback: "Failed to re-enrich metadata",
+          }),
+        );
+      } finally {
+        retryingMetadataMediaIds.remove(mediaId);
+      }
+    },
+    [
+      clearAllVisitData,
+      feedback,
+      retryingMetadataMediaIds,
+    ],
+  );
+
   const handleDeleteMedia = useCallback(
     async (entry: LibraryMediaListEntry) => {
-      if (
-        !confirm(
-          `Delete "${entry.media.title}" from My Library and libraries you manage? This cannot be undone.`,
-        )
-      ) {
-        return;
-      }
+      if (deletingMediaIds.has(entry.media.id)) return;
+      deletingMediaIds.add(entry.media.id);
 
       try {
-        const result = await deleteMedia(entry.media.id);
+        const outcome = await confirmAndDeleteMedia({
+          mediaId: entry.media.id,
+          mediaTitle: entry.media.title,
+          confirmRemoval: (message) => window.confirm(message),
+        });
+        if (outcome.kind === "Cancelled") return;
+        const { result } = outcome;
         // The row leaves the pane whether the media was removed, hidden, or is
         // still being deleted server-side.
         setEntries((current) =>
@@ -977,18 +1135,23 @@ export default function LibraryPaneBody() {
         clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         feedback.show({
           ...toFeedback(err, {
             fallback: "Failed to remove media",
           }),
         });
+      } finally {
+        deletingMediaIds.remove(entry.media.id);
       }
     },
-    [clearAllVisitData, feedback, setEntries],
+    [clearAllVisitData, deletingMediaIds, feedback, setEntries],
   );
 
   const handleSetConsumption = useCallback(
     async (mediaId: string, status: "finished" | "unread") => {
+      if (updatingConsumptionMediaIds.has(mediaId)) return;
+      updatingConsumptionMediaIds.add(mediaId);
       const previous = new Map<string, LibraryMediaConsumption>();
       for (const entry of entries) {
         if (entry.kind === "media" && entry.media.id === mediaId) {
@@ -999,6 +1162,7 @@ export default function LibraryPaneBody() {
         }
       }
       if (previous.size === 0) {
+        updatingConsumptionMediaIds.remove(mediaId);
         throw new Error(`Library media ${mediaId} is not present`);
       }
       const operationToken = Symbol(mediaId);
@@ -1032,6 +1196,7 @@ export default function LibraryPaneBody() {
           }),
         );
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         feedback.show({
           ...toFeedback(err, { fallback: "Failed to update read state" }),
         });
@@ -1041,6 +1206,7 @@ export default function LibraryPaneBody() {
         ) {
           consumptionOperationTokensRef.current.delete(mediaId);
         }
+        updatingConsumptionMediaIds.remove(mediaId);
       }
     },
     [
@@ -1050,11 +1216,14 @@ export default function LibraryPaneBody() {
       lectern,
       patchMediaInViews,
       setEntries,
+      updatingConsumptionMediaIds,
     ],
   );
 
   const handleAddToLectern = useCallback(
     async (mediaId: string) => {
+      if (addingToLecternMediaIds.has(mediaId)) return;
+      addingToLecternMediaIds.add(mediaId);
       try {
         await lectern.placeItems({
           mediaIds: [parseMediaId(mediaId)],
@@ -1064,22 +1233,162 @@ export default function LibraryPaneBody() {
         clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         feedback.show({
           ...toFeedback(err, { fallback: "Failed to add to Lectern" }),
         });
+      } finally {
+        addingToLecternMediaIds.remove(mediaId);
       }
     },
-    [clearAllVisitData, feedback, lectern],
+    [addingToLecternMediaIds, clearAllVisitData, feedback, lectern],
   );
 
+  const handleRemoveFromLectern = useCallback(
+    async (mediaId: string, itemId: LecternItemId) => {
+      if (removingFromLecternMediaIds.has(mediaId)) return;
+      removingFromLecternMediaIds.add(mediaId);
+      try {
+        await lectern.removeItem(itemId);
+        clearAllVisitData();
+      } catch (removeError) {
+        if (handleUnauthenticatedApiError(removeError)) return;
+        if (!isApiError(removeError) || isSameSystemApiDefect(removeError)) {
+          throw removeError;
+        }
+        feedback.show(
+          toFeedback(removeError, {
+            fallback: "Failed to remove from Lectern",
+          }),
+        );
+      } finally {
+        removingFromLecternMediaIds.remove(mediaId);
+      }
+    },
+    [
+      clearAllVisitData,
+      feedback,
+      lectern,
+      removingFromLecternMediaIds,
+    ],
+  );
+
+  const handleRefreshPodcast = async (
+    entry: LibraryPodcastListEntry,
+  ): Promise<void> => {
+    const podcastId = entry.podcast.id;
+    if (refreshingPodcastIds.has(podcastId)) return;
+    refreshingPodcastIds.add(podcastId);
+    try {
+      const result = await refreshPodcastSubscriptionSync(podcastId);
+      const syncStatus = decodePodcastSyncStatus(
+        result.sync_status,
+        "podcast sync_status",
+      );
+      setEntries((current) =>
+        current.map((candidate) =>
+          candidate.kind === "podcast" &&
+          candidate.podcast.id === podcastId
+            ? {
+                ...candidate,
+                podcast: {
+                  ...candidate.podcast,
+                  syncStatus: present(syncStatus),
+                },
+                subscription: candidate.subscription
+                  ? {
+                      ...candidate.subscription,
+                      sync_status: result.sync_status,
+                    }
+                  : null,
+              }
+            : candidate,
+        ),
+      );
+      clearAllVisitData();
+    } catch (refreshError) {
+      if (handleUnauthenticatedApiError(refreshError)) return;
+      if (!isApiError(refreshError) || isSameSystemApiDefect(refreshError)) {
+        throw refreshError;
+      }
+      feedback.show(
+        toFeedback(refreshError, {
+          fallback: "Failed to refresh podcast sync",
+        }),
+      );
+    } finally {
+      refreshingPodcastIds.remove(podcastId);
+    }
+  };
+
+  const handleUnsubscribePodcast = async (
+    entry: LibraryPodcastListEntry,
+  ): Promise<void> => {
+    const podcastId = entry.podcast.id;
+    if (unsubscribingPodcastIds.has(podcastId)) return;
+    unsubscribingPodcastIds.add(podcastId);
+    try {
+      const memberships = await fetchPodcastLibraries(podcastId);
+      if (
+        !confirm(
+          buildPodcastUnsubscribeConfirmation(
+            entry.podcast.title,
+            memberships,
+          ),
+        )
+      ) {
+        return;
+      }
+      await unsubscribeFromPodcast(podcastId);
+      const currentMembership = memberships.find(
+        (membership) => membership.id === id,
+      );
+      setEntries((current) =>
+        current.flatMap((candidate) => {
+          if (
+            candidate.kind !== "podcast" ||
+            candidate.podcast.id !== podcastId
+          ) {
+            return [candidate];
+          }
+          return currentMembership?.canRemove
+            ? []
+            : [{ ...candidate, subscription: null }];
+        }),
+      );
+      clearAllVisitData();
+    } catch (unsubscribeError) {
+      if (handleUnauthenticatedApiError(unsubscribeError)) return;
+      if (
+        !isApiError(unsubscribeError) ||
+        isSameSystemApiDefect(unsubscribeError)
+      ) {
+        throw unsubscribeError;
+      }
+      feedback.show(
+        toFeedback(unsubscribeError, {
+          fallback: "Failed to unsubscribe from podcast",
+        }),
+      );
+    } finally {
+      unsubscribingPodcastIds.remove(podcastId);
+    }
+  };
+
   const handleDeleteLibrary = async () => {
-    if (!currentLibrary || currentLibrary.isDefault) {
+    if (
+      !currentLibrary ||
+      currentLibrary.isDefault ||
+      deletingLibraryRef.current
+    ) {
       return;
     }
     if (!confirm(`Delete "${currentLibrary.name}"? This cannot be undone.`)) {
       return;
     }
 
+    deletingLibraryRef.current = true;
+    setDeletingLibrary(true);
     try {
       await apiFetch(`/api/libraries/${currentLibrary.id}`, {
         method: "DELETE",
@@ -1089,15 +1398,15 @@ export default function LibraryPaneBody() {
       router.push("/libraries");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
-      if (isApiError(err)) {
-        setError(
-          toFeedback(err, {
-            fallback: "Failed to delete library",
-          }),
-        );
-      } else {
-        setError({ severity: "error", title: "Failed to delete library" });
-      }
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
+      setError(
+        toFeedback(err, {
+          fallback: "Failed to delete library",
+        }),
+      );
+    } finally {
+      deletingLibraryRef.current = false;
+      setDeletingLibrary(false);
     }
   };
 
@@ -1124,24 +1433,6 @@ export default function LibraryPaneBody() {
     setSettingsOpen(false);
     router.push("/libraries");
   }, [clearAllVisitData, currentLibrary, router]);
-
-  const handleOpenMediaChat = useCallback(
-    async (media: LibraryMediaEntry) => {
-      try {
-        const conversationId = await startResourceContextChat(`media:${media.id}`);
-        clearAllVisitData();
-        openInNewPane?.(`/conversations/${conversationId}`, media.title);
-      } catch (err) {
-        if (handleUnauthenticatedApiError(err)) return;
-        setError(
-          toFeedback(err, {
-            fallback: "Failed to open media chat",
-          }),
-        );
-      }
-    },
-    [clearAllVisitData, openInNewPane],
-  );
 
   const handleLoadMoreEntries = useCallback(() => {
     if (
@@ -1249,44 +1540,55 @@ export default function LibraryPaneBody() {
       });
   };
 
-  const paneOptions: ActionDescriptor[] = currentLibrary
-    ? [
-        ...(canEditEntries
-          ? [
-              {
-                kind: "command" as const,
-                id: "add-content",
-                label: "Add content",
-                restoreFocusOnClose: false,
-                onSelect: () =>
-                  dispatchOpenLauncher({
-                    kind: "Add",
-                    seed: {
-                      kind: "Content",
-                      initialFocus: "Url",
-                      initialDestinations: currentLibrary.isDefault
-                        ? []
-                        : [
-                            {
-                              id: currentLibrary.id,
-                              name: currentLibrary.name,
-                              color: currentLibrary.color,
-                            },
-                          ],
-                    },
-                  }),
-              },
-            ]
-          : []),
-        ...libraryResourceOptions({
-          library: currentLibrary,
-          onOpenSettings: () => setSettingsOpen(true),
-          onDelete: () => {
-            void handleDeleteLibrary();
+  const paneResourceGroups = currentLibrary
+    ? libraryResourceOptions({
+        settings: currentLibrary.canRename
+          ? {
+              kind: "Available",
+              execute: () => setSettingsOpen(true),
+            }
+          : { kind: "Unavailable" },
+        deleteLibrary: currentLibrary.canDelete
+          ? {
+              kind: "Available",
+              execute: handleDeleteLibrary,
+            }
+          : { kind: "Unavailable" },
+        busyIds: deletingLibrary
+          ? new Set<ResourceActionId>([
+              RESOURCE_ACTION_CATALOG.DeleteLibrary.id,
+            ])
+          : new Set<ResourceActionId>(),
+      })
+    : null;
+  const addContentAction: ActionDescriptor[] =
+    currentLibrary && canEditEntries
+      ? [
+          {
+            kind: "command",
+            id: "ViewAction.Library.AddContent",
+            label: "Add content",
+            restoreFocusOnClose: false,
+            onSelect: () =>
+              dispatchOpenLauncher({
+                kind: "Add",
+                seed: {
+                  kind: "Content",
+                  initialFocus: "Url",
+                  initialDestinations: currentLibrary.isDefault
+                    ? []
+                    : [
+                        {
+                          id: currentLibrary.id,
+                          name: currentLibrary.name,
+                          color: currentLibrary.color,
+                        },
+                      ],
+                },
+              }),
           },
-        }),
-      ]
-    : [];
+        ]
+      : [];
 
   const hideFinished = view?.completion === "unfinished";
   // Under the unfinished filter the client also drops a row the moment it is
@@ -1361,7 +1663,23 @@ export default function LibraryPaneBody() {
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
-    options: paneOptions,
+    menu:
+      currentLibrary && paneResourceGroups
+        ? {
+            kind: "ResourceMenu",
+            target: routeResourceActionSubject({
+              scheme: "library",
+              id: currentLibrary.id,
+              href: `/libraries/${currentLibrary.id}`,
+            }),
+            groups: {
+              core: [],
+              operations: paneResourceGroups.operations,
+              relationships: paneResourceGroups.relationships,
+              view: addContentAction,
+            },
+          }
+        : undefined,
     header: {
       kind: "section",
       folio: { kind: "count", value: entryFolioCount, unit: "entry" },
@@ -1483,15 +1801,44 @@ export default function LibraryPaneBody() {
           syncStatus: item.podcast.syncStatus,
         },
         {
-          canUsePodcastActions: canEditEntries,
           connectionSummary: connectionSummaries.get(
             `podcast:${item.podcast.id}`,
           ),
-          onShare: ({ triggerEl }) =>
-            openShare(
-              resourceShareTarget(`podcast:${item.podcast.id}`),
-              paneShareOpenOptions(triggerEl, paneId),
-            ),
+          settings:
+            item.subscription?.status === "active"
+              ? {
+                  kind: "Available",
+                  execute: () =>
+                    podcastSettingsModal.open({
+                      podcast_id: item.podcast.id,
+                      default_playback_speed:
+                        item.subscription?.default_playback_speed,
+                      auto_queue: item.subscription?.auto_queue,
+                    }),
+                }
+              : { kind: "Unavailable" },
+          refreshSync:
+            item.subscription?.status === "active"
+              ? {
+                  kind: "Available",
+                  execute: () => handleRefreshPodcast(item),
+                }
+              : { kind: "Unavailable" },
+          subscription:
+            item.subscription?.status === "active"
+              ? {
+                  kind: "Subscribed",
+                  execute: () => handleUnsubscribePodcast(item),
+                }
+              : { kind: "Unavailable" },
+          busyIds: new Set<ResourceActionId>([
+            ...(refreshingPodcastIds.ids.has(item.podcast.id)
+              ? [RESOURCE_ACTION_CATALOG.RefreshPodcast.id]
+              : []),
+            ...(unsubscribingPodcastIds.ids.has(item.podcast.id)
+              ? [RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id]
+              : []),
+          ]),
         },
       );
       return {
@@ -1500,49 +1847,110 @@ export default function LibraryPaneBody() {
         context: showAdded ? addedContext(item) : row.context,
       };
     }
+    const lecternItem =
+      lectern.resource.status === "ready"
+        ? (lectern.resource.data.items.find(
+            (candidate) => candidate.mediaId === item.media.id,
+          ) ?? null)
+        : null;
     const row = presentMedia(item.media, {
       readingTimeEstimate: item.readingTimeEstimate,
       connectionSummary: connectionSummaries.get(`media:${item.media.id}`),
-      retryBusy: retryingMediaIds.ids.has(item.media.id),
-      refreshBusy: refreshingMediaIds.ids.has(item.media.id),
-      onRetry:
-        canEditEntries && item.media.capabilities.can_retry
-          ? () => {
-              void handleRetryProcessing(item.media.id);
+      retryProcessing:
+        item.media.capabilities.can_retry
+          ? {
+              kind: "Available",
+              execute: () => handleRetryProcessing(item.media.id),
             }
-          : undefined,
-      onRefreshSource:
-        canEditEntries && item.media.capabilities.can_refresh_source
-          ? () => {
-              void handleRefreshSource(item.media.id);
+          : { kind: "Unavailable" },
+      refreshSource:
+        item.media.capabilities.can_refresh_source
+          ? {
+              kind: "Available",
+              execute: () => handleRefreshSource(item.media.id),
             }
-          : undefined,
-      onOpenChat: () => {
-        void handleOpenMediaChat(item.media);
-      },
-      onShare: ({ triggerEl }) =>
-        openShare(
-          resourceShareTarget(`media:${item.media.id}`),
-          paneShareOpenOptions(triggerEl, paneId),
-        ),
-      onDelete:
-        canEditEntries && item.media.capabilities.can_delete
-          ? () => {
-              void handleDeleteMedia(item);
+          : { kind: "Unavailable" },
+      retryMetadata:
+        item.media.capabilities.can_retry_metadata
+          ? {
+              kind: "Available",
+              execute: () => handleRetryMetadata(item.media.id),
             }
-          : undefined,
-      onMarkFinished: () => {
-        if (hideFinished) {
-          captureFocusNeighbor(libraryRowKey(item, isDefaultLibrary));
-        }
-        void handleSetConsumption(item.media.id, "finished");
-      },
-      onMarkUnread: () => {
-        void handleSetConsumption(item.media.id, "unread");
-      },
-      onAddToLectern: () => {
-        void handleAddToLectern(item.media.id);
-      },
+          : { kind: "Unavailable" },
+      editAuthors: item.media.capabilities.can_edit_authors
+        ? {
+            kind: "Available",
+            execute: (detail) => openAuthorsEditor(item.media.id, detail),
+          }
+        : { kind: "Unavailable" },
+      removeMedia:
+        item.media.capabilities.can_delete
+          ? {
+              kind: "Available",
+              execute: () => handleDeleteMedia(item),
+            }
+          : { kind: "Unavailable" },
+      readState:
+        item.media.read_state === "finished"
+          ? {
+              kind: "MarkUnread",
+              execute: () =>
+                handleSetConsumption(item.media.id, "unread"),
+            }
+          : {
+              kind: "MarkFinished",
+              execute: () => {
+                if (hideFinished) {
+                  captureFocusNeighbor(
+                    libraryRowKey(item, isDefaultLibrary),
+                  );
+                }
+                return handleSetConsumption(item.media.id, "finished");
+              },
+            },
+      lecternMembership:
+        lectern.resource.status !== "ready"
+          ? { kind: "Unavailable" }
+          : lecternItem
+            ? {
+                kind: "Remove",
+                itemId: lecternItem.itemId,
+                execute: () =>
+                  handleRemoveFromLectern(
+                    item.media.id,
+                    lecternItem.itemId,
+                  ),
+              }
+            : {
+                kind: "Add",
+                execute: () => handleAddToLectern(item.media.id),
+              },
+      busyIds: new Set<ResourceActionId>([
+        ...(retryingMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.RetryProcessing.id]
+          : []),
+        ...(refreshingMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.RefreshSource.id]
+          : []),
+        ...(retryingMetadataMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.RetryMetadata.id]
+          : []),
+        ...(deletingMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.RemoveMedia.id]
+          : []),
+        ...(updatingConsumptionMediaIds.ids.has(item.media.id)
+          ? [
+              RESOURCE_ACTION_CATALOG.MarkFinished.id,
+              RESOURCE_ACTION_CATALOG.MarkUnread.id,
+            ]
+          : []),
+        ...(addingToLecternMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.AddToLectern.id]
+          : []),
+        ...(removingFromLecternMediaIds.ids.has(item.media.id)
+          ? [RESOURCE_ACTION_CATALOG.RemoveFromLectern.id]
+          : []),
+      ]),
     });
     return {
       ...row,
@@ -1661,6 +2069,15 @@ export default function LibraryPaneBody() {
       title="No podcasts or media in this library yet."
     />
   );
+  const podcastSettingsEntry = entries.find(
+    (entry) =>
+      entry.kind === "podcast" &&
+      entry.podcast.id === podcastSettingsModal.podcastId,
+  );
+  const podcastSettingsTitle =
+    podcastSettingsEntry?.kind === "podcast"
+      ? podcastSettingsEntry.podcast.title
+      : null;
 
   return (
     <>
@@ -1703,6 +2120,24 @@ export default function LibraryPaneBody() {
           onRename={handleRename}
           onDelete={handleDeleteFromSettings}
         />
+      ) : null}
+      <PodcastSubscriptionSettingsModal
+        podcastTitle={podcastSettingsTitle}
+        settingsModal={podcastSettingsModal}
+      />
+      {authorsEditorMounted && authorsEditorMedia ? (
+        <Suspense fallback={null}>
+          <MediaAuthorsEditor
+            mediaId={authorsEditorMedia.id}
+            open={authorsEditorOpen}
+            authors={mapMediaAuthorCredits(authorsEditorMedia.contributors)}
+            authorMode={authorsEditorMedia.author_mode}
+            returnFocusTo={() => authorsEditorTrigger}
+            returnFocusFallback={() => sortSelectRef.current}
+            onClose={() => setAuthorsEditorOpen(false)}
+            onSaved={handleAuthorsSaved}
+          />
+        </Suspense>
       ) : null}
     </>
   );

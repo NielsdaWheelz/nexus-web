@@ -12,7 +12,7 @@ import type {
 } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
 import type { PodcastSyncStatus } from "@/lib/status/podcastSync";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import type { ActionPublication } from "@/lib/actions/resourceActions";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type {
   PositiveCount,
@@ -106,6 +106,6 @@ export interface CollectionRowView {
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
   readonly connections: Presence<ConnectionSummaryView>;
   readonly relatedMediaId: Presence<string>;
-  readonly actions: readonly ActionDescriptor[];
+  readonly actionPublication: ActionPublication;
   readonly selected: boolean;
 }

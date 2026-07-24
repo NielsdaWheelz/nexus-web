@@ -62,11 +62,20 @@ Every supported route declares one `PaneRouteHeaderContract`:
 - `section` resolves the destination-owned standing head and an optional folio
 - `resource` resolves a title plus structured credit groups
 
-Pane bodies publish the orthogonal `{ header, toolbar, actions, options }`
+Pane bodies publish the orthogonal `{ header, toolbar, actions, menu }`
 capabilities through `usePanePrimaryChrome`. Each update carries the current
 `routeKey`; `PaneShell` rejects stale updates before validating the header kind.
 There is no route-level chrome descriptor, body-mode inference, or ambient title
 override.
+
+`menu` is an `ActionPublication`. Resource panes publish an explicit canonical
+target and the four semantic groups `core | operations | relationships | view`;
+non-resource panes use `FlatMenu`. `PaneShell` resolves current-pane core policy
+from the resource target—Share and Chat, with Open remaining
+representation-only—merges the published groups, and invokes
+`composeResourceMenu` exactly once. Pane bodies never publish flat resource
+arrays or duplicate core behavior. Share and promoted header actions project
+from the universal resource-action catalog.
 
 The three projections are fixed:
 
@@ -74,10 +83,10 @@ The three projections are fixed:
 - desktop resource header: 60px
 - mobile top bar: 60px plus safe area
 
-Desktop actions render through `ActionBar`; the same typed descriptors render in
-mobile Options through `ActionMenu`. Free-form `toolbar` content is reserved for
-bounded format navigation such as PDF and EPUB controls. It is not another
-action channel.
+Desktop promoted actions render through `ActionBar`; overflow publications
+render through `ActionMenu` in desktop and mobile chrome. Free-form `toolbar`
+content is reserved for bounded format navigation such as PDF and EPUB
+controls. It is not another action channel.
 
 Each pane landmark is named from its resolved header. Resource identity owns its
 `h1`; imported reader headings are projected beneath it, and pending resource

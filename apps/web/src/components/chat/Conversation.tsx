@@ -28,9 +28,18 @@ import {
   type ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
-import { conversationResourceOptions } from "@/lib/actions/resourceActions";
+import {
+  RESOURCE_ACTION_CATALOG,
+  conversationResourceOptions,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import { chatDraftKeyFor } from "@/lib/conversations/chatDraftKey";
-import { apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiPath,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import type { PendingTurnContext } from "@/lib/conversations/pendingTurnContext";
@@ -68,6 +77,7 @@ import {
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import styles from "@/app/(authenticated)/conversations/page.module.css";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 
 // ---------------------------------------------------------------------------
 // Pending reader-selection hydration (route-owned launch intent)
@@ -242,6 +252,7 @@ export default function Conversation() {
   const [readerAnnouncement, setReaderAnnouncement] = useState("");
 
   const [deleting, setDeleting] = useState(false);
+  const deleteInFlightRef = useRef(false);
   const [branchFocusKey, setBranchFocusKey] = useState("");
 
   // The context-ref secondary surface is keyed off the engine's resolved id, but the engine
@@ -445,18 +456,21 @@ export default function Conversation() {
   const [deleteError, setDeleteError] = useState<FeedbackContent | null>(null);
   const handleDeleteConversation = useCallback(async () => {
     const id = convo.conversationId;
-    if (!id) return;
+    if (!id || deleteInFlightRef.current) return;
     if (!confirm("Delete this conversation? This cannot be undone.")) return;
+    deleteInFlightRef.current = true;
     setDeleting(true);
     try {
       await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
       router.push("/conversations");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       setDeleteError(
         toFeedback(err, { fallback: "Failed to delete conversation" }),
       );
     } finally {
+      deleteInFlightRef.current = false;
       setDeleting(false);
     }
   }, [convo.conversationId, router]);
@@ -571,12 +585,19 @@ export default function Conversation() {
     () =>
       convo.conversationId
         ? conversationResourceOptions({
-            deleting,
-            onDelete: () => {
-              void handleDeleteConversation();
+            deleteConversation: {
+              kind: "Available",
+              execute: async () => {
+                await handleDeleteConversation();
+              },
             },
+            busyIds: deleting
+              ? new Set<ResourceActionId>([
+                  RESOURCE_ACTION_CATALOG.DeleteConversation.id,
+                ])
+              : new Set<ResourceActionId>(),
           })
-        : [],
+        : null,
     [
       convo.conversationId,
       deleting,
@@ -636,7 +657,29 @@ export default function Conversation() {
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
-    options: paneOptions,
+    menu:
+      convo.conversationId &&
+      paneOptions &&
+      !convo.loading &&
+      !(
+        conversationId !== null &&
+        convo.messages.length === 0 &&
+        convo.error
+      )
+        ? {
+            kind: "ResourceMenu",
+            target: routeResourceActionSubject({
+              scheme: "conversation",
+              id: convo.conversationId,
+              href: `/conversations/${convo.conversationId}`,
+            }),
+            groups: {
+              core: [],
+              ...paneOptions,
+              view: [],
+            },
+          }
+        : undefined,
   });
 
   // --------------------------------------------------------------------------

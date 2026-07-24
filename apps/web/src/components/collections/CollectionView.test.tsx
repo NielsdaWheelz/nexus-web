@@ -7,11 +7,14 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { absent, present } from "@/lib/api/presence";
 import { decodePublicationDate } from "@/lib/dates/publicationDate";
 import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
   PaneReturnMementoProvider,
   PaneReturnVisitScope,
@@ -34,8 +37,20 @@ function PaneReturnTestHarness({ children }: { children: ReactNode }) {
 }
 
 function render(ui: ReactElement) {
-  return testingRender(ui, { wrapper: PaneReturnTestHarness });
+  return testingRender(
+    <FeedbackProvider>
+      <ShareControllerProvider>{ui}</ShareControllerProvider>
+    </FeedbackProvider>,
+    { wrapper: PaneReturnTestHarness },
+  );
 }
+
+const TEST_RESOURCE_ID = "11111111-1111-4111-8111-111111111111";
+const TEST_RESOURCE_TARGET = routeResourceActionSubject({
+  scheme: "media",
+  id: TEST_RESOURCE_ID,
+  href: "/media/test",
+});
 
 function row(id: string, title: string): CollectionRowView {
   return {
@@ -50,7 +65,11 @@ function row(id: string, title: string): CollectionRowView {
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: [],
+    actionPublication: {
+      kind: "ResourceMenu",
+      target: TEST_RESOURCE_TARGET,
+      groups: { core: [], operations: [], relationships: [], view: [] },
+    },
     selected: false,
   };
 }
@@ -151,14 +170,23 @@ describe("canonical CollectionView", () => {
         {
           ...ROWS[0],
           contributors: [contributor],
-          actions: [
-            {
-              kind: "command",
-              id: "archive",
-              label: "Archive",
-              onSelect: vi.fn(),
+          actionPublication: {
+            kind: "ResourceMenu",
+            target: TEST_RESOURCE_TARGET,
+            groups: {
+              core: [],
+              operations: [
+                {
+                  kind: "command",
+                  id: "archive",
+                  label: "Archive",
+                  onSelect: vi.fn(),
+                },
+              ],
+              relationships: [],
+              view: [],
             },
-          ],
+          },
         },
       ],
       rowControls: { a: <button type="button">Primary control</button> },
@@ -257,7 +285,9 @@ describe("canonical CollectionView", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
 
     await userEvent.setup().click(firstTrigger);
-    expect(await screen.findByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
     await userEvent.setup().click(
       screen.getByRole("menuitem", { name: "Move down" }),
     );
@@ -383,7 +413,10 @@ describe("canonical CollectionView", () => {
         name: "More actions for First document",
       }),
     );
-    expect(screen.getByRole("menuitem", { name: "Move down" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.queryByRole("menuitem", { name: /top|bottom/i })).toBeNull();
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape", code: "Escape" });
   });
@@ -522,14 +555,23 @@ describe("canonical CollectionView", () => {
       rows: [
         {
           ...ROWS[0],
-          actions: [
-            {
-              kind: "command",
-              id: "archive",
-              label: "Archive",
-              onSelect: onArchive,
+          actionPublication: {
+            kind: "ResourceMenu",
+            target: TEST_RESOURCE_TARGET,
+            groups: {
+              core: [],
+              operations: [
+                {
+                  kind: "command",
+                  id: "archive",
+                  label: "Archive",
+                  onSelect: onArchive,
+                },
+              ],
+              relationships: [],
+              view: [],
             },
-          ],
+          },
         },
       ],
       sortable: { disabled: true, onReorder },
@@ -542,8 +584,14 @@ describe("canonical CollectionView", () => {
     expect(trigger).not.toHaveAttribute("aria-describedby");
     await new Promise((resolve) => window.setTimeout(resolve, 60));
     await user.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "Move up" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Move down" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Move up" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await user.click(screen.getByRole("menuitem", { name: "Archive" }));
     expect(onArchive).toHaveBeenCalledOnce();
     expect(onReorder).not.toHaveBeenCalled();

@@ -24,6 +24,7 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentPodcast } from "@/lib/collections/presenters/podcast";
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import {
   FeedbackNotice,
@@ -47,13 +48,9 @@ import { dispatchOpenLauncher } from "@/lib/launcher/launcherEvents";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
-  usePaneRuntime,
   usePaneReturnReady,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
-import { useShareController } from "@/lib/sharing/controller";
-import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
-import { resourceShareTarget } from "@/lib/sharing/targets";
 import styles from "./page.module.css";
 
 const PAGE_SIZE = 100;
@@ -133,8 +130,6 @@ function encodePodcastListState(
 }
 
 export default function PodcastsPaneBody() {
-  const paneRuntime = usePaneRuntime();
-  const { openShare } = useShareController();
   const podcastListCodec = useMemo(
     () => ({
       basePath: "/podcasts",
@@ -469,23 +464,33 @@ export default function PodcastsPaneBody() {
         syncStatus: row.syncStatus,
       },
       {
-        canUsePodcastActions: true,
         connectionSummary: connectionSummaries.get(`podcast:${row.podcast_id}`),
-        busy: rowBusy,
-        refreshBusy: rowRefreshing,
-        unsubscribeBusy: rowBusy,
-        onShare: ({ triggerEl }) =>
-          openShare(
-            resourceShareTarget(`podcast:${row.podcast_id}`),
-            paneShareOpenOptions(triggerEl, paneRuntime?.paneId ?? ""),
-          ),
-        onOpenSettings: () => settingsModal.open(row),
-        onRefreshSync: () => {
-          void refreshPodcastSync(row.podcast_id);
+        settings: {
+          kind: "Available",
+          execute: () => settingsModal.open(row),
         },
-        onUnsubscribe: () => {
-          void unsubscribePodcast(row);
+        refreshSync: {
+          kind: "Available",
+          execute: async () => {
+            if (actions.refreshingPodcastIds.has(row.podcast_id)) return;
+            await refreshPodcastSync(row.podcast_id);
+          },
         },
+        subscription: {
+          kind: "Subscribed",
+          execute: async () => {
+            if (actions.unsubscribingPodcastIds.has(row.podcast_id)) return;
+            await unsubscribePodcast(row);
+          },
+        },
+        busyIds: new Set([
+          ...(rowRefreshing
+            ? [RESOURCE_ACTION_CATALOG.RefreshPodcast.id]
+            : []),
+          ...(rowBusy
+            ? [RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id]
+            : []),
+        ]),
       },
     );
   });

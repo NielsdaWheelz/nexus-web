@@ -20,6 +20,8 @@ import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import type { EffectivePaneSizing } from "@/lib/workspace/paneSizing";
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import { routeShareTarget } from "@/lib/sharing/targets";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -53,6 +55,7 @@ vi.mock("@/lib/sharing/controller", () => ({
 const runtimeNavigation = {
   back: vi.fn(),
   forward: vi.fn(),
+  openInNewPane: vi.fn(),
 };
 
 const sectionHeader = {
@@ -91,11 +94,18 @@ function paneSizing(input: {
 
 type PaneProps = ComponentProps<typeof PaneShell>;
 
+const testRouteShareIdentity = routeShareTarget({
+  href: "/libraries",
+  label: "Libraries",
+});
+if (testRouteShareIdentity.kind !== "Route") {
+  throw new Error("routeShareTarget returned a resource target");
+}
 const defaultPaneProps = {
   paneId: "pane-a",
   routeKey: "media:/media/media-1",
   routeHeader: sectionHeader,
-  shareIdentity: routeShareTarget({ href: "/libraries", label: "Libraries" }),
+  routeShareIdentity: testRouteShareIdentity,
   label: "Libraries",
   returnMementoEnabled: false,
   sizing: paneSizing({ widthPx: 560, minWidthPx: 320, maxWidthPx: 1400 }),
@@ -114,7 +124,8 @@ function RuntimeRoute({
 }) {
   return (
     <PaneReturnMementoProvider>
-      <PaneRuntimeProvider
+      <FeedbackProvider>
+        <PaneRuntimeProvider
         paneId={paneId}
         visitId={TEST_VISIT_ID}
         isActive
@@ -127,10 +138,11 @@ function RuntimeRoute({
         onGoForwardPane={runtimeNavigation.forward}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
-        onOpenInNewPane={vi.fn()}
-      >
-        {children}
-      </PaneRuntimeProvider>
+        onOpenInNewPane={runtimeNavigation.openInNewPane}
+        >
+          {children}
+        </PaneRuntimeProvider>
+      </FeedbackProvider>
     </PaneReturnMementoProvider>
   );
 }
@@ -172,6 +184,25 @@ function readyResource(title: string): PanePrimaryChromePublication {
           },
         ],
       },
+    },
+  };
+}
+
+function resourceMenu(
+  actions: readonly ActionDescriptor[] = [],
+): NonNullable<PanePrimaryChromePublication["menu"]> {
+  return {
+    kind: "ResourceMenu",
+    target: routeResourceActionSubject({
+      scheme: "media",
+      id: "00000000-0000-4000-8000-000000000001",
+      href: "/media/00000000-0000-4000-8000-000000000001",
+    }),
+    groups: {
+      core: [],
+      operations: actions,
+      relationships: [],
+      view: [],
     },
   };
 }
@@ -285,6 +316,7 @@ describe("PaneShell", () => {
     render(
       paneTree({
         routeHeader: resourceHeader,
+        routeShareIdentity: null,
         label: "Media",
         bodyMode: "standard",
       }),
@@ -472,13 +504,14 @@ describe("PaneShell", () => {
     render(
       paneTree({
         routeHeader: resourceHeader,
+        routeShareIdentity: null,
         label: "Media",
         children: (
           <PrimaryChromeProbe
             publication={{
               ...readyResource("Document title"),
               actions: [mapAction],
-              options: [creditsOption],
+              menu: resourceMenu([creditsOption]),
             }}
           />
         ),
@@ -497,7 +530,7 @@ describe("PaneShell", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["Share…", "Credits…"]);
+    ).toEqual(["Share…", "Chat about this resource", "Credits…"]);
     expect(
       within(menu).getAllByRole("menuitem", { name: "Share…" }),
     ).toHaveLength(1);
@@ -518,6 +551,7 @@ describe("PaneShell", () => {
     render(
       paneTree({
         routeHeader: resourceHeader,
+        routeShareIdentity: null,
         label: "Media",
         isMobile: true,
         children: (
@@ -525,14 +559,14 @@ describe("PaneShell", () => {
             publication={{
               ...readyResource("Document title"),
               actions: [companion],
-              options: [
+              menu: resourceMenu([
                 {
                   kind: "command",
                   id: "credits",
                   label: "Credits…",
                   onSelect: vi.fn(),
                 },
-              ],
+              ]),
             }}
           />
         ),
@@ -557,19 +591,84 @@ describe("PaneShell", () => {
     ]);
     expect(
       publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Share…", "Credits…"]);
+    ).toEqual(["Share…", "Chat about this resource", "Credits…"]);
     expect(
       publication?.options.filter(
-        (option: ActionDescriptor) => option.id === "share",
+        (option: ActionDescriptor) => option.id === "ResourceAction.Share",
       ),
     ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Options" })).toBeNull();
   });
 
+  it("publishes keyed Chat busy state and guards rapid re-entry", async () => {
+    const pendingFetch: {
+      resolve?: (response: Response) => void;
+    } = {};
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          pendingFetch.resolve = resolve;
+        }),
+    );
+    try {
+      render(
+        paneTree({
+          routeHeader: resourceHeader,
+          routeShareIdentity: null,
+          label: "Media",
+          children: (
+            <PrimaryChromeProbe
+              publication={{
+                ...readyResource("Document title"),
+                menu: resourceMenu(),
+              }}
+            />
+          ),
+        }),
+      );
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Options" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", {
+          name: "Chat about this resource",
+        }),
+      );
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Options" }));
+      const busyChat = await screen.findByRole("menuitem", {
+        name: "Starting chat...",
+      });
+      expect(busyChat).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(busyChat);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      const resolveFetch = pendingFetch.resolve;
+      if (!resolveFetch) {
+        // justify-defect: the selected Chat command must have reached fetch.
+        throw new Error("Chat request was not pending");
+      }
+      resolveFetch(Response.json({ data: { id: "conversation-1" } }));
+      await waitFor(() => {
+        expect(runtimeNavigation.openInNewPane).toHaveBeenCalledWith(
+          "/conversations/conversation-1",
+          "Chat",
+          undefined,
+          "Programmatic",
+        );
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("does not republish equivalent mobile chrome after an unrelated render", async () => {
     const mobilePane = {
       routeHeader: resourceHeader,
+      routeShareIdentity: null,
       label: "Media",
       isMobile: true,
     } satisfies Partial<PaneProps>;
@@ -608,6 +707,7 @@ describe("PaneShell", () => {
             paneId,
             routeKey: "media:/media/media-1",
             routeHeader: resourceHeader,
+            routeShareIdentity: null,
             label: "Media",
             secondaryPane: {
               id: `secondary-${paneId}`,
@@ -646,14 +746,14 @@ describe("PaneShell", () => {
                       onSelect: vi.fn(),
                     },
                   ],
-                  options: [
+                  menu: resourceMenu([
                     {
                       kind: "command",
                       id: "credits",
                       label: "Credits…",
                       onSelect: vi.fn(),
                     },
-                  ],
+                  ]),
                 }}
               />
             ),

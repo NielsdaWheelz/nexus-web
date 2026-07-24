@@ -45,6 +45,7 @@ interface MediaCapabilities {
   can_retry?: boolean;
   can_refresh_source?: boolean;
   can_retry_metadata?: boolean;
+  can_edit_authors?: boolean;
 }
 
 export interface PodcastEpisodeMedia {
@@ -79,6 +80,7 @@ export interface PodcastEpisodeMedia {
   episode_state: EpisodeState | null;
   capabilities: MediaCapabilities;
   contributors: ContributorCredit[];
+  author_mode: "automatic" | "manual";
   published_date: string | null;
   publisher: string | null;
   language: string | null;

@@ -8,8 +8,8 @@
 import type { ComponentType } from "react";
 import type { BrowseResult } from "@/lib/browse/types";
 import type { LibraryDestinationSelection } from "@/lib/libraries/client";
-import type { ResourceActivation } from "@/lib/resources/activation";
-import type { ShareTarget } from "@/lib/sharing/types";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import type { CanonicalResourceRef, ShareTarget } from "@/lib/sharing/types";
 
 export type LauncherLane =
   | "all" // blended default — show all interpretations
@@ -98,8 +98,14 @@ export type AddSeed =
 // Terminal targets: dispatchTarget executes exactly one of these (one open seam, AC-9).
 export type LauncherActionTarget =
   | { kind: "href"; href: string; externalShell: boolean; labelHint?: string }
-  | { kind: "resource"; activation: ResourceActivation; labelHint?: string }
-  | { kind: "ask"; text: string }
+  | {
+      kind: "ResourceOpen";
+      subject: ResourceActionSubject;
+      labelHint?: string;
+    }
+  | { kind: "ResourceShare"; subject: ResourceActionSubject }
+  | { kind: "ResourceChat"; ref: CanonicalResourceRef }
+  | { kind: "Ask"; text: string }
   | { kind: "add-url"; url: string } // quick add from the hard-signal row
   | { kind: "queue-add"; mediaId: string; title: string } // append media to the Lectern
   | { kind: "create-note"; text: string } // quick capture → daily note

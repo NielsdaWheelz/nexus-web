@@ -20,6 +20,8 @@ function requestedUrl(fetchMock: ReturnType<typeof mockFetch>): URL {
   return new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
 }
 
+const NOTE_REF = "note_block:11111111-1111-4111-8111-111111111111";
+
 const NOTE_ROW = {
   type: "note_block",
   id: "note-1",
@@ -29,14 +31,14 @@ const NOTE_ROW = {
   source_label: "note",
   media_id: null,
   media_kind: null,
-  resource_ref: "note_block:note-1",
+  resource_ref: NOTE_REF,
   activation: {
-    resourceRef: "note_block:note-1",
+    resource_ref: NOTE_REF,
     kind: "route",
     href: "/notes/note-1",
-    unresolvedReason: null,
+    unresolved_reason: null,
   },
-  citation_target: "note_block:note-1",
+  citation_target: NOTE_REF,
   context_ref: { type: "note_block", id: "note-1" },
   body_text: "note body text",
   highlight_excerpt: null,
@@ -111,7 +113,10 @@ describe("fetchSearchResultPage URL contract", () => {
     const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
 
     await fetchSearchResultPage(
-      { ...emptySearchQuery(), requestedKinds: new Set<SearchKind>(SEARCH_KINDS) },
+      {
+        ...emptySearchQuery(),
+        requestedKinds: new Set<SearchKind>(SEARCH_KINDS),
+      },
       { limit: 20 },
     );
 
@@ -123,7 +128,10 @@ describe("fetchSearchResultPage URL contract", () => {
   it("omits the scope param for the default 'all' scope", async () => {
     const fetchMock = mockFetch({ results: [], page: { next_cursor: null } });
 
-    await fetchSearchResultPage({ ...emptySearchQuery(), text: "x" }, { limit: 20 });
+    await fetchSearchResultPage(
+      { ...emptySearchQuery(), text: "x" },
+      { limit: 20 },
+    );
 
     expect(requestedUrl(fetchMock).searchParams.has("scope")).toBe(false);
   });
@@ -160,6 +168,11 @@ describe("fetchSearchResultPage page shape", () => {
     expect(page.rows[0]).toMatchObject({
       key: "note_block-note-1",
       activation: { href: "/notes/note-1" },
+      actionTarget: {
+        kind: "Resource",
+        ref: NOTE_REF,
+        missing: false,
+      },
       type: "note_block",
       typeLabel: "note_block",
       paneLabelHint: "note body text",
@@ -183,7 +196,10 @@ describe("fetchSearchResultPage page shape", () => {
     mockFetch({ results: null, page: { next_cursor: null } });
 
     await expect(
-      fetchSearchResultPage({ ...emptySearchQuery(), text: "x" }, { limit: 20 }),
+      fetchSearchResultPage(
+        { ...emptySearchQuery(), text: "x" },
+        { limit: 20 },
+      ),
     ).rejects.toThrow("Search API response is missing results");
   });
 
@@ -192,13 +208,21 @@ describe("fetchSearchResultPage page shape", () => {
       results: [
         NOTE_ROW,
         // Missing all the structural fields a real row requires.
-        { type: "fragment", id: "invalid-frag", score: 0.5, snippet: "invalid" },
+        {
+          type: "fragment",
+          id: "invalid-frag",
+          score: 0.5,
+          snippet: "invalid",
+        },
       ],
       page: { next_cursor: null },
     });
 
     await expect(
-      fetchSearchResultPage({ ...emptySearchQuery(), text: "x" }, { limit: 20 }),
+      fetchSearchResultPage(
+        { ...emptySearchQuery(), text: "x" },
+        { limit: 20 },
+      ),
     ).rejects.toThrow("Search API returned an invalid result row");
   });
 });

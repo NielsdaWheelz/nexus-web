@@ -7,7 +7,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import {
   librariesResource as librariesResourceDescriptor,
   type LibraryListResourceParams,
@@ -28,13 +32,13 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import PaneToolbar from "@/components/ui/PaneToolbar";
 import { presentLibrary } from "@/lib/collections/presenters/library";
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import { createLibrary } from "@/lib/libraries/client";
 import {
   definePaneVisitDataKey,
   useClearAllPaneVisitData,
-  usePaneRuntime,
   usePaneReturnReady,
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
@@ -44,9 +48,7 @@ import {
   fetchViewerLibraryInvites,
   type ViewerLibraryInvite,
 } from "@/lib/libraries/sharing";
-import { useShareController } from "@/lib/sharing/controller";
-import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
-import { resourceShareTarget } from "@/lib/sharing/targets";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./page.module.css";
 
 interface Library {
@@ -86,8 +88,7 @@ export default function LibrariesPaneBody() {
   const [controller, setController] = useState<LibrariesSnapshot | null>(
     restored,
   );
-  const paneRuntime = usePaneRuntime();
-  const { openShare } = useShareController();
+  const deletingLibraryIds = useStringIdSet();
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const clearAllVisitData = useClearAllPaneVisitData();
   const [loadingMore, setLoadingMore] = useState(false);
@@ -248,6 +249,8 @@ export default function LibrariesPaneBody() {
 
   const handleDeleteLibrary = async (library: Library) => {
     if (!confirm(`Delete "${library.name}"? This cannot be undone.`)) return;
+    if (deletingLibraryIds.has(library.id)) return;
+    deletingLibraryIds.add(library.id);
 
     try {
       await apiFetch(`/api/libraries/${library.id}`, {
@@ -266,11 +269,14 @@ export default function LibrariesPaneBody() {
       clearAllVisitData();
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       setFeedback(
         toFeedback(err, {
           fallback: "Failed to delete library",
         })
       );
+    } finally {
+      deletingLibraryIds.remove(library.id);
     }
   };
 
@@ -444,13 +450,21 @@ export default function LibrariesPaneBody() {
         returnScope="Libraries.Items"
         rows={libraries.map((library) =>
           presentLibrary(library, {
-            onShare: ({ triggerEl }) =>
-              openShare(
-                resourceShareTarget(`library:${library.id}`),
-                paneShareOpenOptions(triggerEl, paneRuntime?.paneId ?? ""),
-              ),
-            onOpenSettings: () => setSettingsLibrary(library),
-            onDelete: () => void handleDeleteLibrary(library),
+            settings: library.canRename
+              ? {
+                  kind: "Available",
+                  execute: () => setSettingsLibrary(library),
+                }
+              : { kind: "Unavailable" },
+            deleteLibrary: library.canDelete
+              ? {
+                  kind: "Available",
+                  execute: () => handleDeleteLibrary(library),
+                }
+              : { kind: "Unavailable" },
+            busyIds: deletingLibraryIds.ids.has(library.id)
+              ? new Set([RESOURCE_ACTION_CATALOG.DeleteLibrary.id])
+              : new Set(),
           }),
         )}
         status={status}

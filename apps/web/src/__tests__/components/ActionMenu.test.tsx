@@ -204,7 +204,58 @@ describe("ActionMenu", () => {
     expect(deleteItem).toHaveFocus();
   });
 
-  it("keeps disabled link options non-interactive", async () => {
+  it("keeps unavailable commands in keyboard navigation without activating them", async () => {
+    const user = userEvent.setup();
+    const handleSelect = vi.fn();
+
+    render(
+      <ActionMenu
+        options={[
+          {
+            kind: "command",
+            id: "edit",
+            label: "Edit",
+            onSelect: vi.fn(),
+          },
+          {
+            kind: "command",
+            id: "retry",
+            label: "Retry",
+            disabled: true,
+            disabledReason: "A retry is already in progress.",
+            onSelect: handleSelect,
+          },
+          {
+            kind: "command",
+            id: "delete",
+            label: "Delete",
+            onSelect: vi.fn(),
+          },
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    const retry = screen.getByRole("menuitem", { name: "Retry" });
+    await user.keyboard("{ArrowDown}");
+
+    expect(retry).toHaveFocus();
+    expect(retry).toHaveAttribute("aria-disabled", "true");
+    expect(retry).not.toHaveAttribute("disabled");
+    expect(retry).toHaveAccessibleDescription("A retry is already in progress.");
+
+    fireEvent.click(retry);
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+
+    expect(handleSelect).not.toHaveBeenCalled();
+    expect(retry).toBeInTheDocument();
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
+  });
+
+  it("keeps unavailable links in keyboard navigation without activating them", async () => {
     const user = userEvent.setup();
     const handleSelect = vi.fn();
 
@@ -217,17 +268,43 @@ describe("ActionMenu", () => {
             label: "Reader settings",
             href: "/settings/reader",
             disabled: true,
+            disabledReason: "Reader settings are still loading.",
             onSelect: handleSelect,
+          },
+          {
+            kind: "command",
+            id: "delete",
+            label: "Delete",
+            onSelect: vi.fn(),
           },
         ]}
       />
     );
 
     await user.click(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Reader settings" }));
+    const readerSettings = screen.getByRole("menuitem", {
+      name: "Reader settings",
+    });
+
+    await waitFor(() => {
+      expect(readerSettings).toHaveFocus();
+    });
+    expect(readerSettings).toHaveAttribute("aria-disabled", "true");
+    expect(readerSettings).not.toHaveAttribute("href");
+    expect(readerSettings).toHaveAttribute("tabindex", "-1");
+    expect(readerSettings).toHaveAccessibleDescription(
+      "Reader settings are still loading.",
+    );
+
+    fireEvent.click(readerSettings);
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
 
     expect(handleSelect).not.toHaveBeenCalled();
-    expect(screen.getByRole("menuitem", { name: "Reader settings" })).toBeInTheDocument();
+    expect(readerSettings).toBeInTheDocument();
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
   });
 
   it("projects toggle and disclosure state without submenu ARIA", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
@@ -41,7 +41,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         "libraries:0": {
           data: [
             {
-              id: "lib-seed-1",
+              id: "00000000-0000-4000-8000-000000000201",
               name: "Bootstrapped Reading Room",
               color: null,
               ownerUserHandle: OWNER_USER_HANDLE,
@@ -75,16 +75,6 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
     // (b) No client fetch to the libraries list endpoint — the seed was the source.
     const fetchedLibraries = wasFetchPathCalled(fetchSpy, "/api/libraries");
     expect(fetchedLibraries).toBe(false);
-    await waitFor(() => {
-      const update = publish.mock.calls.findLast(
-        ([value]) => value.publication !== null,
-      )?.[0];
-      expect(
-        update?.publication?.options?.filter(
-          (option: { id: string }) => option.id === "share",
-        ) ?? [],
-      ).toHaveLength(0);
-    });
   });
 
   it("loads another library page from the hydrated first page cursor", async () => {
@@ -97,7 +87,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         return Response.json({
           data: [
             {
-              id: "lib-seed-2",
+              id: "00000000-0000-4000-8000-000000000202",
               name: "Second Page Library",
               color: null,
               ownerUserHandle: OWNER_USER_HANDLE,
@@ -125,7 +115,7 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
         "libraries:0": {
           data: [
             {
-              id: "lib-seed-1",
+              id: "00000000-0000-4000-8000-000000000201",
               name: "Bootstrapped Reading Room",
               color: null,
               ownerUserHandle: OWNER_USER_HANDLE,

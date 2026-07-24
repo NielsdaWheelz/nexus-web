@@ -619,29 +619,6 @@
   cursor: not-allowed;
 }
 
-.readingActions {
-  display: flex;
-  justify-content: center;
-  margin-top: 1.5rem;
-}
-
-.chatAction {
-  background: transparent;
-  color: var(--oracle-gold);
-  border: 1px solid var(--oracle-gold);
-  padding: 0.45rem 1rem;
-  font-family: var(--font-oracle-display);
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .chatAction:hover {
-    background: var(--oracle-gold);
-    color: var(--oracle-bg);
-  }
-}
-
 @keyframes oracle-fade-in {
   from {
     opacity: 0;

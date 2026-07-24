@@ -12,6 +12,7 @@ import {
   type MediaId,
   type PlayerDescriptor,
 } from "@/lib/lectern/contract";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   applySnapshotInstall,
   descriptorFromLecternItem,
@@ -74,6 +75,11 @@ function audioItem(itemKey: string, mediaKey: string, positionMs = 0): LecternIt
     href: assumeAppHref(`/media/${mediaKey}`),
     consumption: { state: "Unread", progress: absent() },
     activation: footerAudio(positionMs),
+    actionTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: mediaId(mediaKey),
+      href: `/media/${mediaId(mediaKey)}`,
+    }),
   };
 }
 

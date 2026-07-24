@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHydratedPane } from "@/__tests__/helpers/authenticatedPane";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import {
   fetchInputPath,
   jsonResponse,
@@ -8,6 +9,7 @@ import {
   wasFetchPathCalled,
 } from "@/__tests__/helpers/fetch";
 import { ResolvedPaneBodyMarker } from "@/lib/panes/paneRenderRegistry";
+import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 import NotePaneBody from "./NotePaneBody";
 
 describe("NotePaneBody resource identity", () => {
@@ -69,6 +71,41 @@ describe("NotePaneBody resource identity", () => {
       getComputedStyle(routeEditorShell as HTMLElement).overflowY,
     );
     expect(fetchSpy.mock.calls.some(([input]) => fetchInputPath(input).startsWith("/api/notes/pages/"))).toBe(false);
+  });
+
+  it("does not publish a resource target when the note fails to load", async () => {
+    const blockId = "77777777-7777-4777-8777-777777777777";
+    stubFetch(async (input) => {
+      const path = fetchInputPath(input);
+      if (path === `/api/notes/blocks/${blockId}`) {
+        return jsonResponse(
+          { error: { code: "E_NOT_FOUND", message: "Missing note" } },
+          404,
+        );
+      }
+      return new Promise<Response>(() => {});
+    });
+    const publish =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+
+    renderHydratedPane({
+      href: `/notes/${blockId}`,
+      resources: {},
+      children: (
+        <PanePrimaryChromeProvider publish={publish}>
+          <ResolvedPaneBodyMarker>
+            <NotePaneBody />
+          </ResolvedPaneBodyMarker>
+        </PanePrimaryChromeProvider>
+      ),
+    });
+
+    await screen.findByRole("alert");
+    expect(
+      publish.mock.calls.some(
+        ([update]) => update.publication?.menu?.kind === "ResourceMenu",
+      ),
+    ).toBe(false);
   });
 });
 

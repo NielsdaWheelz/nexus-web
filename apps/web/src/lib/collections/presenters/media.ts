@@ -3,6 +3,8 @@
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { mediaResourceOptions } from "@/lib/actions/resourceActions";
 import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
+import { publishResourceRowActions } from "@/lib/collections/resourceActionPublication";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   readActivity,
   type ReadActivityTime,
@@ -37,12 +39,13 @@ export interface MediaPresenterItem extends ReadStateFields {
     can_retry?: boolean;
     can_refresh_source?: boolean;
     can_retry_metadata?: boolean;
+    can_edit_authors?: boolean;
   };
 }
 
 export type MediaPresenterContext = Omit<
   Parameters<typeof mediaResourceOptions>[0],
-  "media" | "readState"
+  "media"
 > & {
   connectionSummary?: ConnectionSummaryOut;
   readingTimeEstimate: ReadingTimeEstimatePresence;
@@ -85,18 +88,18 @@ export function presentMedia(
   ctx: MediaPresenterContext,
 ): CollectionRowView {
   const { connectionSummary, readingTimeEstimate, ...actionCtx } = ctx;
-  const actions = mediaResourceOptions({
+  const rich = mediaResourceOptions({
     media: item,
-    readState: item.read_state,
     ...actionCtx,
   });
+  const href = `/media/${item.id}`;
 
   return {
     id: item.id,
     kind: "media",
     primary: {
       kind: "link",
-      href: `/media/${item.id}`,
+      href,
       paneLabelHint: item.title,
       viewTransition: "media-reader",
     },
@@ -112,7 +115,15 @@ export function presentMedia(
     exceptionalStatus: exceptionalStatus(item.processing_status),
     connections: connectionsFromSummary(connectionSummary),
     relatedMediaId: present(item.id),
-    actions,
+    actionPublication: publishResourceRowActions({
+      target: routeResourceActionSubject({
+        scheme: "media",
+        id: item.id,
+        href,
+      }),
+      rich,
+      view: [],
+    }),
     selected: false,
   };
 }

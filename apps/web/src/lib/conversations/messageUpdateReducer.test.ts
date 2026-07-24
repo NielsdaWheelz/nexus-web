@@ -11,6 +11,7 @@ import type {
   ChatRunResponse,
   ConversationMessage,
 } from "@/lib/conversations/types";
+import { decodeContextRef } from "@/lib/resourceGraph/contextRefs";
 
 const base = {
   status: "complete",
@@ -334,6 +335,7 @@ describe("messageUpdateReducer", () => {
 
   it("apply_context_ref appends a context ref and is idempotent by id", () => {
     const ref = {
+      ...decodeContextRef({
       id: "ctx-1",
       conversation_id: "conversation-1",
       resource_ref: "media:11111111-1111-4111-8111-111111111111",
@@ -342,6 +344,7 @@ describe("messageUpdateReducer", () => {
       summary: "A summary",
       missing: false,
       created_at: "2026-01-01T00:00:02Z",
+      }),
       citation_edge_id: null,
     };
     const added = only({ type: "apply_context_ref", assistantId: "a1", data: ref });

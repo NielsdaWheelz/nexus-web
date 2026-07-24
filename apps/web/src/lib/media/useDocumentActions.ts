@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import { usePaneRouter } from "@/lib/panes/paneRuntime";
@@ -9,7 +10,7 @@ import {
   retryMediaMetadata,
 } from "@/lib/media/ingestionClient";
 import type { DocumentProcessingStatus } from "@/lib/media/documentReadiness";
-import { deleteMedia } from "@/lib/media/mediaLibraries";
+import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
 import { runSourceProcessingAction } from "@/lib/media/sourceActions";
 
 interface DocumentActionTarget {
@@ -61,16 +62,15 @@ export function useDocumentActions({
     if (!media || deleteBusy) {
       return;
     }
-    if (
-      !window.confirm(
-        `Remove "${media.title}" from your libraries and shared access?`,
-      )
-    ) {
-      return;
-    }
     setDeleteBusy(true);
     try {
-      const result = await deleteMedia(media.id);
+      const outcome = await confirmAndDeleteMedia({
+        mediaId: media.id,
+        mediaTitle: media.title,
+        confirmRemoval: (message) => window.confirm(message),
+      });
+      if (outcome.kind === "Cancelled") return;
+      const { result } = outcome;
       if (result.kind === "Deleting") {
         // Removal-in-progress: the last reference is gone and physical deletion
         // is scheduled server-side.
@@ -79,6 +79,7 @@ export function useDocumentActions({
       router.push("/libraries");
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to remove media" }),
       });
@@ -108,6 +109,7 @@ export function useDocumentActions({
       feedback.show(projection.feedback);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to retry processing" }),
       });
@@ -137,6 +139,7 @@ export function useDocumentActions({
       feedback.show(projection.feedback);
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to refresh source" }),
       });
@@ -166,6 +169,7 @@ export function useDocumentActions({
       });
     } catch (err) {
       if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to re-enrich metadata" }),
       });

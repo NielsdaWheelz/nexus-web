@@ -17,7 +17,7 @@ import {
   Suspense,
   type UIEvent,
 } from "react";
-import { startResourceContextChat } from "@/lib/resources/resourceContextChat";
+import { executeResourceChat } from "@/lib/resources/resourceActionExecution";
 import ConversationDestinationOverlay from "@/components/chat/ConversationDestinationOverlay";
 import {
   readerHighlightChatIntent,
@@ -59,7 +59,12 @@ import HighlightActionPopover from "@/components/highlights/HighlightActionPopov
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
 } from "@/components/highlights/HighlightQuickNoteComposer";
-import { ApiError, apiFetch, isApiError } from "@/lib/api/client";
+import {
+  ApiError,
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { mediaResource } from "@/lib/api/resource";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
@@ -76,7 +81,15 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
-import { mediaResourceOptions } from "@/lib/actions/resourceActions";
+import {
+  RESOURCE_ACTION_CATALOG,
+  episodeResourceOptions,
+  mediaResourceOptions,
+  type ExecutableResourceAction,
+  type LecternMembershipAction,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import {
   useMediaProcessingStatus,
@@ -304,7 +317,7 @@ export interface Media extends MediaProcessingSnapshot {
   playback_source?: TranscriptPlaybackSource | null;
   chapters?: TranscriptChapter[];
   contributors: ContributorCredit[];
-  author_mode?: "automatic" | "manual" | null;
+  author_mode: "automatic" | "manual";
   published_date?: string | null;
   publisher?: string | null;
   language?: string | null;
@@ -316,6 +329,7 @@ export interface Media extends MediaProcessingSnapshot {
   } | null;
   subscription_default_playback_speed?: number | null;
   episode_state?: "unplayed" | "in_progress" | "played" | null;
+  read_state?: "unread" | "in_progress" | "finished" | null;
   // Presence<PlayerDescriptor> (camelCase key even inside this snake_case DTO;
   // spec §4/§6). Absent for non-audio media; may be missing until the backend
   // field lands — decoded defensively at the call site.
@@ -686,6 +700,24 @@ export default function MediaPaneBody() {
   // Latest snapshot for imperative completion handlers (pre-completion basis for Undo).
   const lecternSnapshotRef = useRef<LecternSnapshot>(lecternSnapshot);
   lecternSnapshotRef.current = lecternSnapshot;
+  const paneActionBusyRef = useRef(new Set<ResourceActionId>());
+  const [paneActionBusyIds, setPaneActionBusyIds] = useState<
+    ReadonlySet<ResourceActionId>
+  >(new Set());
+  const runPaneAction = useCallback(
+    async (actionId: ResourceActionId, execute: () => Promise<void>) => {
+      if (paneActionBusyRef.current.has(actionId)) return;
+      paneActionBusyRef.current.add(actionId);
+      setPaneActionBusyIds(new Set(paneActionBusyRef.current));
+      try {
+        await execute();
+      } finally {
+        paneActionBusyRef.current.delete(actionId);
+        setPaneActionBusyIds(new Set(paneActionBusyRef.current));
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     setCurrentTotalProgression(null);
@@ -720,6 +752,8 @@ export default function MediaPaneBody() {
       });
       feedback.show({ severity: "success", title: "Added to Lectern" });
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to add to Lectern" }),
       });
@@ -747,6 +781,8 @@ export default function MediaPaneBody() {
         completedItemId: row?.itemId ?? null,
       });
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to mark as finished" }),
       });
@@ -757,9 +793,35 @@ export default function MediaPaneBody() {
     try {
       await lectern.setUnread(parseMediaId(id));
     } catch (err) {
+      if (handleUnauthenticatedApiError(err)) return;
+      if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
       feedback.show({
         ...toFeedback(err, { fallback: "Failed to mark as unread" }),
       });
+    }
+  }, [feedback, id, lectern]);
+
+  const handleMarkEpisodePlayed = useCallback(async () => {
+    try {
+      await lectern.ensureMediaFinished(parseMediaId(id));
+    } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      feedback.show(
+        toFeedback(error, { fallback: "Failed to mark episode as played" }),
+      );
+    }
+  }, [feedback, id, lectern]);
+
+  const handleMarkEpisodeUnplayed = useCallback(async () => {
+    try {
+      await lectern.setUnread(parseMediaId(id));
+    } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      feedback.show(
+        toFeedback(error, { fallback: "Failed to mark episode as unplayed" }),
+      );
     }
   }, [feedback, id, lectern]);
 
@@ -4095,10 +4157,32 @@ export default function MediaPaneBody() {
   // Chat verb (opens a full conversation pane)
   // ==========================================================================
 
+  const keyboardChatBusyRef = useRef(false);
   const openChatForMedia = useCallback(async () => {
-    const conversationId = await startResourceContextChat(`media:${id}`);
-    openInNewPane?.(`/conversations/${conversationId}`, "Chat");
-  }, [id, openInNewPane]);
+    if (keyboardChatBusyRef.current) return;
+    keyboardChatBusyRef.current = true;
+    try {
+      await executeResourceChat({
+        ref: routeResourceActionSubject({
+          scheme: "media",
+          id,
+          href: `/media/${id}`,
+        }).ref,
+        openConversation: (conversationId) =>
+          openInNewPane?.(`/conversations/${conversationId}`, "Chat"),
+      });
+    } catch (error: unknown) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      feedback.show(
+        toFeedback(error, {
+          fallback: "A conversation about this resource could not begin.",
+        }),
+      );
+    } finally {
+      keyboardChatBusyRef.current = false;
+    }
+  }, [feedback, id, openInNewPane]);
 
   // ==========================================================================
   // EPUB Section Navigation
@@ -4686,14 +4770,17 @@ export default function MediaPaneBody() {
 
   const isReflowableReader = canRead && !isPdf;
 
-  // Read-state verb driver: the exact Lectern row's consumption when this media
-  // is On Lectern, else Unread (so "Mark as finished"/"Done" is offered).
+  // Read-state verb driver: the exact ready Lectern row wins when present;
+  // otherwise preserve the MediaOut read model instead of inventing Unread.
   const mediaReadState: "unread" | "in_progress" | "finished" = (() => {
-    const row = lecternSnapshot.items.find((item) => item.mediaId === id);
-    if (!row) return "unread";
-    if (row.consumption.state === "Finished") return "finished";
-    if (row.consumption.state === "InProgress") return "in_progress";
-    return "unread";
+    const row =
+      lecternResource.status === "ready"
+        ? lecternResource.data.items.find((item) => item.mediaId === id)
+        : undefined;
+    if (row?.consumption.state === "Finished") return "finished";
+    if (row?.consumption.state === "InProgress") return "in_progress";
+    if (row) return "unread";
+    return media?.read_state ?? "unread";
   })();
 
   const mediaResourceHeader = useMemo<PaneResourceHeaderPublication | null>(
@@ -4710,81 +4797,158 @@ export default function MediaPaneBody() {
     [initialHeaderFailure, media],
   );
 
-  const mediaHeaderOptions = useMemo(() => {
-    const options = mediaResourceOptions({
+  const mediaHeaderGroups = useMemo(() => {
+    if (!media) {
+      return {
+        core: [],
+        operations: [],
+        relationships: [],
+        view: [],
+      };
+    }
+    const busyIds = new Set<ResourceActionId>(paneActionBusyIds);
+    if (retryProcessingBusy) {
+      busyIds.add(RESOURCE_ACTION_CATALOG.RetryProcessing.id);
+    }
+    if (refreshSourceBusy) {
+      busyIds.add(RESOURCE_ACTION_CATALOG.RefreshSource.id);
+    }
+    if (retryMetadataBusy) {
+      busyIds.add(RESOURCE_ACTION_CATALOG.RetryMetadata.id);
+    }
+    if (mediaRemovalBusy) {
+      busyIds.add(RESOURCE_ACTION_CATALOG.RemoveMedia.id);
+    }
+    const lecternItem = lecternSnapshot.items.find(
+      (item) => item.mediaId === id,
+    );
+    const retryProcessing: ExecutableResourceAction =
+      media.capabilities?.can_retry
+        ? { kind: "Available", execute: handleRetryProcessing }
+        : { kind: "Unavailable" };
+    const refreshSource: ExecutableResourceAction =
+      media.capabilities?.can_refresh_source
+        ? { kind: "Available", execute: handleRefreshSource }
+        : { kind: "Unavailable" };
+    const retryMetadata: ExecutableResourceAction =
+      media.capabilities?.can_retry_metadata
+        ? { kind: "Available", execute: handleRetryMetadata }
+        : { kind: "Unavailable" };
+    const removeMedia: ExecutableResourceAction =
+      media.capabilities?.can_delete
+        ? { kind: "Available", execute: handleRemoveMedia }
+        : { kind: "Unavailable" };
+    const editAuthors: ExecutableResourceAction =
+      media.capabilities?.can_edit_authors
+        ? { kind: "Available", execute: openAuthorsEditor }
+        : { kind: "Unavailable" };
+    const lecternMembership: LecternMembershipAction =
+      lectern.resource.status !== "ready"
+        ? { kind: "Unavailable" }
+        : lecternItem
+          ? {
+              kind: "Remove",
+              itemId: lecternItem.itemId,
+              execute: () =>
+                runPaneAction(
+                  RESOURCE_ACTION_CATALOG.RemoveFromLectern.id,
+                  async () => {
+                    try {
+                      await lectern.removeItem(lecternItem.itemId);
+                    } catch (error: unknown) {
+                      if (handleUnauthenticatedApiError(error)) return;
+                      if (
+                        !isApiError(error) ||
+                        isSameSystemApiDefect(error)
+                      ) {
+                        throw error;
+                      }
+                      feedback.show(
+                        toFeedback(error, {
+                          fallback: "Failed to remove from Lectern",
+                        }),
+                      );
+                    }
+                  },
+                ),
+            }
+          : {
+              kind: "Add",
+              execute: () =>
+                runPaneAction(
+                  RESOURCE_ACTION_CATALOG.AddToLectern.id,
+                  handleAddMediaToLectern,
+                ),
+            };
+    const commonActions = {
       media,
-      retryBusy: retryProcessingBusy,
-      refreshBusy: refreshSourceBusy,
-      deleteBusy: mediaRemovalBusy,
-      retryMetadataBusy,
-      onRetry: media?.capabilities?.can_retry
-        ? () => {
-            void handleRetryProcessing();
-          }
-        : undefined,
-      onRefreshSource: media?.capabilities?.can_refresh_source
-        ? () => {
-            void handleRefreshSource();
-          }
-        : undefined,
-      onRetryMetadata: media?.capabilities?.can_retry_metadata
-        ? () => {
-            void handleRetryMetadata();
-          }
-        : undefined,
-      onOpenChat: media
-        ? () => {
-            void openChatForMedia();
-          }
-        : undefined,
-      onDelete: media?.capabilities?.can_delete
-        ? () => {
-            void handleRemoveMedia();
-          }
-        : undefined,
-      onAddToLectern: media
-        ? () => {
-            void handleAddMediaToLectern();
-          }
-        : undefined,
-      readState: mediaReadState,
-      onMarkFinished: media
-        ? () => {
-            void handleMarkFinished();
-          }
-        : undefined,
-      onMarkUnread: media
-        ? () => {
-            void handleMarkUnread();
-          }
-        : undefined,
-    });
-    const readerOptions: ActionDescriptor[] = [];
+      retryProcessing,
+      refreshSource,
+      retryMetadata,
+      editAuthors,
+      removeMedia,
+      lecternMembership,
+      busyIds,
+    };
+    const resourceGroups =
+      media.kind === "podcast_episode"
+        ? episodeResourceOptions({
+            ...commonActions,
+            playedState:
+              media.episode_state === "played" ||
+              media.listening_state?.is_completed === true
+                ? {
+                    kind: "MarkUnplayed",
+                    execute: () =>
+                      runPaneAction(
+                        RESOURCE_ACTION_CATALOG.MarkUnplayed.id,
+                        handleMarkEpisodeUnplayed,
+                      ),
+                  }
+                : {
+                    kind: "MarkPlayed",
+                    execute: () =>
+                      runPaneAction(
+                        RESOURCE_ACTION_CATALOG.MarkPlayed.id,
+                        handleMarkEpisodePlayed,
+                      ),
+                  },
+          })
+        : mediaResourceOptions({
+            ...commonActions,
+            readState:
+              mediaReadState === "finished"
+                ? {
+                    kind: "MarkUnread",
+                    execute: () =>
+                      runPaneAction(
+                        RESOURCE_ACTION_CATALOG.MarkUnread.id,
+                        handleMarkUnread,
+                      ),
+                  }
+                : {
+                    kind: "MarkFinished",
+                    execute: () =>
+                      runPaneAction(
+                        RESOURCE_ACTION_CATALOG.MarkFinished.id,
+                        handleMarkFinished,
+                      ),
+                  },
+          });
+    const view: ActionDescriptor[] = [];
     if (mediaResourceHeader?.status === "ready") {
-      readerOptions.push({
+      view.push({
         kind: "command",
-        id: "view-credits",
+        id: "ViewAction.Resource.Credits",
         label: "Credits…",
         restoreFocusOnClose: false,
         onSelect: openCreditsOverlay,
       });
-      if (media?.capabilities?.can_edit_authors) {
-        const hasAuthors = mediaResourceHeader.creditGroups.some(
-          (group) => group.kind === "authors",
-        );
-        readerOptions.push({
-          kind: "command",
-          id: "edit-authors",
-          label: hasAuthors ? "Edit authors…" : "Add author…",
-          restoreFocusOnClose: false,
-          onSelect: openAuthorsEditor,
-        });
-      }
     }
-    readerOptions.push(
+    view.push(
       {
         kind: "command",
-        id: "reader-settings",
+        id: "ViewAction.Reader.Settings",
         label: "Reader settings",
         restoreFocusOnClose: false,
         onSelect: () => {
@@ -4796,9 +4960,9 @@ export default function MediaPaneBody() {
     // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
     const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
     if (isReflowableReader) {
-      readerOptions.push({
+      view.push({
         kind: "command",
-        id: "reader-theme-light",
+        id: "ViewAction.Reader.Theme.Light",
         label:
           readerProfile.theme === "light"
             ? "Light theme (current)"
@@ -4806,9 +4970,9 @@ export default function MediaPaneBody() {
         disabled: readerProfile.theme === "light" || readerPersistenceForbidden,
         onSelect: () => setTheme("light"),
       });
-      readerOptions.push({
+      view.push({
         kind: "command",
-        id: "reader-theme-dark",
+        id: "ViewAction.Reader.Theme.Dark",
         label:
           readerProfile.theme === "dark"
             ? "Dark theme (current)"
@@ -4817,9 +4981,9 @@ export default function MediaPaneBody() {
         onSelect: () => setTheme("dark"),
       });
     } else if (isPdf && canRead) {
-      readerOptions.push({
+      view.push({
         kind: "custom",
-        id: "reader-pdf-source-colors",
+        id: "ViewAction.Reader.PdfSourceColors",
         label: "PDF pages keep their source colors",
         // A static, perceivable status row (the render seam wraps it in a
         // labelled role="group"): a native-disabled menuitem would be skipped
@@ -4832,18 +4996,23 @@ export default function MediaPaneBody() {
       });
     }
 
-    const dangerIndex = options.findIndex((option) => option.tone === "danger");
-    if (dangerIndex === -1) {
-      options.push(...readerOptions);
-    } else {
-      options.splice(dangerIndex, 0, ...readerOptions);
-    }
-    return options;
+    return {
+      core: [],
+      operations: resourceGroups.operations,
+      relationships: resourceGroups.relationships,
+      view,
+    };
   }, [
+    id,
+    feedback,
+    lectern,
+    lecternSnapshot.items,
     mediaRemovalBusy,
     handleAddMediaToLectern,
     handleRemoveMedia,
     handleMarkFinished,
+    handleMarkEpisodePlayed,
+    handleMarkEpisodeUnplayed,
     handleMarkUnread,
     handleRefreshSource,
     handleRetryMetadata,
@@ -4854,7 +5023,6 @@ export default function MediaPaneBody() {
     mediaResourceHeader,
     mediaReadState,
     openAuthorsEditor,
-    openChatForMedia,
     openCreditsOverlay,
     openInNewPane,
     readerProfile.theme,
@@ -4862,6 +5030,8 @@ export default function MediaPaneBody() {
     refreshSourceBusy,
     retryMetadataBusy,
     retryProcessingBusy,
+    paneActionBusyIds,
+    runPaneAction,
     canRead,
     setTheme,
   ]);
@@ -5906,11 +6076,23 @@ export default function MediaPaneBody() {
         : {}),
       ...(mediaToolbar ? { toolbar: mediaToolbar } : {}),
       actions: companionAction ? [companionAction] : [],
-      options: mediaHeaderOptions,
+      menu: media
+        ? {
+            kind: "ResourceMenu" as const,
+            target: routeResourceActionSubject({
+              scheme: "media",
+              id,
+              href: `/media/${id}`,
+            }),
+            groups: mediaHeaderGroups,
+          }
+        : undefined,
     }),
     [
       companionAction,
-      mediaHeaderOptions,
+      id,
+      media,
+      mediaHeaderGroups,
       mediaResourceHeader,
       mediaToolbar,
     ],
@@ -6526,7 +6708,7 @@ export default function MediaPaneBody() {
             open={authorsEditorOpen}
             onClose={() => setAuthorsEditorOpen(false)}
             authors={mapMediaAuthorCredits(media.contributors)}
-            authorMode={media.author_mode ?? "automatic"}
+            authorMode={media.author_mode}
             returnFocusTo={() => authorsEditorTrigger}
             returnFocusFallback={returnFocusFallback}
             onSaved={handleAuthorsSaved}

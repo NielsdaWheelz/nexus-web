@@ -8,7 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { apiFetch } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { conversationsInitialResource, type NoResourceParams } from "@/lib/api/resource";
 import { useResource } from "@/lib/api/useResource";
@@ -20,6 +24,8 @@ import SectionOpener from "@/components/ui/SectionOpener";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import { presentConversation } from "@/lib/collections/presenters/conversation";
+import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
+import { useStringIdSet } from "@/lib/useStringIdSet";
 import type { ConversationSummary } from "@/lib/conversations/types";
 import {
   definePaneVisitDataKey,
@@ -59,6 +65,7 @@ export default function ConversationsPaneBody() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+  const deletingConversationIds = useStringIdSet();
 
   useEffect(() => {
     if (restoredAtMountRef.current || firstPage.status !== "ready") {
@@ -110,6 +117,8 @@ export default function ConversationsPaneBody() {
   const handleDelete = useCallback(
     async (id: string) => {
       if (!confirm("Delete this conversation? This cannot be undone.")) return;
+      if (deletingConversationIds.has(id)) return;
+      deletingConversationIds.add(id);
       try {
         await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
         setController((current) =>
@@ -125,16 +134,25 @@ export default function ConversationsPaneBody() {
         clearAllVisitData();
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return;
+        if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
         setFeedback(toFeedback(err, { fallback: "Failed to delete conversation" }));
+      } finally {
+        deletingConversationIds.remove(id);
       }
     },
-    [clearAllVisitData],
+    [clearAllVisitData, deletingConversationIds],
   );
 
   const rows = (controller?.conversations ?? [])
     .map((conversation) =>
       presentConversation(conversation, {
-        onDelete: () => void handleDelete(conversation.id),
+        deleteConversation: {
+          kind: "Available",
+          execute: () => handleDelete(conversation.id),
+        },
+        busyIds: deletingConversationIds.ids.has(conversation.id)
+          ? new Set([RESOURCE_ACTION_CATALOG.DeleteConversation.id])
+          : new Set(),
       }),
     );
 

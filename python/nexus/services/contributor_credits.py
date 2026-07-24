@@ -63,6 +63,8 @@ def distinct_visible_works_sql() -> str:
     Columns:
 
     - ``contributor_id``
+    - ``media_id`` / ``podcast_id`` / ``project_gutenberg_catalog_ebook_id`` —
+      the mutually-exclusive target identity columns
     - ``href``          — the target route (also the unique tiebreaker key)
     - ``title``         — target title ('' when absent)
     - ``content_kind``  — media kind | 'podcast' | 'project_gutenberg_ebook'
@@ -74,6 +76,9 @@ def distinct_visible_works_sql() -> str:
     return f"""
         SELECT
             vcc.contributor_id,
+            vcc.media_id,
+            vcc.podcast_id,
+            vcc.project_gutenberg_catalog_ebook_id,
             CASE
                 WHEN vcc.media_id IS NOT NULL
                     THEN '/media/' || vcc.media_id::text

@@ -20,7 +20,7 @@ import type { PaneRouteId, RouteParams } from "@/lib/panes/paneRouteModel";
 import { normalizeBlock, normalizePageSummary } from "@/lib/notes/normalize";
 import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
-import { parseContributorHandle } from "@/lib/contributors/handle";
+import { decodeContributorDetail } from "@/lib/contributors/detail";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import { expectArray, expectNullableString } from "@/lib/validation";
@@ -37,23 +37,6 @@ export interface AuthorPaneSeed {
   detail: ContributorDetail;
   works: ContributorWorkItem[];
   worksNextCursor: string | null;
-}
-
-function decodeAuthorDetail(raw: unknown): ContributorDetail {
-  const detail = raw as {
-    handle: string;
-    href: string;
-    displayName: string;
-    otherNames?: string[] | null;
-    canRename?: boolean;
-  };
-  return {
-    handle: parseContributorHandle(detail.handle),
-    href: detail.href,
-    displayName: detail.displayName,
-    otherNames: Array.isArray(detail.otherNames) ? detail.otherNames : [],
-    canRename: Boolean(detail.canRename),
-  };
 }
 
 // One transport-agnostic loader per prefetchable pane — the single definition of
@@ -175,7 +158,7 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
         >(contributorWorksResource, { handle: p.handle, limit: AUTHOR_WORKS_LIMIT }),
       ]);
       return {
-        detail: decodeAuthorDetail(detailEnv.data),
+        detail: decodeContributorDetail(detailEnv.data),
         works: expectArray(
           worksEnv.data.works,
           decodeContributorWorkItem,

@@ -26,7 +26,7 @@ import { formatKeyCombo } from "@/lib/keybindings";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
 import { getPaneRouteIcon, resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PlatformKind } from "@/lib/renderEnvironment/types";
-import { hrefForResourceActivation } from "@/lib/resources/activation";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { searchHref } from "@/lib/search/searchParams";
 import { SEARCH_TYPE_ICON } from "@/lib/search/searchTypeIcon";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -38,6 +38,9 @@ import type { LauncherItem } from "./model";
 const URL_SIGNAL_BOOST = 1_000_000;
 
 export interface LauncherPane {
+  // Workspace persistence owns pane identity/navigation only. It does not carry
+  // canonical resource presence facts, so Launcher must not upcast this href
+  // into a ResourceActionSubject.
   id: string;
   href: string;
   visibility: "visible" | "minimized";
@@ -45,6 +48,8 @@ export interface LauncherPane {
 }
 
 export interface LauncherRecentRow {
+  // Palette history is destination history, not a resource snapshot. Even a
+  // canonical-looking target_key lacks current missing/presence facts.
   target_key: string;
   target_href: string;
   title_snapshot: string;
@@ -175,7 +180,14 @@ function folioItems(ctx: LauncherContext): LauncherItem[] {
       ],
       sectionId: "recent-folios",
       icon: Sparkles,
-      target: { kind: "href", href: `/oracle/${row.id}`, externalShell: false },
+      target: {
+        kind: "ResourceOpen",
+        subject: routeResourceActionSubject({
+          scheme: "oracle_reading",
+          id: row.id,
+          href: `/oracle/${row.id}`,
+        }),
+      },
       source: "oracle",
       rank: {},
       hasActions: true,
@@ -272,8 +284,16 @@ function addItems(ctx: LauncherContext): LauncherItem[] {
 function searchItems(ctx: LauncherContext): LauncherItem[] {
   return ctx.searchResults
     .map((result): LauncherItem | null => {
-      const href = hrefForResourceActivation(result.activation);
-      if (!href || androidBlocked(ctx, href)) return null;
+      const subject = result.actionTarget;
+      const href = subject.activation.href;
+      if (
+        subject.missing ||
+        subject.activation.kind === "none" ||
+        href === null ||
+        androidBlocked(ctx, href)
+      ) {
+        return null;
+      }
       // Readable/playable media rows expose a trailing "Add to Lectern" action; the
       // default Enter still opens the resource.
       const queueable =
@@ -289,8 +309,8 @@ function searchItems(ctx: LauncherContext): LauncherItem[] {
         sectionId: "search-results",
         icon: SEARCH_TYPE_ICON[result.type],
         target: {
-          kind: "resource",
-          activation: result.activation,
+          kind: "ResourceOpen",
+          subject,
           labelHint: result.paneLabelHint,
         },
         source: "search",
@@ -433,7 +453,7 @@ function askItem(ctx: LauncherContext, base: LauncherItem[]): LauncherItem[] {
       keywords: ["ask", "ai", "chat"],
       sectionId: "ask",
       icon: MessageSquare,
-      target: { kind: "ask", text },
+      target: { kind: "Ask", text },
       source: "ai",
       rank: {},
       pin: "last",

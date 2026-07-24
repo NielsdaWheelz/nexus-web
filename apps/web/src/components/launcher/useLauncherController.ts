@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import {
+  apiFetch,
+  isApiError,
+  isSameSystemApiDefect,
+  type ApiPath,
+} from "@/lib/api/client";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
 import { usePaneWarm } from "@/lib/panes/paneWarm";
@@ -289,7 +294,7 @@ export function useLauncherController(): LauncherController {
     async (signal) => {
       const [browseRows, webRows] = await Promise.all([
         fetchBrowse(input.text, signal),
-        fetchWeb(input.text, signal).catch(() => EMPTY_WEB),
+        fetchWeb(input.text, signal),
       ]);
       return { browseRows, webRows };
     },
@@ -388,11 +393,11 @@ export function useLauncherController(): LauncherController {
       if (target?.kind === "href" && !target.externalShell) {
         warmPane(target.href);
       } else if (
-        target?.kind === "resource" &&
-        target.activation.kind === "route" &&
-        target.activation.href
+        target?.kind === "ResourceOpen" &&
+        target.subject.activation.kind === "route" &&
+        target.subject.activation.href
       ) {
-        warmPane(target.activation.href);
+        warmPane(target.subject.activation.href);
       }
     },
     [warmPane],
@@ -408,17 +413,18 @@ export function useLauncherController(): LauncherController {
       activatePane,
       restorePane,
       closePane,
-      openShare: (target) => {
+      openShare,
+      shareOptions: () => {
         const returnTarget =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
-        openShare(target, {
+        return {
           returnFocusTo: () => returnTarget,
           returnFocusFallback: present(() =>
             findPaneChromeFocusTarget(state.activePrimaryPaneId),
           ),
-        });
+        };
       },
     }),
     [
@@ -443,12 +449,12 @@ export function useLauncherController(): LauncherController {
       const wire =
         target.kind === "href"
           ? { key: target.href, href: target.href }
-          : target.kind === "resource" &&
-              target.activation.kind === "route" &&
-              target.activation.href
+          : target.kind === "ResourceOpen" &&
+              target.subject.activation.kind === "route" &&
+              target.subject.activation.href
             ? {
-                key: target.activation.resourceRef,
-                href: target.activation.href,
+                key: target.subject.ref,
+                href: target.subject.activation.href,
               }
             : null;
       if (!wire) return;
@@ -467,6 +473,7 @@ export function useLauncherController(): LauncherController {
         }),
       }).catch((error) => {
         if (handleUnauthenticatedApiError(error)) return;
+        if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
         feedback.show(
           toFeedback(error, { fallback: "Command history was not saved" }),
         );
@@ -478,6 +485,7 @@ export function useLauncherController(): LauncherController {
   const fail = useCallback(
     (error: unknown) => {
       if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
       feedback.show(toFeedback(error, { fallback: "Command failed" }));
     },
     [feedback],
@@ -563,7 +571,7 @@ export function useLauncherController(): LauncherController {
     if (!input.text) return;
     suppressReturnFocusRef.current = true; // ask opens a new chat pane
     setOpen(false);
-    void dispatchTarget({ kind: "ask", text: input.text }, dispatchCtx).catch(
+    void dispatchTarget({ kind: "Ask", text: input.text }, dispatchCtx).catch(
       fail,
     );
   }, [input.text, dispatchCtx, fail]);

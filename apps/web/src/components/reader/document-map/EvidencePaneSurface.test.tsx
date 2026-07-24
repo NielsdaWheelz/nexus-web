@@ -8,25 +8,40 @@ import type {
   ReaderEvidence,
   ReaderEvidenceHighlight,
   ReaderEvidenceObject,
+  ReaderEvidenceSourceTarget,
   ReaderEvidenceUserEdge,
 } from "@/lib/reader/documentMap";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
+import { ShareControllerProvider } from "@/lib/sharing/controller";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import EvidencePaneSurface, {
   type EvidencePaneProjection,
 } from "./EvidencePaneSurface";
 import type { EvidenceHighlightActions } from "./EvidenceItemRow";
 
 const absent = { kind: "Absent" } as const;
+const LINKED_MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const mediaObject: ReaderEvidenceObject = {
-  ref: "media:linked",
+  ref: `media:${LINKED_MEDIA_ID}`,
   kind: "Media",
   label: "Linked work",
   excerpt: { kind: "Present", value: "A linked excerpt" },
   activation: {
-    resourceRef: "media:linked",
+    resourceRef: `media:${LINKED_MEDIA_ID}`,
     kind: "route",
-    href: "/media/linked",
+    href: `/media/${LINKED_MEDIA_ID}`,
     unresolvedReason: null,
+  },
+  actionTarget: {
+    kind: "Resource",
+    ref: assumeCanonicalResourceRef(`media:${LINKED_MEDIA_ID}`),
+    activation: {
+      resourceRef: `media:${LINKED_MEDIA_ID}`,
+      kind: "route",
+      href: `/media/${LINKED_MEDIA_ID}`,
+      unresolvedReason: null,
+    },
+    missing: false,
   },
 };
 
@@ -183,6 +198,8 @@ function Harness({
   aggregateStatus = "ready",
   projection,
   activatePassage = vi.fn(() => true),
+  activateSourceTarget = vi.fn(),
+  onDismissSynapse = vi.fn(),
   onRemoveUserEdge = vi.fn(),
   onSaveLinkNote = vi.fn().mockResolvedValue({ note_block_id: "nb-new" }),
   onDeleteLinkNote = vi.fn().mockResolvedValue(undefined),
@@ -195,7 +212,12 @@ function Harness({
   activatePassage?: (
     group: ReaderEvidence["passage_groups"][number],
   ) => boolean;
-  onRemoveUserEdge?: (edge: ReaderEvidenceUserEdge) => void;
+  activateSourceTarget?: (
+    target: ReaderEvidenceSourceTarget,
+    options: { newPane: boolean },
+  ) => void;
+  onDismissSynapse?: (edgeId: string) => Promise<void>;
+  onRemoveUserEdge?: (edge: ReaderEvidenceUserEdge) => Promise<void>;
   onSaveLinkNote?: (
     linkId: string,
     noteBlockId: string,
@@ -206,7 +228,8 @@ function Harness({
   const filters = useEvidenceFilters();
   return (
     <FeedbackProvider>
-      <EvidencePaneSurface
+      <ShareControllerProvider>
+        <EvidencePaneSurface
         projection={
           projection ??
           (source === null || aggregateStatus === "empty"
@@ -224,13 +247,14 @@ function Harness({
         highlightActions={actions()}
         onActivatePassage={activatePassage}
         onActivateObject={vi.fn()}
-        onActivateSourceTarget={vi.fn()}
+        onActivateSourceTarget={activateSourceTarget}
         onHoverItem={vi.fn()}
-        onDismissSynapse={vi.fn()}
-        onRemoveUserEdge={onRemoveUserEdge}
+        onDismissSynapse={onDismissSynapse}
+        onRemoveUserEdge={onRemoveUserEdge ?? (async () => {})}
         onSaveLinkNote={onSaveLinkNote}
         onDeleteLinkNote={onDeleteLinkNote}
-      />
+        />
+      </ShareControllerProvider>
     </FeedbackProvider>
   );
 }
@@ -275,6 +299,96 @@ describe("EvidencePaneSurface", () => {
       />,
     );
     expect(screen.getByText("Footnote one")).toBeInTheDocument();
+  });
+
+  it("gives a valid source target universal core while preserving Shift activation", async () => {
+    const source = evidence();
+    const sourceReference = source.passage_groups[0]!.items[2]!;
+    if (sourceReference.kind !== "SourceReference") {
+      throw new Error("Expected SourceReference fixture");
+    }
+    sourceReference.targets = [
+      {
+        ref: mediaObject.ref,
+        stable_key: "source-target",
+        apparatus_kind: "footnote",
+        label: { kind: "Present", value: "Source work" },
+        body: absent,
+        activation: mediaObject.activation,
+        actionTarget: mediaObject.actionTarget,
+        resolution: { kind: "Unavailable", reason: "Unanchorable" },
+      },
+    ];
+    const activateSourceTarget = vi.fn();
+    render(
+      <Harness
+        source={source}
+        activateSourceTarget={activateSourceTarget}
+      />,
+    );
+    const sourceArticle = screen.getAllByRole("article")[2]!;
+    await userEvent.click(
+      within(sourceArticle).getByRole("button", { name: "1 linked object" }),
+    );
+    fireEvent.click(
+      within(sourceArticle).getByRole("button", { name: "Source work" }),
+      { shiftKey: true },
+    );
+    expect(activateSourceTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ stable_key: "source-target" }),
+      { newPane: true },
+    );
+
+    await userEvent.click(
+      within(sourceArticle).getByRole("button", {
+        name: "Actions for Source work",
+      }),
+    );
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(["Open", "Share…", "Chat about this resource"]);
+  });
+
+  it("keeps Highlight and GeneratedCitation rows out of universal resource menus", () => {
+    render(<Harness />);
+    const articles = screen.getAllByRole("article");
+    expect(
+      within(articles[0]!).queryByRole("button", { name: /Actions for/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(articles[3]!).queryByRole("button", { name: /Actions for/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("dismisses a top-level Synapse through its universal resource menu", async () => {
+    const onDismissSynapse = vi.fn(async () => {});
+    render(<Harness onDismissSynapse={onDismissSynapse} />);
+
+    const synapse = screen
+      .getAllByRole("article")
+      .find(
+        (article) =>
+          within(article).queryByText("These passages resonate.") !== null,
+      );
+    if (!synapse) throw new Error("Expected Synapse article");
+    await userEvent.click(
+      within(synapse).getByRole("button", {
+        name: "Actions for Linked work",
+      }),
+    );
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual([
+      "Open",
+      "Share…",
+      "Chat about this resource",
+      "Dismiss connection",
+    ]);
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Dismiss connection" }),
+    );
+
+    expect(onDismissSynapse).toHaveBeenCalledWith("edge-s1");
   });
 
   it("uses one accessible scope tabset and keeps passage failures visible", async () => {
@@ -495,16 +609,19 @@ describe("EvidencePaneSurface", () => {
             direction: "Outgoing",
           },
         ];
-        const onRemoveUserEdge = vi.fn();
+        const onRemoveUserEdge = vi.fn(async () => {});
         render(<Harness source={source} onRemoveUserEdge={onRemoveUserEdge} />);
 
         await userEvent.click(
           screen.getAllByRole("button", { name: "1 linked object" })[0]!,
         );
         await userEvent.click(
-          screen.getByRole("button", {
-            name: "Remove connection to Linked work",
+          within(screen.getAllByRole("article")[0]!).getByRole("button", {
+            name: "Actions for Linked work",
           }),
+        );
+        await userEvent.click(
+          screen.getByRole("menuitem", { name: "Unlink connection" }),
         );
 
         expect(onRemoveUserEdge).toHaveBeenCalledWith(
@@ -538,9 +655,14 @@ describe("EvidencePaneSurface", () => {
       await userEvent.click(
         screen.getAllByRole("button", { name: "1 linked object" })[0]!,
       );
+      await userEvent.click(
+        within(screen.getAllByRole("article")[0]!).getByRole("button", {
+          name: "Actions for Linked work",
+        }),
+      );
       expect(
-        screen.queryByRole("button", {
-          name: "Remove connection to Linked work",
+        screen.queryByRole("menuitem", {
+          name: "Unlink connection",
         }),
       ).not.toBeInTheDocument();
     });
@@ -548,13 +670,16 @@ describe("EvidencePaneSurface", () => {
 
   describe("stable user Link controls", () => {
     it("removes a stable user Link via the typed user-edge contract", async () => {
-      const onRemoveUserEdge = vi.fn();
+      const onRemoveUserEdge = vi.fn(async () => {});
       render(<Harness onRemoveUserEdge={onRemoveUserEdge} />);
       await userEvent.click(
         screen.getByRole("tab", { name: /Whole document 1/ }),
       );
       await userEvent.click(
-        screen.getByRole("button", { name: "Remove link Document relation" }),
+        screen.getByRole("button", { name: "Actions for Linked work" }),
+      );
+      await userEvent.click(
+        screen.getByRole("menuitem", { name: "Unlink connection" }),
       );
       expect(onRemoveUserEdge).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -596,8 +721,11 @@ describe("EvidencePaneSurface", () => {
         screen.getByRole("tab", { name: /Whole document 1/ }),
       );
 
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for Linked work" }),
+      );
       expect(
-        screen.getByRole("button", { name: "Remove link Document relation" }),
+        screen.getByRole("menuitem", { name: "Unlink connection" }),
       ).toBeInTheDocument();
       expect(
         screen.queryByRole("button", {
@@ -616,8 +744,11 @@ describe("EvidencePaneSurface", () => {
         screen.getByRole("tab", { name: /Whole document 1/ }),
       );
 
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for Linked work" }),
+      );
       expect(
-        screen.queryByRole("button", { name: "Remove link Document relation" }),
+        screen.queryByRole("menuitem", { name: "Unlink connection" }),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole("button", {

@@ -1,6 +1,7 @@
 /** Pure semantic projection for one already-decoded search result row. */
 
 import { absent, present } from "@/lib/api/presence";
+import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import type { CollectionRowView } from "@/lib/collections/types";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -43,7 +44,11 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     exceptionalStatus: absent(),
     connections: absent(),
     relatedMediaId: absent(),
-    actions: [],
+    actionPublication: {
+      kind: "ResourceMenu",
+      target: vm.actionTarget,
+      groups: emptyResourceMenuGroups(),
+    },
     selected: false,
   };
 }

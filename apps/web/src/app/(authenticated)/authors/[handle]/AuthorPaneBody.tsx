@@ -53,6 +53,7 @@ import {
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
+import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
 import styles from "./page.module.css";
 
 type AuthorConnectionsResource =
@@ -219,6 +220,13 @@ export default function AuthorPaneBody() {
   // would render the banned "0 works".
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
+    menu: data
+      ? {
+          kind: "ResourceMenu",
+          target: data.detail.actionTarget,
+          groups: emptyResourceMenuGroups(),
+        }
+      : undefined,
     header: {
       kind: "section",
       folio:

@@ -6,7 +6,14 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { normalizeResourceActivation } from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
+import { decodeStandingActionTarget } from "@/lib/resources/resourceActionTarget";
+import {
+  expectExactRecord,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 import {
   RESULT_TYPE_VALUES,
   type SearchApiResult,
@@ -70,6 +77,32 @@ function locatorMatchesSearchType(
   return false;
 }
 
+function decodeSearchActivation(raw: unknown): ResourceActivation {
+  // justify-defect: /search is an owned same-system snake_case transport;
+  // alternate casing or malformed activation facts are contract drift.
+  const value = expectExactRecord(
+    raw,
+    ["resource_ref", "kind", "href", "unresolved_reason"],
+    "SearchResult.activation",
+  );
+  return {
+    resourceRef: expectString(
+      value.resource_ref,
+      "SearchResult.activation.resource_ref",
+    ),
+    kind: expectOneOf(
+      value.kind,
+      ["route", "external", "none"] as const,
+      "SearchResult.activation.kind",
+    ),
+    href: expectNullableString(value.href, "SearchResult.activation.href"),
+    unresolvedReason: expectNullableString(
+      value.unresolved_reason,
+      "SearchResult.activation.unresolved_reason",
+    ),
+  };
+}
+
 function normalizeContributorCredit(value: unknown): ContributorCredit | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -84,11 +117,16 @@ function normalizeContributorCredit(value: unknown): ContributorCredit | null {
     return null;
   }
   const contributorHandle = stringField(credit, "contributor_handle");
-  const contributorDisplayName = stringField(credit, "contributor_display_name");
+  const contributorDisplayName = stringField(
+    credit,
+    "contributor_display_name",
+  );
   const href = stringField(credit, "href");
   return {
     ...(contributorHandle ? { contributor_handle: contributorHandle } : {}),
-    ...(contributorDisplayName ? { contributor_display_name: contributorDisplayName } : {}),
+    ...(contributorDisplayName
+      ? { contributor_display_name: contributorDisplayName }
+      : {}),
     credited_name: creditedName,
     role,
     raw_role: nullableStringField(credit, "raw_role"),
@@ -135,8 +173,22 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
   if (typeof row.resource_ref !== "string") {
     return null;
   }
-  const activation = normalizeResourceActivation(row.activation);
-  if (!activation || activation.kind === "none" || !activation.href) {
+  const activation = decodeSearchActivation(row.activation);
+  const actionTarget = decodeStandingActionTarget(
+    {
+      kind: "Resource",
+      ref: row.resource_ref,
+      activation,
+      missing: false,
+    },
+    "SearchResult.actionTarget",
+  );
+  if (actionTarget.kind !== "Resource") {
+    // justify-defect: same-system search results construct the Resource
+    // discriminator and never downgrade invalid resource facts to External.
+    throw new TypeError("SearchResult.actionTarget must be Resource");
+  }
+  if (actionTarget.activation.kind === "none") {
     return null;
   }
   if (row.citation_target !== null && typeof row.citation_target !== "string") {
@@ -176,7 +228,8 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
     media_id: typeof row.media_id === "string" ? row.media_id : null,
     media_kind: typeof row.media_kind === "string" ? row.media_kind : null,
     resource_ref: row.resource_ref,
-    activation,
+    activation: actionTarget.activation,
+    actionTarget,
     citation_target: row.citation_target,
     context_ref: {
       type: contextRef.type as SearchType,
@@ -338,7 +391,9 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         type: "note_block",
         body_text: row.body_text,
         highlight_excerpt:
-          typeof row.highlight_excerpt === "string" ? row.highlight_excerpt : null,
+          typeof row.highlight_excerpt === "string"
+            ? row.highlight_excerpt
+            : null,
         locator: row.locator,
       };
     case "highlight": {
@@ -453,8 +508,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         typeof row.subject_ref !== "string" ||
         base.context_ref.type !== "artifact" ||
         revisionRef?.scheme !== "artifact_revision" ||
-        revisionRef.id !== row.revision_id ||
-        base.activation.resourceRef !== base.resource_ref
+        revisionRef.id !== row.revision_id
       ) {
         return null;
       }
@@ -477,8 +531,7 @@ export function normalizeSearchResult(result: unknown): SearchApiResult | null {
         row.locator.type !== "external_url" ||
         !Array.isArray(row.extra_snippets) ||
         !row.extra_snippets.every((snippet) => typeof snippet === "string") ||
-        (row.published_at !== null &&
-          typeof row.published_at !== "string") ||
+        (row.published_at !== null && typeof row.published_at !== "string") ||
         typeof row.selected !== "boolean"
       ) {
         return null;

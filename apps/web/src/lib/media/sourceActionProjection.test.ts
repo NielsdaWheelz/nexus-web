@@ -13,6 +13,7 @@ const extractingCapabilities: MediaActionCapabilities = {
   can_retry: false,
   can_refresh_source: false,
   can_retry_metadata: false,
+  can_edit_authors: false,
 };
 
 function result(overrides: Partial<SourceActionResult>): SourceActionResult {

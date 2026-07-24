@@ -23,6 +23,10 @@ import type {
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
 import { isRecord } from "@/lib/validation";
+import {
+  routeResourceActionSubject,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
 // --- Branded identities ------------------------------------------------------
@@ -121,6 +125,7 @@ export interface LecternItem {
   href: AppHref;
   consumption: ConsumptionInfo;
   activation: Activation;
+  actionTarget: ResourceActionSubject;
 }
 
 export interface LecternActivityFacts {
@@ -454,15 +459,22 @@ export function decodeLecternItem(raw: unknown): LecternItem {
     ["itemId", "mediaId", "kind", "title", "subtitle", "href", "consumption", "activation"],
     "LecternItemOut",
   );
+  const mediaId = decodeMediaId(rec.mediaId);
+  const href = decodeAppHref(rec.href);
   return {
     itemId: decodeLecternItemId(rec.itemId),
-    mediaId: decodeMediaId(rec.mediaId),
+    mediaId,
     kind: asLiteral(rec.kind, CONSUMPTION_MEDIA_KINDS, "LecternItemOut.kind"),
     title: asString(rec.title, "LecternItemOut.title"),
     subtitle: decodePresence(rec.subtitle, (v) => asString(v, "LecternItemOut.subtitle")),
-    href: decodeAppHref(rec.href),
+    href,
     consumption: decodeConsumption(rec.consumption),
     activation: decodeActivation(rec.activation),
+    actionTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: mediaId,
+      href,
+    }),
   };
 }
 

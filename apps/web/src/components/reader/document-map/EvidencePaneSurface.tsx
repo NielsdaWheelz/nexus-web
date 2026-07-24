@@ -66,11 +66,11 @@ export interface EvidencePaneSurfaceProps {
     options: { newPane: boolean },
   ) => void;
   onHoverItem: (item: ReaderEvidenceItem | null) => void;
-  onDismissSynapse: (edgeId: string) => void;
+  onDismissSynapse: (edgeId: string) => Promise<void>;
   /** Remove an explicit user edge whether it is a top-level Link or folded
    * association. The caller dispatches context to Link DELETE and stances to
    * stance DELETE from the typed role; generated associations never qualify. */
-  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => void;
+  onRemoveUserEdge: (edge: ReaderEvidenceUserEdge) => Promise<void>;
   /** Add/edit the one ordinary note folded onto a neutral (context) Link — mirrors
    * `links.ts` `putLinkNote(linkId, {noteBlockId, bodyPmJson})`. */
   onSaveLinkNote: (
@@ -522,7 +522,7 @@ function PassageGroup({
   onActivateObject: EvidencePaneSurfaceProps["onActivateObject"];
   onActivateSourceTarget: EvidencePaneSurfaceProps["onActivateSourceTarget"];
   onHoverItem: EvidencePaneSurfaceProps["onHoverItem"];
-  onDismissSynapse: (edgeId: string) => void;
+  onDismissSynapse: (edgeId: string) => Promise<void>;
   linkActions: EvidenceLinkActions;
 }) {
   const resolved = group.resolution.kind === "Resolved";

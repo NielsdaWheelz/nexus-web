@@ -1,423 +1,675 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { assumeLecternItemId } from "@/lib/lectern/contract";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import {
+  RESOURCE_ACTION_CATALOG,
+  composeResourceMenu,
   conversationResourceOptions,
   episodeResourceOptions,
   libraryResourceOptions,
   mediaResourceOptions,
   podcastResourceOptions,
+  projectResourceActionToHeader,
+  projectResourceActionToMenu,
+  resolveResourceCoreActions,
+  type ActionPublication,
+  type ExecutableResourceAction,
+  type RichResourceActionGroups,
+  type ResourceActionId,
+  type ResourceMenuGroups,
 } from "@/lib/actions/resourceActions";
 
-describe("mediaResourceOptions", () => {
-  const media = {
-    id: "media-1",
-    title: "Designing Data-Intensive Applications",
-    canonical_source_url: "https://example.com/source",
-    capabilities: { can_delete: true, can_retry: true },
+const UUID = "00000000-0000-4000-8000-000000000001";
+const MEDIA_REF = assumeCanonicalResourceRef(`media:${UUID}`);
+const noAction = { kind: "Unavailable" } as const;
+const noBusy = new Set<ResourceActionId>();
+
+function available(
+  execute = vi.fn(),
+): Extract<ExecutableResourceAction, { kind: "Available" }> {
+  return { kind: "Available", execute };
+}
+
+function descriptor(id: string, tone?: "default" | "danger"): ActionDescriptor {
+  return {
+    kind: "command",
+    id,
+    label: id,
+    tone,
+    onSelect: vi.fn(),
+  };
+}
+
+function ids(groups: ResourceMenuGroups): string[] {
+  return composeResourceMenu(groups).map((action) => action.id);
+}
+
+function richMenu(
+  groups: RichResourceActionGroups,
+  input: {
+    core?: readonly ActionDescriptor[];
+    view?: readonly ActionDescriptor[];
+  } = {},
+): ResourceMenuGroups {
+  return {
+    core: input.core ?? [],
+    operations: groups.operations,
+    relationships: groups.relationships,
+    view: input.view ?? [],
+  };
+}
+
+function command(groups: ResourceMenuGroups, id: string) {
+  const action = composeResourceMenu(groups).find((candidate) => candidate.id === id);
+  if (!action || action.kind !== "command") {
+    throw new Error(`Missing command ${id}`);
+  }
+  return action;
+}
+
+describe("resource action catalog and projections", () => {
+  it("owns unique dot-delimited PascalCase ids", () => {
+    const ids = Object.values(RESOURCE_ACTION_CATALOG).map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => /^(?:[A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)+$/.test(id))).toBe(
+      true,
+    );
+  });
+
+  it("projects Share metadata identically into menus and headers", () => {
+    const semantic = {
+      kind: "command",
+      catalogKey: "Share",
+      onSelect: vi.fn(),
+    } as const;
+    const menu = projectResourceActionToMenu(semantic);
+    const header = projectResourceActionToHeader(semantic);
+    expect(menu).toMatchObject({
+      id: "ResourceAction.Share",
+      label: "Share…",
+      restoreFocusOnClose: false,
+    });
+    expect(header).toMatchObject({
+      id: menu.id,
+      label: menu.label,
+      tone: menu.tone,
+      restoreFocusOnClose: false,
+    });
+    expect(menu.icon?.type).toBe(header.icon.type);
+  });
+
+  it("owns cross-surface Edit authors operation metadata", () => {
+    expect(
+      projectResourceActionToMenu({
+        kind: "command",
+        catalogKey: "EditAuthors",
+        onSelect: vi.fn(),
+      }),
+    ).toMatchObject({
+      id: "ResourceOperation.Media.EditAuthors",
+      label: "Edit authors…",
+    });
+  });
+
+  it("requires an accessible reason when a busy label does not explain state", () => {
+    expect(() =>
+      projectResourceActionToMenu({
+        kind: "command",
+        catalogKey: "Share",
+        busy: true,
+        onSelect: vi.fn(),
+      }),
+    ).toThrow("Busy resource action requires disabledReason");
+    expect(
+      projectResourceActionToMenu({
+        kind: "command",
+        catalogKey: "Share",
+        busy: true,
+        disabledReason: "Creating highlight",
+        onSelect: vi.fn(),
+      }),
+    ).toMatchObject({
+      id: "ResourceAction.Share",
+      disabled: true,
+      disabledReason: "Creating highlight",
+    });
+  });
+
+  it("requires a standing target on resource publications", () => {
+    const target: ResourceActionSubject = {
+      kind: "Resource",
+      ref: MEDIA_REF,
+      activation: {
+        resourceRef: MEDIA_REF,
+        kind: "route",
+        href: `/media/${UUID}`,
+        unresolvedReason: null,
+      },
+      missing: false,
+    };
+    const publication: ActionPublication = {
+      kind: "ResourceMenu",
+      target,
+      groups: {
+        core: [],
+        operations: [],
+        relationships: [],
+        view: [],
+      },
+    };
+    expect(publication.target).toBe(target);
+  });
+});
+
+describe("resolveResourceCoreActions", () => {
+  const subject: ResourceActionSubject = {
+    kind: "Resource",
+    ref: MEDIA_REF,
+    activation: {
+      resourceRef: MEDIA_REF,
+      kind: "route",
+      href: `/media/${UUID}`,
+      unresolvedReason: null,
+    },
+    missing: false,
   };
 
-  it("keeps the same resource menu for header and list item consumers", () => {
-    const headerMenu = mediaResourceOptions({
-      media,
-      onOpenChat: () => {},
-      onShare: () => {},
-      onRetry: () => {},
-      onDelete: () => {},
+  it("projects the same universal core for every representation", () => {
+    const executors = {
+      open: vi.fn(),
+      share: vi.fn(),
+      chat: vi.fn(),
+    };
+    const groups = resolveResourceCoreActions({
+      target: subject,
+      projection: "Representation",
+      busyIds: noBusy,
+      executors,
     });
-
-    const rowMenu = mediaResourceOptions({
-      media,
-      onOpenChat: () => {},
-      onShare: () => {},
-      onRetry: () => {},
-      onDelete: () => {},
-    });
-
-    expect(
-      headerMenu.map((option) => ({
-        id: option.id,
-        label: option.label,
-        href: option.href,
-        disabled: option.disabled,
-        tone: option.tone,
-        restoreFocusOnClose: option.restoreFocusOnClose,
-        separatorBefore: option.separatorBefore,
-      }))
-    ).toEqual(
-      rowMenu.map((option) => ({
-        id: option.id,
-        label: option.label,
-        href: option.href,
-        disabled: option.disabled,
-        tone: option.tone,
-        restoreFocusOnClose: option.restoreFocusOnClose,
-        separatorBefore: option.separatorBefore,
-      }))
-    );
-    expect(headerMenu.map((option) => option.id)).toEqual([
-      "share",
-      "open-source",
-      "retry-processing",
-      "chat-about-media",
-      "delete-media",
+    expect(ids(groups)).toEqual([
+      "ResourceAction.Open",
+      "ResourceAction.Share",
+      "ResourceAction.Chat",
     ]);
-    expect(headerMenu[1]).toMatchObject({
+
+    command(groups, "ResourceAction.Share").onSelect({ triggerEl: null });
+    expect(executors.share).toHaveBeenCalledWith(subject, { triggerEl: null });
+  });
+
+  it("omits Open in the current pane but keeps applicable Share and Chat", () => {
+    const groups = resolveResourceCoreActions({
+      target: subject,
+      projection: "CurrentPane",
+      busyIds: noBusy,
+      executors: { share: vi.fn(), chat: vi.fn() },
+    });
+    expect(ids(groups)).toEqual([
+      "ResourceAction.Share",
+      "ResourceAction.Chat",
+    ]);
+  });
+
+  it("emits no core for missing resources and Chat only for unrouteable media", () => {
+    const executors = { open: vi.fn(), share: vi.fn(), chat: vi.fn() };
+    expect(
+      ids(
+        resolveResourceCoreActions({
+          target: { ...subject, missing: true },
+          projection: "Representation",
+          busyIds: noBusy,
+          executors,
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      ids(
+        resolveResourceCoreActions({
+          target: {
+            ...subject,
+            activation: {
+              resourceRef: MEDIA_REF,
+              kind: "none",
+              href: null,
+              unresolvedReason: "Unavailable",
+            },
+          },
+          projection: "Representation",
+          busyIds: noBusy,
+          executors,
+        }),
+      ),
+    ).toEqual(["ResourceAction.Chat"]);
+  });
+
+  it("gives external targets Open only", () => {
+    const groups = resolveResourceCoreActions({
+      target: { kind: "External", href: "https://example.com" },
+      projection: "Representation",
+    });
+    expect(ids(groups)).toEqual(["ExternalAction.Open"]);
+    expect(groups.core[0]).toMatchObject({
       kind: "link",
-      id: "open-source",
-      href: "https://example.com/source",
+      href: "https://example.com",
     });
-    expect(
-      headerMenu
-        .filter((option) => option.id !== "open-source")
-        .every((option) => option.kind === "command"),
-    ).toBe(true);
-    expect(headerMenu.at(-1)).toMatchObject({
-      kind: "command",
-      id: "delete-media",
-      label: "Remove media",
-      tone: "danger",
+  });
+
+  it("keeps resource Chat visible with an explanatory busy state", () => {
+    const groups = resolveResourceCoreActions({
+      target: subject,
+      projection: "CurrentPane",
+      busyIds: new Set([RESOURCE_ACTION_CATALOG.Chat.id]),
+      executors: { share: vi.fn(), chat: vi.fn() },
+    });
+    expect(command(groups, "ResourceAction.Chat")).toMatchObject({
+      label: "Starting chat...",
+      disabled: true,
+    });
+  });
+
+  it("defects on mismatched ref and activation identity", () => {
+    expect(() =>
+      resolveResourceCoreActions({
+        target: {
+          ...subject,
+          activation: { ...subject.activation, resourceRef: `page:${UUID}` },
+        },
+        projection: "Representation",
+        busyIds: noBusy,
+        executors: { open: vi.fn(), share: vi.fn(), chat: vi.fn() },
+      }),
+    ).toThrow("Invalid resource action target");
+  });
+});
+
+describe("composeResourceMenu", () => {
+  it("owns group separators and stable danger-last ordering without mutation", () => {
+    const originalCore = descriptor("ResourceAction.Open");
+    const originalOperation = {
+      ...descriptor("ResourceOperation.Read"),
       separatorBefore: true,
-    });
-  });
+    };
+    const originalDanger = descriptor(
+      "ResourceOperation.Delete",
+      "danger",
+    );
+    const groups: ResourceMenuGroups = {
+      core: [originalCore],
+      operations: [originalOperation, originalDanger],
+      relationships: [descriptor("RelationshipAction.Remove")],
+      view: [descriptor("ViewAction.Toggle")],
+    };
 
-  it("exposes Add to Lectern only when onAddToLectern is wired", () => {
-    const withoutHandler = mediaResourceOptions({ media });
-    expect(withoutHandler.some((option) => option.id === "add-to-lectern")).toBe(false);
-
-    const withHandler = mediaResourceOptions({
-      media,
-      onAddToLectern: () => {},
-    });
-    expect(withHandler.map((option) => option.id)).toContain("add-to-lectern");
-    expect(withHandler.find((option) => option.id === "add-to-lectern")).toMatchObject({
-      label: "Add to Lectern",
-    });
-  });
-
-  it("only exposes actions the surface can actually execute", () => {
-    const options = mediaResourceOptions({
-      media,
-      retryBusy: true,
-      deleteBusy: true,
-      onRetry: () => {},
-      onDelete: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "open-source",
-      "retry-processing",
-      "delete-media",
+    const result = composeResourceMenu(groups);
+    expect(result.map((action) => [action.id, action.separatorBefore])).toEqual([
+      ["ResourceAction.Open", undefined],
+      ["ResourceOperation.Read", true],
+      ["RelationshipAction.Remove", true],
+      ["ViewAction.Toggle", true],
+      ["ResourceOperation.Delete", true],
     ]);
-    expect(options[1]).toMatchObject({
-      id: "retry-processing",
+    expect(originalOperation.separatorBefore).toBe(true);
+    expect(result[1]).not.toBe(originalOperation);
+  });
+
+  it("discards every caller separator and preserves stable order inside ordinary and danger partitions", () => {
+    const coreSecond = {
+      ...descriptor("ResourceAction.Chat"),
+      separatorBefore: true,
+    };
+    const firstDanger = descriptor(
+      "ResourceOperation.FirstDanger",
+      "danger",
+    );
+    const secondDanger = {
+      ...descriptor("RelationshipAction.SecondDanger", "danger"),
+      separatorBefore: true,
+    };
+    const groups: ResourceMenuGroups = Object.freeze({
+      core: Object.freeze([
+        descriptor("ResourceAction.Open"),
+        coreSecond,
+        firstDanger,
+      ]),
+      operations: Object.freeze([]),
+      relationships: Object.freeze([
+        descriptor("RelationshipAction.Keep"),
+        secondDanger,
+      ]),
+      view: Object.freeze([]),
+    });
+
+    expect(
+      composeResourceMenu(groups).map((action) => [
+        action.id,
+        action.separatorBefore,
+      ]),
+    ).toEqual([
+      ["ResourceAction.Open", undefined],
+      ["ResourceAction.Chat", undefined],
+      ["RelationshipAction.Keep", true],
+      ["ResourceOperation.FirstDanger", true],
+      ["RelationshipAction.SecondDanger", undefined],
+    ]);
+    expect(coreSecond.separatorBefore).toBe(true);
+    expect(secondDanger.separatorBefore).toBe(true);
+  });
+
+  it("returns an empty projection from frozen empty semantic groups", () => {
+    const groups = Object.freeze({
+      core: Object.freeze([]),
+      operations: Object.freeze([]),
+      relationships: Object.freeze([]),
+      view: Object.freeze([]),
+    });
+    expect(composeResourceMenu(groups)).toEqual([]);
+  });
+
+  it("defects on duplicate ids across groups", () => {
+    expect(() =>
+      composeResourceMenu({
+        core: [descriptor("ResourceAction.Share")],
+        operations: [],
+        relationships: [descriptor("ResourceAction.Share")],
+        view: [],
+      }),
+    ).toThrow("Duplicate resource action id: ResourceAction.Share");
+  });
+});
+
+describe("rich resource builders", () => {
+  const media = {
+    id: UUID,
+    title: "Designing Data-Intensive Applications",
+    canonical_source_url: "https://example.com/source",
+  };
+
+  it("builds media operations and exactly one Lectern relationship from typed capabilities", () => {
+    const retry = vi.fn();
+    const editAuthors = vi.fn();
+    const remove = vi.fn();
+    const busyIds = new Set<ResourceActionId>([
+      RESOURCE_ACTION_CATALOG.RetryProcessing.id,
+      RESOURCE_ACTION_CATALOG.RemoveMedia.id,
+    ]);
+    const groups = mediaResourceOptions({
+      media,
+      retryProcessing: available(retry),
+      refreshSource: noAction,
+      retryMetadata: noAction,
+      editAuthors: available(editAuthors),
+      lecternMembership: { kind: "Add", execute: vi.fn() },
+      readState: { kind: "MarkFinished", execute: vi.fn() },
+      removeMedia: available(remove),
+      busyIds,
+    });
+
+    const menu = richMenu(groups, {
+      core: [descriptor("ResourceAction.Share")],
+    });
+    expect(ids(menu)).toEqual([
+      "ResourceAction.Share",
+      "ResourceOperation.OpenSource",
+      "ResourceOperation.Media.RetryProcessing",
+      "ResourceOperation.Media.EditAuthors",
+      "ResourceOperation.Media.MarkFinished",
+      "RelationshipAction.Lectern.Add",
+      "ResourceOperation.Media.Remove",
+    ]);
+    expect(command(menu, "ResourceOperation.Media.RetryProcessing")).toMatchObject({
       label: "Retrying...",
       disabled: true,
     });
-    expect(options[2]).toMatchObject({
-      id: "delete-media",
-      disabled: true,
-      separatorBefore: true,
-    });
-  });
-
-  it("shows source refresh only when supported and wired by the surface", () => {
-    const options = mediaResourceOptions({
-      media: {
-        ...media,
-        capabilities: { can_refresh_source: true },
-      },
-      refreshBusy: true,
-      onRefreshSource: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "open-source",
-      "refresh-source",
-    ]);
-    expect(options[1]).toMatchObject({
-      id: "refresh-source",
-      label: "Refreshing...",
-      disabled: true,
-    });
-  });
-
-  it("shows metadata re-enrichment between source refresh and chat when supported", () => {
-    const options = mediaResourceOptions({
-      media: {
-        ...media,
-        capabilities: { can_refresh_source: true, can_retry_metadata: true },
-      },
-      refreshBusy: false,
-      retryMetadataBusy: true,
-      onRefreshSource: () => {},
-      onRetryMetadata: () => {},
-      onOpenChat: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "open-source",
-      "refresh-source",
-      "re-enrich-metadata",
-      "chat-about-media",
-    ]);
-    expect(options[2]).toMatchObject({
-      id: "re-enrich-metadata",
-      label: "Re-enriching...",
-      disabled: true,
-    });
-  });
-
-  it("ignores non-boolean capability values", () => {
-    const options = mediaResourceOptions({
-      media: {
-        ...media,
-        capabilities: {
-          can_delete: "true",
-          can_retry: 1,
-          can_refresh_source: true,
-        },
-      },
-      onDelete: () => {},
-      onRetry: () => {},
-      onRefreshSource: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "open-source",
-      "refresh-source",
-    ]);
-  });
-});
-
-describe("libraryResourceOptions", () => {
-  it("orders canonical library actions with destructive work last", () => {
-    const options = libraryResourceOptions({
-      library: {
-        isDefault: false,
-        role: "admin",
-        canRename: true,
-        canDelete: true,
-        canEditEntries: true,
-      },
-      onOpenSettings: () => {},
-      onDelete: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "library-settings",
-      "delete-library",
-    ]);
-    expect(options.at(-1)).toMatchObject({
-      id: "delete-library",
-      tone: "danger",
-      separatorBefore: true,
-    });
-  });
-
-  it("offers no menu actions on the default library", () => {
-    // The default library cannot be renamed or deleted (its media entries are
-    // still editable); the dossier is now inline, not a menu action.
-    const options = libraryResourceOptions({
-      library: {
-        isDefault: true,
-        role: "admin",
-        canRename: false,
-        canDelete: false,
-        canEditEntries: true,
-      },
-      onOpenSettings: () => {},
-      onDelete: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([]);
-  });
-
-  it("offers no mutation actions on a system-protected library", () => {
-    // A system library (e.g. the Oracle Corpus) reports every can_* flag false,
-    // so no edit/delete action is offered even to an admin owner.
-    const options = libraryResourceOptions({
-      library: {
-        isDefault: false,
-        role: "admin",
-        canRename: false,
-        canDelete: false,
-        canEditEntries: false,
-      },
-      onOpenSettings: () => {},
-      onDelete: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([]);
-  });
-});
-
-describe("podcastResourceOptions", () => {
-  it("omits podcast management actions when there is no subscription", () => {
-    expect(
-      podcastResourceOptions({
-        canUsePodcastActions: false,
-        onShare: () => {},
-        onOpenSettings: () => {},
-        onRefreshSync: () => {},
-        onUnsubscribe: () => {},
-      })
-    ).toEqual([
-      expect.objectContaining({ id: "share", label: "Share…" }),
-    ]);
-  });
-
-  it("keeps subscribed podcast management consistent across surfaces", () => {
-    const options = podcastResourceOptions({
-      canUsePodcastActions: true,
-      refreshBusy: true,
-      onShare: () => {},
-      onOpenSettings: () => {},
-      onRefreshSync: () => {},
-      onUnsubscribe: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "share",
-      "open-podcast-settings",
-      "refresh-podcast-sync",
-      "unsubscribe-podcast",
-    ]);
-    expect(options[2]).toMatchObject({
-      id: "refresh-podcast-sync",
-      label: "Refreshing...",
-      disabled: true,
-    });
-    expect(options.at(-1)).toMatchObject({
-      id: "unsubscribe-podcast",
-      tone: "danger",
-      separatorBefore: true,
-    });
-  });
-});
-
-describe("episodeResourceOptions", () => {
-  it("uses media actions plus the episode playback state action", () => {
-    const options = episodeResourceOptions({
-      media: {
-        id: "episode-1",
-        title: "Episode 1",
-        canonical_source_url: "https://example.com/episode",
-        capabilities: { can_delete: true, can_retry: true },
-      },
-      busy: true,
-      retryBusy: true,
-      deleteBusy: true,
-      played: false,
-      markingBusy: true,
-      episodePanelId: "episode-panel-episode-1",
-      onShare: () => {},
-      onOpenChat: () => {},
-      onRetry: () => {},
-      onDelete: () => {},
-      onTogglePlayed: () => {},
-    });
-
-    expect(options.map((option) => option.id)).toEqual([
-      "share",
-      "open-source",
-      "retry-processing",
-      "chat-about-media",
-      "toggle-episode-played",
-      "delete-media",
-    ]);
-    expect(options[2]).toMatchObject({
-      id: "retry-processing",
-      disabled: true,
-    });
-    expect(options[0]).toMatchObject({
-      id: "share",
-    });
-    expect(options[4]).toMatchObject({
-      id: "toggle-episode-played",
-      label: "Mark as played",
-      disabled: true,
-    });
-    expect(options[5]).toMatchObject({
-      id: "delete-media",
+    expect(command(menu, "ResourceOperation.Media.Remove")).toMatchObject({
+      label: "Removing...",
       disabled: true,
       tone: "danger",
-      separatorBefore: true,
     });
+    command(menu, "ResourceOperation.Media.EditAuthors").onSelect({
+      triggerEl: null,
+    });
+    expect(editAuthors).toHaveBeenCalledOnce();
   });
 
-  it("exposes Add to Lectern when onAddToLectern is wired (AC-13)", () => {
-    const options = episodeResourceOptions({
-      media: {
-        id: "episode-2",
-        title: "Episode 2",
-        canonical_source_url: "https://example.com/episode-2",
-        capabilities: {},
+  it("projects Remove instead of Add from explicit Lectern membership", () => {
+    const remove = vi.fn();
+    const groups = mediaResourceOptions({
+      media,
+      retryProcessing: noAction,
+      refreshSource: noAction,
+      retryMetadata: noAction,
+      editAuthors: noAction,
+      lecternMembership: {
+        kind: "Remove",
+        itemId: assumeLecternItemId(
+          "11111111-0000-4000-8000-000000000002",
+        ),
+        execute: remove,
       },
-      played: false,
-      episodePanelId: "episode-panel-episode-2",
-      onShare: () => {},
-      onTogglePlayed: () => {},
-      onAddToLectern: () => {},
-    });
-    expect(options.map((option) => option.id)).toContain("add-to-lectern");
-  });
-
-  it("keeps episode notes, queue, and transcript commands in the row menu", () => {
-    const options = episodeResourceOptions({
-      media: {
-        id: "episode-3",
-        title: "Episode 3",
-        canonical_source_url: null,
-        capabilities: {},
-      },
-      played: false,
-      episodePanelId: "episode-panel-episode-3",
-      showNotesExpanded: true,
-      transcriptPanelExpanded: true,
-      onShare: () => {},
-      onTogglePlayed: () => {},
-      onToggleShowNotes: () => {},
-      onPlayNext: () => {},
-      onRequestTranscript: () => {},
+      readState: noAction,
+      removeMedia: noAction,
+      busyIds: noBusy,
     });
 
-    expect(options.map((option) => option.id)).toEqual([
-      "share",
-      "toggle-episode-notes",
-      "play-episode-next",
-      "request-episode-transcript",
-      "toggle-episode-played",
+    const menu = richMenu(groups);
+    expect(ids(menu)).toEqual([
+      "ResourceOperation.OpenSource",
+      "RelationshipAction.Lectern.Remove",
     ]);
-    expect(options[1]).toMatchObject({
-      state: {
-        kind: "disclosure",
-        expanded: true,
-        controls: "episode-panel-episode-3",
-      },
+    command(menu, "RelationshipAction.Lectern.Remove").onSelect({
+      triggerEl: null,
     });
-    expect(options[3]).toMatchObject({
-      state: {
-        kind: "disclosure",
-        expanded: true,
-        controls: "episode-panel-episode-3",
-      },
-    });
+    expect(remove).toHaveBeenCalledOnce();
   });
-});
 
-describe("conversationResourceOptions", () => {
-  it("uses one destructive conversation action everywhere", () => {
-    expect(
-      conversationResourceOptions({
-        deleting: true,
-        onDelete: () => {},
-      })
-    ).toEqual([
-      expect.objectContaining({
-        id: "delete-conversation",
-        label: "Deleting...",
-        tone: "danger",
-        disabled: true,
+  it.each([
+    [
+      "media alternate capabilities",
+      () => {
+        const refresh = vi.fn();
+        const metadata = vi.fn();
+        const markUnread = vi.fn();
+        const removeFromLectern = vi.fn();
+        return {
+          groups: mediaResourceOptions({
+            media,
+            retryProcessing: noAction,
+            refreshSource: available(refresh),
+            retryMetadata: available(metadata),
+            editAuthors: noAction,
+            lecternMembership: {
+              kind: "Remove",
+              itemId: assumeLecternItemId(
+                "22222222-0000-4000-8000-000000000002",
+              ),
+              execute: removeFromLectern,
+            },
+            readState: {
+              kind: "MarkUnread",
+              execute: markUnread,
+            },
+            removeMedia: noAction,
+            busyIds: noBusy,
+          }),
+          expected: [
+            "ResourceOperation.OpenSource",
+            "ResourceOperation.Media.RefreshSource",
+            "ResourceOperation.Media.RetryMetadata",
+            "ResourceOperation.Media.MarkUnread",
+            "RelationshipAction.Lectern.Remove",
+          ],
+          executors: [
+            refresh,
+            metadata,
+            markUnread,
+            removeFromLectern,
+          ],
+        };
+      },
+    ],
+    [
+      "episode alternate played state",
+      () => {
+        const markUnplayed = vi.fn();
+        return {
+          groups: episodeResourceOptions({
+            media,
+            retryProcessing: noAction,
+            refreshSource: noAction,
+            retryMetadata: noAction,
+            editAuthors: noAction,
+            lecternMembership: noAction,
+            removeMedia: noAction,
+            playedState: {
+              kind: "MarkUnplayed",
+              execute: markUnplayed,
+            },
+            busyIds: noBusy,
+          }),
+          expected: [
+            "ResourceOperation.OpenSource",
+            "ResourceOperation.Episode.MarkUnplayed",
+          ],
+          executors: [markUnplayed],
+        };
+      },
+    ],
+    [
+      "library alternate capabilities",
+      () => {
+        const deleteLibrary = vi.fn();
+        return {
+          groups: libraryResourceOptions({
+            settings: noAction,
+            deleteLibrary: available(deleteLibrary),
+            busyIds: noBusy,
+          }),
+          expected: ["ResourceOperation.Library.Delete"],
+          executors: [deleteLibrary],
+        };
+      },
+    ],
+    [
+      "podcast unavailable capabilities",
+      () => ({
+        groups: podcastResourceOptions({
+          settings: noAction,
+          refreshSync: noAction,
+          subscription: noAction,
+          busyIds: noBusy,
+        }),
+        expected: [],
+        executors: [],
       }),
+    ],
+    [
+      "conversation unavailable capability",
+      () => ({
+        groups: conversationResourceOptions({
+          deleteConversation: noAction,
+          busyIds: noBusy,
+        }),
+        expected: [],
+        executors: [],
+      }),
+    ],
+  ] as const)("%s projects only its legal actions and executes each once", (
+    _name,
+    build,
+  ) => {
+    const projection = build();
+    const menu = richMenu(projection.groups);
+    expect(ids(menu)).toEqual(projection.expected);
+    for (const action of composeResourceMenu(menu)) {
+      if (action.kind === "command") {
+        action.onSelect({ triggerEl: null });
+      }
+    }
+    for (const execute of projection.executors) {
+      expect(execute).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("builds only applicable library operations", () => {
+    const groups = libraryResourceOptions({
+      settings: available(),
+      deleteLibrary: noAction,
+      busyIds: noBusy,
+    });
+    expect(ids(richMenu(groups))).toEqual(["ResourceOperation.Library.Settings"]);
+  });
+
+  it("keeps podcast unsubscribe in the relationship group and danger-last", () => {
+    const groups = podcastResourceOptions({
+      settings: available(),
+      refreshSync: available(),
+      subscription: { kind: "Subscribed", execute: vi.fn() },
+      busyIds: new Set([
+        RESOURCE_ACTION_CATALOG.RefreshPodcast.id,
+        RESOURCE_ACTION_CATALOG.UnsubscribePodcast.id,
+      ]),
+    });
+    const menu = richMenu(groups, {
+      core: [descriptor("ResourceAction.Share")],
+    });
+    expect(ids(menu)).toEqual([
+      "ResourceAction.Share",
+      "ResourceOperation.Podcast.Settings",
+      "ResourceOperation.Podcast.Refresh",
+      "RelationshipAction.Podcast.Unsubscribe",
     ]);
+    expect(command(menu, "RelationshipAction.Podcast.Unsubscribe")).toMatchObject({
+      label: "Unsubscribing...",
+      disabled: true,
+      tone: "danger",
+    });
+  });
+
+  it("keeps episode view actions out of the rich builder", () => {
+    const groups = episodeResourceOptions({
+      media,
+      retryProcessing: noAction,
+      refreshSource: noAction,
+      retryMetadata: noAction,
+      editAuthors: noAction,
+      lecternMembership: noAction,
+      removeMedia: noAction,
+      playedState: { kind: "MarkPlayed", execute: vi.fn() },
+      busyIds: noBusy,
+    });
+    expect(Object.keys(groups).sort()).toEqual(["operations", "relationships"]);
+    expect(ids(richMenu(groups))).toEqual([
+      "ResourceOperation.OpenSource",
+      "ResourceOperation.Episode.MarkPlayed",
+    ]);
+  });
+
+  it("projects conversation deletion from an explicit applicable variant", () => {
+    const groups = conversationResourceOptions({
+      deleteConversation: available(),
+      busyIds: new Set([
+        RESOURCE_ACTION_CATALOG.DeleteConversation.id,
+      ]),
+    });
+    expect(command(richMenu(groups), "ResourceOperation.Conversation.Delete")).toMatchObject({
+      label: "Deleting...",
+      disabled: true,
+      tone: "danger",
+    });
+  });
+});
+
+describe("relationship catalog copy", () => {
+  it("names the affected relationship explicitly", () => {
+    expect(RESOURCE_ACTION_CATALOG.RemoveFromContext.label).toBe(
+      "Remove from conversation context",
+    );
+    expect(RESOURCE_ACTION_CATALOG.UnlinkConnection.label).toBe(
+      "Unlink connection",
+    );
+    expect(RESOURCE_ACTION_CATALOG.DismissConnection.label).toBe(
+      "Dismiss connection",
+    );
   });
 });

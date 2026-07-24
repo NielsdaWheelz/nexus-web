@@ -93,7 +93,19 @@ describe("Resonance slate contract", () => {
           href: `/podcasts/${MEDIA_A}`,
         };
       }
-      expect(decodeItems(raw)[0].target.kind).toBe(kind);
+      const target = decodeItems(raw)[0].target;
+      expect(target.kind).toBe(kind);
+      expect(target.actionTarget).toEqual({
+        kind: "Resource",
+        ref: target.ref,
+        activation: {
+          resourceRef: target.ref,
+          kind: "route",
+          href: target.href,
+          unresolvedReason: null,
+        },
+        missing: false,
+      });
     },
   );
 

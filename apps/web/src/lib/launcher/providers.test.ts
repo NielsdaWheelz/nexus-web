@@ -11,6 +11,17 @@ import { parseLauncherInput, type LauncherInput } from "./parseLauncherInput";
 import type { LauncherLane } from "./model";
 import type { BrowseResult } from "@/lib/browse/types";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
+import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
+
+const ORACLE_IDS = [
+  "00000000-0000-4000-8000-000000000101",
+  "00000000-0000-4000-8000-000000000102",
+  "00000000-0000-4000-8000-000000000103",
+  "00000000-0000-4000-8000-000000000104",
+  "00000000-0000-4000-8000-000000000105",
+  "00000000-0000-4000-8000-000000000106",
+  "00000000-0000-4000-8000-000000000107",
+] as const;
 
 // ---------------------------------------------------------------------------
 // ctx helper — sensible empty defaults, caller can override any field.
@@ -82,15 +93,22 @@ function makeSearchResult(
   partial: Partial<SearchResultRowViewModel> & { key: string },
 ): SearchResultRowViewModel {
   const resourceRef =
-    partial.resourceRef ?? "media:11111111-1111-4111-8111-111111111111";
-  return {
+    partial.resourceRef ??
+    partial.activation?.resourceRef ??
+    "media:11111111-1111-4111-8111-111111111111";
+  const activation = partial.activation ?? {
     resourceRef,
-    activation: partial.activation ?? {
-      resourceRef,
-      kind: "route",
-      href: "/media/11111111-1111-4111-8111-111111111111",
-      unresolvedReason: null,
-    },
+    kind: "route" as const,
+    href: "/media/11111111-1111-4111-8111-111111111111",
+    unresolvedReason: null,
+  };
+  const actionTarget = partial.actionTarget ?? {
+    kind: "Resource" as const,
+    ref: assumeCanonicalResourceRef(resourceRef),
+    activation,
+    missing: false,
+  };
+  return {
     citationTarget: partial.citationTarget ?? resourceRef,
     type: "media",
     mediaId: null,
@@ -104,6 +122,9 @@ function makeSearchResult(
     contributorCredits: [],
     noteBody: null,
     ...partial,
+    resourceRef,
+    activation,
+    actionTarget,
   };
 }
 
@@ -222,6 +243,21 @@ describe("buildLauncherItems — open-tab items", () => {
       paneItems.find((i) => i.id === "pane-open-other")!.rank.scopeBoost,
     ).toBe(0);
   });
+
+  it("does not infer a resource subject from an open pane href", () => {
+    const pane = makePane({
+      id: "media-pane",
+      href: "/media/11111111-1111-4111-8111-111111111111",
+    });
+    const item = buildLauncherItems(ctx({ panes: [pane] })).find(
+      (candidate) => candidate.id === "pane-open-media-pane",
+    );
+
+    expect(item?.target).toEqual({
+      kind: "pane-open",
+      paneId: "media-pane",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -263,6 +299,23 @@ describe("buildLauncherItems — recent items", () => {
     );
     expect(items.find((i) => i.id === "recent-lib-key")).toBeUndefined();
   });
+
+  it("does not invent missing facts for canonical-looking resource history", () => {
+    const ref = "media:11111111-1111-4111-8111-111111111111";
+    const row = makeHistoryRow({
+      target_key: ref,
+      target_href: "/media/11111111-1111-4111-8111-111111111111",
+    });
+    const recent = buildLauncherItems(ctx({ historyRows: [row] })).find(
+      (candidate) => candidate.id === `recent-${ref}`,
+    );
+
+    expect(recent?.target).toEqual({
+      kind: "href",
+      href: "/media/11111111-1111-4111-8111-111111111111",
+      externalShell: false,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -270,46 +323,46 @@ describe("buildLauncherItems — recent items", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildLauncherItems — recent folios", () => {
-  it("only includes complete rows (capped at 5), targets /oracle/{id} as a pane (externalShell false)", () => {
+  it("only includes complete rows (capped at 5) with explicit Oracle resource subjects", () => {
     const rows: LauncherOracleRow[] = [
       makeOracleRow({
-        id: "o1",
+        id: ORACLE_IDS[0],
         status: "complete",
         folio_number: 1,
         folio_theme: "Love",
       }),
       makeOracleRow({
-        id: "o2",
+        id: ORACLE_IDS[1],
         status: "pending",
         folio_number: 2,
         folio_theme: "War",
       }),
       makeOracleRow({
-        id: "o3",
+        id: ORACLE_IDS[2],
         status: "complete",
         folio_number: 3,
         folio_theme: "Peace",
       }),
       makeOracleRow({
-        id: "o4",
+        id: ORACLE_IDS[3],
         status: "complete",
         folio_number: 4,
         folio_theme: "Fire",
       }),
       makeOracleRow({
-        id: "o5",
+        id: ORACLE_IDS[4],
         status: "complete",
         folio_number: 5,
         folio_theme: "Water",
       }),
       makeOracleRow({
-        id: "o6",
+        id: ORACLE_IDS[5],
         status: "complete",
         folio_number: 6,
         folio_theme: "Earth",
       }),
       makeOracleRow({
-        id: "o7",
+        id: ORACLE_IDS[6],
         status: "complete",
         folio_number: 7,
         folio_theme: "Air",
@@ -320,27 +373,40 @@ describe("buildLauncherItems — recent folios", () => {
 
     expect(folioItems).toHaveLength(5); // 6 complete capped at 5
     expect(folioItems.every((i) => i.source === "oracle")).toBe(true);
-    expect(items.find((i) => i.id === "oracle-recent-o2")).toBeUndefined(); // pending excluded
+    expect(
+      items.find((i) => i.id === `oracle-recent-${ORACLE_IDS[1]}`),
+    ).toBeUndefined(); // pending excluded
 
-    const first = items.find((i) => i.id === "oracle-recent-o1")!;
+    const first = items.find(
+      (i) => i.id === `oracle-recent-${ORACLE_IDS[0]}`,
+    )!;
     expect(first.target).toEqual({
-      kind: "href",
-      href: "/oracle/o1",
-      externalShell: false,
+      kind: "ResourceOpen",
+      subject: {
+        kind: "Resource",
+        ref: `oracle_reading:${ORACLE_IDS[0]}`,
+        activation: {
+          resourceRef: `oracle_reading:${ORACLE_IDS[0]}`,
+          kind: "route",
+          href: `/oracle/${ORACLE_IDS[0]}`,
+          unresolvedReason: null,
+        },
+        missing: false,
+      },
     });
   });
 
   it("includes the Roman folio numeral in the title", () => {
     const row = makeOracleRow({
-      id: "o1",
+      id: ORACLE_IDS[0],
       folio_number: 4,
       folio_theme: "Fire",
       folio_motto: "Ignis",
     });
     const items = buildLauncherItems(ctx({ oracleRows: [row] }));
-    expect(items.find((i) => i.id === "oracle-recent-o1")!.title).toContain(
-      "IV",
-    );
+    expect(
+      items.find((i) => i.id === `oracle-recent-${ORACLE_IDS[0]}`)!.title,
+    ).toContain("IV");
   });
 });
 
@@ -490,8 +556,16 @@ describe("buildLauncherItems — search results", () => {
     const s1 = searchItems.find((i) => i.id === "search-s1")!;
     expect(s1.sectionId).toBe("search-results");
     expect(s1.target).toMatchObject({
-      kind: "resource",
-      activation: { resourceRef: results[0]!.resourceRef, href: "/media/abc" },
+      kind: "ResourceOpen",
+      subject: {
+        kind: "Resource",
+        ref: results[0]!.resourceRef,
+        activation: {
+          resourceRef: results[0]!.resourceRef,
+          href: "/media/abc",
+        },
+        missing: false,
+      },
       labelHint: "Article about love",
     });
     expect(s1.rank.searchScore).toBe(1);
@@ -624,7 +698,7 @@ describe("buildLauncherItems — ask item", () => {
     const items = buildLauncherItems(ctx({ input: makeInput("quantum") }));
     const ask = items.find((i) => i.id === "ask-ai")!;
     expect(ask).toBeDefined();
-    expect(ask.target).toEqual({ kind: "ask", text: "quantum" });
+    expect(ask.target).toEqual({ kind: "Ask", text: "quantum" });
     expect(ask.source).toBe("ai");
     expect(ask.sectionId).toBe("ask");
     expect(ask.pin).toBe("last");

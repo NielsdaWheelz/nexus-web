@@ -7,6 +7,7 @@ import { LecternProvider, useLectern } from "@/lib/lectern/LecternProvider";
 import { WalknoteSessionProvider } from "@/lib/walknotes/walknoteSession";
 import { present, absent } from "@/lib/api/presence";
 import type { ChapterOut, LecternItem } from "@/lib/lectern/contract";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   buildFooterDescriptor,
   installLecternPlayerFetchMock,
@@ -65,6 +66,11 @@ function audioLecternItem(itemId: string, mediaId: string, title: string): Lecte
       artworkUrl: absent(),
       chapters: [],
     },
+    actionTarget: routeResourceActionSubject({
+      scheme: "media",
+      id: mediaId,
+      href: `/media/${mediaId}`,
+    }),
   };
 }
 

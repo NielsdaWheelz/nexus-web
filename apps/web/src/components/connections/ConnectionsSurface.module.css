@@ -150,11 +150,6 @@
   font-size: var(--text-xs);
 }
 
-.deleteWrap {
-  display: grid;
-  gap: var(--space-1);
-}
-
 .fileInput {
   height: 1px;
   opacity: 0;

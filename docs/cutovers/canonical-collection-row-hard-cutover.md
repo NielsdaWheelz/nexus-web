@@ -4,6 +4,12 @@
 > [`library-sorting-hard-cutover.md`](library-sorting-hard-cutover.md) collapses
 > the "resonance list, gallery entries, list entries" three-way split of
 > `LibraryPaneBody` this document references into one view controller.
+>
+> **Action-contract update (2026-07-24):**
+> [`universal-resource-actions-hard-cutover.md`](universal-resource-actions-hard-cutover.md)
+> supersedes this document's flat row-action publication, callback-presence
+> capability rule, and action-group ordering. Reorder behavior and the single
+> overflow affordance remain unchanged.
 
 **Status:** Implemented and locally verified · 2026-07-21 · adversarially
 reviewed
@@ -247,12 +253,15 @@ existing domain DTO
   order are testable in isolation without domain fixtures.
 - `CollectionRow` **composes the content** of those slots: it formats activity
   (numeric facts → display + accessible label), maps `ExceptionalStatus` to
-  tone+label through an exhaustive helper, composes action-menu commands from
-  truthful capabilities, owns lazy related/connection expansion, and owns the
-  optional reorder activator. Each concern has exactly one owner: composition in
-  `CollectionRow`, rendering in `ResourceRow`.
+  tone+label through an exhaustive helper, resolves the universal resource core,
+  merges renderer-owned related/reorder commands into the `view` group, invokes
+  `composeResourceMenu` exactly once, owns lazy related/connection expansion,
+  and owns the optional reorder activator. Each concern has exactly one owner:
+  composition in `CollectionRow`, rendering in `ResourceRow`.
 - Pure presenters own selection and ordering of truthful row facts. Panes own
-  fetch/mutation state and callbacks. `ActionMenu` remains the action primitive;
+  fetch/mutation state and typed executable capability variants. Presenters
+  publish `ActionPublication`; they do not flatten resource menus or gate
+  visibility on callback presence. `ActionMenu` remains the action primitive;
   `SortableList` remains the reorder owner.
 - Author work gets one pure `presentContributorWork` adapter. There is no author
   row component or author row CSS.
@@ -341,7 +350,7 @@ interface CollectionRowView {
   exceptionalStatus: Presence<ExceptionalStatus>;
   connections: Presence<ConnectionSummaryView>;
   relatedMediaId: Presence<string>;  // real DTO field; never parsed from href
-  actions: readonly ActionDescriptor[];
+  actionPublication: ActionPublication;
   selected: boolean;
 }
 ```
@@ -382,8 +391,14 @@ summary, `relatedMediaId` is the explicit lazy-lookup capability, and
 
 ### Capability contract
 
-- A menu command exists only when the pane supplies its truthful capability and
-  handler. Rendering parity never mints action parity.
+- Resource-bearing rows publish an explicit `ResourceMenu` target plus
+  `core | operations | relationships | view`; non-resource rows publish the
+  explicit `FlatMenu` variant. No flat resource-action array survives.
+- Applicable rich capabilities carry their executor in a discriminated variant;
+  unavailable variants carry none. Callback presence never decides visibility.
+- `CollectionRow` resolves Open, Share, and resource Chat from the target and
+  shared capability policy. Rendering parity never fabricates richer domain
+  facts.
 - A present `connections` value with `total > 0`, or a present
   `relatedMediaId`, adds one leading **Connections and related** menu command.
   Invocation closes the menu, lazily loads as today, and toggles the existing
@@ -402,13 +417,15 @@ Reorder has three layered paths on the reorderable Library and Lectern rows: two
 menu commands (the discoverable, single-pointer, voice- and touch-AT-reachable
 path), a pointer-drag accelerator, and a keyboard accelerator.
 
-- **Menu commands.** When `sortable` is eligible, the `…` menu’s leading group
+- **Menu commands.** When `sortable` is eligible, the `…` menu’s `view` group
   contains `Move up` and `Move down` (each disabled at the corresponding end of
-  the list). These are the WCAG 2.5.7 single-pointer, non-drag alternative and the
-  voice-control- and touch-screen-reader-reachable reorder path (touch AT
-  intercepts long-press-drag, so drag alone is unreachable there). They are hidden
-  until the already-present overflow menu opens, are `Move up`/`Move down` only
-  (no move-to-top/bottom), and add no standing visible control — so they satisfy
+  the list). The universal composer places that group after resource operations
+  and relationships and before the final danger group. These are the WCAG 2.5.7
+  single-pointer, non-drag alternative and the voice-control- and
+  touch-screen-reader-reachable reorder path (touch AT intercepts
+  long-press-drag, so drag alone is unreachable there). They are hidden until
+  the already-present overflow menu opens, are `Move up`/`Move down` only (no
+  move-to-top/bottom), and add no standing visible control — so they satisfy
   accessibility without reintroducing row clutter or a separate handle.
 - **Drag accelerator** on the `…` trigger: mouse movement beyond 8px, or a
   touch hold of 250ms within 8px tolerance, begins a drag. An

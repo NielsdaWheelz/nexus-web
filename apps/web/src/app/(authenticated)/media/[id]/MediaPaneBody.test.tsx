@@ -72,12 +72,15 @@ const testState = vi.hoisted(() => ({
   canRefreshSource: false,
   contributors: [] as ContributorCredit[],
   canEditAuthors: false,
+  episodeState: null as "unplayed" | "in_progress" | "played" | null,
+  readState: null as "unread" | "in_progress" | "finished" | null,
   initialMediaFailureStatus: null as number | null,
   canonicalMediaRefetchFailure: null as {
     status: number;
     code: string;
   } | null,
   fragmentFailure: null as { status: number; code: string } | null,
+  conversationResponse: null as Promise<{ data: { id: string } }> | null,
   mediaDetailCallCount: 0,
   onMetadataRetryEnqueued: null as (() => void) | null,
   includeToc: false,
@@ -382,7 +385,7 @@ function sourceReferencePassage({
             activation: {
               resource_ref: targetRef,
               kind: "route",
-              href: `/media/media-1?apparatus=${target.stableKey}`,
+              href: `/media/00000000-0000-4000-8000-000000000001?apparatus=${target.stableKey}`,
               unresolved_reason: null,
             },
             resolution: {
@@ -413,7 +416,7 @@ function pdfHighlightPassage() {
       anchor: {
         locator: {
           type: "pdf_page_geometry",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           page_number: 1,
           quads: [
             {
@@ -463,7 +466,7 @@ function crossSectionSourceReferencePassage() {
     label: "Owner marker",
     locator: {
       type: "epub_fragment_offsets",
-      media_id: "media-1",
+      media_id: "00000000-0000-4000-8000-000000000001",
       section_id: "section-1",
       fragment_id: "fragment-1",
       start_offset: 0,
@@ -478,7 +481,7 @@ function crossSectionSourceReferencePassage() {
         body: "Cross-section evidence.",
         locator: {
           type: "epub_fragment_offsets",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           section_id: "section-2",
           fragment_id: "fragment-2",
           start_offset: 0,
@@ -492,7 +495,7 @@ function crossSectionSourceReferencePassage() {
 
 function mediaResponse() {
   return {
-    id: "media-1",
+    id: "00000000-0000-4000-8000-000000000001",
     kind: testState.mediaKind,
     title: "Reader fixture",
     canonical_source_url: testState.sourceUrl,
@@ -515,6 +518,8 @@ function mediaResponse() {
       can_read_embeds: testState.mediaKind === "web_article",
       can_edit_authors: testState.canEditAuthors,
     },
+    episode_state: testState.episodeState,
+    read_state: testState.readState,
   };
 }
 
@@ -525,7 +530,7 @@ function readerDocumentMapResponse() {
   const documentItems = testState.documentMapDocumentItems ?? [];
   const passageItems = passageGroups.flatMap((group) => group.items);
   return {
-    media_id: "media-1",
+    media_id: "00000000-0000-4000-8000-000000000001",
     media_kind: testState.mediaKind,
     title: "Reader fixture",
     status: "ready",
@@ -601,7 +606,7 @@ function fragmentResponse() {
   return [
     {
       id: "fragment-1",
-      media_id: "media-1",
+      media_id: "00000000-0000-4000-8000-000000000001",
       idx: 0,
       html_sanitized: testState.fragmentHtml,
       canonical_text: testState.fragmentCanonicalText,
@@ -653,6 +658,20 @@ function latestPrimaryChrome(): PanePrimaryChromePublication | null {
   return (call?.[0] as PanePrimaryChromePublication | undefined) ?? null;
 }
 
+function publishedMenuActions(
+  publication: PanePrimaryChromePublication | null,
+): readonly ActionDescriptor[] {
+  const menu = publication?.menu;
+  if (!menu) return [];
+  if (menu.kind === "FlatMenu") return menu.actions;
+  return [
+    ...menu.groups.core,
+    ...menu.groups.operations,
+    ...menu.groups.relationships,
+    ...menu.groups.view,
+  ];
+}
+
 async function renderLatestToolbar() {
   let toolbar: ReactNode = null;
   await waitFor(() => {
@@ -690,7 +709,9 @@ async function getContentsSurfaceBody(
 async function getPrimaryOption(id: string): Promise<ActionDescriptor> {
   let option: ActionDescriptor | undefined;
   await waitFor(() => {
-    option = latestPrimaryChrome()?.options?.find((item) => item.id === id);
+    option = publishedMenuActions(latestPrimaryChrome()).find(
+      (item) => item.id === id,
+    );
     expect(option).toBeDefined();
   });
   return option as ActionDescriptor;
@@ -806,7 +827,7 @@ function renderMediaPane(
     renderSecondarySurfaceId?: WorkspaceSecondarySurfaceId;
   } = {},
 ) {
-  const href = options.href ?? "/media/media-1";
+  const href = options.href ?? "/media/00000000-0000-4000-8000-000000000001";
   const identity = resolvePaneRouteIdentity(href);
   const onSetPaneLayout = vi.fn();
   const onSetPaneLabel = vi.fn();
@@ -834,7 +855,7 @@ function renderMediaPane(
               canGoForward={false}
               onGoBackPane={vi.fn()}
               onGoForwardPane={vi.fn()}
-              pathParams={{ id: "media-1" }}
+              pathParams={{ id: "00000000-0000-4000-8000-000000000001" }}
               onNavigatePane={onNavigatePane}
               onReplacePane={vi.fn()}
               onOpenInNewPane={onOpenInNewPane}
@@ -893,9 +914,12 @@ describe("MediaPaneBody pane sizing", () => {
     testState.canRefreshSource = false;
     testState.contributors = [];
     testState.canEditAuthors = false;
+    testState.episodeState = null;
+    testState.readState = null;
     testState.initialMediaFailureStatus = null;
     testState.canonicalMediaRefetchFailure = null;
     testState.fragmentFailure = null;
+    testState.conversationResponse = null;
     testState.mediaDetailCallCount = 0;
     testState.onMetadataRetryEnqueued = null;
     testState.readerFocusMode = "off";
@@ -912,7 +936,13 @@ describe("MediaPaneBody pane sizing", () => {
           // Lets the LecternProvider (consumed by the pane) settle to Ready.
           return jsonResponse({ items: [] });
         }
-        if (path === "/api/media/media-1") {
+        if (
+          path === "/api/conversations" &&
+          testState.conversationResponse !== null
+        ) {
+          return testState.conversationResponse;
+        }
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001") {
           testState.mediaDetailCallCount += 1;
           if (testState.initialMediaFailureStatus !== null) {
             throw {
@@ -932,7 +962,7 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse(mediaResponse());
         }
-        if (path === "/api/media/media-1/reader-state") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/reader-state") {
           if (init?.method === "PUT") {
             const body = init.body ? JSON.parse(String(init.body)) : {};
             return jsonResponse({
@@ -943,7 +973,7 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse({ state: "Empty", revision: 0 });
         }
-        if (path === "/api/media/media-1/fragments") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/fragments") {
           if (testState.fragmentFailure) {
             throw {
               ...testState.fragmentFailure,
@@ -952,9 +982,9 @@ describe("MediaPaneBody pane sizing", () => {
           }
           return jsonResponse(fragmentResponse());
         }
-        if (path === "/api/media/media-1/navigation") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/navigation") {
           return jsonResponse({
-            media_id: "media-1",
+            media_id: "00000000-0000-4000-8000-000000000001",
             kind: testState.mediaKind,
             sections: [
               {
@@ -997,10 +1027,10 @@ describe("MediaPaneBody pane sizing", () => {
             page_list: [],
           });
         }
-        if (path === "/api/media/media-1/document-map") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/document-map") {
           return jsonResponse(readerDocumentMapResponse());
         }
-        if (path === "/api/media/media-1/sections/section-1") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/sections/section-1") {
           return jsonResponse({
             section_id: "section-1",
             label: "Section 1",
@@ -1020,7 +1050,7 @@ describe("MediaPaneBody pane sizing", () => {
             created_at: "2026-01-01T00:00:00Z",
           });
         }
-        if (path === "/api/media/media-1/sections/section-2") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/sections/section-2") {
           return jsonResponse({
             section_id: "section-2",
             label: "Section 2",
@@ -1040,7 +1070,7 @@ describe("MediaPaneBody pane sizing", () => {
             created_at: "2026-01-01T00:00:00Z",
           });
         }
-        if (path === "/api/media/media-1/highlights") {
+        if (path === "/api/media/00000000-0000-4000-8000-000000000001/highlights") {
           return jsonResponse({ highlights: [] });
         }
         if (path === "/api/fragments/fragment-1/highlights") {
@@ -1110,18 +1140,73 @@ describe("MediaPaneBody pane sizing", () => {
     });
   });
 
-  it("leaves pane-level Share ownership to PaneShell", async () => {
+  it("publishes a grouped resource target and leaves core ownership to PaneShell", async () => {
     testState.mediaKind = "web_article";
     renderMediaPane();
 
     await waitFor(() => {
       const publication = latestPrimaryChrome();
       expect(publication?.header?.kind).toBe("resource");
-      expect(
-        publication?.options?.filter((option) => option.id === "share") ?? [],
-      ).toHaveLength(0);
+      expect(publication?.menu?.kind).toBe("ResourceMenu");
+      if (publication?.menu?.kind !== "ResourceMenu") return;
+      expect(publication.menu.target.kind).toBe("Resource");
+      if (publication.menu.target.kind !== "Resource") return;
+      expect(publication.menu.target.ref).toBe(
+        "media:00000000-0000-4000-8000-000000000001",
+      );
+      expect(publication.menu.groups.core).toEqual([]);
     });
   });
+
+  it.each([
+    {
+      episodeState: "unplayed" as const,
+      expectedId: "ResourceOperation.Episode.MarkPlayed",
+      excludedId: "ResourceOperation.Media.MarkFinished",
+    },
+    {
+      episodeState: "played" as const,
+      expectedId: "ResourceOperation.Episode.MarkUnplayed",
+      excludedId: "ResourceOperation.Media.MarkUnread",
+    },
+  ])(
+    "uses episode parity actions for opened podcast episodes in $episodeState state",
+    async ({ episodeState, expectedId, excludedId }) => {
+      testState.mediaKind = "podcast_episode";
+      testState.episodeState = episodeState;
+      renderMediaPane();
+
+      const publication = await getReadyPrimaryChrome();
+      const ids = publishedMenuActions(publication).map((action) => action.id);
+      expect(ids).toContain(expectedId);
+      expect(ids).not.toContain(excludedId);
+    },
+  );
+
+  it.each([
+    {
+      readState: "finished" as const,
+      expectedId: "ResourceOperation.Media.MarkUnread",
+      excludedId: "ResourceOperation.Media.MarkFinished",
+    },
+    {
+      readState: "unread" as const,
+      expectedId: "ResourceOperation.Media.MarkFinished",
+      excludedId: "ResourceOperation.Media.MarkUnread",
+    },
+  ])(
+    "uses the MediaOut $readState state when no ready Lectern item exists",
+    async ({ readState, expectedId, excludedId }) => {
+      testState.mediaKind = "web_article";
+      testState.readState = readState;
+      renderMediaPane();
+
+      const publication = await getReadyPrimaryChrome();
+      const ids = publishedMenuActions(publication).map((action) => action.id);
+      expect(ids).toContain(expectedId);
+      expect(ids).not.toContain(excludedId);
+    },
+  );
 
   it("publishes unavailable resource identity after an initial 404", async () => {
     testState.initialMediaFailureStatus = 404;
@@ -1293,14 +1378,14 @@ describe("MediaPaneBody pane sizing", () => {
 
       await waitFor(() => {
         expect(
-          apiCallsForPath("/api/media/media-1/sections/section-2"),
+          apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
         ).toHaveLength(1);
         expect(pulseHandler).toHaveBeenCalledTimes(1);
       });
       expect(
         (pulseHandler.mock.calls[0]?.[0] as CustomEvent).detail,
       ).toMatchObject({
-        mediaId: "media-1",
+        mediaId: "00000000-0000-4000-8000-000000000001",
         locator: {
           type: "epub_fragment_offsets",
           section_id: "section-2",
@@ -1328,13 +1413,13 @@ describe("MediaPaneBody pane sizing", () => {
     });
 
     expect(onOpenInNewPane).toHaveBeenCalledWith(
-      "/media/media-1?apparatus=target",
+      "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
       "Target note",
       undefined,
       "Programmatic",
     );
     expect(
-      apiCallsForPath("/api/media/media-1/sections/section-2"),
+      apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
     ).toHaveLength(0);
   });
 
@@ -1346,13 +1431,13 @@ describe("MediaPaneBody pane sizing", () => {
     window.addEventListener(READER_PULSE_HIGHLIGHT, pulseHandler);
     try {
       renderMediaPane({
-        href: "/media/media-1?apparatus=target",
+        href: "/media/00000000-0000-4000-8000-000000000001?apparatus=target",
         renderSecondarySurfaceId: "resource-evidence",
       });
 
       await waitFor(() => {
         expect(
-          apiCallsForPath("/api/media/media-1/sections/section-2"),
+          apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/sections/section-2"),
         ).toHaveLength(1);
         expect(pulseHandler).toHaveBeenCalledTimes(1);
       });
@@ -1392,7 +1477,7 @@ describe("MediaPaneBody pane sizing", () => {
       name: "authorized empty author set",
       contributors: [] as ContributorCredit[],
       canEditAuthors: true,
-      expected: ["Credits…", "Add author…"],
+      expected: ["Edit authors…", "Credits…"],
     },
     {
       name: "authorized authored resource",
@@ -1406,7 +1491,7 @@ describe("MediaPaneBody pane sizing", () => {
         },
       ] satisfies ContributorCredit[],
       canEditAuthors: true,
-      expected: ["Credits…", "Edit authors…"],
+      expected: ["Edit authors…", "Credits…"],
     },
   ])("gates credit and author Options for $name", async (testCase) => {
     testState.mediaKind = "web_article";
@@ -1416,11 +1501,13 @@ describe("MediaPaneBody pane sizing", () => {
 
     const publication = await getReadyPrimaryChrome();
     const creditOptionLabels =
-      publication.options
-        ?.filter((option) =>
-          option.id === "view-credits" || option.id === "edit-authors",
+      publishedMenuActions(publication)
+        .filter(
+          (option) =>
+            option.id === "ViewAction.Resource.Credits" ||
+            option.id === "ResourceOperation.Media.EditAuthors",
         )
-        .map((option) => option.label) ?? [];
+        .map((option) => option.label);
     expect(creditOptionLabels).toEqual(testCase.expected);
     await waitFor(() => {
       expect(onSetPaneLabel).toHaveBeenCalledWith({
@@ -1439,7 +1526,7 @@ describe("MediaPaneBody pane sizing", () => {
 
     expect(
       testState.apiFetch.mock.calls.filter(
-        ([input]) => pathOf(input) === "/api/media/media-1/fragments",
+        ([input]) => pathOf(input) === "/api/media/00000000-0000-4000-8000-000000000001/fragments",
       ),
     ).toHaveLength(1);
   });
@@ -1472,7 +1559,7 @@ describe("MediaPaneBody pane sizing", () => {
     testState.documentMapEmbeds = [
       {
         id: "embed-1",
-        media_id: "media-1",
+        media_id: "00000000-0000-4000-8000-000000000001",
         fragment_id: "fragment-1",
         ordinal: 0,
         occurrence_key: "embed:000000:youtube:dQw4w9WgXcQ",
@@ -1542,7 +1629,7 @@ describe("MediaPaneBody pane sizing", () => {
         label: "1",
         locator: {
           type: "web_text_offsets",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           fragment_id: "fragment-1",
           start_offset: 5,
           end_offset: 6,
@@ -1556,7 +1643,7 @@ describe("MediaPaneBody pane sizing", () => {
             body: "Preview note body.",
             locator: {
               type: "web_text_offsets",
-              media_id: "media-1",
+              media_id: "00000000-0000-4000-8000-000000000001",
               fragment_id: "fragment-1",
               start_offset: 7,
               end_offset: 30,
@@ -1607,7 +1694,7 @@ describe("MediaPaneBody pane sizing", () => {
         confidence: "strong",
         locator: {
           type: "web_text_offsets",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           fragment_id: "fragment-1",
           start_offset: 5,
           end_offset: 33,
@@ -1704,7 +1791,7 @@ describe("MediaPaneBody pane sizing", () => {
         label: "[13]",
         locator: {
           type: "pdf_page_geometry",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           page_number: 2,
           quads: [
             { x1: 10, y1: 20, x2: 20, y2: 20, x3: 20, y3: 30, x4: 10, y4: 30 },
@@ -1721,7 +1808,7 @@ describe("MediaPaneBody pane sizing", () => {
             body: "[13] Long short-term memory. Neural computation.",
             locator: {
               type: "pdf_page_geometry",
-              media_id: "media-1",
+              media_id: "00000000-0000-4000-8000-000000000001",
               page_number: 11,
               quads: [
                 {
@@ -1764,13 +1851,13 @@ describe("MediaPaneBody pane sizing", () => {
       expect(onCloseSecondaryPane).toHaveBeenCalledWith("secondary-1");
       const event = pulseHandler.mock.calls[0]?.[0] as CustomEvent;
       expect(event.detail).toMatchObject({
-        mediaId: "media-1",
+        mediaId: "00000000-0000-4000-8000-000000000001",
         snippet: "[13]",
         highlightBehavior: "pulse",
         focusBehavior: "scroll_into_view",
         locator: {
           type: "pdf_page_geometry",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           page_number: 2,
           exact: "[13]",
         },
@@ -1789,7 +1876,7 @@ describe("MediaPaneBody pane sizing", () => {
         snippet: "[13] Long short-term memory. Neural computation.",
         locator: {
           type: "pdf_page_geometry",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           page_number: 11,
           exact: "[13] Long short-term memory. Neural computation.",
         },
@@ -1797,7 +1884,7 @@ describe("MediaPaneBody pane sizing", () => {
       expect(
         testState.apiFetch.mock.calls.some(
           ([input, init]) =>
-            pathOf(input) === "/api/media/media-1/pdf-highlights" &&
+            pathOf(input) === "/api/media/00000000-0000-4000-8000-000000000001/pdf-highlights" &&
             init?.method === "POST",
         ),
       ).toBe(false);
@@ -1816,7 +1903,7 @@ describe("MediaPaneBody pane sizing", () => {
         label: "Missing passage",
         locator: {
           type: "web_text_offsets",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           fragment_id: "missing-fragment",
           start_offset: 0,
           end_offset: 7,
@@ -1846,7 +1933,7 @@ describe("MediaPaneBody pane sizing", () => {
         label: "1",
         locator: {
           type: "web_text_offsets",
-          media_id: "media-1",
+          media_id: "00000000-0000-4000-8000-000000000001",
           fragment_id: "fragment-1",
           start_offset: 0,
           end_offset: 1,
@@ -1860,7 +1947,7 @@ describe("MediaPaneBody pane sizing", () => {
             body: "Old note body.",
             locator: {
               type: "web_text_offsets",
-              media_id: "media-1",
+              media_id: "00000000-0000-4000-8000-000000000001",
               fragment_id: "missing-fragment",
               start_offset: 0,
               end_offset: 8,
@@ -1948,7 +2035,7 @@ describe("MediaPaneBody pane sizing", () => {
         ),
       ).toHaveLength(1);
       expect(
-        publication.options?.filter(
+        publishedMenuActions(publication).filter(
           (option) => option.id === "resource-inspector-companion",
         ),
       ).toHaveLength(0);
@@ -1958,7 +2045,7 @@ describe("MediaPaneBody pane sizing", () => {
         ),
       ).toEqual(["resource-evidence", "resource-dossier"]);
       if (kind === "future_kind") {
-        expect(apiCallsForPath("/api/media/media-1/document-map")).toHaveLength(0);
+        expect(apiCallsForPath("/api/media/00000000-0000-4000-8000-000000000001/document-map")).toHaveLength(0);
         expect(
           onSetFixedChrome.mock.calls.some(([publication]) => publication !== null),
         ).toBe(false);
@@ -1990,6 +2077,38 @@ describe("MediaPaneBody pane sizing", () => {
       }
     },
   );
+
+  it("coalesces rapid Shift+G resource Chat requests", async () => {
+    testState.mediaKind = "web_article";
+    let resolveConversation:
+      | ((response: { data: { id: string } }) => void)
+      | undefined;
+    testState.conversationResponse = new Promise((resolve) => {
+      resolveConversation = resolve;
+    });
+    const { onOpenInNewPane } = renderMediaPane();
+    await getReadyPrimaryChrome();
+
+    fireEvent.keyDown(document, { key: "G", shiftKey: true });
+    fireEvent.keyDown(document, { key: "G", shiftKey: true });
+
+    await waitFor(() => {
+      expect(apiCallsForPath("/api/conversations")).toHaveLength(1);
+    });
+    if (resolveConversation === undefined) {
+      // justify-defect -- the Promise constructor above must run synchronously.
+      throw new Error("Conversation test resolver was not initialized");
+    }
+    resolveConversation({ data: { id: "conversation-1" } });
+    await waitFor(() => {
+      expect(onOpenInNewPane).toHaveBeenCalledWith(
+        "/conversations/conversation-1",
+        "Chat",
+        undefined,
+        "Programmatic",
+      );
+    });
+  });
 
   it("lets bare G close a topmost mobile Companion", async () => {
     testState.mediaKind = "epub";
@@ -2085,7 +2204,7 @@ describe("MediaPaneBody pane sizing", () => {
       ),
     ).toHaveLength(1);
     expect(
-      latestPrimaryChrome()?.options?.some(
+      publishedMenuActions(latestPrimaryChrome()).some(
         (option) => option.id === "resource-inspector-companion",
       ),
     ).toBe(false);
@@ -2205,14 +2324,14 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "web_article";
     renderMediaPane();
 
-    const light = await getPrimaryOption("reader-theme-light");
-    const dark = await getPrimaryOption("reader-theme-dark");
+    const light = await getPrimaryOption("ViewAction.Reader.Theme.Light");
+    const dark = await getPrimaryOption("ViewAction.Reader.Theme.Dark");
     // The current theme is light: its own option is inert, the other active.
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(false);
     expect(
-      latestPrimaryChrome()?.options?.map((option) => option.id),
-    ).not.toContain("reader-pdf-source-colors");
+      publishedMenuActions(latestPrimaryChrome()).map((option) => option.id),
+    ).not.toContain("ViewAction.Reader.PdfSourceColors");
 
     dark.onSelect?.({ triggerEl: null });
     expect(testState.readerContextFns.setTheme).toHaveBeenCalledWith("dark");
@@ -2223,8 +2342,8 @@ describe("MediaPaneBody pane sizing", () => {
     testState.readerPersistence = { state: "Forbidden", failure: {} };
     renderMediaPane();
 
-    const light = await getPrimaryOption("reader-theme-light");
-    const dark = await getPrimaryOption("reader-theme-dark");
+    const light = await getPrimaryOption("ViewAction.Reader.Theme.Light");
+    const dark = await getPrimaryOption("ViewAction.Reader.Theme.Dark");
     expect(light.disabled).toBe(true);
     expect(dark.disabled).toBe(true);
   });
@@ -2233,7 +2352,9 @@ describe("MediaPaneBody pane sizing", () => {
     testState.mediaKind = "pdf";
     renderMediaPane();
 
-    const statusRow = await getPrimaryOption("reader-pdf-source-colors");
+    const statusRow = await getPrimaryOption(
+      "ViewAction.Reader.PdfSourceColors",
+    );
     expect(statusRow.label).toBe("PDF pages keep their source colors");
     // A render-seam status row: perceivable static content, not a disabled
     // menuitem that keyboard traversal would skip.
@@ -2252,10 +2373,10 @@ describe("MediaPaneBody pane sizing", () => {
       screen.getByText("PDF pages keep their source colors"),
     ).toBeInTheDocument();
 
-    const optionIds = latestPrimaryChrome()?.options?.map(
+    const optionIds = publishedMenuActions(latestPrimaryChrome()).map(
       (option) => option.id,
     );
-    expect(optionIds).not.toContain("reader-theme-light");
-    expect(optionIds).not.toContain("reader-theme-dark");
+    expect(optionIds).not.toContain("ViewAction.Reader.Theme.Light");
+    expect(optionIds).not.toContain("ViewAction.Reader.Theme.Dark");
   });
 });

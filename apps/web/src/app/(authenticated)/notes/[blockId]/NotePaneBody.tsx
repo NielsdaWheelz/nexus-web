@@ -37,6 +37,8 @@ import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { consumePendingNoteActivation } from "@/lib/reader/pendingNoteActivation";
+import { emptyResourceMenuGroups } from "@/lib/actions/resourceActions";
+import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import {
   useNotePulseHighlight,
   type NotePulseTarget,
@@ -232,6 +234,18 @@ export default function NotePaneBody() {
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],
+    menu:
+      block && initialDoc
+        ? {
+            kind: "ResourceMenu",
+            target: routeResourceActionSubject({
+              scheme: "note_block",
+              id: block.id,
+              href: `/notes/${block.id}`,
+            }),
+            groups: emptyResourceMenuGroups(),
+          }
+        : undefined,
   });
 
   if (feedback && !initialDoc) return <FeedbackNotice {...feedback} />;

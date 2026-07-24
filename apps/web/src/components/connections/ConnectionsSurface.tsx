@@ -13,7 +13,7 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { Link, Paperclip, Sparkles, Trash2, X } from "lucide-react";
+import { Link, Paperclip, Sparkles } from "lucide-react";
 import {
   FeedbackNotice,
   toFeedback,
@@ -23,13 +23,22 @@ import ResourceTargetListbox, {
   resourceTargetKey,
   resourceTargetOptionId,
 } from "@/components/resources/ResourceTargetListbox";
+import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import Pill from "@/components/ui/Pill";
 import Select from "@/components/ui/Select";
-import { isSameSystemApiDefect } from "@/lib/api/client";
+import { absent } from "@/lib/api/presence";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
+import {
+  composeResourceMenu,
+  projectResourceActionToMenu,
+  resolveResourceCoreActions,
+  RESOURCE_ACTION_CATALOG,
+  type ResourceActionId,
+} from "@/lib/actions/resourceActions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   getFileUploadError,
@@ -58,6 +67,12 @@ import {
   hrefForResourceActivation,
   type ResourceActivation,
 } from "@/lib/resources/activation";
+import {
+  executeResourceChat,
+  executeResourceOpen,
+  executeResourceShare,
+} from "@/lib/resources/resourceActionExecution";
+import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
 import { SYNAPSE_SOURCE_SCHEMES } from "@/lib/resources/resourceCapabilities";
 import { resourceIconForUri } from "@/lib/resources/resourceKind";
@@ -68,6 +83,7 @@ import {
   fetchSynapseScanStatus,
   requestSynapseScan,
 } from "@/lib/synapse";
+import { useShareController } from "@/lib/sharing/controller";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./ConnectionsSurface.module.css";
 import type {
@@ -82,8 +98,8 @@ interface Connection {
   ref: string;
   label: string;
   activation: ResourceActivation;
-  href: string | null;
   missing: boolean;
+  actionTarget: ResourceActionSubject;
   kind: EdgeKind;
   origin: ConnectionOut["origin"];
   rationale: string | null;
@@ -122,7 +138,7 @@ export default function ConnectionsSurface({
 }: {
   resourceRef: ResourceRef;
   composerController: ConnectionsComposerController;
-  onOpenRoute?: (
+  onOpenRoute: (
     href: string,
     openInNewPane: boolean,
     secondaryActivation?: WorkspaceSecondaryActivation,
@@ -170,13 +186,14 @@ export default function ConnectionsSurface({
       ? connectionsResource.data.data
           .map((connection) => {
             const href = hrefForResourceActivation(connection.other.activation);
+            const unavailable = connection.other.missing || href === null;
             return {
               edgeId: connection.edge_id,
               ref: connection.other.ref,
               label: connection.other.label ?? connection.other.ref,
               activation: connection.other.activation,
-              href,
-              missing: connection.other.missing || href === null,
+              missing: unavailable,
+              actionTarget: connection.other.actionTarget,
               kind: connection.kind,
               origin: connection.origin,
               rationale:
@@ -245,8 +262,8 @@ export default function ConnectionsSurface({
       activateResource(connection.activation, {
         labelHint: connection.label,
         openInNewPane: (href, _labelHint, secondaryActivation) =>
-          onOpenRoute?.(href, true, secondaryActivation),
-        navigate: (href) => onOpenRoute?.(href, false),
+          onOpenRoute(href, true, secondaryActivation),
+        navigate: (href) => onOpenRoute(href, false),
         newPane: openInNewPane,
       });
     },
@@ -314,69 +331,197 @@ export default function ConnectionsSurface({
       ) : null}
       {connections.length > 0 ? (
         <div className={styles.list}>
-          {connections.map((connection) => {
-            const Icon = resourceIconForUri(connection.ref);
-            return (
-              <div
-                key={connection.edgeId}
-                className={`${styles.linkRow}${connection.missing ? ` ${styles.missing}` : ""}`}
-              >
-                <button
-                  type="button"
-                  className={styles.linkButton}
-                  disabled={connection.missing}
-                  onClick={(event) =>
-                    openConnection(connection, event.shiftKey)
-                  }
-                >
-                  <Icon size={14} aria-hidden="true" />
-                  <span className={styles.connectionText}>
-                    <span>{connection.label}</span>
-                    <span className={styles.connectionMeta}>
-                      {connection.origin === "synapse" ? (
-                        <Pill
-                          tone="accent"
-                          className={styles.synapseMarker}
-                          role="img"
-                          aria-label="Synapse connection"
-                        >
-                          ✦
-                        </Pill>
-                      ) : null}
-                      {connection.kind}
-                    </span>
-                    {connection.origin === "synapse" && connection.rationale ? (
-                      <MachineText
-                        variant="inline"
-                        as="span"
-                        origin={{ label: "Synapse" }}
-                        className={styles.rationale}
-                      >
-                        {connection.rationale}
-                      </MachineText>
-                    ) : null}
-                  </span>
-                </button>
-                {connection.origin === "user" ? (
-                  <DeleteConnectionButton
-                    edgeId={connection.edgeId}
-                    kind={connection.kind}
-                    label={connection.label}
-                    onChanged={reloadConnections}
-                  />
-                ) : connection.origin === "synapse" ? (
-                  <DismissConnectionButton
-                    edgeId={connection.edgeId}
-                    label={connection.label}
-                    onChanged={reloadConnections}
-                  />
-                ) : null}
-              </div>
-            );
-          })}
+          {connections.map((connection) => (
+            <ConnectionRow
+              key={connection.edgeId}
+              connection={connection}
+              onOpen={(openInNewPane) =>
+                openConnection(connection, openInNewPane)
+              }
+              onOpenRoute={onOpenRoute}
+              onChanged={reloadConnections}
+            />
+          ))}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ConnectionRow({
+  connection,
+  onOpen,
+  onOpenRoute,
+  onChanged,
+}: {
+  connection: Connection;
+  onOpen: (openInNewPane: boolean) => void;
+  onOpenRoute: (
+    href: string,
+    openInNewPane: boolean,
+    secondaryActivation?: WorkspaceSecondaryActivation,
+  ) => void;
+  onChanged: () => void;
+}) {
+  const Icon = resourceIconForUri(connection.ref);
+  const { openShare } = useShareController();
+  const busyRef = useRef<Set<ResourceActionId>>(new Set());
+  const [busyIds, setBusyIds] = useState<ReadonlySet<ResourceActionId>>(
+    () => new Set(),
+  );
+  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
+
+  async function runAction({
+    id,
+    execute,
+    failure,
+  }: {
+    id: ResourceActionId;
+    execute: () => Promise<void>;
+    failure: string;
+  }) {
+    if (busyRef.current.has(id)) return;
+    busyRef.current.add(id);
+    setBusyIds(new Set(busyRef.current));
+    setFeedback(null);
+    try {
+      await execute();
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
+      setFeedback(toFeedback(error, { fallback: failure }));
+    } finally {
+      busyRef.current.delete(id);
+      setBusyIds(new Set(busyRef.current));
+    }
+  }
+
+  const core = resolveResourceCoreActions({
+    target: connection.actionTarget,
+    projection: "Representation",
+    busyIds,
+    executors: {
+      open: (subject: ResourceActionSubject) =>
+        executeResourceOpen({
+          target: subject,
+          resourceNavigation: {
+            labelHint: connection.label,
+            navigate: (href) => onOpenRoute(href, false),
+            openInNewPane: (href, _labelHint, secondaryActivation) =>
+              onOpenRoute(href, true, secondaryActivation),
+          },
+        }),
+      share: (subject, { triggerEl }) =>
+        executeResourceShare({
+          subject,
+          openShare,
+          options: {
+            returnFocusTo: () => triggerEl,
+            returnFocusFallback: absent(),
+          },
+        }),
+      chat: (subject: ResourceActionSubject) =>
+        runAction({
+          id: RESOURCE_ACTION_CATALOG.Chat.id,
+          execute: () =>
+            executeResourceChat({
+              ref: subject.ref,
+              openConversation: (conversationId) =>
+                onOpenRoute(`/conversations/${conversationId}`, true),
+            }),
+          failure: "Chat could not be started.",
+        }),
+    },
+  });
+  const relationship =
+    connection.origin === "user"
+      ? projectResourceActionToMenu({
+          kind: "command",
+          catalogKey: "UnlinkConnection",
+          busy: busyIds.has(RESOURCE_ACTION_CATALOG.UnlinkConnection.id),
+          onSelect: () => {
+            void runAction({
+              id: RESOURCE_ACTION_CATALOG.UnlinkConnection.id,
+              execute: async () => {
+                if (connection.kind === "context") {
+                  await deleteLink(connection.edgeId);
+                } else {
+                  await deleteStance(connection.edgeId);
+                }
+                onChanged();
+              },
+              failure: "Connection could not be unlinked.",
+            });
+          },
+        })
+      : connection.origin === "synapse"
+        ? projectResourceActionToMenu({
+            kind: "command",
+            catalogKey: "DismissConnection",
+            busy: busyIds.has(RESOURCE_ACTION_CATALOG.DismissConnection.id),
+            onSelect: () => {
+              void runAction({
+                id: RESOURCE_ACTION_CATALOG.DismissConnection.id,
+                execute: async () => {
+                  await dismissSynapseEdge(connection.edgeId);
+                  onChanged();
+                },
+                failure: "Connection could not be dismissed.",
+              });
+            },
+          })
+        : null;
+  const options = composeResourceMenu({
+    ...core,
+    relationships: relationship ? [relationship] : [],
+  });
+
+  return (
+    <div
+      className={`${styles.linkRow}${connection.missing ? ` ${styles.missing}` : ""}`}
+    >
+      <button
+        type="button"
+        className={styles.linkButton}
+        disabled={connection.missing}
+        onClick={(event) => onOpen(event.shiftKey)}
+      >
+        <Icon size={14} aria-hidden="true" />
+        <span className={styles.connectionText}>
+          <span>{connection.label}</span>
+          <span className={styles.connectionMeta}>
+            {connection.origin === "synapse" ? (
+              <Pill
+                tone="accent"
+                className={styles.synapseMarker}
+                role="img"
+                aria-label="Synapse connection"
+              >
+                ✦
+              </Pill>
+            ) : null}
+            {connection.kind}
+          </span>
+          {connection.origin === "synapse" && connection.rationale ? (
+            <MachineText
+              variant="inline"
+              as="span"
+              origin={{ label: "Synapse" }}
+              className={styles.rationale}
+            >
+              {connection.rationale}
+            </MachineText>
+          ) : null}
+        </span>
+      </button>
+      {options.length > 0 ? (
+        <ActionMenu
+          options={options}
+          label={`Actions for ${connection.label}`}
+        />
+      ) : null}
+      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
+    </div>
   );
 }
 
@@ -945,8 +1090,7 @@ class ConnectionComposerDefectBoundary extends Component<
 }
 
 type AttachmentEdgeOutcome =
-  | { kind: "Fulfilled" }
-  | { kind: "Rejected"; error: unknown };
+  { kind: "Fulfilled" } | { kind: "Rejected"; error: unknown };
 
 function upsertPending(
   current: readonly ConnectionsPendingAttachment[],
@@ -966,105 +1110,6 @@ function createAttachmentLink(
     source: { kind: "resource", ref: sourceRef },
     target: { kind: "resource", ref: `media:${pending.mediaId}` },
   });
-}
-
-function DeleteConnectionButton({
-  edgeId,
-  kind,
-  label,
-  onChanged,
-}: {
-  edgeId: string;
-  kind: EdgeKind;
-  label: string;
-  onChanged: () => void;
-}) {
-  const [deleting, setDeleting] = useState(false);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-
-  async function deleteConnection() {
-    setDeleting(true);
-    setFeedback(null);
-    try {
-      if (kind === "context") {
-        await deleteLink(edgeId);
-      } else {
-        await deleteStance(edgeId);
-      }
-      onChanged();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, { fallback: "Connection could not be deleted." }),
-      );
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  return (
-    <div className={styles.deleteWrap}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        iconOnly
-        loading={deleting}
-        aria-label={`Delete connection to ${label}`}
-        onClick={() => void deleteConnection()}
-      >
-        <Trash2 size={14} aria-hidden="true" />
-      </Button>
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
-    </div>
-  );
-}
-
-function DismissConnectionButton({
-  edgeId,
-  label,
-  onChanged,
-}: {
-  edgeId: string;
-  label: string;
-  onChanged: () => void;
-}) {
-  const [dismissing, setDismissing] = useState(false);
-  const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
-
-  async function dismissConnection() {
-    setDismissing(true);
-    setFeedback(null);
-    try {
-      await dismissSynapseEdge(edgeId);
-      onChanged();
-    } catch (err) {
-      if (handleUnauthenticatedApiError(err)) return;
-      setFeedback(
-        toFeedback(err, { fallback: "Connection could not be dismissed." }),
-      );
-    } finally {
-      setDismissing(false);
-    }
-  }
-
-  return (
-    <div className={styles.deleteWrap}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        iconOnly
-        loading={dismissing}
-        aria-label={`Dismiss connection to ${label}`}
-        title="Dismiss — won't be suggested again"
-        onClick={() => void dismissConnection()}
-      >
-        <X size={14} aria-hidden="true" />
-      </Button>
-      {feedback ? <FeedbackNotice feedback={feedback} /> : null}
-    </div>
-  );
 }
 
 const SYNAPSE_SCAN_POLL_MS = 2000;

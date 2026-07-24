@@ -3,12 +3,12 @@ import {
   MessageSquarePlus,
   MessagesSquare,
   NotebookPen,
-  Share2,
   TextSelect,
   Trash2,
 } from "lucide-react";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
+import { projectResourceActionToHeader } from "@/lib/actions/resourceActions";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type {
   ActionSelectDetail,
@@ -113,15 +113,13 @@ export function buildHighlightActions({
   }
 
   if (canEdit && handlers.onShare) {
-    options.push({
+    options.push(projectResourceActionToHeader({
       kind: "command",
-      id: "share",
-      label: "Share…",
-      icon: <Share2 size={14} aria-hidden="true" />,
-      disabled: !isExisting && state.changingColor,
-      restoreFocusOnClose: false,
+      catalogKey: "Share",
+      busy: !isExisting && state.changingColor,
+      disabledReason: "Creating highlight",
       onSelect: handlers.onShare,
-    });
+    }));
   }
 
   if (canQuoteToChat && hasQuoteText) {

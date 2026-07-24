@@ -11,14 +11,14 @@ import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
 import LibraryPaneBody from "./LibraryPaneBody";
 
-// Default-library ("My Library") coverage per the default-library-virtualization
+// Default-library ("My Library") coverage per the 00000000-0000-4000-8000-000000000204-virtualization
 // cutover contract: no reorder UX (no drag handles, no reorder PATCH), no
 // resonance sort offered/forced, and pagination merges are deduped by media id
 // (the server may hand back a different representative entry id for the same
 // media across pages). Every existing LibraryPaneBody fixture uses
 // `isDefault: false`; this file is the only isDefault:true coverage.
 
-const LIBRARY_ID = "default-library";
+const LIBRARY_ID = "00000000-0000-4000-8000-000000000204";
 const LIBRARY_NAME = "My Library";
 
 function seededDefaultLibrary() {
@@ -217,7 +217,7 @@ describe("LibraryPaneBody (Default library)", () => {
     ).toHaveLength(1);
   });
 
-  it("dedupes an appended default-library page by media id, not entry id", async () => {
+  it("dedupes an appended 00000000-0000-4000-8000-000000000204 page by media id, not entry id", async () => {
     const user = userEvent.setup();
     stubFetch(async (input) => {
       const lectern = lecternGetResponse(input);

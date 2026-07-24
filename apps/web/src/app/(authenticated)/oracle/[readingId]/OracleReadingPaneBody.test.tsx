@@ -7,6 +7,7 @@ import {
 import { useLayoutEffect, useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { buildOraclePlateImageSrc } from "@/lib/media/oraclePlateImage";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
@@ -23,6 +24,8 @@ import {
 } from "@/lib/workspace/schema";
 import OracleConcordance from "../OracleConcordance";
 import OracleReadingPaneBody, { type ReadingDetail } from "./OracleReadingPaneBody";
+import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
+import type { PanePrimaryChromePublicationUpdate } from "@/lib/panes/panePublications";
 
 const TEST_VISIT_ID = assumePaneVisitId(
   "00000000-0000-4000-8000-000000000001",
@@ -62,7 +65,12 @@ function resolvedOpenHrefs(
   return [...msgHrefs, ...queue.map((d) => d.href)];
 }
 
-function readingPane(readingId: string) {
+function readingPane(
+  readingId: string,
+  publishPrimaryChrome: (
+    update: PanePrimaryChromePublicationUpdate,
+  ) => void = () => {},
+) {
   const href = `/oracle/${readingId}`;
   return (
     <PaneReturnMementoProvider>
@@ -82,7 +90,11 @@ function readingPane(readingId: string) {
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
       >
-        <OracleReadingPaneBody />
+        <FeedbackProvider>
+          <PanePrimaryChromeProvider publish={publishPrimaryChrome}>
+            <OracleReadingPaneBody />
+          </PanePrimaryChromeProvider>
+        </FeedbackProvider>
       </PaneRuntimeProvider>
     </PaneReturnMementoProvider>
   );
@@ -142,7 +154,7 @@ function OracleReturnScrollport({
             paneId: "pane-return-test",
             visitId,
             routeKey: resolvePaneRouteIdentity(
-              "/oracle/reading-1",
+              "/oracle/00000000-0000-4000-8000-000000000021",
             ).routeKey,
             modality: "Programmatic",
           });
@@ -168,7 +180,7 @@ function OracleReturnScrollport({
 }
 
 function oracleReturnApp(phase: "source" | "away" | "return") {
-  const href = "/oracle/reading-1";
+  const href = "/oracle/00000000-0000-4000-8000-000000000021";
   const visitId = phase === "away" ? AWAY_VISIT_ID : TEST_VISIT_ID;
   return (
     <PaneReturnMementoProvider>
@@ -183,7 +195,7 @@ function oracleReturnApp(phase: "source" | "away" | "return") {
         canGoForward={false}
         onGoBackPane={vi.fn()}
         onGoForwardPane={vi.fn()}
-        pathParams={{ readingId: "reading-1" }}
+        pathParams={{ readingId: "00000000-0000-4000-8000-000000000021" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
@@ -220,7 +232,7 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return detail.promise;
         }
         throw new Error(`Unexpected fetch path: ${path}`);
@@ -241,7 +253,7 @@ describe("OracleReadingPaneBody", () => {
     detail.resolve(
       jsonResponse({
         data: readingDetail({
-          id: "reading-1",
+          id: "00000000-0000-4000-8000-000000000021",
           question: "When is the reading ready?",
           folioNumber: 1,
         }),
@@ -263,28 +275,28 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What keeps the first lamp lit?",
               folioNumber: 1,
             }),
           });
         }
-        if (path === "/api/oracle/readings/reading-2") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000022") {
           return secondDetail.promise;
         }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
     );
 
-    const { rerender } = render(readingPane("reading-1"));
+    const { rerender } = render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     expect(await screen.findByRole("heading", { name: "What keeps the first lamp lit?" }))
       .toBeVisible();
 
-    rerender(readingPane("reading-2"));
+    rerender(readingPane("00000000-0000-4000-8000-000000000022"));
 
     await waitFor(() => {
       expect(
@@ -296,7 +308,7 @@ describe("OracleReadingPaneBody", () => {
     secondDetail.resolve(
       jsonResponse({
         data: readingDetail({
-          id: "reading-2",
+          id: "00000000-0000-4000-8000-000000000022",
           question: "Where does the second path open?",
           folioNumber: 2,
         }),
@@ -311,10 +323,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What is still forming?",
               folioNumber: 1,
               status: "streaming",
@@ -325,7 +337,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     await waitFor(() => {
       expect(mocks.sseClientDirect).toHaveBeenCalledTimes(1);
@@ -342,7 +354,7 @@ describe("OracleReadingPaneBody", () => {
     await expect(
       (initialConnection as () => Promise<unknown>)(),
     ).resolves.toEqual({
-      url: "https://stream.example.test/stream/oracle-readings/reading-1/events",
+      url: "https://stream.example.test/stream/oracle-readings/00000000-0000-4000-8000-000000000021/events",
       token: "stream-token-1",
     });
   });
@@ -350,13 +362,13 @@ describe("OracleReadingPaneBody", () => {
   it("does not start a stream for a reading load that became stale", async () => {
     const firstDetail = deferred<Response>();
     const fetchMock = vi.fn(async (path: string) => {
-      if (path === "/api/oracle/readings/reading-1") {
+      if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
         return firstDetail.promise;
       }
-      if (path === "/api/oracle/readings/reading-2") {
+      if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000022") {
         return jsonResponse({
           data: readingDetail({
-            id: "reading-2",
+            id: "00000000-0000-4000-8000-000000000022",
             question: "Where does the second path open?",
             folioNumber: 2,
           }),
@@ -366,11 +378,11 @@ describe("OracleReadingPaneBody", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { rerender } = render(readingPane("reading-1"));
+    const { rerender } = render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/oracle/readings/reading-1",
+        "/api/oracle/readings/00000000-0000-4000-8000-000000000021",
         expect.objectContaining({
           headers: { "Content-Type": "application/json" },
           method: "GET",
@@ -379,11 +391,11 @@ describe("OracleReadingPaneBody", () => {
       );
     });
 
-    rerender(readingPane("reading-2"));
+    rerender(readingPane("00000000-0000-4000-8000-000000000022"));
     firstDetail.resolve(
       jsonResponse({
         data: readingDetail({
-          id: "reading-1",
+          id: "00000000-0000-4000-8000-000000000021",
           question: "What keeps the first lamp lit?",
           folioNumber: 1,
           status: "streaming",
@@ -404,10 +416,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What keeps the lamp lit?",
               folioNumber: 1,
               image: {
@@ -426,7 +438,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     const plate = await screen.findByRole("img", {
       name: "Test Engraver, The Test Plate",
@@ -438,10 +450,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What did the provider say?",
               folioNumber: 1,
               status: "failed",
@@ -453,7 +465,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -469,11 +481,11 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: {
               ...readingDetail({
-                id: "reading-1",
+                id: "00000000-0000-4000-8000-000000000021",
                 question: "What did the model decide?",
                 folioNumber: 1,
                 status: "streaming",
@@ -492,7 +504,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -506,10 +518,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What does the platform require?",
               folioNumber: 1,
               status: "failed",
@@ -521,7 +533,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     expect(await screen.findByText("The reading could not finish.")).toBeVisible();
     expect(
@@ -535,10 +547,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "Where is the evidence?",
               folioNumber: 1,
               passages: [
@@ -585,7 +597,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toBeInTheDocument();
@@ -599,10 +611,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "Where is the note evidence?",
               folioNumber: 1,
               passages: [
@@ -648,7 +660,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/notes/block-1");
@@ -665,10 +677,10 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What does the corpus say?",
               folioNumber: 1,
               passages: [
@@ -718,7 +730,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    render(readingPane("reading-1"));
+    render(readingPane("00000000-0000-4000-8000-000000000021"));
 
     const chip = await screen.findByRole("link", { name: "Open citation 1" });
     expect(chip).toHaveAttribute("href", "/media/media-9#fragment-fragment-9");
@@ -731,47 +743,91 @@ describe("OracleReadingPaneBody", () => {
     );
   });
 
-  it("shows chat-open failure copy when starting a conversation fails", async () => {
+  it("publishes the resource menu target without a duplicate body Chat control", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
           return jsonResponse({
             data: readingDetail({
-              id: "reading-1",
+              id: "00000000-0000-4000-8000-000000000021",
               question: "What follows the reading?",
               folioNumber: 1,
             }),
           });
         }
-        if (path === "/api/conversations") {
-          return errorResponse(500, "E_INTERNAL", "boom");
+        throw new Error(`Unexpected fetch path: ${path}`);
+      }),
+    );
+    const publishPrimaryChrome =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
+
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        publishPrimaryChrome,
+      ),
+    );
+
+    await screen.findByText("What follows the reading?");
+    await waitFor(() => {
+      const publication = publishPrimaryChrome.mock.calls
+        .map(([update]) => update.publication)
+        .findLast((candidate) => candidate?.menu?.kind === "ResourceMenu");
+      expect(publication?.menu?.kind).toBe("ResourceMenu");
+      if (publication?.menu?.kind !== "ResourceMenu") return;
+      expect(publication.menu.target).toMatchObject({
+        kind: "Resource",
+        ref: "oracle_reading:00000000-0000-4000-8000-000000000021",
+      });
+      expect(publication.menu.groups.core).toEqual([]);
+    });
+    expect(
+      screen.queryByRole("button", { name: /Chat about/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not publish a resource target when the reading fails to load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021") {
+          return new Response(
+            JSON.stringify({
+              error: { code: "E_NOT_FOUND", message: "Missing reading" },
+            }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
         }
         throw new Error(`Unexpected fetch path: ${path}`);
       }),
     );
+    const publishPrimaryChrome =
+      vi.fn<(update: PanePrimaryChromePublicationUpdate) => void>();
 
-    render(readingPane("reading-1"));
-
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Chat about this reading" }),
+    render(
+      readingPane(
+        "00000000-0000-4000-8000-000000000021",
+        publishPrimaryChrome,
+      ),
     );
 
+    await screen.findByRole("alert");
     expect(
-      await screen.findByText(
-        "A conversation about this reading could not begin.",
+      publishPrimaryChrome.mock.calls.some(
+        ([update]) => update.publication?.menu?.kind === "ResourceMenu",
       ),
-    ).toBeVisible();
-    expect(
-      screen.queryByText("The reading was interrupted."),
-    ).not.toBeInTheDocument();
+    ).toBe(false);
   });
 
   it("clears concordance immediately when the reading status is no longer complete", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) => {
-        if (path === "/api/oracle/readings/reading-1/concordance") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021/concordance") {
           return jsonResponse({
             data: [concordanceEntry({ id: "reading-2", motto: "In limine" })],
           });
@@ -780,7 +836,7 @@ describe("OracleReadingPaneBody", () => {
       }),
     );
 
-    const concordanceHref = "/oracle/reading-1";
+    const concordanceHref = "/oracle/00000000-0000-4000-8000-000000000021";
     const concordancePane = (status: string) => (
       <PaneRuntimeProvider
         paneId="pane-1"
@@ -793,12 +849,12 @@ describe("OracleReadingPaneBody", () => {
         canGoForward={false}
         onGoBackPane={vi.fn()}
         onGoForwardPane={vi.fn()}
-        pathParams={{ readingId: "reading-1" }}
+        pathParams={{ readingId: "00000000-0000-4000-8000-000000000021" }}
         onNavigatePane={vi.fn()}
         onReplacePane={vi.fn()}
         onOpenInNewPane={vi.fn()}
       >
-        <OracleConcordance readingId="reading-1" status={status} />
+        <OracleConcordance readingId="00000000-0000-4000-8000-000000000021" status={status} />
       </PaneRuntimeProvider>
     );
 
@@ -820,7 +876,7 @@ describe("OracleReadingPaneBody", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((path: string, init?: RequestInit) => {
-        if (path === "/api/oracle/readings/reading-1/concordance") {
+        if (path === "/api/oracle/readings/00000000-0000-4000-8000-000000000021/concordance") {
           signals.reading1 = init?.signal as AbortSignal;
           return firstConcordance.promise;
         }
@@ -856,7 +912,7 @@ describe("OracleReadingPaneBody", () => {
       );
     }
 
-    const { rerender } = render(concordancePane("reading-1"));
+    const { rerender } = render(concordancePane("00000000-0000-4000-8000-000000000021"));
 
     await waitFor(() => {
       expect(signals.reading1).toBeDefined();
@@ -914,13 +970,6 @@ function readingDetail(input: {
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function errorResponse(status: number, code: string, message: string): Response {
-  return new Response(JSON.stringify({ error: { code, message } }), {
-    status,
     headers: { "Content-Type": "application/json" },
   });
 }

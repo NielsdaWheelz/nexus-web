@@ -158,8 +158,38 @@ describe("toChatSSEEvent", () => {
     expect(toChatSSEEvent("context_ref_added", data)).toEqual({
       seq: 0,
       type: "context_ref_added",
-      data,
+      data: {
+        ...data,
+        actionTarget: {
+          kind: "Resource",
+          ref: data.resource_ref,
+          activation: data.activation,
+          missing: false,
+        },
+      },
     });
+  });
+
+  it("defects when a context ref activation names another resource", () => {
+    const resourceRef = "media:44444444-4444-4444-8444-444444444444";
+    expect(() =>
+      toChatSSEEvent("context_ref_added", {
+        id: "33333333-3333-4333-8333-333333333333",
+        conversation_id: "conv-1",
+        resource_ref: resourceRef,
+        activation: {
+          resourceRef: "media:55555555-5555-4555-8555-555555555555",
+          kind: "route",
+          href: "/media/55555555-5555-4555-8555-555555555555",
+          unresolvedReason: null,
+        },
+        label: "Annual report",
+        summary: "Page 4",
+        missing: false,
+        created_at: "2026-01-01T00:00:00Z",
+        citation_edge_id: null,
+      }),
+    ).toThrow("ref must equal");
   });
 
   it("rejects context_ref_added payloads without a citation edge key", () => {

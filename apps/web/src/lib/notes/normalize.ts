@@ -1,4 +1,8 @@
 import { assertNoTopLevelLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
+import {
+  routeResourceActionSubject,
+  type ResourceActionSubject,
+} from "@/lib/resources/resourceActionTarget";
 import { isRecord } from "@/lib/validation";
 
 // Transport-free note normalizers + their types. Lives apart from notes/api.ts
@@ -22,6 +26,7 @@ export interface NotePageSummary {
   id: string;
   title: string;
   updatedAt?: string;
+  actionTarget: ResourceActionSubject;
 }
 
 export function requiredRecord(
@@ -98,8 +103,10 @@ export function normalizePageSummary(
   raw: Record<string, unknown>,
 ): NotePageSummary {
   assertNoTopLevelLegacyArtifactIdentityKey(raw, "note page");
+  const id = requiredString(raw.id, "note page id");
+  const href = `/pages/${id}`;
   return {
-    id: requiredString(raw.id, "note page id"),
+    id,
     title: String(raw.title ?? "Untitled"),
     updatedAt:
       typeof raw.updatedAt === "string"
@@ -107,5 +114,6 @@ export function normalizePageSummary(
         : typeof raw.updated_at === "string"
           ? raw.updated_at
           : undefined,
+    actionTarget: routeResourceActionSubject({ scheme: "page", id, href }),
   };
 }

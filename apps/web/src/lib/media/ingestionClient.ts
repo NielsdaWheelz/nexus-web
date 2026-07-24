@@ -40,6 +40,7 @@ export interface MediaActionCapabilities {
   can_retry: boolean;
   can_refresh_source: boolean;
   can_retry_metadata: boolean;
+  can_edit_authors: boolean;
 }
 
 export interface SourceIngestResult {

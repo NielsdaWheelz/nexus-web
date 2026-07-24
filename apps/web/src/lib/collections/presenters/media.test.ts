@@ -9,7 +9,7 @@ import {
 
 function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
   return {
-    id: "media-1",
+    id: "11111111-1111-4111-8111-111111111111",
     kind: "pdf",
     title: "On Exactitude in Science",
     canonical_source_url: "https://example.test/borges.pdf",
@@ -30,6 +30,14 @@ function item(overrides: Partial<MediaPresenterItem> = {}): MediaPresenterItem {
 function ctx(overrides: Partial<MediaPresenterContext> = {}): MediaPresenterContext {
   return {
     readingTimeEstimate: { kind: "Absent" },
+    retryProcessing: { kind: "Unavailable" },
+    refreshSource: { kind: "Unavailable" },
+    retryMetadata: { kind: "Unavailable" },
+    editAuthors: { kind: "Unavailable" },
+    lecternMembership: { kind: "Unavailable" },
+    removeMedia: { kind: "Unavailable" },
+    readState: { kind: "Unavailable" },
+    busyIds: new Set(),
     ...overrides,
   };
 }
@@ -40,7 +48,7 @@ describe("presentMedia", () => {
 
     expect(view.primary).toEqual({
       kind: "link",
-      href: "/media/media-1",
+      href: "/media/11111111-1111-4111-8111-111111111111",
       paneLabelHint: "On Exactitude in Science",
       viewTransition: "media-reader",
     });
@@ -48,7 +56,10 @@ describe("presentMedia", () => {
     expect(view.publicationDate).toEqual({ kind: "Present", value: "1946" });
     expect(view).not.toHaveProperty("publisher");
     expect(view).not.toHaveProperty("lead");
-    expect(view.relatedMediaId).toEqual({ kind: "Present", value: "media-1" });
+    expect(view.relatedMediaId).toEqual({
+      kind: "Present",
+      value: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("uses the source host only for web articles", () => {
@@ -142,13 +153,20 @@ describe("presentMedia", () => {
     ];
     const view = presentMedia(
       item({ contributors: credits, capabilities: { can_quote: true, can_delete: true } }),
-      ctx({ onDelete: vi.fn(), onShare: vi.fn() }),
+      ctx({
+        removeMedia: { kind: "Available", execute: vi.fn() },
+      }),
     );
 
     expect(view.contributors).toEqual(credits);
-    expect(view.actions.map((action) => action.id)).toEqual(
-      expect.arrayContaining(["delete-media", "share"]),
-    );
+    expect(view.actionPublication.kind).toBe("ResourceMenu");
+    if (view.actionPublication.kind !== "ResourceMenu") {
+      throw new Error("Expected resource menu publication");
+    }
+    expect(
+      view.actionPublication.groups.operations.map((action) => action.id),
+    ).toContain("ResourceOperation.Media.Remove");
+    expect(view.actionPublication.groups.core).toEqual([]);
     expect(view).not.toHaveProperty("swipeActions");
   });
 });
