@@ -547,6 +547,7 @@ function paneResourceItem(ref: string): ResourceItem {
       adjacencySource: false,
       adjacencyTarget: true,
       sharing: "CopyOnly",
+      libraryPlacement: "None",
     },
     versionByLane: {},
   };

@@ -98,6 +98,9 @@ def test_missing_resource_activation_fails_closed(db_session: Session, bootstrap
     assert item.activation.kind == "none"
     assert item.activation.href is None
     assert item.activation.unresolved_reason == "missing"
+    serialized = item.model_dump(mode="json", by_alias=True)
+    assert serialized["capabilities"]["libraryPlacement"] == "ManageEntries"
+    assert "library_placement" not in serialized["capabilities"]
 
 
 def test_generated_and_identity_resources_project_existing_routes(
@@ -121,8 +124,7 @@ def test_generated_and_identity_resources_project_existing_routes(
     db_session.flush()
 
     assert (
-        _route(db_session, bootstrapped_user, "artifact", artifact_id)
-        == f"/libraries/{library_id}"
+        _route(db_session, bootstrapped_user, "artifact", artifact_id) == f"/libraries/{library_id}"
     )
     assert (
         _route(db_session, bootstrapped_user, "artifact_revision", revision_id)

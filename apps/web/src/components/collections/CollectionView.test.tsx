@@ -14,6 +14,7 @@ import type { CollectionRowView } from "@/lib/collections/types";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionEndpointOut } from "@/lib/resourceGraph/connections";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import {
   PaneReturnMementoProvider,
@@ -22,9 +23,7 @@ import {
 import { assumePaneVisitId } from "@/lib/workspace/schema";
 import CollectionView from "./CollectionView";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000011",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000011");
 
 function PaneReturnTestHarness({ children }: { children: ReactNode }) {
   return (
@@ -39,7 +38,9 @@ function PaneReturnTestHarness({ children }: { children: ReactNode }) {
 function render(ui: ReactElement) {
   return testingRender(
     <FeedbackProvider>
-      <ShareControllerProvider>{ui}</ShareControllerProvider>
+      <LibraryPlacementControllerProvider>
+        <ShareControllerProvider>{ui}</ShareControllerProvider>
+      </LibraryPlacementControllerProvider>
     </FeedbackProvider>,
     { wrapper: PaneReturnTestHarness },
   );
@@ -125,10 +126,9 @@ describe("canonical CollectionView", () => {
     expect(list).toBeVisible();
     expect(list).not.toHaveAttribute("data-view");
     expect(list).not.toHaveAttribute("data-density");
-    expect(screen.getByRole("link", { name: "First document" })).toHaveAttribute(
-      "href",
-      "/media/a",
-    );
+    expect(
+      screen.getByRole("link", { name: "First document" }),
+    ).toHaveAttribute("href", "/media/a");
     expect(screen.queryByRole("img")).toBeNull();
   });
 
@@ -197,7 +197,9 @@ describe("canonical CollectionView", () => {
     await user.tab();
     expect(screen.getByRole("link", { name: "Ada Author" })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Primary control" })).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Primary control" }),
+    ).toHaveFocus();
     await user.tab();
     expect(
       screen.getByRole("button", { name: "More actions for First document" }),
@@ -288,9 +290,9 @@ describe("canonical CollectionView", () => {
     expect(
       await screen.findByRole("menuitem", { name: "Move up" }),
     ).toHaveAttribute("aria-disabled", "true");
-    await userEvent.setup().click(
-      screen.getByRole("menuitem", { name: "Move down" }),
-    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Move down" }));
 
     await waitFor(() =>
       expect(
@@ -313,9 +315,9 @@ describe("canonical CollectionView", () => {
         name: "More actions for First document",
       }),
     );
-    await userEvent.setup().click(
-      screen.getByRole("menuitem", { name: "Move up" }),
-    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Move up" }));
     await waitFor(() =>
       expect(
         screen.getAllByRole("link").map((link) => link.textContent),
@@ -380,7 +382,9 @@ describe("canonical CollectionView", () => {
       clientX: targetX,
       clientY: targetY,
     });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
     fireEvent.mouseMove(document, {
       buttons: 1,
       clientX: targetX,
@@ -418,7 +422,10 @@ describe("canonical CollectionView", () => {
       "true",
     );
     expect(screen.queryByRole("menuitem", { name: /top|bottom/i })).toBeNull();
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape", code: "Escape" });
+    fireEvent.keyDown(screen.getByRole("menu"), {
+      key: "Escape",
+      code: "Escape",
+    });
   });
 
   it("keeps sub-threshold clicks and Escape cancellation on the same trigger", async () => {
@@ -431,15 +438,30 @@ describe("canonical CollectionView", () => {
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    fireEvent.mouseDown(trigger, { button: 0, buttons: 1, clientX: x, clientY: y });
+    fireEvent.mouseDown(trigger, {
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+    });
     fireEvent.mouseMove(document, { buttons: 1, clientX: x, clientY: y + 7 });
     fireEvent.mouseUp(document, { button: 0, clientX: x, clientY: y + 7 });
     fireEvent.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "Move down" })).toBeVisible();
+    expect(
+      await screen.findByRole("menuitem", { name: "Move down" }),
+    ).toBeVisible();
     expect(onReorder).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape", code: "Escape" });
+    fireEvent.keyDown(screen.getByRole("menu"), {
+      key: "Escape",
+      code: "Escape",
+    });
 
-    fireEvent.mouseDown(trigger, { button: 0, buttons: 1, clientX: x, clientY: y });
+    fireEvent.mouseDown(trigger, {
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+    });
     fireEvent.mouseMove(document, { buttons: 1, clientX: x, clientY: y + 9 });
     await waitFor(() =>
       expect(screen.getAllByRole("listitem")[0]).toHaveAttribute(
@@ -528,7 +550,9 @@ describe("canonical CollectionView", () => {
     fireEvent.touchMove(source, {
       touches: [touch(targetX, targetY)],
     });
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
     fireEvent.touchMove(source, {
       touches: [touch(targetX, targetY)],
     });

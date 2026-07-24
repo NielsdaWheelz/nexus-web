@@ -14,6 +14,7 @@ import {
   projectResourceActionToHeader,
   projectResourceActionToMenu,
   resolveResourceCoreActions,
+  resolveUniversalResourceRelationshipActions,
   type ActionPublication,
   type ExecutableResourceAction,
   type RichResourceActionGroups,
@@ -62,7 +63,9 @@ function richMenu(
 }
 
 function command(groups: ResourceMenuGroups, id: string) {
-  const action = composeResourceMenu(groups).find((candidate) => candidate.id === id);
+  const action = composeResourceMenu(groups).find(
+    (candidate) => candidate.id === id,
+  );
   if (!action || action.kind !== "command") {
     throw new Error(`Missing command ${id}`);
   }
@@ -73,9 +76,11 @@ describe("resource action catalog and projections", () => {
   it("owns unique dot-delimited PascalCase ids", () => {
     const ids = Object.values(RESOURCE_ACTION_CATALOG).map((entry) => entry.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.every((id) => /^(?:[A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)+$/.test(id))).toBe(
-      true,
-    );
+    expect(
+      ids.every((id) =>
+        /^(?:[A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)+$/.test(id),
+      ),
+    ).toBe(true);
   });
 
   it("projects Share metadata identically into menus and headers", () => {
@@ -283,6 +288,84 @@ describe("resolveResourceCoreActions", () => {
   });
 });
 
+describe("resolveUniversalResourceRelationshipActions", () => {
+  function subject(
+    scheme: "media" | "podcast" | "page",
+  ): ResourceActionSubject {
+    const ref = assumeCanonicalResourceRef(`${scheme}:${UUID}`);
+    return {
+      kind: "Resource",
+      ref,
+      activation: {
+        resourceRef: ref,
+        kind: "route",
+        href: `/${scheme}/${UUID}`,
+        unresolvedReason: null,
+      },
+      missing: false,
+    };
+  }
+
+  it.each(["media", "podcast"] as const)(
+    "publishes one direct Libraries relationship for %s",
+    (scheme) => {
+      const target = subject(scheme);
+      const libraryPlacement = vi.fn();
+      const groups = resolveUniversalResourceRelationshipActions({
+        target,
+        executors: { libraryPlacement },
+      });
+
+      expect(ids(groups)).toEqual(["RelationshipAction.LibraryPlacement.Edit"]);
+      expect(groups.relationships[0]).toMatchObject({
+        label: "Libraries…",
+        restoreFocusOnClose: false,
+      });
+      command(groups, "RelationshipAction.LibraryPlacement.Edit").onSelect({
+        triggerEl: null,
+      });
+      expect(libraryPlacement).toHaveBeenCalledWith(target, {
+        triggerEl: null,
+      });
+    },
+  );
+
+  it("omits placement for unsupported and missing resources", () => {
+    expect(
+      ids(
+        resolveUniversalResourceRelationshipActions({
+          target: subject("page"),
+          executors: { libraryPlacement: vi.fn() },
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      ids(
+        resolveUniversalResourceRelationshipActions({
+          target: { ...subject("media"), missing: true },
+          executors: { libraryPlacement: vi.fn() },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("defects on contradictory resource identity", () => {
+    const target = subject("media");
+    expect(() =>
+      resolveUniversalResourceRelationshipActions({
+        target: {
+          ...target,
+          activation: {
+            ...target.activation,
+            resourceRef: assumeCanonicalResourceRef(`podcast:${UUID}`),
+          },
+        },
+        executors: { libraryPlacement: vi.fn() },
+      }),
+    ).toThrow("Invalid resource action target");
+  });
+});
+
 describe("composeResourceMenu", () => {
   it("owns group separators and stable danger-last ordering without mutation", () => {
     const originalCore = descriptor("ResourceAction.Open");
@@ -290,10 +373,7 @@ describe("composeResourceMenu", () => {
       ...descriptor("ResourceOperation.Read"),
       separatorBefore: true,
     };
-    const originalDanger = descriptor(
-      "ResourceOperation.Delete",
-      "danger",
-    );
+    const originalDanger = descriptor("ResourceOperation.Delete", "danger");
     const groups: ResourceMenuGroups = {
       core: [originalCore],
       operations: [originalOperation, originalDanger],
@@ -302,13 +382,15 @@ describe("composeResourceMenu", () => {
     };
 
     const result = composeResourceMenu(groups);
-    expect(result.map((action) => [action.id, action.separatorBefore])).toEqual([
-      ["ResourceAction.Open", undefined],
-      ["ResourceOperation.Read", true],
-      ["RelationshipAction.Remove", true],
-      ["ViewAction.Toggle", true],
-      ["ResourceOperation.Delete", true],
-    ]);
+    expect(result.map((action) => [action.id, action.separatorBefore])).toEqual(
+      [
+        ["ResourceAction.Open", undefined],
+        ["ResourceOperation.Read", true],
+        ["RelationshipAction.Remove", true],
+        ["ViewAction.Toggle", true],
+        ["ResourceOperation.Delete", true],
+      ],
+    );
     expect(originalOperation.separatorBefore).toBe(true);
     expect(result[1]).not.toBe(originalOperation);
   });
@@ -318,10 +400,7 @@ describe("composeResourceMenu", () => {
       ...descriptor("ResourceAction.Chat"),
       separatorBefore: true,
     };
-    const firstDanger = descriptor(
-      "ResourceOperation.FirstDanger",
-      "danger",
-    );
+    const firstDanger = descriptor("ResourceOperation.FirstDanger", "danger");
     const secondDanger = {
       ...descriptor("RelationshipAction.SecondDanger", "danger"),
       separatorBefore: true,
@@ -417,7 +496,9 @@ describe("rich resource builders", () => {
       "RelationshipAction.Lectern.Add",
       "ResourceOperation.Media.Remove",
     ]);
-    expect(command(menu, "ResourceOperation.Media.RetryProcessing")).toMatchObject({
+    expect(
+      command(menu, "ResourceOperation.Media.RetryProcessing"),
+    ).toMatchObject({
       label: "Retrying...",
       disabled: true,
     });
@@ -442,9 +523,7 @@ describe("rich resource builders", () => {
       editAuthors: noAction,
       lecternMembership: {
         kind: "Remove",
-        itemId: assumeLecternItemId(
-          "11111111-0000-4000-8000-000000000002",
-        ),
+        itemId: assumeLecternItemId("11111111-0000-4000-8000-000000000002"),
         execute: remove,
       },
       readState: noAction,
@@ -499,12 +578,7 @@ describe("rich resource builders", () => {
             "ResourceOperation.Media.MarkUnread",
             "RelationshipAction.Lectern.Remove",
           ],
-          executors: [
-            refresh,
-            metadata,
-            markUnread,
-            removeFromLectern,
-          ],
+          executors: [refresh, metadata, markUnread, removeFromLectern],
         };
       },
     ],
@@ -574,22 +648,22 @@ describe("rich resource builders", () => {
         executors: [],
       }),
     ],
-  ] as const)("%s projects only its legal actions and executes each once", (
-    _name,
-    build,
-  ) => {
-    const projection = build();
-    const menu = richMenu(projection.groups);
-    expect(ids(menu)).toEqual(projection.expected);
-    for (const action of composeResourceMenu(menu)) {
-      if (action.kind === "command") {
-        action.onSelect({ triggerEl: null });
+  ] as const)(
+    "%s projects only its legal actions and executes each once",
+    (_name, build) => {
+      const projection = build();
+      const menu = richMenu(projection.groups);
+      expect(ids(menu)).toEqual(projection.expected);
+      for (const action of composeResourceMenu(menu)) {
+        if (action.kind === "command") {
+          action.onSelect({ triggerEl: null });
+        }
       }
-    }
-    for (const execute of projection.executors) {
-      expect(execute).toHaveBeenCalledOnce();
-    }
-  });
+      for (const execute of projection.executors) {
+        expect(execute).toHaveBeenCalledOnce();
+      }
+    },
+  );
 
   it("builds only applicable library operations", () => {
     const groups = libraryResourceOptions({
@@ -597,7 +671,9 @@ describe("rich resource builders", () => {
       deleteLibrary: noAction,
       busyIds: noBusy,
     });
-    expect(ids(richMenu(groups))).toEqual(["ResourceOperation.Library.Settings"]);
+    expect(ids(richMenu(groups))).toEqual([
+      "ResourceOperation.Library.Settings",
+    ]);
   });
 
   it("keeps podcast unsubscribe in the relationship group and danger-last", () => {
@@ -619,7 +695,9 @@ describe("rich resource builders", () => {
       "ResourceOperation.Podcast.Refresh",
       "RelationshipAction.Podcast.Unsubscribe",
     ]);
-    expect(command(menu, "RelationshipAction.Podcast.Unsubscribe")).toMatchObject({
+    expect(
+      command(menu, "RelationshipAction.Podcast.Unsubscribe"),
+    ).toMatchObject({
       label: "Unsubscribing...",
       disabled: true,
       tone: "danger",
@@ -648,11 +726,11 @@ describe("rich resource builders", () => {
   it("projects conversation deletion from an explicit applicable variant", () => {
     const groups = conversationResourceOptions({
       deleteConversation: available(),
-      busyIds: new Set([
-        RESOURCE_ACTION_CATALOG.DeleteConversation.id,
-      ]),
+      busyIds: new Set([RESOURCE_ACTION_CATALOG.DeleteConversation.id]),
     });
-    expect(command(richMenu(groups), "ResourceOperation.Conversation.Delete")).toMatchObject({
+    expect(
+      command(richMenu(groups), "ResourceOperation.Conversation.Delete"),
+    ).toMatchObject({
       label: "Deleting...",
       disabled: true,
       tone: "danger",

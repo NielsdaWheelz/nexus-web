@@ -4,7 +4,6 @@ import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 export type ShareMode =
   | "None"
   | "CopyOnly"
-  | "CopyWithLibraryFiling"
   | "ResourceGrants"
   | "HighlightGrants"
   | "LibraryMembership";
@@ -12,7 +11,6 @@ export type ShareMode =
 const SHARE_MODES = new Set<ShareMode>([
   "None",
   "CopyOnly",
-  "CopyWithLibraryFiling",
   "ResourceGrants",
   "HighlightGrants",
   "LibraryMembership",

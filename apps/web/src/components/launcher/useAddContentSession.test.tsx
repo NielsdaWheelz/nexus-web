@@ -72,8 +72,18 @@ describe("useAddContentSession mutation lifecycle", () => {
               id: "library-stale",
               name: "Stale destination",
               color: null,
-              created_at: "2026-07-21T12:00:00Z",
-              updated_at: "2026-07-21T12:00:00Z",
+              ownerUserHandle:
+                "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+              isDefault: false,
+              role: "admin",
+              systemKey: null,
+              canRename: true,
+              canDelete: true,
+              canEditEntries: true,
+              canManageMembers: true,
+              canTransferOwnership: true,
+              createdAt: "2026-07-21T12:00:00Z",
+              updatedAt: "2026-07-21T12:00:00Z",
             },
           }),
         );
@@ -320,7 +330,7 @@ describe("useAddContentSession mutation lifecycle", () => {
     expect(session.state.opml).toEqual({ kind: "Ready", file });
   });
 
-  it("restores Unloaded after an authoritative membership read defects", async () => {
+  it("restores Unloaded after an authoritative placement read defects", async () => {
     const mediaId = "33333333-3333-4333-8333-333333333333";
     let session!: AddContentSessionController;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -337,25 +347,25 @@ describe("useAddContentSession mutation lifecycle", () => {
       throw new Error(`Unexpected fetch: ${url.pathname}`);
     });
     render(<Harness onRender={(next) => (session = next)} />);
-    await acceptUrl(session, "https://example.com/membership-defect");
+    await acceptUrl(session, "https://example.com/placement-defect");
 
     await act(async () => {
-      await expect(session.refreshMemberships([mediaId])).rejects.toMatchObject(
+      await expect(session.refreshPlacements([mediaId])).rejects.toMatchObject(
         {
           code: "E_INTERNAL",
         },
       );
     });
 
-    expect(session.state.membershipByMediaId.get(mediaId)).toEqual({
+    expect(session.state.placementByMediaId.get(mediaId)).toEqual({
       kind: "Unloaded",
     });
   });
 
-  it("restores a concurrent membership read when another mutation is stopped", async () => {
+  it("restores a concurrent placement read when another mutation is stopped", async () => {
     const mediaId = "31313131-3131-4131-8131-313131313131";
     const libraryId = "41414141-4141-4141-8141-414141414141";
-    let membershipReads = 0;
+    let placementReads = 0;
     let urlWrites = 0;
     let session!: AddContentSessionController;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -375,8 +385,8 @@ describe("useAddContentSession mutation lifecycle", () => {
         url.pathname === `/api/media/${mediaId}/libraries` &&
         init?.method === "GET"
       ) {
-        membershipReads += 1;
-        if (membershipReads === 2) {
+        placementReads += 1;
+        if (placementReads === 2) {
           const signal = init.signal as AbortSignal;
           return new Promise<Response>((_resolve, reject) => {
             const rejectAbort = () =>
@@ -404,18 +414,18 @@ describe("useAddContentSession mutation lifecycle", () => {
     });
     render(<Harness onRender={(next) => (session = next)} />);
     await acceptUrl(session, "https://example.com/accepted");
-    await act(async () => session.refreshMemberships([mediaId]));
-    expect(session.state.membershipByMediaId.get(mediaId)).toMatchObject({
+    await act(async () => session.refreshPlacements([mediaId]));
+    expect(session.state.placementByMediaId.get(mediaId)).toMatchObject({
       kind: "Ready",
       libraries: [{ id: libraryId, isInLibrary: true }],
     });
 
     let refresh!: Promise<void>;
     act(() => {
-      refresh = session.refreshMemberships([mediaId]);
+      refresh = session.refreshPlacements([mediaId]);
     });
     await waitFor(() =>
-      expect(session.state.membershipByMediaId.get(mediaId)?.kind).toBe(
+      expect(session.state.placementByMediaId.get(mediaId)?.kind).toBe(
         "Loading",
       ),
     );
@@ -430,19 +440,19 @@ describe("useAddContentSession mutation lifecycle", () => {
     act(() => session.stop());
     await act(async () => Promise.all([refresh, submission]));
 
-    expect(session.state.membershipByMediaId.get(mediaId)).toMatchObject({
+    expect(session.state.placementByMediaId.get(mediaId)).toMatchObject({
       kind: "Ready",
       libraries: [{ id: libraryId, isInLibrary: true }],
     });
-    await act(async () => session.refreshMemberships([mediaId]));
-    expect(membershipReads).toBe(3);
-    expect(session.state.membershipByMediaId.get(mediaId)?.kind).toBe("Ready");
+    await act(async () => session.refreshPlacements([mediaId]));
+    expect(placementReads).toBe(3);
+    expect(session.state.placementByMediaId.get(mediaId)?.kind).toBe("Ready");
   });
 
-  it("restores authoritative membership after reconciliation decoding defects", async () => {
+  it("restores authoritative placement after reconciliation decoding defects", async () => {
     const mediaId = "22222222-2222-4222-8222-222222222222";
     const libraryId = "11111111-1111-4111-8111-111111111111";
-    let membershipReads = 0;
+    let placementReads = 0;
     let session!: AddContentSessionController;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://localhost");
@@ -453,8 +463,8 @@ describe("useAddContentSession mutation lifecycle", () => {
         url.pathname === `/api/media/${mediaId}/libraries` &&
         init?.method === "GET"
       ) {
-        membershipReads += 1;
-        return membershipReads === 1
+        placementReads += 1;
+        return placementReads === 1
           ? jsonResponse({
               data: [
                 {
@@ -473,30 +483,30 @@ describe("useAddContentSession mutation lifecycle", () => {
         url.pathname === `/api/media/${mediaId}/libraries` &&
         init?.method === "POST"
       ) {
-        throw new Error("Unclassified membership write failure");
+        throw new Error("Unclassified placement write failure");
       }
       throw new Error(`Unexpected fetch: ${url.pathname}`);
     });
     render(<Harness onRender={(next) => (session = next)} />);
-    await acceptUrl(session, "https://example.com/membership-reconcile-defect");
+    await acceptUrl(session, "https://example.com/placement-reconcile-defect");
 
     await act(async () => {
       await expect(
-        session.runMembership({
+        session.runPlacement({
           mediaIds: [mediaId],
           command: { kind: "Add", libraryId },
         }),
-      ).rejects.toThrow("Invalid media-library memberships response");
+      ).rejects.toThrow("Invalid library placement");
     });
 
     expect(session.state.mutation.kind).toBe("Idle");
-    expect(session.state.membershipByMediaId.get(mediaId)).toMatchObject({
+    expect(session.state.placementByMediaId.get(mediaId)).toMatchObject({
       kind: "Ready",
       libraries: [{ id: libraryId, isInLibrary: false }],
     });
   });
 
-  it("projects queued, started, and succeeded membership work truthfully on Stop", async () => {
+  it("projects queued, started, and succeeded placement work truthfully on Stop", async () => {
     const libraryId = "91919191-9191-4191-8191-919191919191";
     const mediaIds = ["media-one", "media-two", "media-three", "media-four"];
     const startedWrites: string[] = [];
@@ -519,10 +529,10 @@ describe("useAddContentSession mutation lifecycle", () => {
           },
         });
       }
-      const membershipMatch = url.pathname.match(
+      const placementMatch = url.pathname.match(
         /^\/api\/media\/(media-[^/]+)\/libraries$/,
       );
-      if (membershipMatch && init?.method === "GET") {
+      if (placementMatch && init?.method === "GET") {
         return jsonResponse({
           data: [
             {
@@ -536,8 +546,8 @@ describe("useAddContentSession mutation lifecycle", () => {
           ],
         });
       }
-      if (membershipMatch && init?.method === "POST") {
-        const mediaId = membershipMatch[1];
+      if (placementMatch && init?.method === "POST") {
+        const mediaId = placementMatch[1];
         if (!mediaId) throw new Error("Expected media id");
         startedWrites.push(mediaId);
         if (mediaId === "media-one") {
@@ -569,7 +579,7 @@ describe("useAddContentSession mutation lifecycle", () => {
 
     let command!: Promise<void>;
     act(() => {
-      command = session.runMembership({
+      command = session.runPlacement({
         mediaIds,
         command: { kind: "Add", libraryId },
       });
@@ -581,17 +591,17 @@ describe("useAddContentSession mutation lifecycle", () => {
     act(() => session.stop());
     await act(async () => command);
 
-    expect(session.state.membershipByMediaId.get("media-one")).toMatchObject({
+    expect(session.state.placementByMediaId.get("media-one")).toMatchObject({
       kind: "Ready",
       libraries: [{ isInLibrary: true }],
     });
-    expect(session.state.membershipByMediaId.get("media-two")).toMatchObject({
+    expect(session.state.placementByMediaId.get("media-two")).toMatchObject({
       kind: "CommandFailed",
     });
-    expect(session.state.membershipByMediaId.get("media-three")).toMatchObject({
+    expect(session.state.placementByMediaId.get("media-three")).toMatchObject({
       kind: "CommandFailed",
     });
-    expect(session.state.membershipByMediaId.get("media-four")).toMatchObject({
+    expect(session.state.placementByMediaId.get("media-four")).toMatchObject({
       kind: "Ready",
       libraries: [{ isInLibrary: false }],
     });

@@ -198,11 +198,14 @@ class ResourceItemCapabilitiesOut(BaseModel):
     sharing: Literal[
         "None",
         "CopyOnly",
-        "CopyWithLibraryFiling",
         "ResourceGrants",
         "HighlightGrants",
         "LibraryMembership",
     ]
+    library_placement: Literal["None", "ManageEntries"] = Field(
+        validation_alias=AliasChoices("library_placement", "libraryPlacement"),
+        serialization_alias="libraryPlacement",
+    )
     user_relation: ResourceUserRelationPolicyOut = Field(
         validation_alias=AliasChoices("user_relation", "userRelation"),
         serialization_alias="userRelation",

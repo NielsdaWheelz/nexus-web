@@ -30,11 +30,11 @@ from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.library import (
-    ItemLibraryMembershipOut,
     LibraryEntryKind,
     LibraryEntryOrderRequest,
     LibraryEntryOut,
     LibraryPageInfo,
+    LibraryPlacementOptionOut,
     LibraryPodcastOut,
     LibraryPodcastSubscriptionOut,
     ReadingTimeEstimateOut,
@@ -1034,20 +1034,34 @@ def _hydrate_entry_rows(
 
 def list_item_libraries(
     db: Session, *, viewer_id: UUID, target: EntryTarget
-) -> list[ItemLibraryMembershipOut]:
-    """Per-library add/remove affordances for one media or podcast across the viewer's
-    non-default libraries. Replaces the media/podcast twins; the existence check and the
-    EXISTS predicate column derive from target.kind."""
+) -> list[LibraryPlacementOptionOut]:
+    """Per-library placement options for one media or podcast."""
     if target.kind == "media":
         if not can_read_media(db, viewer_id, target.id):
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+        target_can_be_added = True
     elif target.kind == "podcast":
-        exists = db.execute(
-            text("SELECT 1 FROM podcasts WHERE id = :podcast_id"),
-            {"podcast_id": target.id},
-        ).fetchone()
-        if exists is None:
+        podcast = (
+            db.execute(
+                text("""
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM podcast_subscriptions ps
+                        WHERE ps.podcast_id = p.id
+                          AND ps.user_id = :viewer_id
+                          AND ps.status = 'active'
+                    ) AS has_active_subscription
+                    FROM podcasts p
+                    WHERE p.id = :podcast_id
+                """),
+                {"viewer_id": viewer_id, "podcast_id": target.id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if podcast is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast not found")
+        target_can_be_added = bool(podcast["has_active_subscription"])
     else:
         assert_never(target.kind)
 
@@ -1075,12 +1089,14 @@ def list_item_libraries(
     )
 
     return [
-        ItemLibraryMembershipOut(
+        LibraryPlacementOptionOut(
             id=row["id"],
             name=row["name"],
             color=row["color"],
             is_in_library=bool(row["in_library"]),
-            can_add=row["role"] == "admin" and not bool(row["in_library"]),
+            can_add=(
+                target_can_be_added and row["role"] == "admin" and not bool(row["in_library"])
+            ),
             can_remove=row["role"] == "admin" and bool(row["in_library"]),
         )
         for row in rows

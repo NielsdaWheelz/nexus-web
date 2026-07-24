@@ -297,7 +297,7 @@ interface PodcastDetailSnapshot {
   readonly detail: PodcastDetailResponse;
   readonly episodes: readonly PodcastEpisodeMedia[];
   readonly hasMoreEpisodes: boolean;
-  readonly podcastLibraries: readonly PodcastLibraryMembership[];
+  readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 ```
 

@@ -135,7 +135,6 @@ def replace_surface(
         )
 
         versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="outgoing_edges")
-        changed_lanes = {source.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=source)}
         updated_at = db.scalar(select(func.now()))
         if updated_at is None:
             raise AssertionError("database clock returned no timestamp")
@@ -152,7 +151,9 @@ def replace_surface(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes=changed_lanes,
+            changed_lanes={
+                source.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=source)
+            },
         )
         db.commit()
         return response
@@ -180,6 +181,7 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
         missing=resolved.missing,
         capabilities=ResourceItemCapabilitiesOut(
             sharing=capability.sharing,
+            library_placement=capability.library_placement,
             user_relation=ResourceUserRelationPolicyOut(
                 user_link_source=capability.user_relation.user_link_source,
                 user_link_target=capability.user_relation.user_link_target,

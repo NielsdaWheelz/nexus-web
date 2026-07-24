@@ -41,6 +41,7 @@ function resourceItem(overrides: Partial<ResourceItem> = {}): ResourceItem {
       adjacencySource: false,
       adjacencyTarget: true,
       sharing: "ResourceGrants",
+      libraryPlacement: "ManageEntries",
     },
     versionByLane: {},
     ...overrides,

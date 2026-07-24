@@ -171,13 +171,13 @@
 }
 
 .itemStatus,
-.membershipStatus,
+.placementStatus,
 .itemFeedback {
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }
 
-.membershipStatus {
+.placementStatus {
   color: var(--accent);
 }
 

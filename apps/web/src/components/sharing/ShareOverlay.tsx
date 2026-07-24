@@ -1,27 +1,14 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Send, Share2 } from "lucide-react";
-import LibraryEntryEditor from "@/components/sharing/LibraryEntryEditor";
 import LibraryMemberEditor from "@/components/sharing/LibraryMemberEditor";
 import PeopleSearchCombobox from "@/components/sharing/PeopleSearchCombobox";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { toFeedback } from "@/components/feedback/Feedback";
-import {
-  addPodcastToLibrary,
-  fetchPodcastLibraries,
-  removePodcastFromLibrary,
-} from "@/app/(authenticated)/podcasts/podcastSubscriptions";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { useLibraryMembership } from "@/lib/media/useLibraryMembership";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   createLinkShare,
@@ -30,7 +17,10 @@ import {
   fetchShareSnapshot,
   searchShareUsers,
 } from "@/lib/sharing/api";
-import { SHARE_MODE_INTRO, audienceUnavailableMessage } from "@/lib/sharing/content";
+import {
+  SHARE_MODE_INTRO,
+  audienceUnavailableMessage,
+} from "@/lib/sharing/content";
 import type { ShareSession } from "@/lib/sharing/controller";
 import { absoluteNexusHref } from "@/lib/sharing/targets";
 import type {
@@ -42,7 +32,6 @@ import type {
 } from "@/lib/sharing/types";
 import { copyText } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import styles from "./ShareOverlay.module.css";
 
 interface ShareOverlayProps {
@@ -68,10 +57,17 @@ function returnFocusFallback(session: ShareSession | null) {
   return fallback?.kind === "Present" ? fallback.value : undefined;
 }
 
-export default function ShareOverlay({
-  session,
-  onClose,
-}: ShareOverlayProps) {
+function librarySubjectId(snapshot: ShareSnapshot): string {
+  const ref = parseResourceRef(snapshot.subject);
+  if (!ref || ref.scheme !== "library") {
+    // justify-defect: LibraryMembership is valid only for a canonical library
+    // subject; the editor cannot govern any other resource.
+    throw new Error("Library sharing received a non-library subject");
+  }
+  return ref.id;
+}
+
+export default function ShareOverlay({ session, onClose }: ShareOverlayProps) {
   const isMobile = useIsMobileViewport();
   const active = session !== null;
   const content = session ? (
@@ -144,14 +140,13 @@ function SharePanel({ session }: { session: ShareSession }) {
     return () => controller.abort();
   }, [load, target.kind]);
 
-  const snapshot =
-    loadState.kind === "Ready" ? loadState.snapshot : null;
+  const snapshot = loadState.kind === "Ready" ? loadState.snapshot : null;
   const mode: ShareMode =
     target.kind === "Route" ? "CopyOnly" : (snapshot?.sharing ?? "None");
   const nexusHref =
     target.kind === "Route"
       ? absoluteNexusHref(target.href)
-      : snapshot?.authenticatedHref ?? null;
+      : (snapshot?.authenticatedHref ?? null);
   const label =
     target.kind === "Route"
       ? target.label
@@ -212,7 +207,11 @@ function SharePanel({ session }: { session: ShareSession }) {
         <div className={styles.sectionHeading}>
           <div>
             <h3 id="share-nexus-link">Nexus link</h3>
-            <p>{mode === "LibraryMembership" ? "Only members can open this link." : label}</p>
+            <p>
+              {mode === "LibraryMembership"
+                ? "Only members can open this link."
+                : label}
+            </p>
           </div>
           <div className={styles.actions}>
             <Button
@@ -220,7 +219,9 @@ function SharePanel({ session }: { session: ShareSession }) {
               size="sm"
               leadingIcon={<Copy size={15} />}
               disabled={!nexusHref}
-              onClick={() => nexusHref && void handleCopy(nexusHref, "Nexus link")}
+              onClick={() =>
+                nexusHref && void handleCopy(nexusHref, "Nexus link")
+              }
             >
               Copy link
             </Button>
@@ -250,8 +251,7 @@ function SharePanel({ session }: { session: ShareSession }) {
         </div>
       ) : null}
 
-      {snapshot &&
-      (mode === "ResourceGrants" || mode === "HighlightGrants") ? (
+      {snapshot && (mode === "ResourceGrants" || mode === "HighlightGrants") ? (
         <GrantEditor
           snapshot={snapshot}
           onSnapshotChange={(next) =>
@@ -265,22 +265,18 @@ function SharePanel({ session }: { session: ShareSession }) {
       ) : null}
 
       {snapshot && mode === "LibraryMembership" ? (
-        <section className={styles.section} aria-labelledby="share-library-members">
+        <section
+          className={styles.section}
+          aria-labelledby="share-library-members"
+        >
           <div className={styles.sectionHeading}>
             <div>
               <h3 id="share-library-members">People</h3>
               <p>People, invitations, roles, and ownership.</p>
             </div>
           </div>
-          <LibraryMemberEditor
-            libraryId={parseResourceRef(snapshot.subject)?.id ?? ""}
-          />
+          <LibraryMemberEditor libraryId={librarySubjectId(snapshot)} />
         </section>
-      ) : null}
-
-      {snapshot &&
-      (mode === "ResourceGrants" || mode === "CopyWithLibraryFiling") ? (
-        <ResourceLibraryEntryEditor subject={snapshot.subject} />
       ) : null}
 
       {actionError ? (
@@ -288,7 +284,12 @@ function SharePanel({ session }: { session: ShareSession }) {
           {actionError}
         </div>
       ) : null}
-      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {liveMessage}
       </div>
     </div>
@@ -492,9 +493,7 @@ function GrantEditor({
             />
           </>
         ) : (
-          <AvailabilityNote
-            availability={snapshot.creationAvailability.user}
-          />
+          <AvailabilityNote availability={snapshot.creationAvailability.user} />
         )}
 
         <div className={styles.rows}>
@@ -578,7 +577,10 @@ function GrantEditor({
                           setConfirmHandle(null);
                           announce("This shared access path was declined.");
                         } catch (error) {
-                          reportError(error, "The shared access could not be declined.");
+                          reportError(
+                            error,
+                            "The shared access could not be declined.",
+                          );
                         } finally {
                           setBusyHandle(null);
                         }
@@ -636,7 +638,9 @@ function GrantEditor({
                 variant="secondary"
                 size="sm"
                 leadingIcon={<Copy size={15} />}
-                onClick={() => void onCopy(publicShare.publicHref, "Public link")}
+                onClick={() =>
+                  void onCopy(publicShare.publicHref, "Public link")
+                }
               >
                 Copy public link
               </Button>
@@ -700,8 +704,8 @@ function GrantEditor({
               <div className={styles.warning}>
                 <p>
                   Posting sends this bearer link to X. X gains read access and
-                  may retain the credential. Posting also makes an unlisted
-                  link effectively published.
+                  may retain the credential. Posting also makes an unlisted link
+                  effectively published.
                 </p>
                 <div className={styles.actions}>
                   <Button
@@ -791,117 +795,5 @@ function GrantEditor({
         </p>
       </section>
     </>
-  );
-}
-
-function ResourceLibraryEntryEditor({ subject }: { subject: string }) {
-  const ref = useMemo(() => parseResourceRef(subject), [subject]);
-  const media = useLibraryMembership(ref?.scheme === "media" ? ref.id : null);
-  const loadMediaLibraries = media.loadLibraries;
-  const [podcastLibraries, setPodcastLibraries] = useState<
-    LibraryTargetPickerItem[]
-  >([]);
-  const [podcastLoading, setPodcastLoading] = useState(false);
-  const [podcastBusy, setPodcastBusy] = useState(false);
-  const [podcastError, setPodcastError] = useState<string | null>(null);
-
-  const loadPodcastLibraries = useCallback(async () => {
-    if (ref?.scheme !== "podcast") return;
-    setPodcastLoading(true);
-    setPodcastError(null);
-    try {
-      setPodcastLibraries(await fetchPodcastLibraries(ref.id));
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setPodcastError(
-        toFeedback(error, { fallback: "Libraries could not be loaded." }).title,
-      );
-    } finally {
-      setPodcastLoading(false);
-    }
-  }, [ref]);
-
-  useEffect(() => {
-    if (ref?.scheme === "media") {
-      void loadMediaLibraries();
-    } else if (ref?.scheme === "podcast") {
-      void loadPodcastLibraries();
-    }
-  }, [loadMediaLibraries, loadPodcastLibraries, ref?.scheme]);
-
-  if (!ref || (ref.scheme !== "media" && ref.scheme !== "podcast")) return null;
-
-  const podcastMutation = async (
-    libraryId: string,
-    kind: "add" | "remove",
-  ) => {
-    setPodcastBusy(true);
-    setPodcastError(null);
-    try {
-      if (kind === "add") {
-        await addPodcastToLibrary(ref.id, libraryId);
-      } else {
-        await removePodcastFromLibrary(ref.id, libraryId);
-      }
-      setPodcastLibraries((current) =>
-        current.map((library) =>
-          library.id === libraryId
-            ? { ...library, isInLibrary: kind === "add" }
-            : library,
-        ),
-      );
-    } catch (error) {
-      if (handleUnauthenticatedApiError(error)) return;
-      setPodcastError(
-        toFeedback(error, {
-          fallback:
-            kind === "add"
-              ? "The podcast could not be added."
-              : "The podcast could not be removed.",
-        }).title,
-      );
-    } finally {
-      setPodcastBusy(false);
-    }
-  };
-
-  return (
-    <section className={styles.section} aria-labelledby="share-libraries">
-      <div className={styles.sectionHeading}>
-        <div>
-          <h3 id="share-libraries">Libraries</h3>
-          <p>Choose where this {ref.scheme === "podcast" ? "podcast" : "media"} is filed.</p>
-        </div>
-      </div>
-      <LibraryEntryEditor
-        libraries={
-          ref.scheme === "media" ? media.libraries : podcastLibraries
-        }
-        loading={
-          ref.scheme === "media" ? media.loading : podcastLoading
-        }
-        busy={ref.scheme === "media" ? media.busy : podcastBusy}
-        error={ref.scheme === "media" ? media.error : podcastError}
-        onRetry={
-          ref.scheme === "media"
-            ? () => void media.loadLibraries()
-            : () => void loadPodcastLibraries()
-        }
-        onAddToLibrary={(libraryId) => {
-          if (ref.scheme === "media") {
-            void media.addToLibrary(libraryId);
-          } else {
-            void podcastMutation(libraryId, "add");
-          }
-        }}
-        onRemoveFromLibrary={(libraryId) => {
-          if (ref.scheme === "media") {
-            void media.removeFromLibrary(libraryId);
-          } else {
-            void podcastMutation(libraryId, "remove");
-          }
-        }}
-      />
-    </section>
   );
 }

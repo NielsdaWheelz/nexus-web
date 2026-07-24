@@ -38,7 +38,7 @@ class AddPodcastRequest(BaseModel):
     podcast_id: UUID = Field(..., description="ID of the podcast to add")
 
 
-class ItemLibraryMembershipOut(BaseModel):
+class LibraryPlacementOptionOut(BaseModel):
     id: UUID
     name: str
     color: str | None = None

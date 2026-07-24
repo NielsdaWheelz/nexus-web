@@ -9,9 +9,10 @@ import {
 } from "@/lib/sharing/targets";
 
 vi.mock("@/lib/sharing/api", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/sharing/api")>(
-    "@/lib/sharing/api",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/sharing/api")>(
+      "@/lib/sharing/api",
+    );
   return {
     ...actual,
     createLinkShare: vi.fn(),
@@ -20,14 +21,6 @@ vi.mock("@/lib/sharing/api", async () => {
 });
 vi.mock("@/lib/ui/useIsMobileViewport", () => ({
   useIsMobileViewport: () => false,
-}));
-vi.mock("@/lib/media/useLibraryMembership", () => ({
-  useLibraryMembership: () => ({
-    libraries: [],
-    loading: false,
-    error: null,
-    setMembership: vi.fn(),
-  }),
 }));
 
 const fetchShareSnapshotMock = vi.mocked(fetchShareSnapshot);
@@ -58,8 +51,7 @@ function snapshot() {
     shares: [
       {
         kind: "Link" as const,
-        handle:
-          "nrg1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+        handle: "nrg1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
         publicHref: PUBLIC_HREF,
       },
     ],
@@ -101,23 +93,23 @@ describe("ShareOverlay public native sharing", () => {
         /this share also includes this exact highlight and its source media/i,
       ),
     ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Share public link" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Share public link" }));
     expect(share).not.toHaveBeenCalled();
     expect(
-      screen.getByText(/destination gains read access and may retain the credential/i),
+      screen.getByText(
+        /destination gains read access and may retain the credential/i,
+      ),
     ).toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Continue to share" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Continue to share" }));
     expect(share).toHaveBeenCalledWith({
       title: "Shared from Nexus",
       url: PUBLIC_HREF,
     });
     expect(
-      screen.queryByText(/destination gains read access and may retain the credential/i),
+      screen.queryByText(
+        /destination gains read access and may retain the credential/i,
+      ),
     ).not.toBeInTheDocument();
   });
 
@@ -130,9 +122,7 @@ describe("ShareOverlay public native sharing", () => {
     await user.click(
       await screen.findByRole("button", { name: "Share public link" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "Continue to share" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Continue to share" }));
     expect(
       screen.queryByText("The share menu could not be opened."),
     ).not.toBeInTheDocument();
@@ -148,9 +138,7 @@ describe("ShareOverlay public native sharing", () => {
     await user.click(
       await screen.findByRole("button", { name: "Share public link" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "Continue to share" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Continue to share" }));
     expect(
       await screen.findByText("The share menu could not be opened."),
     ).toHaveAttribute("role", "alert");
@@ -161,14 +149,10 @@ describe("ShareOverlay public native sharing", () => {
 
   it("discloses X bearer access before leaving Nexus", async () => {
     const user = userEvent.setup();
-    const open = vi
-      .spyOn(window, "open")
-      .mockReturnValue({} as Window);
+    const open = vi.spyOn(window, "open").mockReturnValue({} as Window);
     render(<ShareOverlay session={session()} onClose={vi.fn()} />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Post to X" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Post to X" }));
     expect(open).not.toHaveBeenCalled();
     expect(
       screen.getByText(/x gains read access and may retain the credential/i),
@@ -187,9 +171,7 @@ describe("ShareOverlay public native sharing", () => {
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ShareOverlay session={session()} onClose={vi.fn()} />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "Post to X" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Post to X" }));
     await user.click(screen.getByRole("button", { name: "Continue to X" }));
 
     expect(
@@ -223,5 +205,39 @@ describe("ShareOverlay public native sharing", () => {
     expect(
       await screen.findByText("Your public link was already on."),
     ).toHaveAttribute("role", "status");
+  });
+
+  it("keeps podcast Share copy-only and contains no library placement UI", async () => {
+    const podcastRef = assumeCanonicalResourceRef(`podcast:${MEDIA_ID}`);
+    fetchShareSnapshotMock.mockResolvedValueOnce({
+      subject: podcastRef,
+      sharing: "CopyOnly",
+      authenticatedHref: `http://localhost:3000/podcasts/${MEDIA_ID}`,
+      creationAvailability: {
+        user: { kind: "Unavailable", reason: "UnsupportedSubject" },
+        link: { kind: "Unavailable", reason: "UnsupportedSubject" },
+      },
+      shares: [],
+      receivedAccess: [],
+    });
+
+    render(
+      <ShareOverlay
+        session={{
+          ...session(),
+          target: resourceShareTarget(podcastRef),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "This link does not change who can open the item.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Libraries" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { requiredRecord, requiredString } from "@/lib/notes/normalize";
 import type {
+  LibraryPlacementMode,
   ResourceChatSubjectMode,
   ResourceExpansionPolicy,
   ResourceInspectMode,
@@ -7,6 +8,7 @@ import type {
   ResourceReadMode,
   UserLinkTargetMode,
 } from "@/lib/resources/resourceCapabilities";
+import { isLibraryPlacementMode } from "@/lib/resources/resourceCapabilities";
 import { isShareMode, type ShareMode } from "@/lib/sharing/types";
 import {
   normalizeResourceActivation,
@@ -26,6 +28,7 @@ export interface ResourceUserRelation {
 export interface ResourceItemCapabilities {
   userRelation: ResourceUserRelation;
   sharing: ShareMode;
+  libraryPlacement: LibraryPlacementMode;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -69,9 +72,7 @@ export interface ResourceSurface {
 function normalizeUserRelation(raw: unknown): ResourceUserRelation {
   const record = requiredRecord(raw, "resource user relation");
   return {
-    userLinkSource: Boolean(
-      record.userLinkSource ?? record.user_link_source,
-    ),
+    userLinkSource: Boolean(record.userLinkSource ?? record.user_link_source),
     userLinkTarget: String(
       record.userLinkTarget ?? record.user_link_target ?? "none",
     ) as UserLinkTargetMode,
@@ -81,7 +82,9 @@ function normalizeUserRelation(raw: unknown): ResourceUserRelation {
   };
 }
 
-export function normalizeResourceItem(raw: Record<string, unknown>): ResourceItem {
+export function normalizeResourceItem(
+  raw: Record<string, unknown>,
+): ResourceItem {
   const capabilities = requiredRecord(
     raw.capabilities,
     "resource capabilities",
@@ -92,6 +95,9 @@ export function normalizeResourceItem(raw: Record<string, unknown>): ResourceIte
   }
   if (!isShareMode(capabilities.sharing)) {
     throw new Error("Invalid resource sharing capability");
+  }
+  if (!isLibraryPlacementMode(capabilities.libraryPlacement)) {
+    throw new Error("Invalid resource library placement capability");
   }
   const versionByLane = isRecord(raw.versionByLane)
     ? raw.versionByLane
@@ -112,6 +118,7 @@ export function normalizeResourceItem(raw: Record<string, unknown>): ResourceIte
         capabilities.userRelation ?? capabilities.user_relation,
       ),
       sharing: capabilities.sharing,
+      libraryPlacement: capabilities.libraryPlacement,
       attachable: Boolean(capabilities.attachable),
       chatSubject: String(
         capabilities.chatSubject ?? capabilities.chat_subject ?? "none",

@@ -29,6 +29,7 @@ import {
   RESOURCE_ACTION_CATALOG,
   composeResourceMenu,
   resolveResourceCoreActions,
+  resolveUniversalResourceRelationshipActions,
 } from "@/lib/actions/resourceActions";
 import {
   arePanePrimaryChromePublicationsEqual,
@@ -48,8 +49,10 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import {
   executeResourceChat,
+  executeResourceLibraryPlacement,
   executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
+import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useShareController } from "@/lib/sharing/controller";
 import { present } from "@/lib/api/presence";
 import type {
@@ -177,6 +180,7 @@ export default function PaneShell({
     scrollportRef: bodyRef,
   });
   const { openShare } = useShareController();
+  const { openLibraryPlacement } = useLibraryPlacementController();
   const currentRouteKeyRef = useRef(routeKey);
   currentRouteKeyRef.current = routeKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
@@ -381,14 +385,37 @@ export default function PaneShell({
         },
       },
     }).core;
+    const universalRelationships =
+      resolveUniversalResourceRelationshipActions({
+        target,
+        executors: {
+          libraryPlacement: (subject, detail) => {
+            executeResourceLibraryPlacement({
+              subject,
+              openLibraryPlacement,
+              options: {
+                returnFocusTo: () => detail.triggerEl,
+                returnFocusFallback: present(() =>
+                  findPaneChromeFocusTarget(paneId),
+                ),
+              },
+            });
+          },
+        },
+      }).relationships;
     return composeResourceMenu({
       ...effectiveMenu.groups,
       core,
+      relationships: [
+        ...universalRelationships,
+        ...effectiveMenu.groups.relationships,
+      ],
     });
   }, [
     chatBusySubjects,
     effectiveMenu,
     feedback,
+    openLibraryPlacement,
     openShare,
     paneId,
     paneRuntime,

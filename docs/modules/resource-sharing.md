@@ -22,7 +22,7 @@ The capability registry closes the product surface:
 - owned highlight: `HighlightGrants` (the parent media plus that highlight,
   never the author's other annotations or notes);
 - library: membership-only route sharing, never a link grant;
-- podcast: copy plus library filing;
+- podcast: `CopyOnly`;
 - unsupported resources: no Share action.
 
 Authenticated APIs use canonical `ResourceRef` subjects and sealed
@@ -68,5 +68,7 @@ loads no third party until a user explicitly opens the disclosed source link.
 
 The universal `ShareControllerProvider` owns one responsive modal. Pane chrome,
 resource menus, media/podcast/highlight actions, and selection-create-then-share
-flows call its central target/options builders; they do not grow bespoke copy or
-membership dialogs. Copying an authenticated URL never changes access.
+flows call its central target/options builders; they do not grow bespoke copy
+or membership dialogs. Item-to-library placement is independently owned by the
+top-level `Libraries…` resource relationship action. Copying an authenticated
+URL never changes access.

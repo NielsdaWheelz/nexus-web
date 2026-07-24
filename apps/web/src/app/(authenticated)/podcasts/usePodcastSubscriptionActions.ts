@@ -4,16 +4,18 @@ import { useCallback } from "react";
 import { toFeedback, type FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import {
+  addLibraryPlacement,
+  listLibraryPlacements,
+  removeLibraryPlacement,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
-  addPodcastToLibrary,
   buildPodcastUnsubscribeConfirmation,
-  fetchPodcastLibraries,
   getPodcastSubscriptionSyncPatch,
   refreshPodcastSubscriptionSync,
-  removePodcastFromLibrary,
   unsubscribeFromPodcast,
-  type PodcastLibraryMembership,
   type PodcastSubscriptionSyncRefreshResult,
 } from "./podcastSubscriptions";
 
@@ -30,14 +32,14 @@ export function usePodcastSubscriptionActions(
   onError: (feedback: FeedbackContent) => void,
 ) {
   // Busy key for add/remove: `${libraryId}:${podcastId}`.
-  const busyLibraryMembershipKeys = useStringIdSet();
+  const busyLibraryPlacementKeys = useStringIdSet();
   const refreshingPodcastIds = useStringIdSet();
   const unsubscribingPodcastIds = useStringIdSet();
 
   const loadLibraries = useCallback(
-    async (podcastId: string): Promise<PodcastLibraryMembership[] | null> => {
+    async (podcastId: string): Promise<LibraryPlacementOption[] | null> => {
       try {
-        return await fetchPodcastLibraries(podcastId);
+        return await listLibraryPlacements({ kind: "Podcast", id: podcastId });
       } catch (loadError) {
         if (handleUnauthenticatedApiError(loadError)) return null;
         if (!isApiError(loadError) || isSameSystemApiDefect(loadError)) {
@@ -59,9 +61,12 @@ export function usePodcastSubscriptionActions(
       onSuccess: () => void,
     ): Promise<void> => {
       const busyKey = `${libraryId}:${podcastId}`;
-      busyLibraryMembershipKeys.add(busyKey);
+      busyLibraryPlacementKeys.add(busyKey);
       try {
-        await addPodcastToLibrary(podcastId, libraryId);
+        await addLibraryPlacement(
+          { kind: "Podcast", id: podcastId },
+          libraryId,
+        );
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
@@ -74,10 +79,10 @@ export function usePodcastSubscriptionActions(
           }),
         );
       } finally {
-        busyLibraryMembershipKeys.remove(busyKey);
+        busyLibraryPlacementKeys.remove(busyKey);
       }
     },
-    [busyLibraryMembershipKeys, onError],
+    [busyLibraryPlacementKeys, onError],
   );
 
   const removeFromLibrary = useCallback(
@@ -87,9 +92,12 @@ export function usePodcastSubscriptionActions(
       onSuccess: () => void,
     ): Promise<void> => {
       const busyKey = `${libraryId}:${podcastId}`;
-      busyLibraryMembershipKeys.add(busyKey);
+      busyLibraryPlacementKeys.add(busyKey);
       try {
-        await removePodcastFromLibrary(podcastId, libraryId);
+        await removeLibraryPlacement(
+          { kind: "Podcast", id: podcastId },
+          libraryId,
+        );
         onSuccess();
       } catch (mutationError) {
         if (handleUnauthenticatedApiError(mutationError)) return;
@@ -102,10 +110,10 @@ export function usePodcastSubscriptionActions(
           }),
         );
       } finally {
-        busyLibraryMembershipKeys.remove(busyKey);
+        busyLibraryPlacementKeys.remove(busyKey);
       }
     },
-    [busyLibraryMembershipKeys, onError],
+    [busyLibraryPlacementKeys, onError],
   );
 
   const refreshSync = useCallback(
@@ -135,7 +143,7 @@ export function usePodcastSubscriptionActions(
     [onError, refreshingPodcastIds],
   );
 
-  // Confirms (loading fresh library membership for the prompt) then unsubscribes.
+  // Confirms (loading fresh library placement for the prompt) then unsubscribes.
   // `onSuccess` receives the freshly-loaded libraries so the caller can compute
   // retained (non-removable) libraries; returns false if the user cancels or the
   // library load fails.
@@ -143,7 +151,7 @@ export function usePodcastSubscriptionActions(
     async (
       podcastId: string,
       title: string,
-      onSuccess: (libraries: PodcastLibraryMembership[]) => void,
+      onSuccess: (libraries: LibraryPlacementOption[]) => void,
     ): Promise<boolean> => {
       const libraries = await loadLibraries(podcastId);
       if (libraries === null) {
@@ -181,7 +189,7 @@ export function usePodcastSubscriptionActions(
   );
 
   return {
-    busyLibraryMembershipKeys,
+    busyLibraryPlacementKeys,
     refreshingPodcastIds,
     unsubscribingPodcastIds,
     loadLibraries,

@@ -4,21 +4,21 @@ import { ApiError } from "@/lib/api/client";
 import { usePodcastSubscriptionActions } from "./usePodcastSubscriptionActions";
 
 const mocks = vi.hoisted(() => ({
-  addPodcastToLibrary: vi.fn(),
+  addLibraryPlacement: vi.fn(),
 }));
 
-vi.mock("./podcastSubscriptions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./podcastSubscriptions")>()),
-  addPodcastToLibrary: mocks.addPodcastToLibrary,
+vi.mock("@/lib/libraries/libraryPlacement", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/libraries/libraryPlacement")>()),
+  addLibraryPlacement: mocks.addLibraryPlacement,
 }));
 
 describe("usePodcastSubscriptionActions error boundary", () => {
   beforeEach(() => {
-    mocks.addPodcastToLibrary.mockReset();
+    mocks.addLibraryPlacement.mockReset();
   });
 
-  it("reports an expected API failure and clears the membership busy key", async () => {
-    mocks.addPodcastToLibrary.mockRejectedValue(
+  it("reports an expected API failure and clears the placement busy key", async () => {
+    mocks.addLibraryPlacement.mockRejectedValue(
       new ApiError(409, "E_CONFLICT", "Already linked"),
     );
     const onError = vi.fn();
@@ -34,7 +34,7 @@ describe("usePodcastSubscriptionActions error boundary", () => {
       expect.objectContaining({ severity: "error" }),
     );
     expect(
-      result.current.busyLibraryMembershipKeys.has("library-1:podcast-1"),
+      result.current.busyLibraryPlacementKeys.has("library-1:podcast-1"),
     ).toBe(false);
   });
 
@@ -44,8 +44,8 @@ describe("usePodcastSubscriptionActions error boundary", () => {
       "a same-system API defect",
       new ApiError(500, "E_INTERNAL", "broken contract"),
     ],
-  ])("rethrows %s and clears the membership busy key", async (_, defect) => {
-    mocks.addPodcastToLibrary.mockRejectedValue(defect);
+  ])("rethrows %s and clears the placement busy key", async (_, defect) => {
+    mocks.addLibraryPlacement.mockRejectedValue(defect);
     const onError = vi.fn();
     const { result } = renderHook(() =>
       usePodcastSubscriptionActions(onError),
@@ -63,7 +63,7 @@ describe("usePodcastSubscriptionActions error boundary", () => {
 
     expect(onError).not.toHaveBeenCalled();
     expect(
-      result.current.busyLibraryMembershipKeys.has("library-1:podcast-1"),
+      result.current.busyLibraryPlacementKeys.has("library-1:podcast-1"),
     ).toBe(false);
   });
 });

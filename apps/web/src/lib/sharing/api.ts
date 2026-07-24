@@ -20,7 +20,6 @@ import type {
 const SHARE_MODES = new Set<ShareMode>([
   "None",
   "CopyOnly",
-  "CopyWithLibraryFiling",
   "ResourceGrants",
   "HighlightGrants",
   "LibraryMembership",
@@ -34,13 +33,11 @@ const UNAVAILABLE_REASONS = new Set<AudienceUnavailableReason>([
   "ProjectionNotReady",
   "ProjectionUnsupported",
 ]);
-const SHARE_MODE_BY_SCHEME: Readonly<
-  Partial<Record<string, ShareMode>>
-> = {
+const SHARE_MODE_BY_SCHEME: Readonly<Partial<Record<string, ShareMode>>> = {
   media: "ResourceGrants",
   highlight: "HighlightGrants",
   library: "LibraryMembership",
-  podcast: "CopyWithLibraryFiling",
+  podcast: "CopyOnly",
   page: "CopyOnly",
   note_block: "CopyOnly",
   conversation: "CopyOnly",
@@ -100,10 +97,7 @@ function decodeUser(raw: unknown, name: string): ShareUserProjection {
   };
 }
 
-function decodeAvailability(
-  raw: unknown,
-  name: string,
-): AudienceAvailability {
+function decodeAvailability(raw: unknown, name: string): AudienceAvailability {
   if (!isRecord(raw)) {
     throw new ShareContractDefect(`${name} must be an object`);
   }
@@ -139,10 +133,7 @@ function decodeOwnedShare(raw: unknown, index: number): OwnedShare {
     ]);
     return {
       kind: "User",
-      handle: expectResourceGrantHandle(
-        row.handle,
-        `shares[${index}].handle`,
-      ),
+      handle: expectResourceGrantHandle(row.handle, `shares[${index}].handle`),
       user: decodeUser(row.user, `shares[${index}].user`),
     };
   }
@@ -154,10 +145,7 @@ function decodeOwnedShare(raw: unknown, index: number): OwnedShare {
     ]);
     return {
       kind: "Link",
-      handle: expectResourceGrantHandle(
-        row.handle,
-        `shares[${index}].handle`,
-      ),
+      handle: expectResourceGrantHandle(row.handle, `shares[${index}].handle`),
       publicHref: expectPublicShareHref(
         row.publicHref,
         `shares[${index}].publicHref`,
@@ -167,10 +155,7 @@ function decodeOwnedShare(raw: unknown, index: number): OwnedShare {
   throw new ShareContractDefect(`shares[${index}].kind is invalid`);
 }
 
-function decodeReceivedShare(
-  raw: unknown,
-  index: number,
-): ReceivedUserShare {
+function decodeReceivedShare(raw: unknown, index: number): ReceivedUserShare {
   const row = exactRecord(raw, `receivedAccess[${index}]`, [
     "kind",
     "handle",
@@ -257,14 +242,8 @@ export function decodeShareSnapshot(raw: unknown): ShareSnapshot {
       "share response.data.authenticatedHref",
     ),
     creationAvailability: {
-      user: decodeAvailability(
-        availability.user,
-        "creationAvailability.user",
-      ),
-      link: decodeAvailability(
-        availability.link,
-        "creationAvailability.link",
-      ),
+      user: decodeAvailability(availability.user, "creationAvailability.user"),
+      link: decodeAvailability(availability.link, "creationAvailability.link"),
     },
     shares: data.shares.map(decodeOwnedShare),
     receivedAccess: data.receivedAccess.map(decodeReceivedShare),

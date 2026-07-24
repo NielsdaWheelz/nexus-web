@@ -55,16 +55,17 @@ import { presentPodcast } from "@/lib/collections/presenters/podcast";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import {
   confirmAndDeleteMedia,
-  ensureMediaInLibraries,
 } from "@/lib/media/mediaLibraries";
+import {
+  addLibraryPlacement,
+  listLibraryPlacements,
+} from "@/lib/libraries/libraryPlacement";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useResource } from "@/lib/api/useResource";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import {
-  addPodcastToLibrary,
   buildPodcastUnsubscribeConfirmation,
-  fetchPodcastLibraries,
   refreshPodcastSubscriptionSync,
   unsubscribeFromPodcast,
   type PodcastSubscriptionSettingsResponse,
@@ -922,17 +923,12 @@ export default function LibraryPaneBody() {
       error !== null,
   );
 
-  // Library membership is owned by the universal share surface.
+  // Reading-slate intake writes the same library-entry contract as placement.
   const acceptSlateTarget = useCallback<ReadingSlateAccept>(
     (target, options) => {
       const targetId = slateTargetId(target);
       const frozenAttempt = () =>
-        target.kind === "Podcast"
-          ? addPodcastToLibrary(targetId, id)
-          : ensureMediaInLibraries({
-              mediaId: targetId,
-              libraryIds: [id],
-            });
+        addLibraryPlacement({ kind: target.kind, id: targetId }, id);
 
       return new Promise((resolve) => {
         let observing = true;
@@ -1328,20 +1324,23 @@ export default function LibraryPaneBody() {
     if (unsubscribingPodcastIds.has(podcastId)) return;
     unsubscribingPodcastIds.add(podcastId);
     try {
-      const memberships = await fetchPodcastLibraries(podcastId);
+      const placements = await listLibraryPlacements({
+        kind: "Podcast",
+        id: podcastId,
+      });
       if (
         !confirm(
           buildPodcastUnsubscribeConfirmation(
             entry.podcast.title,
-            memberships,
+            placements,
           ),
         )
       ) {
         return;
       }
       await unsubscribeFromPodcast(podcastId);
-      const currentMembership = memberships.find(
-        (membership) => membership.id === id,
+      const currentPlacement = placements.find(
+        (placement) => placement.id === id,
       );
       setEntries((current) =>
         current.flatMap((candidate) => {
@@ -1351,7 +1350,7 @@ export default function LibraryPaneBody() {
           ) {
             return [candidate];
           }
-          return currentMembership?.canRemove
+          return currentPlacement?.canRemove
             ? []
             : [{ ...candidate, subscription: null }];
         }),

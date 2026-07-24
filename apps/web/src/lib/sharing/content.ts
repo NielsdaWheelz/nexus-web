@@ -1,13 +1,8 @@
-import type {
-  AudienceUnavailableReason,
-  ShareMode,
-} from "@/lib/sharing/types";
+import type { AudienceUnavailableReason, ShareMode } from "@/lib/sharing/types";
 
 export const SHARE_MODE_INTRO: Record<ShareMode, string> = {
   None: "Sharing is not available for this item.",
   CopyOnly: "This link does not change who can open the item.",
-  CopyWithLibraryFiling:
-    "Copy the Nexus link or choose which of your libraries includes this podcast.",
   ResourceGrants:
     "Copying the Nexus link does not grant access. Add a person or turn on your public link explicitly.",
   HighlightGrants:

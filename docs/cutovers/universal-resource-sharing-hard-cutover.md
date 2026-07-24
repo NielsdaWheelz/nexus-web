@@ -1,6 +1,6 @@
 # Universal Resource Sharing — Hard Cutover
 
-**Status:** Validated target implementation spec · Rev 3 · 2026-07-23
+**Status:** IMPLEMENTED · Rev 4 · 2026-07-24
 
 **Type:** Hard cutover — one final contract; no legacy path, fallback, compatibility
 shim, dual write, or mixed-version support.
@@ -14,15 +14,13 @@ read-only media projection and no private Nexus graph.
 
 ## Validation record
 
-This document specifies a target; it does not claim that sharing is already
-implemented. The following current-state findings were verified against the
-2026-07-23 tree and are the reason for the cutover:
+The following pre-cutover findings were verified against the 2026-07-23 tree
+and motivated the implemented cutover:
 
 - `PaneShell.tsx` owns a standalone “Copy pane link” action even though
   `PaneRuntimeContext` already carries typed resource identity.
-- `resourceActions.ts` exposes a separate media “Libraries…” action, while
-  `LibraryEditDialog.tsx` and both library-pane callers mix settings with
-  member/invitation state. There is no single Share surface.
+- `LibraryEditDialog.tsx` and both library-pane callers mixed settings with
+  member/invitation state. There was no single Share surface.
 - `auth.permissions` is the canonical scalar/set visibility owner. Media
   visibility currently composes tombstones, teardown, and library entries;
   highlight visibility currently composes parent-media access and library
@@ -111,8 +109,8 @@ highlights, and libraries gain access-management behavior in this cutover.
   conversations, messages, dossiers/artifacts, contributors, podcast roots, or
   internal reader/index resources. Routeable `CopyOnly` subjects still use Share
   to copy or natively send their authenticated Nexus URL; that never widens
-  access. Existing podcast-root library filing moves into Share without gaining
-  a user/link grant mode.
+  access. Podcast-root library placement is independently owned by the
+  top-level resource relationship action.
 - Changing the existing conversation-sharing product contract.
 - User-account deletion. No product account-delete operation exists. Both grant
   user foreign keys remain non-cascading and intentionally block a future user
@@ -136,12 +134,12 @@ library action.
 
 | Subject | Share overlay |
 |---|---|
-| Media | Copy Nexus link; Your shares; Libraries; Your public link Off/On; Copy public link; native Share; X after a public link exists |
+| Media | Copy Nexus link; Your shares; Your public link Off/On; Copy public link; native Share; X after a public link exists |
 | Owned highlight | Same grant controls; public/authenticated URL opens parent media focused on exactly this highlight |
 | Bare selection | Materialize through the existing highlight-create command, then open the owned-highlight Share overlay |
 | Non-owned highlight | No highlight Share action; the viewer may share the parent media without the other user’s annotation |
 | Library | Copy member-only link; members, roles, pending invitations, and admin controls; no public-link or X control |
-| Podcast root | Copy authenticated Nexus link; native Share; Libraries; no user grant, public link, or X |
+| Podcast root | Copy authenticated Nexus link and native Share only |
 | Copy-only resource | Copy authenticated Nexus link and native Share only |
 | Internal/non-routeable resource | No Share action |
 
@@ -596,7 +594,6 @@ projection:
 ShareMode =
   None
   CopyOnly
-  CopyWithLibraryFiling
   ResourceGrants
   HighlightGrants
   LibraryMembership
@@ -609,8 +606,7 @@ Final assignments:
 | `ResourceGrants` | `media` |
 | `HighlightGrants` | `highlight` |
 | `LibraryMembership` | `library` |
-| `CopyWithLibraryFiling` | `podcast` |
-| `CopyOnly` | `page`, `note_block`, `conversation`, `oracle_reading`, `artifact`, `contributor` |
+| `CopyOnly` | `podcast`, `page`, `note_block`, `conversation`, `oracle_reading`, `artifact`, `contributor` |
 | `None` | `evidence_span`, `content_chunk`, `fragment`, `message`, `oracle_passage_anchor`, `artifact_revision`, `external_snapshot`, `reader_apparatus_item`, `passage_anchor` |
 
 Rules:
@@ -624,8 +620,8 @@ Rules:
 - `library`: every member may copy the route; admins create/revoke invitations
   and manage members/roles, while an invitee may accept/decline only their own
   invitation; Default/system libraries are copy-only in practice.
-- `podcast`: the existing root-podcast `library_entries` editor is embedded in
-  Share; this mode never calls grant or public-projection APIs.
+- `podcast`: Share is copy-only. Library placement is governed by the
+  independent `libraryPlacement` resource capability and relationship action.
 - Unsupported modes fail; they never fall back to a parent or generic
   serializer.
 
@@ -1065,8 +1061,8 @@ Rules:
   fallback when an opener unmounts. Close, Escape, backdrop, mobile drag, and
   browser Back all use the same retained return-focus contract.
 - Row/dropdown Share actions are added only through central action builders.
-- `mediaResourceOptions` removes the standalone “Libraries…” action; the Media
-  Share overlay owns the library-entry editor.
+- Media and podcast library placement is published only by the universal
+  `RelationshipAction.LibraryPlacement.Edit` action.
 - `libraryResourceOptions` always offers Share for a visible library. “Edit
   library” becomes Settings.
 - `buildHighlightActions` is the sole highlight Share action owner across the
@@ -1115,19 +1111,17 @@ Admin copy states that removal closes only the membership path; a former member
 may retain access through another library or grant, including a media grant they
 created while they could read it.
 
-Library UI uses two deliberately separate state machines:
+Library UI uses two deliberately separate state machines and surfaces:
 
 - `LibraryMemberEditor`: people, roles, invitations, removal, and ownership
   transfer; it is embedded only by the library Share variant.
 - `LibraryEntryEditor`: filing an existing media or podcast through
-  `library_entries`; media, podcast-episode, and podcast-root Share variants
-  embed it.
+  `library_entries`; the top-level `Libraries…` resource action opens it.
 
 They share no DTO merely because both mention libraries. Hard-cut
-`LibraryMembershipPanel` into the embeddable `LibraryEntryEditor`; a narrow
-`LibraryEntryPanel` overlay may wrap it only for non-Share flows such as Add
-Content. Share never nests that overlay. Remove standalone Libraries actions
-from media, episode, and podcast-root menus.
+the old entry panel into the embeddable `LibraryEntryEditor`; a narrow
+`LibraryEntryPanel` overlay wraps it only for Add Content. Share never renders
+or requests item placement.
 
 `LibrarySettingsDialog` owns only name/settings and deletion. No
 member/invitation/ownership-transfer fetch, state, or markup survives there.
@@ -1137,8 +1131,8 @@ Visual and accessibility standard:
 - Reuse the existing surface, type, spacing, border, focus-ring, motion, and
   color tokens. Share introduces no bespoke visual language.
 - Present a stable hierarchy: Nexus link, Your shares, Shared with you when
-  `ReceivedAccess` is non-empty, Your public link, then Libraries where
-  applicable. Each received row says whether the exact media or included
+  `ReceivedAccess` is non-empty, then Your public link. Each received row says
+  whether the exact media or included
   highlight supplies the path and offers path-local Decline. Async rows retain
   their geometry; loading, empty, success, billing, permission, and
   retryable-error states are explicit.
@@ -1241,7 +1235,7 @@ Threat model and honest limits:
 - entity-specific user/invitation sealing adapters in their existing service
   owners and focused handle/grant/public/migration tests
 - `apps/web/src/components/sharing/ShareOverlay.tsx` + styles/tests
-- `apps/web/src/components/sharing/{LibraryMemberEditor,LibraryEntryEditor,LibraryEntryPanel}.tsx`
+- `apps/web/src/components/sharing/LibraryMemberEditor.tsx`
 - `apps/web/src/lib/sharing/` controller, strict authenticated/public decoders,
   API client, public asset resolver, and tests
 - `apps/web/src/lib/reader/readerTargetHash.ts` + tests
@@ -1308,13 +1302,13 @@ Threat model and honest limits:
 
 - delete `LibraryEditDialog.*`; create the narrower
   `LibrarySettingsDialog.*`;
-- delete the `LibraryMembershipPanel.*` name/overlay ownership after extracting
+- delete the old item-placement panel name/overlay ownership after extracting
   `LibraryEntryEditor` and its narrow non-Share wrapper;
 - delete `[userId]`/`[inviteId]` library BFF route directories after creating
   the handle-named final routes;
 - delete membership/invitation state and handlers from Edit/Settings callers;
-- delete “Copy pane link,” standalone media/episode/podcast “Libraries…,” Nexus
-  launcher `copy-link`, void/best-effort clipboard behavior, duplicate
+- delete “Copy pane link,” Nexus launcher `copy-link`, void/best-effort
+  clipboard behavior, duplicate
   clipboard handlers, obsolete tests/styles/comments, and any superseded share
   modal;
 - do not retain old component exports, prop shims, route aliases, payload
@@ -1335,7 +1329,7 @@ Historical migrations and superseded cutover documents remain immutable.
 4. **Universal overlay:** controller, responsive overlay, pane/row/highlight
    actions, selection create-then-share.
 5. **Library consolidation:** membership-only Share variant;
-   `LibrarySettingsDialog`; remove duplicate Libraries/Edit responsibilities.
+   `LibrarySettingsDialog`; keep item placement outside Share.
 6. **Extirpation/acceptance:** negative source gates, focused backend/browser
    tests, real-stack multi-user/public-revocation flow, docs update.
 
@@ -1500,8 +1494,8 @@ not accepted from mocks or unit tests alone.
   trusted branches defect. Every in-scope subject deletion cleans grants; account
   deletion remains out of scope.
 - **AC2 — Capabilities:** every `RESOURCE_SCHEME` has exactly one Share mode;
-  backend/API/frontend mirrors agree; `podcast` is
-  `CopyWithLibraryFiling`; unsupported schemes cannot create grants or reach a
+  backend/API/frontend mirrors agree; `podcast` is `CopyOnly`; unsupported
+  schemes cannot create grants or reach a
   generic projection.
 - **AC3 — Media authority:** any library/member/direct-grant reader with
   `can_share` may grant media; a recipient may reshare; creator identity is not
@@ -1542,9 +1536,9 @@ not accepted from mocks or unit tests alone.
   launcher has no `copy-link`; clipboard feedback is truthful; desktop/mobile
   focus and dismissal work.
 - **AC11 — Library UI:** library Share owns `LibraryMemberEditor`, including
-  ownership transfer; media/episode/podcast Share embeds
-  `LibraryEntryEditor`; no nested library-entry dialog exists; Settings owns no
-  member/share state; Default/system libraries expose copy-only behavior.
+  ownership transfer; media/episode/podcast Share contains no
+  `LibraryEntryEditor` or placement request; Settings owns no member/share
+  state; Default/system libraries expose copy-only behavior.
 - **AC12 — Billing:** new grants/invitations and actor-owned media/podcast filing
   into a library with another member or pending invitation require `can_share`
   through the named commands; idempotent, Default, system, dedupe, repair,
@@ -1556,8 +1550,8 @@ not accepted from mocks or unit tests alone.
   user egress, no-store, no-referrer, noindex/nofollow, and protected by a
   verified deployment edge limit.
 - **AC14 — Extirpation:** live code/tests contain no old pane-copy action,
-  standalone media/episode/podcast Libraries action, Nexus launcher copy-link,
-  `LibraryMembershipPanel`, membership-bearing Edit Library component,
+  Nexus launcher copy-link, old nested library placement, membership-bearing
+  Edit Library component,
   void/best-effort clipboard contract, duplicate share UI, legacy route/payload
   alias, fake public viewer, public pseudo-library/user, or sharing
   `resource_edges`.

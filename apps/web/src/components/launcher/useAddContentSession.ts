@@ -27,12 +27,12 @@ import {
   type UploadIngestResult,
 } from "@/lib/media/ingestionClient";
 import {
-  ensureMediaAbsentFromLibrary,
-  ensureMediaInLibraries,
-  fetchMediaLibraryMemberships,
-  patchLibraryMembership,
-  type LibraryTargetPickerItem,
-} from "@/lib/media/mediaLibraries";
+  addMediaToLibraries,
+  listLibraryPlacements,
+  patchLibraryPlacement,
+  removeLibraryPlacement,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
 import {
   getPodcastOpmlFileError,
   importPodcastOpml,
@@ -50,10 +50,10 @@ import {
   type AddSessionAction,
   type AddSessionState,
   type FrozenAcceptanceIntent,
-  type MembershipCommand,
-  type MembershipMutationProgress,
-  type MembershipState,
-  type RestingMembershipState,
+  type PlacementCommand,
+  type PlacementMutationProgress,
+  type PlacementState,
+  type RestingPlacementState,
   type SessionMutationOperation,
   type StagedAddItem,
 } from "./addContentSessionModel";
@@ -92,10 +92,10 @@ export interface AddContentSessionController {
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
   importOpml(): Promise<void>;
-  refreshMemberships(mediaIds: readonly string[]): Promise<void>;
-  runMembership(input: {
+  refreshPlacements(mediaIds: readonly string[]): Promise<void>;
+  runPlacement(input: {
     mediaIds: readonly string[];
-    command: MembershipCommand;
+    command: PlacementCommand;
   }): Promise<void>;
   createDestination(name: string): Promise<LibraryDestinationSelection>;
   stop(): void;
@@ -138,7 +138,7 @@ function acceptedUncertainItem(
   };
 }
 
-function membershipErrorMessage(
+function placementErrorMessage(
   error: unknown,
   fallback = "Libraries could not be updated.",
 ): FeedbackContent | null {
@@ -161,16 +161,16 @@ function requireIndexedItem<T>(items: readonly T[], index: number): T {
   return item;
 }
 
-function restingMembershipSnapshot(
-  membership: MembershipState | undefined,
-): RestingMembershipState | null {
-  if (!membership) return { kind: "Unloaded" };
-  switch (membership.kind) {
+function restingPlacementSnapshot(
+  placement: PlacementState | undefined,
+): RestingPlacementState | null {
+  if (!placement) return { kind: "Unloaded" };
+  switch (placement.kind) {
     case "Unloaded":
     case "Ready":
     case "LoadFailed":
     case "CommandFailed":
-      return membership;
+      return placement;
     case "Loading":
     case "Updating":
     case "Reconciling":
@@ -193,8 +193,8 @@ export function useAddContentSession(): AddContentSessionController {
     new Map<string, AcceptedUploadIdentity>(),
   );
   const startedSubmissionItemIdsRef = useRef(new Set<string>());
-  const membershipProgressByMediaIdRef = useRef(
-    new Map<string, MembershipMutationProgress>(),
+  const placementProgressByMediaIdRef = useRef(
+    new Map<string, PlacementMutationProgress>(),
   );
 
   const apply = useCallback((action: AddSessionAction) => {
@@ -221,7 +221,7 @@ export function useAddContentSession(): AddContentSessionController {
       generationRef.current += 1;
       acceptedUploadIdentityByItemIdRef.current.clear();
       startedSubmissionItemIdsRef.current.clear();
-      membershipProgressByMediaIdRef.current.clear();
+      placementProgressByMediaIdRef.current.clear();
       apply({
         kind: "Reset",
         state: createAddSessionState({
@@ -239,7 +239,7 @@ export function useAddContentSession(): AddContentSessionController {
     generationRef.current += 1;
     acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
-    membershipProgressByMediaIdRef.current.clear();
+    placementProgressByMediaIdRef.current.clear();
     apply({
       kind: "Reset",
       state: createAddSessionState({
@@ -259,8 +259,8 @@ export function useAddContentSession(): AddContentSessionController {
         acceptedUploadIdentityByItemIdRef.current,
       ),
       startedSubmissionItemIds: new Set(startedSubmissionItemIdsRef.current),
-      membershipProgressByMediaId: new Map(
-        membershipProgressByMediaIdRef.current,
+      placementProgressByMediaId: new Map(
+        placementProgressByMediaIdRef.current,
       ),
       acceptanceFeedback: {
         severity: "warning",
@@ -275,7 +275,7 @@ export function useAddContentSession(): AddContentSessionController {
     });
     acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
-    membershipProgressByMediaIdRef.current.clear();
+    placementProgressByMediaIdRef.current.clear();
   }, [apply]);
 
   const setUrlText = useCallback(
@@ -819,13 +819,13 @@ export function useAddContentSession(): AddContentSessionController {
     if (defect !== undefined) throw defect;
   }, [apply]);
 
-  const runMembership = useCallback(
+  const runPlacement = useCallback(
     async ({
       mediaIds,
       command,
     }: {
       mediaIds: readonly string[];
-      command: MembershipCommand;
+      command: PlacementCommand;
     }) => {
       const current = stateRef.current;
       if (current.mutation.kind !== "Idle") return;
@@ -836,10 +836,10 @@ export function useAddContentSession(): AddContentSessionController {
       if (uniqueMediaIds.length === 0) return;
       const generation = generationRef.current;
       const signal = sessionAbortRef.current.signal;
-      membershipProgressByMediaIdRef.current.clear();
+      placementProgressByMediaIdRef.current.clear();
       apply({
         kind: "StartMutation",
-        operation: { kind: "Membership", command, mediaIds: uniqueMediaIds },
+        operation: { kind: "Placement", command, mediaIds: uniqueMediaIds },
       });
       const defects: unknown[] = [];
       const loaded = await runBoundedTasks({
@@ -847,21 +847,24 @@ export function useAddContentSession(): AddContentSessionController {
         concurrency: MUTATION_CONCURRENCY,
         run: (mediaId) => {
           signal.throwIfAborted();
-          return fetchMediaLibraryMemberships(mediaId, { signal });
+          return listLibraryPlacements(
+            { kind: "Media", id: mediaId },
+            { signal },
+          );
         },
       });
       if (generation !== generationRef.current) return;
 
       const eligible: {
         mediaId: string;
-        libraries: readonly LibraryTargetPickerItem[];
+        libraries: readonly LibraryPlacementOption[];
       }[] = [];
       loaded.forEach((outcome, index) => {
         const mediaId = requireIndexedItem(uniqueMediaIds, index);
         if (outcome.kind === "Rejected") {
           if (!signal.aborted && !isAbortError(outcome.error)) {
             if (handleUnauthenticatedApiError(outcome.error)) return;
-            const feedback = membershipErrorMessage(
+            const feedback = placementErrorMessage(
               outcome.error,
               "Libraries could not be loaded.",
             );
@@ -869,9 +872,9 @@ export function useAddContentSession(): AddContentSessionController {
               defects.push(outcome.error);
             } else {
               apply({
-                kind: "SetMembership",
+                kind: "SetPlacement",
                 mediaId,
-                membership: { kind: "LoadFailed", feedback },
+                placement: { kind: "LoadFailed", feedback },
               });
             }
           }
@@ -879,9 +882,9 @@ export function useAddContentSession(): AddContentSessionController {
         }
         const libraries = outcome.value;
         apply({
-          kind: "SetMembership",
+          kind: "SetPlacement",
           mediaId,
-          membership: { kind: "Ready", libraries },
+          placement: { kind: "Ready", libraries },
         });
         const target = libraries.find(
           (library) => library.id === command.libraryId,
@@ -894,15 +897,15 @@ export function useAddContentSession(): AddContentSessionController {
       });
 
       for (const work of eligible) {
-        membershipProgressByMediaIdRef.current.set(work.mediaId, {
+        placementProgressByMediaIdRef.current.set(work.mediaId, {
           phase: "Queued",
           libraries: work.libraries,
           command,
         });
         apply({
-          kind: "SetMembership",
+          kind: "SetPlacement",
           mediaId: work.mediaId,
-          membership: { kind: "Updating", libraries: work.libraries, command },
+          placement: { kind: "Updating", libraries: work.libraries, command },
         });
       }
       const mutated = await runBoundedTasks({
@@ -910,29 +913,29 @@ export function useAddContentSession(): AddContentSessionController {
         concurrency: MUTATION_CONCURRENCY,
         run: async ({ mediaId }) => {
           signal.throwIfAborted();
-          const progress = membershipProgressByMediaIdRef.current.get(mediaId);
+          const progress = placementProgressByMediaIdRef.current.get(mediaId);
           if (generation === generationRef.current && progress) {
-            membershipProgressByMediaIdRef.current.set(mediaId, {
+            placementProgressByMediaIdRef.current.set(mediaId, {
               ...progress,
               phase: "Started",
             });
           }
           if (command.kind === "Add") {
-            await ensureMediaInLibraries({
+            await addMediaToLibraries(
               mediaId,
-              libraryIds: [command.libraryId],
-              signal,
-            });
+              [command.libraryId],
+              { signal },
+            );
           } else {
-            await ensureMediaAbsentFromLibrary({
-              mediaId,
-              libraryId: command.libraryId,
-              signal,
-            });
+            await removeLibraryPlacement(
+              { kind: "Media", id: mediaId },
+              command.libraryId,
+              { signal },
+            );
           }
-          const started = membershipProgressByMediaIdRef.current.get(mediaId);
+          const started = placementProgressByMediaIdRef.current.get(mediaId);
           if (generation === generationRef.current && started) {
-            membershipProgressByMediaIdRef.current.set(mediaId, {
+            placementProgressByMediaIdRef.current.set(mediaId, {
               ...started,
               phase: "Succeeded",
             });
@@ -943,18 +946,18 @@ export function useAddContentSession(): AddContentSessionController {
 
       const uncertain: {
         mediaId: string;
-        libraries: readonly LibraryTargetPickerItem[];
+        libraries: readonly LibraryPlacementOption[];
         error: unknown;
       }[] = [];
       mutated.forEach((outcome, index) => {
         const work = requireIndexedItem(eligible, index);
         if (outcome.kind === "Fulfilled") {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId: work.mediaId,
-            membership: {
+            placement: {
               kind: "Ready",
-              libraries: patchLibraryMembership(
+              libraries: patchLibraryPlacement(
                 [...work.libraries],
                 command.libraryId,
                 command.kind === "Add",
@@ -964,9 +967,9 @@ export function useAddContentSession(): AddContentSessionController {
         } else if (!signal.aborted && !isAbortError(outcome.error)) {
           uncertain.push({ ...work, error: outcome.error });
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId: work.mediaId,
-            membership: {
+            placement: {
               kind: "Reconciling",
               libraries: work.libraries,
               command,
@@ -978,7 +981,8 @@ export function useAddContentSession(): AddContentSessionController {
       const reconciled = await runBoundedTasks({
         items: uncertain,
         concurrency: MUTATION_CONCURRENCY,
-        run: ({ mediaId }) => fetchMediaLibraryMemberships(mediaId, { signal }),
+        run: ({ mediaId }) =>
+          listLibraryPlacements({ kind: "Media", id: mediaId }, { signal }),
       });
       if (generation !== generationRef.current) return;
       reconciled.forEach((outcome, index) => {
@@ -987,25 +991,25 @@ export function useAddContentSession(): AddContentSessionController {
           if (!signal.aborted && !isAbortError(outcome.error)) {
             if (handleUnauthenticatedApiError(outcome.error)) {
               apply({
-                kind: "SetMembership",
+                kind: "SetPlacement",
                 mediaId: work.mediaId,
-                membership: { kind: "Ready", libraries: work.libraries },
+                placement: { kind: "Ready", libraries: work.libraries },
               });
               return;
             }
-            const feedback = membershipErrorMessage(outcome.error);
+            const feedback = placementErrorMessage(outcome.error);
             if (feedback === null) {
               apply({
-                kind: "SetMembership",
+                kind: "SetPlacement",
                 mediaId: work.mediaId,
-                membership: { kind: "Ready", libraries: work.libraries },
+                placement: { kind: "Ready", libraries: work.libraries },
               });
               defects.push(outcome.error);
             } else {
               apply({
-                kind: "SetMembership",
+                kind: "SetPlacement",
                 mediaId: work.mediaId,
-                membership: {
+                placement: {
                   kind: "CommandFailed",
                   libraries: work.libraries,
                   command,
@@ -1025,27 +1029,27 @@ export function useAddContentSession(): AddContentSessionController {
             : !target?.isInLibrary;
         if (desired) {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId: work.mediaId,
-            membership: { kind: "Ready", libraries: outcome.value },
+            placement: { kind: "Ready", libraries: outcome.value },
           });
-          if (membershipErrorMessage(work.error) === null) {
+          if (placementErrorMessage(work.error) === null) {
             defects.push(work.error);
           }
         } else {
-          const feedback = membershipErrorMessage(work.error);
+          const feedback = placementErrorMessage(work.error);
           if (feedback === null) {
             apply({
-              kind: "SetMembership",
+              kind: "SetPlacement",
               mediaId: work.mediaId,
-              membership: { kind: "Ready", libraries: outcome.value },
+              placement: { kind: "Ready", libraries: outcome.value },
             });
             defects.push(work.error);
           } else {
             apply({
-              kind: "SetMembership",
+              kind: "SetPlacement",
               mediaId: work.mediaId,
-              membership: {
+              placement: {
                 kind: "CommandFailed",
                 libraries: outcome.value,
                 command,
@@ -1055,25 +1059,25 @@ export function useAddContentSession(): AddContentSessionController {
           }
         }
       });
-      membershipProgressByMediaIdRef.current.clear();
+      placementProgressByMediaIdRef.current.clear();
       apply({ kind: "FinishMutation" });
       if (defects.length > 0) throw defects[0];
     },
     [apply],
   );
 
-  const refreshMemberships = useCallback(
+  const refreshPlacements = useCallback(
     async (mediaIds: readonly string[]) => {
       const current = stateRef.current;
       const accepted = new Set(acceptedMediaIds(current));
       const refreshWork: Array<{
         mediaId: string;
-        previous: RestingMembershipState;
+        previous: RestingPlacementState;
       }> = [];
       for (const mediaId of new Set(mediaIds)) {
         if (!accepted.has(mediaId)) continue;
-        const previous = restingMembershipSnapshot(
-          current.membershipByMediaId.get(mediaId),
+        const previous = restingPlacementSnapshot(
+          current.placementByMediaId.get(mediaId),
         );
         if (previous) refreshWork.push({ mediaId, previous });
       }
@@ -1082,9 +1086,9 @@ export function useAddContentSession(): AddContentSessionController {
       const signal = sessionAbortRef.current.signal;
       for (const { mediaId, previous } of refreshWork) {
         apply({
-          kind: "SetMembership",
+          kind: "SetPlacement",
           mediaId,
-          membership: { kind: "Loading", previous },
+          placement: { kind: "Loading", previous },
         });
       }
       const outcomes = await runBoundedTasks({
@@ -1092,7 +1096,10 @@ export function useAddContentSession(): AddContentSessionController {
         concurrency: MUTATION_CONCURRENCY,
         run: ({ mediaId }) => {
           signal.throwIfAborted();
-          return fetchMediaLibraryMemberships(mediaId, { signal });
+          return listLibraryPlacements(
+            { kind: "Media", id: mediaId },
+            { signal },
+          );
         },
       });
       if (generation !== generationRef.current) return;
@@ -1102,37 +1109,37 @@ export function useAddContentSession(): AddContentSessionController {
         const { mediaId, previous } = requireIndexedItem(refreshWork, index);
         if (outcome.kind === "Fulfilled") {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId,
-            membership: { kind: "Ready", libraries: outcome.value },
+            placement: { kind: "Ready", libraries: outcome.value },
           });
           return;
         }
         if (signal.aborted || isAbortError(outcome.error)) return;
         if (handleUnauthenticatedApiError(outcome.error)) {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId,
-            membership: previous,
+            placement: previous,
           });
           return;
         }
-        const feedback = membershipErrorMessage(
+        const feedback = placementErrorMessage(
           outcome.error,
           "Libraries could not be loaded.",
         );
         if (feedback === null) {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId,
-            membership: previous,
+            placement: previous,
           });
           defects.push(outcome.error);
         } else {
           apply({
-            kind: "SetMembership",
+            kind: "SetPlacement",
             mediaId,
-            membership: { kind: "LoadFailed", feedback },
+            placement: { kind: "LoadFailed", feedback },
           });
         }
       });
@@ -1192,8 +1199,8 @@ export function useAddContentSession(): AddContentSessionController {
     submit,
     reconcileAcceptance,
     importOpml,
-    refreshMemberships,
-    runMembership,
+    refreshPlacements,
+    runPlacement,
     createDestination,
     stop,
     discard,

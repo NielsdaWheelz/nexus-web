@@ -165,6 +165,12 @@ export const RESOURCE_ACTION_CATALOG = {
     tone: "danger",
     restoreFocusOnClose: false,
   },
+  EditLibraryPlacement: {
+    id: "RelationshipAction.LibraryPlacement.Edit",
+    label: "Libraries…",
+    icon: Library,
+    restoreFocusOnClose: false,
+  },
   AddToLectern: {
     id: "RelationshipAction.Lectern.Add",
     label: "Add to Lectern",
@@ -456,15 +462,7 @@ function isExternalRepresentationInput(
   return input.target.kind === "External";
 }
 
-/**
- * The projection-independent policy for resource core membership and order.
- * Menu and Launcher projections consume these catalog keys instead of
- * independently re-deriving visibility from scheme capabilities.
- */
-export function resolveResourceCoreCatalogKeys(
-  target: ResourceActionSubject,
-  projection: ResourceActionProjection,
-): readonly ResourceCoreCatalogKey[] {
+function validatedResourceActionRef(target: ResourceActionSubject) {
   const parsedRef = parseResourceRef(target.ref);
   if (!parsedRef || target.activation.resourceRef !== target.ref) {
     // justify-defect: the strict target decoder guarantees one canonical
@@ -476,6 +474,19 @@ export function resolveResourceCoreCatalogKeys(
       })}`,
     );
   }
+  return parsedRef;
+}
+
+/**
+ * The projection-independent policy for resource core membership and order.
+ * Menu and Launcher projections consume these catalog keys instead of
+ * independently re-deriving visibility from scheme capabilities.
+ */
+export function resolveResourceCoreCatalogKeys(
+  target: ResourceActionSubject,
+  projection: ResourceActionProjection,
+): readonly ResourceCoreCatalogKey[] {
+  const parsedRef = validatedResourceActionRef(target);
   if (target.missing) return [];
 
   const capabilities = resourceCapabilityForScheme(parsedRef.scheme);
@@ -547,6 +558,59 @@ export function resolveResourceCoreActions(
     }
   }
   return { ...emptyResourceMenuGroups(), core };
+}
+
+export interface ResourceRelationshipResolverInput {
+  readonly target: ResourceActionSubject;
+  readonly executors: {
+    readonly libraryPlacement: SynchronousResourceActionExecutor<ResourceActionSubject>;
+  };
+}
+
+/**
+ * Universal relationship policy for standing resource menus. Static scheme
+ * capability decides whether placement is meaningful; row permissions remain
+ * owned by the placement list response.
+ */
+export function resolveUniversalResourceRelationshipActions(
+  input: ResourceRelationshipResolverInput,
+): ResourceMenuGroups {
+  const parsedRef = validatedResourceActionRef(input.target);
+  if (input.target.missing) return emptyResourceMenuGroups();
+
+  const mode =
+    resourceCapabilityForScheme(parsedRef.scheme).libraryPlacement;
+  switch (mode) {
+    case "None":
+      return emptyResourceMenuGroups();
+    case "ManageEntries":
+      if (parsedRef.scheme !== "media" && parsedRef.scheme !== "podcast") {
+        // justify-defect: ManageEntries is a closed capability whose executor
+        // can narrow only the two supported placement targets.
+        throw new Error(
+          `Unsupported library placement scheme: ${parsedRef.scheme}`,
+        );
+      }
+      return {
+        ...emptyResourceMenuGroups(),
+        relationships: [
+          projectResourceActionToMenu({
+            kind: "command",
+            catalogKey: "EditLibraryPlacement",
+            onSelect: invokeSynchronous(
+              input.executors.libraryPlacement,
+              input.target,
+            ),
+          }),
+        ],
+      };
+    default: {
+      const exhaustive: never = mode;
+      throw new Error(
+        `Unsupported library placement mode: ${JSON.stringify(exhaustive)}`,
+      );
+    }
+  }
 }
 
 export type RichActionExecutor = (

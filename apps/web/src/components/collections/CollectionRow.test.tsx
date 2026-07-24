@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ResourceList from "@/components/ui/ResourceList";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { absent, present } from "@/lib/api/presence";
 import type { CollectionRowView } from "@/lib/collections/types";
@@ -42,12 +43,68 @@ function baseRow(): CollectionRowView {
 function renderRow(ui: ReactNode) {
   return render(
     <FeedbackProvider>
-      <ShareControllerProvider>{ui}</ShareControllerProvider>
+      <LibraryPlacementControllerProvider>
+        <ShareControllerProvider>{ui}</ShareControllerProvider>
+      </LibraryPlacementControllerProvider>
     </FeedbackProvider>,
   );
 }
 
 describe("CollectionRow", () => {
+  it("publishes one direct Libraries relationship action for media", async () => {
+    const user = userEvent.setup();
+    renderRow(
+      <ResourceList ariaLabel="Documents">
+        <CollectionRow row={baseRow()} />
+      </ResourceList>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for Canonical title",
+      }),
+    );
+
+    expect(
+      screen.getAllByRole("menuitem", { name: "Libraries…" }),
+    ).toHaveLength(1);
+  });
+
+  it("does not publish Libraries for an external target", async () => {
+    const user = userEvent.setup();
+    renderRow(
+      <ResourceList ariaLabel="Documents">
+        <CollectionRow
+          row={{
+            ...baseRow(),
+            actionPublication: {
+              kind: "ResourceMenu",
+              target: {
+                kind: "External",
+                href: "https://example.test/document",
+              },
+              groups: {
+                core: [],
+                operations: [],
+                relationships: [],
+                view: [],
+              },
+            },
+          }}
+        />
+      </ResourceList>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "More actions for Canonical title",
+      }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "Libraries…" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the canonical identity, support, and activity hierarchy", () => {
     const row: CollectionRowView = {
       ...baseRow(),
@@ -164,7 +221,7 @@ describe("CollectionRow", () => {
       }),
     );
     try {
-    renderRow(
+      renderRow(
         <ResourceList ariaLabel="Documents">
           <CollectionRow
             row={{
@@ -187,7 +244,9 @@ describe("CollectionRow", () => {
         }),
       );
       await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
-      expect(fetchSpy.mock.calls[0]?.[0]).toBe(`/api/media/${MEDIA_ID}/related`);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe(
+        `/api/media/${MEDIA_ID}/related`,
+      );
     } finally {
       fetchSpy.mockRestore();
     }

@@ -12,9 +12,9 @@ import type {
   UploadFileKind,
 } from "@/lib/media/ingestionClient";
 import {
-  patchLibraryMembership,
-  type LibraryTargetPickerItem,
-} from "@/lib/media/mediaLibraries";
+  patchLibraryPlacement,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
 import type { PodcastOpmlImportResult } from "@/lib/podcasts/opmlImport";
 
 export const ADD_SESSION_MAX_ITEMS = 20;
@@ -78,30 +78,30 @@ export type AddItem =
       result: SourceIngestResult;
     };
 
-export type MembershipCommand =
+export type PlacementCommand =
   | { kind: "Add"; libraryId: string }
   | { kind: "Remove"; libraryId: string };
 
-export type MembershipWork = {
-  libraries: readonly LibraryTargetPickerItem[];
-  command: MembershipCommand;
+export type PlacementWork = {
+  libraries: readonly LibraryPlacementOption[];
+  command: PlacementCommand;
 };
 
-export type MembershipMutationProgress = MembershipWork & {
+export type PlacementMutationProgress = PlacementWork & {
   phase: "Queued" | "Started" | "Succeeded";
 };
 
-export type RestingMembershipState =
+export type RestingPlacementState =
   | { kind: "Unloaded" }
-  | { kind: "Ready"; libraries: readonly LibraryTargetPickerItem[] }
+  | { kind: "Ready"; libraries: readonly LibraryPlacementOption[] }
   | { kind: "LoadFailed"; feedback: FeedbackContent }
-  | ({ kind: "CommandFailed"; feedback: FeedbackContent } & MembershipWork);
+  | ({ kind: "CommandFailed"; feedback: FeedbackContent } & PlacementWork);
 
-export type MembershipState =
-  | RestingMembershipState
-  | { kind: "Loading"; previous: RestingMembershipState }
-  | ({ kind: "Updating" } & MembershipWork)
-  | ({ kind: "Reconciling" } & MembershipWork);
+export type PlacementState =
+  | RestingPlacementState
+  | { kind: "Loading"; previous: RestingPlacementState }
+  | ({ kind: "Updating" } & PlacementWork)
+  | ({ kind: "Reconciling" } & PlacementWork);
 
 export type SessionMutationOperation =
   | { kind: "Submit"; itemIds: readonly string[] }
@@ -109,8 +109,8 @@ export type SessionMutationOperation =
   | { kind: "CreateDestination" }
   | { kind: "ImportOpml" }
   | {
-      kind: "Membership";
-      command: MembershipCommand;
+      kind: "Placement";
+      command: PlacementCommand;
       mediaIds: readonly string[];
     };
 
@@ -144,7 +144,7 @@ export type AddSessionState = Readonly<{
   defaultDestinations: readonly LibraryDestinationSelection[];
   opmlDestinations: readonly LibraryDestinationSelection[];
   opml: OpmlImportState;
-  membershipByMediaId: ReadonlyMap<string, MembershipState>;
+  placementByMediaId: ReadonlyMap<string, PlacementState>;
   mutation: SessionMutationState;
 }>;
 
@@ -231,17 +231,17 @@ export type AddSessionAction =
         AcceptedUploadIdentity
       >;
       startedSubmissionItemIds: ReadonlySet<string>;
-      membershipProgressByMediaId: ReadonlyMap<
+      placementProgressByMediaId: ReadonlyMap<
         string,
-        MembershipMutationProgress
+        PlacementMutationProgress
       >;
       acceptanceFeedback: FeedbackContent;
       operationFeedback: FeedbackContent;
     }
   | {
-      kind: "SetMembership";
+      kind: "SetPlacement";
       mediaId: string;
-      membership: MembershipState;
+      placement: PlacementState;
     };
 
 export function createAddSessionState({
@@ -260,7 +260,7 @@ export function createAddSessionState({
     defaultDestinations: [...seed.initialDestinations],
     opmlDestinations: [...seed.initialDestinations],
     opml: { kind: "Empty" },
-    membershipByMediaId: new Map(),
+    placementByMediaId: new Map(),
     mutation: { kind: "Idle" },
   };
 }
@@ -305,11 +305,11 @@ export function reduceAddSession(
           item.kind === "Accepted" ? [item.result.mediaId] : [],
         ),
       );
-      const membershipByMediaId = new Map(state.membershipByMediaId);
-      for (const mediaId of membershipByMediaId.keys()) {
-        if (!retainedMediaIds.has(mediaId)) membershipByMediaId.delete(mediaId);
+      const placementByMediaId = new Map(state.placementByMediaId);
+      for (const mediaId of placementByMediaId.keys()) {
+        if (!retainedMediaIds.has(mediaId)) placementByMediaId.delete(mediaId);
       }
-      return { ...state, items, membershipByMediaId };
+      return { ...state, items, placementByMediaId };
     }
     case "RestageItem":
       return {
@@ -458,22 +458,22 @@ export function reduceAddSession(
                 feedback: action.operationFeedback,
               }
             : state.opml,
-        membershipByMediaId: new Map(
-          [...state.membershipByMediaId].map(([mediaId, membership]) => {
-            if (membership.kind === "Loading") {
-              return [mediaId, membership.previous];
+        placementByMediaId: new Map(
+          [...state.placementByMediaId].map(([mediaId, placement]) => {
+            if (placement.kind === "Loading") {
+              return [mediaId, placement.previous];
             }
             if (
-              membership.kind !== "Updating" &&
-              membership.kind !== "Reconciling"
+              placement.kind !== "Updating" &&
+              placement.kind !== "Reconciling"
             ) {
-              return [mediaId, membership];
+              return [mediaId, placement];
             }
-            const progress = action.membershipProgressByMediaId.get(mediaId);
+            const progress = action.placementProgressByMediaId.get(mediaId);
             if (!progress) {
-              // justify-defect: an in-flight membership projection must have a
+              // justify-defect: an in-flight placement projection must have a
               // frozen request-boundary lifecycle entry owned by the mutation.
-              throw new Error("Missing membership mutation progress.");
+              throw new Error("Missing placement mutation progress.");
             }
             switch (progress.phase) {
               case "Queued":
@@ -486,7 +486,7 @@ export function reduceAddSession(
                   mediaId,
                   {
                     kind: "Ready" as const,
-                    libraries: patchLibraryMembership(
+                    libraries: patchLibraryPlacement(
                       [...progress.libraries],
                       progress.command.libraryId,
                       progress.command.kind === "Add",
@@ -508,10 +508,10 @@ export function reduceAddSession(
         ),
         mutation: { kind: "Idle" },
       };
-    case "SetMembership": {
-      const membershipByMediaId = new Map(state.membershipByMediaId);
-      membershipByMediaId.set(action.mediaId, action.membership);
-      return { ...state, membershipByMediaId };
+    case "SetPlacement": {
+      const placementByMediaId = new Map(state.placementByMediaId);
+      placementByMediaId.set(action.mediaId, action.placement);
+      return { ...state, placementByMediaId };
     }
   }
 }

@@ -69,12 +69,14 @@ import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import {
-  fetchPodcastLibraries,
   getPodcastSubscriptionSettingsPatch,
   subscribeToPodcast,
   type PodcastDetailResponse,
-  type PodcastLibraryMembership,
 } from "../podcastSubscriptions";
+import {
+  listLibraryPlacements,
+  type LibraryPlacementOption,
+} from "@/lib/libraries/libraryPlacement";
 import { usePodcastSubscriptionActions } from "../usePodcastSubscriptionActions";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
 import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
@@ -106,21 +108,21 @@ const MediaAuthorsEditor = lazy(
 interface PodcastDetailLoadResult {
   detail: PodcastDetailResponse;
   episodes: PodcastEpisodeMedia[];
-  podcastLibraries: PodcastLibraryMembership[];
+  podcastLibraries: LibraryPlacementOption[];
 }
 
 interface PodcastDetailSnapshot {
   readonly detail: PodcastDetailResponse;
   readonly episodes: readonly PodcastEpisodeMedia[];
   readonly hasMoreEpisodes: boolean;
-  readonly podcastLibraries: readonly PodcastLibraryMembership[];
+  readonly podcastLibraries: readonly LibraryPlacementOption[];
 }
 
 const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
   "PodcastDetail.Episodes",
 );
 const EMPTY_PODCAST_EPISODES: PodcastEpisodeMedia[] = [];
-const EMPTY_PODCAST_LIBRARIES: PodcastLibraryMembership[] = [];
+const EMPTY_PODCAST_LIBRARIES: LibraryPlacementOption[] = [];
 
 export default function PodcastDetailPaneBody() {
   const podcastId = usePaneParam("podcastId");
@@ -176,7 +178,7 @@ export default function PodcastDetailPaneBody() {
       });
     }, []);
   const setPodcastLibraries: Dispatch<
-    SetStateAction<PodcastLibraryMembership[]>
+    SetStateAction<LibraryPlacementOption[]>
   > = useCallback((update) => {
     setController((current) => {
       if (current === null) return current;
@@ -393,13 +395,12 @@ export default function PodcastDetailPaneBody() {
       if (signal?.aborted) {
         throw signal.reason ?? new DOMException("Aborted", "AbortError");
       }
-      let podcastLibraries: PodcastLibraryMembership[] = [];
+      let podcastLibraries: LibraryPlacementOption[] = [];
       if (detailResp.data.subscription) {
-        try {
-          podcastLibraries = await fetchPodcastLibraries(podcastId);
-        } catch {
-          podcastLibraries = [];
-        }
+        podcastLibraries = await listLibraryPlacements(
+          { kind: "Podcast", id: podcastId },
+          { signal },
+        );
       }
       return {
         detail: detailResp.data,

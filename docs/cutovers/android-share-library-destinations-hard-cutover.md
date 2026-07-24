@@ -289,7 +289,7 @@ Rules:
 - inaccessible IDs are forbidden,
 - member-only IDs are forbidden,
 - already-present media-library entries are idempotent no-ops,
-- success is `204 No Content`; authoritative membership is read separately.
+- success is `204 No Content`; authoritative placement is read separately.
 
 ## Backend API design
 
@@ -376,7 +376,7 @@ Required backend behavior:
 
 ### `POST /media/{media_id}/libraries`
 
-Existing endpoint remains for post-hoc media membership management outside the
+Existing endpoint remains for post-hoc media placement management outside the
 share flow.
 
 Required backend behavior:
@@ -438,7 +438,7 @@ Required properties:
 - no partial apply across selected destinations,
 - no nested independent transaction per destination,
 - idempotent for already-present entries,
-- no response metadata; callers read authoritative membership separately.
+- no response metadata; callers read authoritative placement separately.
 
 Concurrency:
 
@@ -589,18 +589,18 @@ Migrate these from `LibraryMultiSelectPicker` and `useNonDefaultLibraries` to
 The goal is one destination picker for write destinations. Do not leave a second
 client-filtered destination picker for ingest.
 
-### Membership panel
+### Placement editor
 
-`LibraryMembershipPanel` remains a separate capability because it displays
-current membership and add/remove affordances for an existing item. It should not
-be collapsed into `LibraryDestinationPicker` in this cutover.
+`LibraryEntryEditor` remains a separate capability because it displays current
+placement and add/remove affordances for an existing item. It is not collapsed
+into `LibraryDestinationPicker`.
 
 Allowed consolidation:
 
 - share `LibraryColorDot`,
 - share canonical library destination/summary types,
 - share a row component only if it removes real duplication without mixing
-  membership state into destination selection.
+  placement state into destination selection.
 
 ## Duplicate and repetitive patterns to remove
 
@@ -646,14 +646,14 @@ Final state:
 Current duplication:
 
 - `LibraryMultiSelectPicker` filters locally.
-- `LibraryMembershipPanel` filters locally.
+- `LibraryEntryEditor` filters locally.
 - Command palette has stronger remote/debounced search mechanics.
 
 Final state:
 
 - destination picker uses server-backed search.
-- membership panel may keep local filter because it is a loaded current-item
-  membership list, not the high-cardinality destination source.
+- placement editor may keep local filter because it is a loaded current-item
+  placement list, not the high-cardinality destination source.
 - command palette mechanics are reused by architecture, not by coupling the
   destination picker to command-palette item types.
 
@@ -837,7 +837,7 @@ Add or update:
   - reused URL add remains idempotent.
 - `python/tests/test_media_libraries_endpoint.py`
   - atomic no-partial behavior,
-  - `204` plus authoritative membership under already-present entries,
+  - `204` plus authoritative placement under already-present entries,
   - invalid target prevents all inserts.
 - podcast tests if podcast library assignment uses the writable destination
   resolver.

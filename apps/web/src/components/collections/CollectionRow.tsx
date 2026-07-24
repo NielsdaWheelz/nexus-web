@@ -13,6 +13,7 @@ import {
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
+import { present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { toFeedback, useFeedback } from "@/components/feedback/Feedback";
 import type { SortableActivatorProps } from "@/components/sortable/SortableList";
@@ -23,6 +24,7 @@ import {
   composeResourceMenu,
   RESOURCE_ACTION_CATALOG,
   resolveResourceCoreActions,
+  resolveUniversalResourceRelationshipActions,
   type ActionPublication,
   type ResourceActionId,
 } from "@/lib/actions/resourceActions";
@@ -35,13 +37,16 @@ import type {
 import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   executeResourceChat,
+  executeResourceLibraryPlacement,
   executeResourceOpen,
   executeResourceShare,
 } from "@/lib/resources/resourceActionExecution";
 import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
+import { useLibraryPlacementController } from "@/lib/libraries/placementController";
 import { useShareController } from "@/lib/sharing/controller";
 import { paneShareOpenOptions } from "@/lib/sharing/openOptions";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
+import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import ConnectionRail from "./ConnectionRail";
 import {
   collectionActivityText,
@@ -215,6 +220,7 @@ function ResourceCollectionRowActionMenu({
   readonly reorderHintId: string;
 }) {
   const paneRuntime = usePaneRuntime();
+  const { openLibraryPlacement } = useLibraryPlacementController();
   const { openShare } = useShareController();
   const feedback = useFeedback();
   const busyIdsRef = useRef<ReadonlySet<ResourceActionId>>(EMPTY_BUSY_IDS);
@@ -305,10 +311,34 @@ function ResourceCollectionRowActionMenu({
           },
         });
 
+  const universalRelationships =
+    publication.target.kind === "Resource"
+      ? resolveUniversalResourceRelationshipActions({
+          target: publication.target,
+          executors: {
+            libraryPlacement: (subject, detail) => {
+              const runtime = requirePaneRuntime();
+              executeResourceLibraryPlacement({
+                subject,
+                openLibraryPlacement,
+                options: {
+                  returnFocusTo: () => detail.triggerEl,
+                  returnFocusFallback: present(() =>
+                    findPaneChromeFocusTarget(runtime.paneId),
+                  ),
+                },
+              });
+            },
+          },
+        }).relationships
+      : [];
   const options = composeResourceMenu({
     core: groups.core,
     operations: publication.groups.operations,
-    relationships: publication.groups.relationships,
+    relationships: [
+      ...universalRelationships,
+      ...publication.groups.relationships,
+    ],
     view: [...publication.groups.view, ...rendererView],
   });
 

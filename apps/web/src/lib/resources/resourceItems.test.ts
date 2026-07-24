@@ -24,6 +24,8 @@ function rawResourceItem(
         user_link_target: "direct",
         note_reference_target: true,
       },
+      sharing: "ResourceGrants",
+      libraryPlacement: "ManageEntries",
       attachable: true,
       chat_subject: "label",
       readable: "body",
@@ -67,6 +69,8 @@ describe("normalizeResourceItem", () => {
         userLinkTarget: "direct",
         noteReferenceTarget: true,
       },
+      sharing: "ResourceGrants",
+      libraryPlacement: "ManageEntries",
       attachable: true,
       chatSubject: "label",
       readable: "body",
@@ -87,6 +91,8 @@ describe("normalizeResourceItem", () => {
             userLinkTarget: "materialize_passage",
             noteReferenceTarget: false,
           },
+          sharing: "None",
+          libraryPlacement: "None",
           attachable: false,
           chatSubject: "none",
           readable: "none",
@@ -111,6 +117,7 @@ describe("normalizeResourceItem", () => {
       noteReferenceTarget: false,
     });
     expect(item.capabilities.citableResultType).toBe("highlight");
+    expect(item.capabilities.libraryPlacement).toBe("None");
     expect(item.versionByLane).toEqual({ title: 1 });
   });
 
@@ -142,5 +149,22 @@ describe("normalizeResourceItem", () => {
     expect(() =>
       normalizeResourceItem(rawResourceItem({ ref: undefined })),
     ).toThrow();
+  });
+
+  it("rejects missing or unknown library placement modes", () => {
+    const value = rawResourceItem();
+    const capabilities = value.capabilities as Record<string, unknown>;
+    expect(() =>
+      normalizeResourceItem({
+        ...value,
+        capabilities: { ...capabilities, libraryPlacement: undefined },
+      }),
+    ).toThrow("Invalid resource library placement capability");
+    expect(() =>
+      normalizeResourceItem({
+        ...value,
+        capabilities: { ...capabilities, libraryPlacement: "Manage" },
+      }),
+    ).toThrow("Invalid resource library placement capability");
   });
 });

@@ -2,7 +2,7 @@
 
 import LibraryEntryEditor, {
   type LibraryEntryEditorProps,
-} from "@/components/sharing/LibraryEntryEditor";
+} from "@/components/libraries/LibraryEntryEditor";
 import Dialog from "@/components/ui/Dialog";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 
@@ -14,10 +14,8 @@ interface LibraryEntryPanelProps extends LibraryEntryEditorProps {
   returnFocusFallback?: ReturnFocusTarget;
 }
 
-/**
- * Narrow non-Share wrapper retained for flows such as Add Content. Resource
- * action menus use the universal Share overlay instead.
- */
+// Add Content owns this desktop wrapper. Standing resource actions use the
+// responsive LibraryPlacementOverlay instead.
 export default function LibraryEntryPanel({
   open,
   title,

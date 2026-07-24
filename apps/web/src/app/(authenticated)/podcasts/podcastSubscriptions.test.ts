@@ -5,12 +5,12 @@ import {
   getPodcastSubscriptionSettingsPatch,
   getPodcastSubscriptionSyncPatch,
   parsePodcastSubscriptionDefaultPlaybackSpeed,
-  type PodcastLibraryMembership,
 } from "./podcastSubscriptions";
+import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 
-function createLibraryMembership(
-  overrides: Partial<PodcastLibraryMembership> = {},
-): PodcastLibraryMembership {
+function createLibraryPlacement(
+  overrides: Partial<LibraryPlacementOption> = {},
+): LibraryPlacementOption {
   return {
     id: "library-1",
     name: "Inbox",
@@ -80,13 +80,13 @@ describe("podcastSubscriptions helpers", () => {
 
   it("describes unsubscribe side effects with removable and retained libraries", () => {
     const message = buildPodcastUnsubscribeConfirmation("Debug Show", [
-      createLibraryMembership({
+      createLibraryPlacement({
         id: "library-1",
         isInLibrary: true,
         canAdd: false,
         canRemove: true,
       }),
-      createLibraryMembership({
+      createLibraryPlacement({
         id: "library-2",
         name: "Shared",
         isInLibrary: true,

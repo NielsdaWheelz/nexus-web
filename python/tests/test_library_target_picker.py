@@ -26,8 +26,8 @@ def _bootstrap_user(auth_client, user_id: UUID) -> UUID:
     return UUID(response.json()["data"]["default_library_id"])
 
 
-class TestLibraryTargetPickerOptions:
-    def test_get_media_libraries_returns_current_membership_options(
+class TestLibraryPlacementOptions:
+    def test_get_media_libraries_returns_current_placement_options(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -152,7 +152,7 @@ class TestLibraryTargetPickerOptions:
         assert system_library_id not in rows
         assert normal_library_id in rows
 
-    def test_get_podcast_libraries_returns_current_membership_options(
+    def test_get_podcast_libraries_returns_current_placement_options(
         self,
         auth_client,
         direct_db: DirectSessionManager,
@@ -276,3 +276,32 @@ class TestLibraryTargetPickerOptions:
             "can_add": False,
             "can_remove": False,
         }
+
+        with direct_db.session() as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE podcast_subscriptions
+                    SET status = 'unsubscribed'
+                    WHERE user_id = :viewer_id
+                      AND podcast_id = :podcast_id
+                    """
+                ),
+                {"viewer_id": viewer_id, "podcast_id": podcast_id},
+            )
+            session.commit()
+
+        response = auth_client.get(
+            f"/podcasts/{podcast_id}/libraries",
+            headers=auth_headers(viewer_id),
+        )
+
+        assert response.status_code == 200, (
+            "unsubscribed podcast placement read failed unexpectedly: "
+            f"{response.status_code} {response.text}"
+        )
+        rows = {UUID(row["id"]): row for row in response.json()["data"]}
+        assert rows[owned_in_library_id]["can_add"] is False
+        assert rows[owned_in_library_id]["can_remove"] is True
+        assert rows[owned_out_library_id]["can_add"] is False
+        assert rows[owned_out_library_id]["can_remove"] is False

@@ -2,10 +2,8 @@ import { decodeShareSnapshot } from "@/lib/sharing/api";
 import { describe, expect, it } from "vitest";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
-const GRANT_HANDLE =
-  "nrg1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
-const USER_HANDLE =
-  "nus1.CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
+const GRANT_HANDLE = "nrg1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const USER_HANDLE = "nus1.CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
 const TOKEN = `nxshr1_${"E".repeat(43)}`;
 
 function snapshot() {
@@ -107,8 +105,7 @@ describe("decodeShareSnapshot", () => {
           ...snapshot().data,
           subject: `highlight:${MEDIA_ID}`,
           sharing: "HighlightGrants",
-          authenticatedHref:
-            `http://localhost:3000/media/${"-".repeat(36)}#highlight-${MEDIA_ID}`,
+          authenticatedHref: `http://localhost:3000/media/${"-".repeat(36)}#highlight-${MEDIA_ID}`,
         },
       }),
     ],
@@ -146,7 +143,7 @@ describe("decodeShareSnapshot", () => {
           data: {
             ...value.data,
             subject: `podcast:${MEDIA_ID}`,
-            sharing: "CopyWithLibraryFiling",
+            sharing: "CopyOnly",
             authenticatedHref: `http://localhost:3000/podcasts/${MEDIA_ID}`,
           },
         };

@@ -2,25 +2,24 @@ import type { ResourceScheme } from "@/lib/resourceGraph/resourceRef";
 import type { ShareMode } from "@/lib/sharing/types";
 
 export type ResourceChatSubjectMode =
-  | "none"
-  | "label"
-  | "scope"
-  | "readable"
-  | "quote"
-  | "generated_output";
+  "none" | "label" | "scope" | "readable" | "quote" | "generated_output";
 export type ResourceReadMode = "none" | "scope" | "body" | "media";
 export type ResourceInspectMode = "none" | "media_document_map";
 export type ResourcePromptRenderMode =
-  | "none"
-  | "label"
-  | "inline_body"
-  | "quote";
+  "none" | "label" | "inline_body" | "quote";
 export type ResourceExpansionPolicy =
   | "none"
   | "media_owned_reader_children"
   | "page_note_blocks"
   | "note_block_owned_evidence"
   | "artifact_revisions";
+export type LibraryPlacementMode = "None" | "ManageEntries";
+
+export function isLibraryPlacementMode(
+  value: unknown,
+): value is LibraryPlacementMode {
+  return value === "None" || value === "ManageEntries";
+}
 
 // Mirrors backend `ResourceUserRelationPolicy`
 // (python/nexus/services/resource_items/capabilities.py). Replaces the scalar
@@ -42,17 +41,12 @@ export interface ResourceUserRelationPolicy {
 // docs/cutovers/resource-inspector-and-universal-dossiers-hard-cutover.md
 // (Capability Contract).
 export type ResourceInspectorSurfaceRole =
-  | "Contents"
-  | "LinkedItems"
-  | "Forks"
-  | "Dossier";
+  "Contents" | "LinkedItems" | "Forks" | "Dossier";
 
 // Which concrete LinkedItems surface a subject's Inspector resolves to:
 // Media -> Evidence, Conversation -> Context, everything else -> Connections.
 export type ResourceInspectorLinkedItemsSurface =
-  | "MediaEvidence"
-  | "ConversationContext"
-  | "ResourceConnections";
+  "MediaEvidence" | "ConversationContext" | "ResourceConnections";
 
 // Only Conversation ever carries a Forks surface.
 export type ResourceInspectorForksSurface = "ConversationForks";
@@ -76,6 +70,7 @@ export type ResourceInspectorPolicy = ResourceInspectorResourcePolicy | null;
 export interface ResourceCapabilityProjection {
   userRelation: ResourceUserRelationPolicy;
   sharing: ShareMode;
+  libraryPlacement: LibraryPlacementMode;
   attachable: boolean;
   chatSubject: ResourceChatSubjectMode;
   readable: ResourceReadMode;
@@ -104,6 +99,7 @@ export const RESOURCE_CAPABILITIES = {
   media: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "ResourceGrants",
+    libraryPlacement: "ManageEntries",
     attachable: true,
     chatSubject: "readable",
     readable: "media",
@@ -125,6 +121,7 @@ export const RESOURCE_CAPABILITIES = {
   library: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "LibraryMembership",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "scope",
     readable: "scope",
@@ -144,8 +141,12 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   evidence_span: {
-    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    userRelation: {
+      userLinkSource: false,
+      userLinkTarget: "materialize_passage",
+    },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -161,8 +162,12 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   content_chunk: {
-    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    userRelation: {
+      userLinkSource: false,
+      userLinkTarget: "materialize_passage",
+    },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -180,6 +185,7 @@ export const RESOURCE_CAPABILITIES = {
   highlight: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "HighlightGrants",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "quote",
     readable: "body",
@@ -197,6 +203,7 @@ export const RESOURCE_CAPABILITIES = {
   page: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -218,6 +225,7 @@ export const RESOURCE_CAPABILITIES = {
   note_block: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -237,8 +245,12 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   fragment: {
-    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    userRelation: {
+      userLinkSource: false,
+      userLinkTarget: "materialize_passage",
+    },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -256,6 +268,7 @@ export const RESOURCE_CAPABILITIES = {
   conversation: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "label",
     readable: "body",
@@ -277,6 +290,7 @@ export const RESOURCE_CAPABILITIES = {
   message: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -294,6 +308,7 @@ export const RESOURCE_CAPABILITIES = {
   oracle_reading: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -309,8 +324,12 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   oracle_passage_anchor: {
-    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    userRelation: {
+      userLinkSource: false,
+      userLinkTarget: "materialize_passage",
+    },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: false,
     chatSubject: "none",
     readable: "body",
@@ -328,6 +347,7 @@ export const RESOURCE_CAPABILITIES = {
   artifact: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -345,6 +365,7 @@ export const RESOURCE_CAPABILITIES = {
   artifact_revision: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "generated_output",
     readable: "body",
@@ -362,6 +383,7 @@ export const RESOURCE_CAPABILITIES = {
   external_snapshot: {
     userRelation: { userLinkSource: false, userLinkTarget: "none" },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: false,
     chatSubject: "none",
     readable: "none",
@@ -379,6 +401,7 @@ export const RESOURCE_CAPABILITIES = {
   contributor: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "CopyOnly",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -399,7 +422,8 @@ export const RESOURCE_CAPABILITIES = {
   },
   podcast: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
-    sharing: "CopyWithLibraryFiling",
+    sharing: "CopyOnly",
+    libraryPlacement: "ManageEntries",
     attachable: true,
     chatSubject: "label",
     readable: "none",
@@ -419,8 +443,12 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
   reader_apparatus_item: {
-    userRelation: { userLinkSource: false, userLinkTarget: "materialize_passage" },
+    userRelation: {
+      userLinkSource: false,
+      userLinkTarget: "materialize_passage",
+    },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "readable",
     readable: "body",
@@ -438,6 +466,7 @@ export const RESOURCE_CAPABILITIES = {
   passage_anchor: {
     userRelation: { userLinkSource: true, userLinkTarget: "direct" },
     sharing: "None",
+    libraryPlacement: "None",
     attachable: true,
     chatSubject: "quote",
     readable: "body",

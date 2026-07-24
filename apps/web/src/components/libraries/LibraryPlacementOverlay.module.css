@@ -1,0 +1,29 @@
+.sheetHeader {
+  padding-bottom: var(--space-2);
+}
+
+.sheetTitle {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.sheetBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 768px) {
+  .sheetHeader,
+  .sheetBody {
+    padding-inline: var(--space-4);
+  }
+
+  .sheetBody {
+    padding-bottom: var(--space-4);
+  }
+}

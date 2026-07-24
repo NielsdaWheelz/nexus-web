@@ -21,7 +21,7 @@ The pre-cutover implementation mostly conformed to the superseded Add policy in
 `universal-launcher-hard-cutover.md`; those were product-policy limitations, not
 implementation drift. This document replaces only that document's Add behavior.
 Durable ingest, library ownership, Launcher overlay, and podcast domain contracts stay
-normative except for the one membership-removal addition in §5.
+normative except for the one placement-removal addition in §5.
 
 No product question remains open.
 
@@ -46,7 +46,7 @@ policy; the removal-kind mismatch was an API capability gap.
 - Source and local validation precede organization and explicit network acceptance.
 - Outcomes remain actionable and truthful across reuse, partial failure, uncertainty, and
   processing failure.
-- One ingest, destination, membership, overlay, and bounded-execution path owns each concern.
+- One ingest, destination, placement, overlay, and bounded-execution path owns each concern.
 - Ship a small-batch workbench, not an import subsystem.
 
 ### Product and visual rules
@@ -61,12 +61,12 @@ policy; the removal-kind mismatch was an API capability gap.
 ### In scope
 
 - Desktop/mobile Add entry, URL/PDF/EPUB intake, draft/outcome filing, OPML handoff,
-  focus/dismissal, one media-membership removal command, and hard deletion of everything
+  focus/dismissal, one media-placement removal command, and hard deletion of everything
   these contracts replace.
 
 ### Non-goals
 
-- Backend work beyond §5's membership/reference concurrency consolidation, error, and BFF; no new
+- Backend work beyond §5's placement/reference concurrency consolidation, error, and BFF; no new
   table, migration, queue, ingest semantic, or server batch/exact-set API.
 - Durable drafts, resumable/chunked/background-worker uploads, percentage progress, or
   per-item pause/resume.
@@ -81,7 +81,7 @@ policy; the removal-kind mismatch was an API capability gap.
 - Add state is browser-memory only and disappears after an accepted discard/Done/reload.
 - `ADD_SESSION_MAX_ITEMS = 20` across all URL/file rows; OPML keeps its server limit.
 - Client fan-out is bounded and partial, not durable.
-- File membership editing begins only after upload/confirm settles as Accepted.
+- File placement editing begins only after upload/confirm settles as Accepted.
 - Whole-session Stop uses `AbortSignal`; already-accepted server effects may survive.
 - No client-side canonical file dedupe exists.
 
@@ -94,7 +94,7 @@ policy; the removal-kind mismatch was an API capability gap.
 | Staging      | Review/file selection creates local rows only. The session cap is atomic; overflow never truncates silently.                                   |
 | Draft filing | My Library is implicit. One movable all-drafts control plus per-row controls remain available until submission.                                |
 | Submission   | `Add N items` freezes valid row intent and runs at concurrency `2`; invalid rows are excluded.                                                 |
-| Outcomes     | No automatic navigation. Settled Accepted rows retain status, Open, and authoritative individual/bulk membership editing.                      |
+| Outcomes     | No automatic navigation. Settled Accepted rows retain status, Open, and authoritative individual/bulk placement editing.                       |
 | OPML         | Secondary branch; OPML/XML ≤1,000,000 bytes and ≤200 RSS outlines; one destination set; aggregate result.                                      |
 | Dismissal    | Reads abort/discard. Dirty or active work is guarded. Explicit Stop aborts browser requests and warns that accepted server effects can remain. |
 
@@ -172,7 +172,7 @@ policy; the removal-kind mismatch was an API capability gap.
 | Reused + ready                   | `Already in Nexus · ready`                                   |
 | Reused + failed                  | `Already in Nexus · processing failed`                       |
 | Accepted uncertain               | `Saved · status unknown`                                     |
-| Membership active                | Separate `Updating libraries…`; never replaces ingest status |
+| Placement active                 | Separate `Updating libraries…`; never replaces ingest status |
 
 Only decoded modeled errors become row feedback (with request ID). Add owns this
 exhaustive mapping; do not copy `mediaCaptureStatus`.
@@ -182,12 +182,12 @@ confirm, and `sourceUrlCapture` consume it rather than restating local status he
 
 ### 3.4 Filing after acceptance
 
-- Settled Accepted rows lazily read authoritative non-default memberships from
+- Settled Accepted rows lazily read authoritative non-default placements from
   `GET /api/media/{id}/libraries`; delete frontend default filtering.
 - Bulk Add/Remove are distinct commands over unique settled media. Load candidates first;
   call only eligible absent/present rows; skipped rows are no-ops. Mixed state is never one
   boolean toggle.
-- One session membership command snapshots IDs and disables all filing; later Accepted
+- One session placement command snapshots IDs and disables all filing; later Accepted
   rows do not inherit it. Fan-out is `2`. After mutation error, re-read: desired state is
   success; otherwise Retry refreshes first. Filing never calls ingest/resource deletion.
 
@@ -220,13 +220,13 @@ imported - already - invalid`. Errors are Issues, never a failed count because
   mounted and its toggle/Escape close commands are disabled.
 - Adapt one canonical picker; search/paging/create/selection/active-option/listbox logic is
   not duplicated.
-- Escape order is nested mobile membership Dialog → destination disclosure → OPML branch
+- Escape order is nested mobile placement Dialog → destination disclosure → OPML branch
   → Add → Launcher. Header/footer stay stable while the body scrolls; mobile actions
   stack; DOM and focus order follow visual order.
 - One polite region announces progress/failure summary; row errors are associated text,
   not alert storms.
 - One session mutation gate admits submit, acceptance reconciliation, destination
-  creation, OPML import, or membership mutation. While held, every competing source,
+  creation, OPML import, or placement mutation. While held, every competing source,
   filing, branch, and destination command disables; reads may continue. The active
   operation observes the session `AbortSignal`, and stale completion cannot mutate the
   next generation.
@@ -252,11 +252,11 @@ imported - already - invalid`. Errors are Issues, never a failed count because
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Launcher model/events/controller                              | Tagged Root/Add intent, one Add session above desktop/mobile shells, branch navigation, initial-focus timing, and sole dismissal/replacement gateway.               |
 | `addContentSessionModel.ts`                                   | Pure unions, reducer, selectors, cap/freeze/dirty invariants, and derived actions.                                                                                  |
-| `useAddContentSession.ts`                                     | One mutation gate, transport orchestration, strict defect restoration/fail-closed handling, submit/reconcile, abort generation, and serialized membership commands. |
+| `useAddContentSession.ts`                                     | One mutation gate, transport orchestration, strict defect restoration/fail-closed handling, submit/reconcile, abort generation, and serialized placement commands.  |
 | `AddPanel.tsx`, `AddPanelBoundary.tsx`, `OpmlImportPanel.tsx` | Add-only projection, defect recovery, and user intent; `AddPanel` owns source-focus target/fallback resolution, but none owns workflow state or raw endpoint calls. |
 | Destination picker/disclosure                                 | One destination-object selection model; inline/disclosure presentations; session-owned creation.                                                                    |
 | Ingest clients                                                | Boundary validation, durable acceptance mapping, upload uncertainty, and transport.                                                                                 |
-| Membership clients/panel                                      | Authoritative non-default reads and idempotent add/remove commands; single/bulk presentation.                                                                       |
+| Placement clients/panel                                       | Authoritative non-default reads and idempotent add/remove commands; single/bulk presentation.                                                                       |
 | `runBoundedTasks.ts`                                          | Ordered, joined, non-fail-fast bounded execution; no domain policy.                                                                                                 |
 | Podcast OPML client                                           | Existing request/result boundary used by the Add session.                                                                                                           |
 | Library backend                                               | Atomic media-entry add/remove authorization and one media→library reference-mutation protocol, including library teardown.                                          |
@@ -334,24 +334,24 @@ type AddItem =
       source: SourceSummary;
       result: SourceIngestResult;
     };
-type MembershipCommand =
+type PlacementCommand =
   | { kind: "Add"; libraryId: string }
   | { kind: "Remove"; libraryId: string };
-type MembershipWork = {
-  libraries: readonly LibraryTargetPickerItem[];
-  command: MembershipCommand;
+type PlacementWork = {
+  libraries: readonly LibraryPlacementOption[];
+  command: PlacementCommand;
 };
-type RestingMembershipState =
+type RestingPlacementState =
   | { kind: "Unloaded" }
-  | { kind: "Ready"; libraries: readonly LibraryTargetPickerItem[] }
+  | { kind: "Ready"; libraries: readonly LibraryPlacementOption[] }
   | { kind: "LoadFailed"; feedback: FeedbackContent }
-  | ({ kind: "CommandFailed"; feedback: FeedbackContent } & MembershipWork);
-type MembershipState =
-  | RestingMembershipState
-  | { kind: "Loading"; previous: RestingMembershipState }
-  | ({ kind: "Updating" } & MembershipWork)
-  | ({ kind: "Reconciling" } & MembershipWork);
-type MembershipMutationProgress = MembershipWork & {
+  | ({ kind: "CommandFailed"; feedback: FeedbackContent } & PlacementWork);
+type PlacementState =
+  | RestingPlacementState
+  | { kind: "Loading"; previous: RestingPlacementState }
+  | ({ kind: "Updating" } & PlacementWork)
+  | ({ kind: "Reconciling" } & PlacementWork);
+type PlacementMutationProgress = PlacementWork & {
   phase: "Queued" | "Started" | "Succeeded";
 };
 type SessionMutationOperation =
@@ -360,8 +360,8 @@ type SessionMutationOperation =
   | { kind: "CreateDestination" }
   | { kind: "ImportOpml" }
   | {
-      kind: "Membership";
-      command: MembershipCommand;
+      kind: "Placement";
+      command: PlacementCommand;
       mediaIds: readonly string[];
     };
 type SessionMutationState =
@@ -392,22 +392,22 @@ type AddSessionState = Readonly<{
   defaultDestinations: readonly LibraryDestinationSelection[];
   opmlDestinations: readonly LibraryDestinationSelection[];
   opml: OpmlImportState;
-  membershipByMediaId: ReadonlyMap<string, MembershipState>;
+  placementByMediaId: ReadonlyMap<string, PlacementState>;
   mutation: SessionMutationState;
 }>;
 ```
 
 The unions are the state machines. Presentation is exhaustive and derived; there are no
 parallel `phase/success/uploading/autoOpen` flags. Accepted media identity keys
-membership state, so reuse and bulk work deduplicate naturally.
+placement state, so reuse and bulk work deduplicate naturally.
 
 The session is dirty when URL input contains non-whitespace text, a selected/invalid OPML
 file exists, or any non-settled row exists. Accepted rows alone are retained results, not
 discard-risk intent. The hook owns the Running mutation's `AbortController`; the signal
 is not presentation state.
-`Loading.previous` restores a concurrent membership read when Stop invalidates its
-generation. Membership Stop projects queued, started, and succeeded request-boundary
-truth from the frozen `MembershipMutationProgress`; it never guesses from presentation.
+`Loading.previous` restores a concurrent placement read when Stop invalidates its
+generation. Placement Stop projects queued, started, and succeeded request-boundary
+truth from the frozen `PlacementMutationProgress`; it never guesses from presentation.
 
 ### 4.3 Launcher and picker contracts
 
@@ -504,7 +504,7 @@ function runBoundedTasks<TInput, TOutput>(input: {
 | URL acceptance            | `POST /api/media/from-url` + `Idempotency-Key` + `{url, library_ids}`               |
 | File acceptance           | `POST /api/media/upload/init` + key; signed PUT; `POST /api/media/{id}/ingest`      |
 | Destination search/create | `GET /api/libraries/writable-destinations`; `POST /api/libraries`                   |
-| Membership read/add       | `GET/POST /api/media/{id}/libraries`; POST is additive/idempotent and returns `204` |
+| Placement read/add        | `GET/POST /api/media/{id}/libraries`; POST is additive/idempotent and returns `204` |
 | OPML                      | `POST /api/podcasts/import/opml` with one default set and empty per-feed map        |
 
 The upload idempotency key applies to init only. PUT and confirm have no independent
@@ -513,7 +513,7 @@ init replay may sign only the canonical staging path for that media/kind. Once c
 has promoted the file to its media-owned final path, replay returns current durable
 attempt/media truth with no upload URL; it never signs a PUT over the final object.
 
-### New canonical membership removal
+### New canonical placement removal
 
 ```text
 DELETE /api/media/{mediaId}/libraries/{libraryId}
@@ -522,7 +522,7 @@ DELETE /api/media/{mediaId}/libraries/{libraryId}
 
 FastAPI owns the same path without the `/api` BFF prefix.
 
-Canonical membership POST and DELETE are command-shaped, bodyless `204 No Content`
+Canonical placement POST and DELETE are command-shaped, bodyless `204 No Content`
 responses. The shared API client validates exact status `204` (not `205`) before either
 command converges. Authoritative state comes from `GET /media/{id}/libraries`; no
 `library_ids_added` response schema or client inference survives.
@@ -562,7 +562,7 @@ schedule or retryable database error crosses the API. `delete_document_media_if_
 locks the media row at entry and holds it across reference count and delete; a caller that
 also touches a library must already have acquired that media lock in global order. This
 removes media→library/library→media deadlock for every kind and the two-library document
-cleanup write-skew; it adds no table, queue, or public API. The new per-membership DELETE
+cleanup write-skew; it adds no table, queue, or public API. The new per-placement DELETE
 refuses the last reference for every kind. Whole-library teardown retains the existing
 lifecycle boundary: it cleans up zero-reference document media, while video and podcast-
 episode physical lifecycle remains unchanged and outside this cutover.
@@ -590,7 +590,7 @@ tooling migrates directly. No old-name adapter or batch/exact-set route is added
 ## 6. Reuse and hard gates
 
 Reuse existing URL/file validators and clients, feedback/ID/acceptance types, destination
-search/create/paging, `LibraryMembershipPanel`, anchored/modal/overlay primitives,
+search/create/paging, `LibraryEntryPanel`, anchored/modal/overlay primitives,
 confirmation Dialog, OPML backend, and `apiFetch` cancellation. Adapt one picker to
 destination objects + controlled disclosure; generalize the URL worker pool into §4.4.
 
@@ -640,8 +640,8 @@ This is the implemented footprint, not a prospective file plan.
   `apps/web/src/app/share/{ShareCapture.tsx,ShareCapture.test.tsx}`.
 - Shared components:
   `LibraryDestinationPicker.tsx`, `LibraryDestinationPicker.test.tsx`,
-  `LibraryMembershipPanel.tsx`, `LibraryMembershipPanel.module.css`,
-  `LibraryMembershipPanel.test.tsx`, `OpmlImportPanel.tsx`,
+  `libraries/LibraryEntryPanel.tsx`, `libraries/LibraryEntryEditor.tsx`,
+  `libraries/LibraryEntryEditor.module.css`, `OpmlImportPanel.tsx`,
   `OpmlImportPanel.module.css`, `appnav/{AppNav.tsx,AppNav.test.tsx}`,
   `connections/{ConnectionsSurface.tsx,ConnectionsSurface.module.css,ConnectionsSurface.test.tsx}`,
   `notes/{HighlightNoteEditor.tsx,ProseMirrorOutlineEditor.tsx,ProseMirrorOutlineEditor.test.tsx}`,
@@ -651,7 +651,8 @@ This is the implemented footprint, not a prospective file plan.
   `apps/web/src/lib/api/{client.ts,client.test.ts}`,
   `apps/web/src/lib/launcher/{launcherEvents.ts,model.ts,parseLauncherInput.test.ts,providers.ts,providers.test.ts,ranking.ts,ranking.test.ts}`,
   `apps/web/src/lib/libraries/client.ts`, and
-  `apps/web/src/lib/media/{ingestionClient.ts,ingestionClient.test.ts,mediaLibraries.ts,mediaLibraries.test.ts,sourceUrlCapture.ts,useLibraryMembership.ts}`.
+  `apps/web/src/lib/media/{ingestionClient.ts,ingestionClient.test.ts,mediaLibraries.ts,mediaLibraries.test.ts,sourceUrlCapture.ts}` and
+  `apps/web/src/lib/libraries/{libraryPlacement.ts,libraryPlacement.test.ts}`.
 - Backend owners:
   `python/nexus/api/routes/{libraries.py,media.py}`,
   `db/{errors.py,retries.py,session.py}`, `errors.py`,
@@ -715,17 +716,17 @@ Completed on 2026-07-21 with exact changed-contract selections only:
 
 - The 12-file changed-contract unit selection covering the API client, bounded execution,
   launcher parsing/providers/ranking/invariants, destination decoding, ingestion,
-  membership, URL capture, OPML, and the Add session model passed **174/174**. After adding
+  placement, URL capture, OPML, and the Add session model passed **174/174**. After adding
   the final signed-PUT HTTP-classification regression, the exact affected ingestion file
   passed **17/17**.
 - The 11-file directly affected browser selection passed **147/147**. After adding the
   final joined-failure lifecycle regression, the exact affected Connections file passed
   **14/14**. Coverage includes viewport continuity, Stop/abort/stale-completion behavior,
-  destination defects, durable upload identity, OPML/membership restoration, Notes and
+  destination defects, durable upload identity, OPML/placement restoration, Notes and
   Connections insertion/retry, Share partial outcomes, and malformed-response defect
   restoration. Targeted ESLint passed for every changed frontend TypeScript file and the
   final modified subsets.
-- Backend: **36** focused upload/membership/real-Postgres-concurrency/negative-gate tests
+- Backend: **36** focused upload/placement/real-Postgres-concurrency/negative-gate tests
   passed, plus **5** directly affected integration tests. Targeted Ruff passed for the 12
   changed backend modules. The real-media case was deselected by its normal marker; it was
   not reported as executed.
@@ -746,7 +747,7 @@ Completed on 2026-07-21 with exact changed-contract selections only:
   `Reading Slate acceptance preserves survivors, excludes the accepted target, and
   reconciles on library reactivation` — **2 passed**; the named case completed in 6.5 s.
   It proves explicit post-upload Open, canonical Link creation/deletion, canonical
-  membership acceptance, bounded Slate refill, and reactivation reconciliation.
+  placement acceptance, bounded Slate refill, and reactivation reconciliation.
 - Targeted static residue checks and document-scoped `git diff --check` passed.
 
 No broad Makefile verification, CI, or full verification target was run for this cutover.

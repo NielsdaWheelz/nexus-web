@@ -109,8 +109,8 @@ The groups are disjoint:
 1. **Resource core:** Open, Share, Chat.
 2. **Resource operation:** Open source, retry/refresh, read/played state,
    settings, and mutation/removal of the canonical resource.
-3. **Relationship:** Add/Remove from Lectern, remove from context, unlink,
-   dismiss, and unsubscribe.
+3. **Relationship:** Libraries, Add/Remove from Lectern, remove from context,
+   unlink, dismiss, and unsubscribe.
 4. **View:** transcript, show/hide notes, playback, theme, reorder, and
    related-content navigation.
 
@@ -328,7 +328,7 @@ Flat non-resource publications retain caller-owned separators.
 |---|---|
 | Resource pane | current-pane core without Open + rich operations + relationships + pane view |
 | Rich collection row | representation core + same rich operations/relationships for the same facts |
-| Search/note/resource contributor row | representation core |
+| Search/note/resource contributor row | representation core + universal relationships supported by the resource capability |
 | External contributor work | Open only |
 | Conversation context ref | representation core + Remove from conversation context |
 | Lectern row | representation core + Remove from Lectern + reorder/playback view; existing consumption activation remains primary |

@@ -9,13 +9,14 @@ import {
 import LibraryColorDot from "@/components/LibraryColorDot";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
+import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import styles from "./LibraryEntryEditor.module.css";
 
 export interface LibraryEntryEditorProps {
-  libraries: LibraryTargetPickerItem[];
+  libraries: readonly LibraryPlacementOption[];
   loading?: boolean;
   busy?: boolean;
+  busyLibraryId?: string | null;
   error?: string | FeedbackContent | null;
   emptyMessage?: string;
   onRetry?: () => void;
@@ -23,16 +24,13 @@ export interface LibraryEntryEditorProps {
   onRemoveFromLibrary: (libraryId: string) => void;
 }
 
-/**
- * Edits where an existing media item or podcast is filed. This component owns
- * no modal state, so Share can embed it without creating a nested overlay.
- */
 export default function LibraryEntryEditor({
   libraries,
   loading = false,
   busy = false,
+  busyLibraryId = null,
   error = null,
-  emptyMessage = "No libraries found.",
+  emptyMessage = "No additional libraries available.",
   onRetry,
   onAddToLibrary,
   onRemoveFromLibrary,
@@ -45,6 +43,7 @@ export default function LibraryEntryEditor({
       library.name.toLocaleLowerCase().includes(normalized),
     );
   }, [libraries, query]);
+  const isBusy = busy || busyLibraryId !== null;
 
   return (
     <div className={styles.content}>
@@ -67,7 +66,7 @@ export default function LibraryEntryEditor({
             <Button
               variant="secondary"
               size="sm"
-              disabled={busy}
+              disabled={isBusy}
               onClick={onRetry}
             >
               Retry
@@ -76,26 +75,38 @@ export default function LibraryEntryEditor({
         </div>
       ) : null}
 
+      {loading ? (
+        <p className={styles.empty} role="status">
+          {libraries.length === 0
+            ? "Loading libraries…"
+            : "Updating libraries…"}
+        </p>
+      ) : null}
+
       <div className={styles.list}>
-        {loading ? (
-          <p className={styles.empty} role="status">
-            Loading libraries…
-          </p>
-        ) : filteredLibraries.length === 0 ? (
+        {!loading && !error && libraries.length === 0 ? (
           <p className={styles.empty}>{emptyMessage}</p>
+        ) : libraries.length > 0 && filteredLibraries.length === 0 ? (
+          <p className={styles.empty}>No matching libraries.</p>
         ) : (
           filteredLibraries.map((library) => {
-            const disabled =
-              busy ||
-              (library.isInLibrary ? !library.canRemove : !library.canAdd);
+            const actionable = library.isInLibrary
+              ? library.canRemove
+              : library.canAdd;
+            const rowBusy = busyLibraryId === library.id;
+            const disabled = !actionable || (isBusy && !rowBusy);
             return (
               <button
                 key={library.id}
                 type="button"
                 className={styles.item}
                 disabled={disabled}
+                aria-label={library.name}
                 aria-pressed={library.isInLibrary}
+                aria-busy={rowBusy || undefined}
+                aria-disabled={rowBusy || undefined}
                 onClick={() => {
+                  if (isBusy || !actionable) return;
                   if (library.isInLibrary) {
                     onRemoveFromLibrary(library.id);
                   } else {
@@ -108,10 +119,12 @@ export default function LibraryEntryEditor({
                     <LibraryColorDot color={library.color} />
                     {library.name}
                   </span>
-                  <span className={styles.itemMeta}>
-                    {library.isInLibrary
-                      ? "Included in this library"
-                      : "Not in this library"}
+                  <span className={styles.itemMeta} aria-hidden="true">
+                    {!actionable
+                      ? "You can’t change this library."
+                      : library.isInLibrary
+                        ? "Included in this library"
+                        : "Not in this library"}
                   </span>
                 </span>
                 {library.isInLibrary ? (

@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FileText, Link, Plus, Upload, X } from "lucide-react";
 import LibraryDestinationDisclosure from "@/components/LibraryDestinationDisclosure";
-import LibraryEntryPanel from "@/components/sharing/LibraryEntryPanel";
+import LibraryEntryPanel from "@/components/libraries/LibraryEntryPanel";
 import OpmlImportPanel from "@/components/OpmlImportPanel";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -13,7 +13,7 @@ import {
   isLibraryDestinationDefect,
   type LibraryDestinationSelection,
 } from "@/lib/libraries/client";
-import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
+import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import {
   acceptedMediaIds,
   couldNotSubscribeCount,
@@ -21,8 +21,8 @@ import {
   settledAcceptedItems,
   type AddItem,
   type AddSessionState,
-  type MembershipCommand,
-  type MembershipState,
+  type PlacementCommand,
+  type PlacementState,
 } from "./addContentSessionModel";
 import type { AddContentSessionController } from "./useAddContentSession";
 import styles from "./AddPanel.module.css";
@@ -66,7 +66,7 @@ export function resolveAddPanelInitialFocus(
   );
 }
 
-type MembershipEditor =
+type PlacementEditor =
   | {
       kind: "Row";
       mediaIds: readonly [string];
@@ -80,7 +80,7 @@ type MembershipEditor =
       anchorEl: HTMLElement;
     };
 
-type MembershipEditorIntent =
+type PlacementEditorIntent =
   | {
       kind: "Row";
       mediaIds: readonly [string];
@@ -92,11 +92,11 @@ type MembershipEditorIntent =
       title: string;
     };
 
-interface MembershipPresentation {
-  libraries: LibraryTargetPickerItem[];
+interface PlacementPresentation {
+  libraries: LibraryPlacementOption[];
   loading: boolean;
   error: ReturnType<typeof feedbackForItem>;
-  retryCommand: MembershipCommand | null;
+  retryCommand: PlacementCommand | null;
 }
 
 function fileLabel(source: { name: string; sizeBytes: number }): string {
@@ -190,16 +190,16 @@ function feedbackForItem(item: AddItem) {
   }
 }
 
-function librariesForMembership(
-  membership: MembershipState | undefined,
-): readonly LibraryTargetPickerItem[] {
-  if (!membership) return [];
-  switch (membership.kind) {
+function librariesForPlacement(
+  placement: PlacementState | undefined,
+): readonly LibraryPlacementOption[] {
+  if (!placement) return [];
+  switch (placement.kind) {
     case "Ready":
     case "Updating":
     case "Reconciling":
     case "CommandFailed":
-      return membership.libraries;
+      return placement.libraries;
     case "Unloaded":
     case "Loading":
     case "LoadFailed":
@@ -208,12 +208,12 @@ function librariesForMembership(
 }
 
 function projectBulkLibraries(
-  memberships: readonly (MembershipState | undefined)[],
+  placements: readonly (PlacementState | undefined)[],
   command: "Add" | "Remove",
-): LibraryTargetPickerItem[] {
-  const byId = new Map<string, LibraryTargetPickerItem>();
-  for (const membership of memberships) {
-    for (const library of librariesForMembership(membership)) {
+): LibraryPlacementOption[] {
+  const byId = new Map<string, LibraryPlacementOption>();
+  for (const placement of placements) {
+    for (const library of librariesForPlacement(placement)) {
       const current = byId.get(library.id);
       const eligible =
         command === "Add"
@@ -247,7 +247,7 @@ function mutationLabel(session: AddContentSessionController): string {
       return "Creating library…";
     case "ImportOpml":
       return "Importing…";
-    case "Membership":
+    case "Placement":
       return "Updating libraries…";
   }
 }
@@ -329,8 +329,8 @@ export default function AddPanel({
   const [defaultDestinationsOpen, setDefaultDestinationsOpen] = useState(false);
   const [rowDestinationId, setRowDestinationId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [membershipEditor, setMembershipEditor] =
-    useState<MembershipEditor | null>(null);
+  const [placementEditor, setPlacementEditor] =
+    useState<PlacementEditor | null>(null);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -344,8 +344,8 @@ export default function AddPanel({
       requestAnimationFrame(() => keepWorkingRef.current?.focus());
   }, [dismissalConfirmation]);
 
-  const membershipPresentation = useMemo<MembershipPresentation>(() => {
-    if (!membershipEditor) {
+  const placementPresentation = useMemo<PlacementPresentation>(() => {
+    if (!placementEditor) {
       return {
         libraries: [],
         loading: false,
@@ -353,35 +353,35 @@ export default function AddPanel({
         retryCommand: null,
       };
     }
-    const memberships = membershipEditor.mediaIds.map((mediaId) =>
-      state.membershipByMediaId.get(mediaId),
+    const placements = placementEditor.mediaIds.map((mediaId) =>
+      state.placementByMediaId.get(mediaId),
     );
-    const loading = memberships.some(
-      (membership) =>
-        membership === undefined ||
-        membership.kind === "Unloaded" ||
-        membership.kind === "Loading",
+    const loading = placements.some(
+      (placement) =>
+        placement === undefined ||
+        placement.kind === "Unloaded" ||
+        placement.kind === "Loading",
     );
-    const failure = memberships.find(
-      (membership) =>
-        membership?.kind === "LoadFailed" ||
-        membership?.kind === "CommandFailed",
+    const failure = placements.find(
+      (placement) =>
+        placement?.kind === "LoadFailed" ||
+        placement?.kind === "CommandFailed",
     );
     const error =
       failure?.kind === "LoadFailed" || failure?.kind === "CommandFailed"
         ? failure.feedback
         : null;
     const libraries =
-      membershipEditor.kind === "Row"
-        ? [...librariesForMembership(memberships[0])]
+      placementEditor.kind === "Row"
+        ? [...librariesForPlacement(placements[0])]
         : projectBulkLibraries(
-            memberships,
-            membershipEditor.kind === "BulkAdd" ? "Add" : "Remove",
+            placements,
+            placementEditor.kind === "BulkAdd" ? "Add" : "Remove",
           );
     const retryCommand =
       failure?.kind === "CommandFailed" ? failure.command : null;
     return { libraries, loading, error, retryCommand };
-  }, [membershipEditor, state.membershipByMediaId]);
+  }, [placementEditor, state.placementByMediaId]);
 
   function focusQueue() {
     requestAnimationFrame(() => queueRef.current?.focus());
@@ -420,12 +420,12 @@ export default function AddPanel({
     });
   }
 
-  function openMembershipEditor(
-    editor: MembershipEditorIntent,
+  function openPlacementEditor(
+    editor: PlacementEditorIntent,
     anchorEl: HTMLElement,
   ) {
-    setMembershipEditor({ ...editor, anchorEl });
-    runSessionCommand(() => session.refreshMemberships(editor.mediaIds));
+    setPlacementEditor({ ...editor, anchorEl });
+    runSessionCommand(() => session.refreshPlacements(editor.mediaIds));
   }
 
   function runSessionCommand(command: () => Promise<void>): void {
@@ -567,9 +567,9 @@ export default function AddPanel({
     </section>
   );
 
-  const activeMembershipMediaIds =
+  const activePlacementMediaIds =
     state.mutation.kind === "Running" &&
-    state.mutation.operation.kind === "Membership"
+    state.mutation.operation.kind === "Placement"
       ? new Set(state.mutation.operation.mediaIds)
       : new Set<string>();
 
@@ -724,8 +724,8 @@ export default function AddPanel({
                             ? "Checking…"
                             : itemStatus(item)}
                         </span>
-                        {activeMembershipMediaIds.has(mediaId ?? "") ? (
-                          <span className={styles.membershipStatus}>
+                        {activePlacementMediaIds.has(mediaId ?? "") ? (
+                          <span className={styles.placementStatus}>
                             Updating libraries…
                           </span>
                         ) : null}
@@ -826,7 +826,7 @@ export default function AddPanel({
                             size="sm"
                             disabled={busy}
                             onClick={(event) =>
-                              openMembershipEditor(
+                              openPlacementEditor(
                                 {
                                   kind: "Row",
                                   mediaIds: [item.result.mediaId],
@@ -877,7 +877,7 @@ export default function AddPanel({
                     size="sm"
                     disabled={busy}
                     onClick={(event) =>
-                      openMembershipEditor(
+                      openPlacementEditor(
                         {
                           kind: "BulkAdd",
                           mediaIds: uniqueAcceptedMediaIds,
@@ -894,7 +894,7 @@ export default function AddPanel({
                     size="sm"
                     disabled={busy}
                     onClick={(event) =>
-                      openMembershipEditor(
+                      openPlacementEditor(
                         {
                           kind: "BulkRemove",
                           mediaIds: uniqueAcceptedMediaIds,
@@ -987,52 +987,52 @@ export default function AddPanel({
       </Dialog>
 
       <LibraryEntryPanel
-        open={membershipEditor !== null}
-        title={membershipEditor?.title ?? "Libraries"}
-        returnFocusTo={() => membershipEditor?.anchorEl ?? null}
+        open={placementEditor !== null}
+        title={placementEditor?.title ?? "Libraries"}
+        returnFocusTo={() => placementEditor?.anchorEl ?? null}
         returnFocusFallback={() => headingRef.current}
-        libraries={membershipPresentation.libraries}
-        loading={membershipPresentation.loading}
+        libraries={placementPresentation.libraries}
+        loading={placementPresentation.loading}
         busy={
           state.mutation.kind === "Running" &&
-          state.mutation.operation.kind === "Membership"
+          state.mutation.operation.kind === "Placement"
         }
-        error={membershipPresentation.error}
+        error={placementPresentation.error}
         emptyMessage="No eligible libraries."
         onRetry={
-          membershipPresentation.error && membershipEditor
+          placementPresentation.error && placementEditor
             ? () => {
-                const retryCommand = membershipPresentation.retryCommand;
+                const retryCommand = placementPresentation.retryCommand;
                 if (retryCommand) {
                   runSessionCommand(() =>
-                    session.runMembership({
-                      mediaIds: membershipEditor.mediaIds,
+                    session.runPlacement({
+                      mediaIds: placementEditor.mediaIds,
                       command: retryCommand,
                     }),
                   );
                   return;
                 }
                 runSessionCommand(() =>
-                  session.refreshMemberships(membershipEditor.mediaIds),
+                  session.refreshPlacements(placementEditor.mediaIds),
                 );
               }
             : undefined
         }
-        onClose={() => setMembershipEditor(null)}
+        onClose={() => setPlacementEditor(null)}
         onAddToLibrary={(libraryId) => {
-          if (!membershipEditor) return;
+          if (!placementEditor) return;
           runSessionCommand(() =>
-            session.runMembership({
-              mediaIds: membershipEditor.mediaIds,
+            session.runPlacement({
+              mediaIds: placementEditor.mediaIds,
               command: { kind: "Add", libraryId },
             }),
           );
         }}
         onRemoveFromLibrary={(libraryId) => {
-          if (!membershipEditor) return;
+          if (!placementEditor) return;
           runSessionCommand(() =>
-            session.runMembership({
-              mediaIds: membershipEditor.mediaIds,
+            session.runPlacement({
+              mediaIds: placementEditor.mediaIds,
               command: { kind: "Remove", libraryId },
             }),
           );

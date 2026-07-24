@@ -23,15 +23,16 @@ import { routeShareTarget } from "@/lib/sharing/targets";
 import { routeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 
-const TEST_VISIT_ID = assumePaneVisitId(
-  "00000000-0000-4000-8000-000000000001",
-);
+const TEST_VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const mobileChromeMock = vi.hoisted(() => ({
   setPaneChrome: vi.fn(),
 }));
 const shareControllerMock = vi.hoisted(() => ({
   openShare: vi.fn(),
+}));
+const libraryPlacementControllerMock = vi.hoisted(() => ({
+  openLibraryPlacement: vi.fn(),
 }));
 
 vi.mock("@/lib/workspace/mobileChrome", () => ({
@@ -50,6 +51,9 @@ vi.mock("@/lib/workspace/mobileChrome", () => ({
 
 vi.mock("@/lib/sharing/controller", () => ({
   useShareController: () => shareControllerMock,
+}));
+vi.mock("@/lib/libraries/placementController", () => ({
+  useLibraryPlacementController: () => libraryPlacementControllerMock,
 }));
 
 const runtimeNavigation = {
@@ -126,19 +130,19 @@ function RuntimeRoute({
     <PaneReturnMementoProvider>
       <FeedbackProvider>
         <PaneRuntimeProvider
-        paneId={paneId}
-        visitId={TEST_VISIT_ID}
-        isActive
-        href="/media/media-1"
-        routeId="media"
-        routeKey={routeKey}
-        canGoBack
-        canGoForward
-        onGoBackPane={runtimeNavigation.back}
-        onGoForwardPane={runtimeNavigation.forward}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onOpenInNewPane={runtimeNavigation.openInNewPane}
+          paneId={paneId}
+          visitId={TEST_VISIT_ID}
+          isActive
+          href="/media/media-1"
+          routeId="media"
+          routeKey={routeKey}
+          canGoBack
+          canGoForward
+          onGoBackPane={runtimeNavigation.back}
+          onGoForwardPane={runtimeNavigation.forward}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onOpenInNewPane={runtimeNavigation.openInNewPane}
         >
           {children}
         </PaneRuntimeProvider>
@@ -530,10 +534,29 @@ describe("PaneShell", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent?.trim()),
-    ).toEqual(["Share…", "Chat about this resource", "Credits…"]);
+    ).toEqual(["Share…", "Chat about this resource", "Credits…", "Libraries…"]);
     expect(
       within(menu).getAllByRole("menuitem", { name: "Share…" }),
     ).toHaveLength(1);
+    expect(
+      within(menu).getAllByRole("menuitem", { name: "Libraries…" }),
+    ).toHaveLength(1);
+    const libraries = within(menu).getByRole("menuitem", {
+      name: "Libraries…",
+    });
+    fireEvent.click(libraries);
+    expect(
+      libraryPlacementControllerMock.openLibraryPlacement,
+    ).toHaveBeenCalledWith(
+      {
+        kind: "Media",
+        id: "00000000-0000-4000-8000-000000000001",
+      },
+      expect.objectContaining({
+        returnFocusTo: expect.any(Function),
+        returnFocusFallback: expect.objectContaining({ kind: "Present" }),
+      }),
+    );
     expect(
       within(menu).queryByRole("menuitem", { name: "Companion" }),
     ).not.toBeInTheDocument();
@@ -586,12 +609,12 @@ describe("PaneShell", () => {
     const publication = mobileChromeMock.setPaneChrome.mock.calls
       .map(([value]) => value)
       .findLast((value) => value !== null);
-    expect(publication?.actions.map((action: PaneHeaderAction) => action.label)).toEqual([
-      "Companion",
-    ]);
+    expect(
+      publication?.actions.map((action: PaneHeaderAction) => action.label),
+    ).toEqual(["Companion"]);
     expect(
       publication?.options.map((option: ActionDescriptor) => option.label),
-    ).toEqual(["Share…", "Chat about this resource", "Credits…"]);
+    ).toEqual(["Share…", "Chat about this resource", "Credits…", "Libraries…"]);
     expect(
       publication?.options.filter(
         (option: ActionDescriptor) => option.id === "ResourceAction.Share",
@@ -628,9 +651,7 @@ describe("PaneShell", () => {
         }),
       );
 
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Options" }),
-      );
+      fireEvent.click(await screen.findByRole("button", { name: "Options" }));
       fireEvent.click(
         await screen.findByRole("menuitem", {
           name: "Chat about this resource",
@@ -700,7 +721,10 @@ describe("PaneShell", () => {
       ],
     } satisfies NonNullable<PaneProps["secondaryPublication"]>;
     const concurrentPane = (paneId: "pane-a" | "pane-b") => {
-      const secondaryRegionId = paneSecondaryRegionId(paneId, "resource-inspector");
+      const secondaryRegionId = paneSecondaryRegionId(
+        paneId,
+        "resource-inspector",
+      );
       return (
         <div data-pane-id={paneId} data-testid={paneId}>
           {paneTree({
@@ -785,19 +809,23 @@ describe("PaneShell", () => {
           name: "Computing Machinery",
         }),
       ).toHaveLength(1);
-      expect(
-        scoped.getAllByRole("button", { name: "Companion" }),
-      ).toHaveLength(1);
+      expect(scoped.getAllByRole("button", { name: "Companion" })).toHaveLength(
+        1,
+      );
       expect(scoped.getAllByRole("button", { name: "Options" })).toHaveLength(
         1,
       );
 
       const secondaryRegion = scoped.getByTestId("workspace-secondary-pane");
-      const secondaryRegionId = paneSecondaryRegionId(paneId, "resource-inspector");
+      const secondaryRegionId = paneSecondaryRegionId(
+        paneId,
+        "resource-inspector",
+      );
       expect(secondaryRegion).toHaveAttribute("id", secondaryRegionId);
-      expect(
-        scoped.getByRole("button", { name: "Companion" }),
-      ).toHaveAttribute("aria-controls", secondaryRegionId);
+      expect(scoped.getByRole("button", { name: "Companion" })).toHaveAttribute(
+        "aria-controls",
+        secondaryRegionId,
+      );
     }
     expect(paneSecondaryRegionId("pane-a", "resource-inspector")).not.toBe(
       paneSecondaryRegionId("pane-b", "resource-inspector"),
@@ -805,7 +833,10 @@ describe("PaneShell", () => {
   });
 
   it("retains a controlled desktop secondary region until its disclosure publication collapses", async () => {
-    const secondaryRegionId = paneSecondaryRegionId("pane-a", "resource-inspector");
+    const secondaryRegionId = paneSecondaryRegionId(
+      "pane-a",
+      "resource-inspector",
+    );
     const props: Partial<PaneProps> = {
       routeHeader: sectionHeader,
       label: "Reader",
@@ -886,9 +917,10 @@ describe("PaneShell", () => {
         "id",
         secondaryRegionId,
       );
-      expect(
-        screen.getByRole("button", { name: "Companion" }),
-      ).toHaveAttribute("aria-controls", secondaryRegionId);
+      expect(screen.getByRole("button", { name: "Companion" })).toHaveAttribute(
+        "aria-controls",
+        secondaryRegionId,
+      );
     });
 
     rerender(
@@ -912,9 +944,7 @@ describe("PaneShell", () => {
       }),
     );
     expect(screen.queryByTestId("workspace-secondary-pane")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Companion" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Companion" })).toBeNull();
 
     rerender(
       paneTree({

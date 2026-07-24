@@ -50,7 +50,7 @@ def test_every_resource_scheme_has_the_exact_share_mode() -> None:
         "media": "ResourceGrants",
         "highlight": "HighlightGrants",
         "library": "LibraryMembership",
-        "podcast": "CopyWithLibraryFiling",
+        "podcast": "CopyOnly",
         "page": "CopyOnly",
         "note_block": "CopyOnly",
         "conversation": "CopyOnly",
@@ -63,6 +63,17 @@ def test_every_resource_scheme_has_the_exact_share_mode() -> None:
         for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
         if capability.sharing != "None"
     } == expected
+
+
+def test_every_resource_scheme_has_the_exact_library_placement_mode() -> None:
+    assert {
+        scheme: capability.library_placement
+        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
+        if capability.library_placement != "None"
+    } == {
+        "media": "ManageEntries",
+        "podcast": "ManageEntries",
+    }
 
 
 def test_read_search_and_citation_capabilities_are_owned_together() -> None:
@@ -156,13 +167,14 @@ def test_every_resource_scheme_has_full_capability_decisions() -> None:
     share_modes = {
         "None",
         "CopyOnly",
-        "CopyWithLibraryFiling",
         "ResourceGrants",
         "HighlightGrants",
         "LibraryMembership",
     }
+    library_placement_modes = {"None", "ManageEntries"}
     for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items():
         assert capability.sharing in share_modes, scheme
+        assert capability.library_placement in library_placement_modes, scheme
         assert isinstance(capability.user_relation.user_link_source, bool), scheme
         assert capability.user_relation.user_link_target in user_link_target_modes, scheme
         assert capability.user_relation.note_reference_target is (

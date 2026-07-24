@@ -50,18 +50,6 @@ vi.mock("@/lib/reader/ReaderContext", () => ({
   }),
 }));
 
-vi.mock("@/lib/media/useLibraryMembership", () => ({
-  useLibraryMembership: () => ({
-    libraries: [],
-    loading: false,
-    error: null,
-    busy: false,
-    loadLibraries: vi.fn(),
-    addToLibrary: vi.fn(),
-    removeFromLibrary: vi.fn(),
-  }),
-}));
-
 vi.mock("@/lib/media/useDocumentActions", () => ({
   useDocumentActions: () => ({
     deleteBusy: false,

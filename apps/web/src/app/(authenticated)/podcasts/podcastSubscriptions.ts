@@ -1,4 +1,3 @@
-import type { LibraryTargetPickerItem } from "@/lib/media/mediaLibraries";
 import { apiFetch } from "@/lib/api/client";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { Presence } from "@/lib/api/presence";
@@ -6,6 +5,7 @@ import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import { decodeOptionalPublicationDate } from "@/lib/dates/publicationDate";
 import { decodePodcastUnplayedCount } from "@/lib/podcasts/activityFacts";
+import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { pluralize } from "@/lib/text/pluralize";
 import {
   decodePodcastSyncStatus,
@@ -91,21 +91,6 @@ export function decodePodcastSubscriptionListItem(
   };
 }
 
-type PodcastLibraryResponseItem = {
-  id: string;
-  name: string;
-  color: string | null;
-  is_in_library: boolean;
-  can_add: boolean;
-  can_remove: boolean;
-};
-
-export type PodcastLibraryMembership = LibraryTargetPickerItem & {
-  isInLibrary: boolean;
-  canAdd: boolean;
-  canRemove: boolean;
-};
-
 type PodcastSubscriptionSettingsFields = Pick<
   PodcastSubscriptionRecord,
   "default_playback_speed" | "auto_queue"
@@ -182,28 +167,6 @@ export function toPodcastContributorInputs(
   });
 }
 
-function toPodcastLibraryMembership(
-  library: PodcastLibraryResponseItem,
-): PodcastLibraryMembership {
-  return {
-    id: library.id,
-    name: library.name,
-    color: library.color,
-    isInLibrary: library.is_in_library,
-    canAdd: library.can_add,
-    canRemove: library.can_remove,
-  };
-}
-
-export async function fetchPodcastLibraries(
-  podcastId: string,
-): Promise<PodcastLibraryMembership[]> {
-  const response = await apiFetch<{ data: PodcastLibraryResponseItem[] }>(
-    `/api/podcasts/${podcastId}/libraries`,
-  );
-  return response.data.map(toPodcastLibraryMembership);
-}
-
 export function getPodcastSubscriptionSettingsDraft(
   subscription: PodcastSubscriptionSettingsFields | null | undefined,
 ): PodcastSubscriptionSettingsDraft {
@@ -245,25 +208,6 @@ export function getPodcastSubscriptionSettingsPatch({
     auto_queue: response.auto_queue,
     updated_at: response.updated_at ?? updatedAt,
   };
-}
-
-export async function addPodcastToLibrary(
-  podcastId: string,
-  libraryId: string,
-): Promise<void> {
-  await apiFetch(`/api/libraries/${libraryId}/podcasts`, {
-    method: "POST",
-    body: JSON.stringify({ podcast_id: podcastId }),
-  });
-}
-
-export async function removePodcastFromLibrary(
-  podcastId: string,
-  libraryId: string,
-): Promise<void> {
-  await apiFetch(`/api/libraries/${libraryId}/podcasts/${podcastId}`, {
-    method: "DELETE",
-  });
 }
 
 export async function refreshPodcastSubscriptionSync(
@@ -321,7 +265,7 @@ export async function subscribeToPodcast(
 
 export function buildPodcastUnsubscribeConfirmation(
   title: string,
-  libraries: PodcastLibraryMembership[],
+  libraries: readonly LibraryPlacementOption[],
 ): string {
   const removableLibraries = libraries.filter(
     (library) => library.isInLibrary && library.canRemove,

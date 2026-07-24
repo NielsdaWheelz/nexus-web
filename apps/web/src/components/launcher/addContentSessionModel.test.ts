@@ -311,7 +311,7 @@ describe("add content submission state", () => {
 
     expect(
       reduceAddSession(state, { kind: "RemoveItem", itemId: "uncertain" }),
-    ).toMatchObject({ items: [], membershipByMediaId: new Map() });
+    ).toMatchObject({ items: [], placementByMediaId: new Map() });
   });
 
   it("turns stopped submissions into same-key uncertainty and releases the gate", () => {
@@ -327,7 +327,7 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(["one"]),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -356,7 +356,7 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(["one", "two"]),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -397,7 +397,7 @@ describe("add content submission state", () => {
         ["file-one", { mediaId: "media-one", sourceAttemptId: "attempt-one" }],
       ]),
       startedSubmissionItemIds: new Set(["file-one"]),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -435,7 +435,7 @@ describe("add content submission state", () => {
         ["file-one", { mediaId: "media-one", sourceAttemptId: "attempt-one" }],
       ]),
       startedSubmissionItemIds: new Set(),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -474,7 +474,7 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -496,7 +496,7 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
@@ -508,7 +508,7 @@ describe("add content submission state", () => {
     });
   });
 
-  it("projects membership Stop from queued, started, and succeeded request truth", () => {
+  it("projects placement Stop from queued, started, and succeeded request truth", () => {
     const command = { kind: "Add" as const, libraryId: research.id };
     const libraries = [
       {
@@ -520,7 +520,7 @@ describe("add content submission state", () => {
     ];
     const state = {
       ...initial(),
-      membershipByMediaId: new Map(
+      placementByMediaId: new Map(
         ["queued", "started", "succeeded"].map((mediaId) => [
           mediaId,
           { kind: "Updating" as const, libraries, command },
@@ -529,7 +529,7 @@ describe("add content submission state", () => {
       mutation: {
         kind: "Running" as const,
         operation: {
-          kind: "Membership" as const,
+          kind: "Placement" as const,
           command,
           mediaIds: ["queued", "started", "succeeded"],
         },
@@ -540,7 +540,7 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
-      membershipProgressByMediaId: new Map([
+      placementProgressByMediaId: new Map([
         ["queued", { phase: "Queued", libraries, command }],
         ["started", { phase: "Started", libraries, command }],
         ["succeeded", { phase: "Succeeded", libraries, command }],
@@ -549,21 +549,21 @@ describe("add content submission state", () => {
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
 
-    expect(stopped.membershipByMediaId.get("queued")).toMatchObject({
+    expect(stopped.placementByMediaId.get("queued")).toMatchObject({
       kind: "Ready",
       libraries: [{ isInLibrary: false }],
     });
-    expect(stopped.membershipByMediaId.get("started")).toMatchObject({
+    expect(stopped.placementByMediaId.get("started")).toMatchObject({
       kind: "CommandFailed",
       feedback: { title: "Stopped" },
     });
-    expect(stopped.membershipByMediaId.get("succeeded")).toMatchObject({
+    expect(stopped.placementByMediaId.get("succeeded")).toMatchObject({
       kind: "Ready",
       libraries: [{ isInLibrary: true }],
     });
   });
 
-  it("restores an unrelated membership read from Loading on Stop", () => {
+  it("restores an unrelated placement read from Loading on Stop", () => {
     const previous = {
       kind: "Ready" as const,
       libraries: [
@@ -577,7 +577,7 @@ describe("add content submission state", () => {
     };
     const state = {
       ...initial(),
-      membershipByMediaId: new Map([
+      placementByMediaId: new Map([
         ["media-read", { kind: "Loading" as const, previous }],
       ]),
       mutation: {
@@ -590,12 +590,12 @@ describe("add content submission state", () => {
       kind: "StopMutation",
       acceptedUploadIdentityByItemId: new Map(),
       startedSubmissionItemIds: new Set(),
-      membershipProgressByMediaId: new Map(),
+      placementProgressByMediaId: new Map(),
       acceptanceFeedback: { severity: "warning", title: "Status unknown" },
       operationFeedback: { severity: "warning", title: "Stopped" },
     });
 
-    expect(stopped.membershipByMediaId.get("media-read")).toEqual(previous);
+    expect(stopped.placementByMediaId.get("media-read")).toEqual(previous);
   });
 });
 

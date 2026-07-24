@@ -53,13 +53,15 @@ copy-only and cannot accept membership changes.
 The universal Share modal is the UI owner for non-default library membership:
 it embeds `LibraryMemberEditor`, including invitation lifecycle and ownership
 transfer. `LibrarySettingsDialog` owns name/color settings only. Media and
-podcast Share embed the library-entry editor for filing, but library entries are
-organization references rather than access-grant provenance. See
-[resource-sharing.md](resource-sharing.md).
+podcast placement is a separate top-level `Libraries…` resource relationship
+action backed by `LibraryEntryEditor`; it never appears inside Share. Library
+entries are organization references rather than access-grant provenance. See
+[resource-sharing.md](resource-sharing.md) and
+[library-placement-resource-action-hard-cutover.md](../cutovers/library-placement-resource-action-hard-cutover.md).
 
 Library entry mutations are commands, not refreshed read models. Successful
-media-membership add/remove, add-podcast, and reorder requests return `204 No
-Content`; callers refresh or retain their existing local state deliberately.
+media-placement add/remove, add-podcast, and reorder requests return `204 No
+Content`; the placement overlay refreshes server truth after each command.
 Agent filing receives only inserted/already-present truth for Undo and never
 hydrates an entry payload.
 
@@ -153,10 +155,10 @@ contribution the moment it is gone, on the very next read.
   reconcile against it. `services/media_deletion.py` is a pure orchestrator
   over the public `library_entries` API; it issues zero direct
   `library_entries` DML of its own.
-- **Membership removal is convergent and non-destructive.**
+- **Placement removal is convergent and non-destructive.**
   `ensure_media_absent_from_library_for_viewer` authorizes a mutable target
   library, returns `204` when the entry is already absent without exposing media
-  existence, and removes exactly one present membership. It supports every
+  existence, and removes exactly one present entry. It supports every
   media kind and refuses the final lifetime reference with
   `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
   Whole-resource `DELETE /media/{id}` accepts no query string.
@@ -192,9 +194,9 @@ those modules retain their tables and mutations.
   [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)).
   Resonance here retains only the Reading Slate.
 - `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
-  outside complete destination membership. A library suggestion must have a
+  outside complete destination placement. A library suggestion must have a
   factual graph, shared-author, or calibrated semantic relation to one of five
-  representative complete-membership anchors; recency cannot qualify it.
+  representative complete-placement anchors; recency cannot qualify it.
 - A non-default, non-system admin library accepts media plus actively
   subscribed podcasts. Default accepts media suggestions only. Member-only and
   system libraries return an empty Slate because their actor-facing filing
@@ -232,7 +234,7 @@ library the viewer can read.
   committing the created media. `ensure_media_in_libraries_for_viewer` adds
   post-hoc destinations atomically as a bodyless command.
 
-The canonical HTTP membership surface is
+The canonical HTTP placement surface is
 `GET/POST /media/{media_id}/libraries` plus
 `DELETE /media/{media_id}/libraries/{library_id}`. There is no inverse
 library-to-media write route and no scoped resource-delete query mode.
