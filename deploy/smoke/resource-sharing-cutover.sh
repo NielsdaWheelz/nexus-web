@@ -135,9 +135,30 @@ assert_status() {
   [ "$actual" = "$expected" ] || die "${label}: expected ${expected}, got ${actual}"
 }
 
+has_cache_control_directive() {
+  local value="$1"
+  local wanted="$2"
+  printf '%s\n' "$value" | awk -F, -v wanted="$wanted" '
+    {
+      for (index = 1; index <= NF; index += 1) {
+        directive = tolower($index)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", directive)
+        if (directive == wanted) {
+          found = 1
+        }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 assert_public_headers() {
   local file="$1"
-  [ "$(header_value cache-control "$file")" = "private, no-store" ] || \
+  local cache_control
+  cache_control="$(header_value cache-control "$file")"
+  has_cache_control_directive "$cache_control" "private" || \
+    die "missing private cache policy"
+  has_cache_control_directive "$cache_control" "no-store" || \
     die "missing private no-store policy"
   [ "$(header_value referrer-policy "$file")" = "no-referrer" ] || \
     die "missing no-referrer policy"
