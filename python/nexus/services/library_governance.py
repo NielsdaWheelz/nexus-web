@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.errors import TransactionRestart
-from nexus.db.retries import retry_read_committed
+from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -30,12 +30,14 @@ from nexus.errors import (
 )
 from nexus.schemas.library import (
     LibraryDestinationOut,
+    LibraryGovernancePageInfo,
     LibraryMemberOut,
     LibraryOut,
     LibraryPageInfo,
     LibraryRole,
 )
-from nexus.services.sealed_handles import seal_user
+from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.services.sealed_handles import seal_user, unseal_user
 from nexus.storage.client import StorageError, get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,17 @@ def _library_destination_out_from_row(row) -> LibraryDestinationOut:
         color=row["color"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _library_member_out_from_row(row, *, owner_user_id: UUID) -> LibraryMemberOut:
+    return LibraryMemberOut(
+        user_handle=seal_user(row["user_id"]),
+        role=row["role"],
+        is_owner=row["user_id"] == owner_user_id,
+        email=presence_from_nullable(row["email"]),
+        display_name=presence_from_nullable(row["display_name"]),
+        created_at=row["created_at"],
     )
 
 
@@ -678,10 +691,62 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     return _library_out_from_row(row, viewer_user_id=viewer_id)
 
 
+def _encode_library_member_cursor(
+    row,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+) -> str:
+    payload = {
+        "k": "library_members:v1",
+        "viewer": str(seal_user(viewer_id)),
+        "library_id": str(library_id),
+        "after_user": str(seal_user(row["user_id"])),
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_library_member_cursor(
+    cursor: str,
+    *,
+    viewer_id: UUID,
+    library_id: UUID,
+) -> UUID:
+    try:
+        if not cursor or "=" in cursor:
+            raise ValueError
+        padded = cursor + "=" * (-len(cursor) % 4)
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+        if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != cursor:
+            raise ValueError
+        raw_payload: Any = json.loads(decoded.decode("utf-8"))
+        if not isinstance(raw_payload, dict):
+            raise ValueError
+        payload: dict[str, Any] = raw_payload
+        if (
+            set(payload) != {"k", "viewer", "library_id", "after_user"}
+            or not all(isinstance(value, str) for value in payload.values())
+            or payload["k"] != "library_members:v1"
+            or payload["viewer"] != str(seal_user(viewer_id))
+            or UUID(str(payload["library_id"])) != library_id
+        ):
+            raise ValueError
+        return unseal_user(str(payload["after_user"]))
+    except Exception:
+        # justify-ignore-error: malformed cursor input is an expected API error path.
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+
+
 def list_library_members(
-    db: Session, viewer_id: UUID, library_id: UUID, limit: int = 100
-) -> list[LibraryMemberOut]:
-    """List members of a library. Admin-only; owner first, then admin, then member."""
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> tuple[list[LibraryMemberOut], LibraryGovernancePageInfo]:
+    """List one immutable-keyset page of library members. Admin-only."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     limit = min(limit, 200)
@@ -689,215 +754,251 @@ def list_library_members(
     ctx = lock_library_for_member(db, viewer_id, library_id, lock=False)
     require_admin(ctx.role)
 
+    cursor_clause = ""
+    params: dict[str, object] = {"library_id": library_id, "limit": limit + 1}
+    if cursor is not None:
+        cursor_user_id = _decode_library_member_cursor(
+            cursor,
+            viewer_id=viewer_id,
+            library_id=library_id,
+        )
+        cursor_clause = "AND m.user_id > :cursor_user_id"
+        params["cursor_user_id"] = cursor_user_id
+
     rows = (
         db.execute(
-            text("""
+            text(f"""
             SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
             FROM memberships m
             JOIN users u ON u.id = m.user_id
             WHERE m.library_id = :library_id
-            ORDER BY
-                (m.user_id = :owner_user_id) DESC,
-                (CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END) ASC,
-                m.created_at ASC,
-                m.user_id ASC
+              {cursor_clause}
+            ORDER BY m.user_id ASC
             LIMIT :limit
         """),
-            {"library_id": library_id, "owner_user_id": ctx.owner_user_id, "limit": limit},
+            params,
         )
         .mappings()
         .all()
     )
 
-    return [
-        LibraryMemberOut(
-            user_handle=seal_user(row["user_id"]),
-            role=row["role"],
-            is_owner=(row["user_id"] == ctx.owner_user_id),
-            created_at=row["created_at"],
-            email=row["email"],
-            display_name=row["display_name"],
+    page_rows = rows[:limit]
+    next_cursor = (
+        _encode_library_member_cursor(
+            page_rows[-1],
+            viewer_id=viewer_id,
+            library_id=library_id,
         )
-        for row in rows
-    ]
+        if len(rows) > limit
+        else None
+    )
+    return (
+        [_library_member_out_from_row(row, owner_user_id=ctx.owner_user_id) for row in page_rows],
+        LibraryGovernancePageInfo(
+            next_cursor=present(next_cursor) if next_cursor is not None else absent()
+        ),
+    )
 
 
 def update_library_member_role(
-    db: Session, viewer_id: UUID, library_id: UUID, target_user_id: UUID, role: str
+    db: Session,
+    viewer_id: UUID,
+    library_id: UUID,
+    target_user_id: UUID,
+    role: LibraryRole,
 ) -> LibraryMemberOut:
     """Update a member's role. Admin-only; cannot change owner's role; default forbidden."""
-    with transaction(db):
-        ctx = lock_library_for_member(db, viewer_id, library_id)
-        require_admin(ctx.role)
-        require_non_default(ctx.is_default)
-        require_not_system(ctx.system_key)
 
-        _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+    def attempt() -> LibraryMemberOut:
+        with transaction(db):
+            ctx = lock_library_for_member(db, viewer_id, library_id)
+            require_admin(ctx.role)
+            require_non_default(ctx.is_default)
+            require_not_system(ctx.system_key)
 
-        if target_user_id == ctx.owner_user_id:
-            raise ForbiddenError(
-                ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
-                "Cannot change owner role; transfer ownership first",
+            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+
+            if target_user_id == ctx.owner_user_id:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
+                    "Cannot change owner role; transfer ownership first",
+                )
+
+            target = (
+                db.execute(
+                    text("""
+                    SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
+                    FROM memberships m
+                    JOIN users u ON u.id = m.user_id
+                    WHERE m.library_id = :lid AND m.user_id = :uid
+                """),
+                    {"lid": library_id, "uid": target_user_id},
+                )
+                .mappings()
+                .fetchone()
             )
+            if target is None:
+                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
 
-        target = (
-            db.execute(
-                text("""
-                SELECT user_id, role, created_at FROM memberships
-                WHERE library_id = :lid AND user_id = :uid
-            """),
-                {"lid": library_id, "uid": target_user_id},
-            )
-            .mappings()
-            .fetchone()
-        )
-        if target is None:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
+            if target["role"] != role:
+                result = db.execute(
+                    text("""
+                    UPDATE memberships SET role = :role
+                    WHERE library_id = :lid AND user_id = :uid
+                """),
+                    {"role": role, "lid": library_id, "uid": target_user_id},
+                )
+                assert result.rowcount == 1
+                target = (
+                    db.execute(
+                        text("""
+                        SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
+                        FROM memberships m
+                        JOIN users u ON u.id = m.user_id
+                        WHERE m.library_id = :lid AND m.user_id = :uid
+                    """),
+                        {"lid": library_id, "uid": target_user_id},
+                    )
+                    .mappings()
+                    .one()
+                )
 
-        if target["role"] == role:
-            return LibraryMemberOut(
-                user_handle=seal_user(target["user_id"]),
-                role=target["role"],
-                is_owner=False,
-                created_at=target["created_at"],
-            )
+            return _library_member_out_from_row(target, owner_user_id=ctx.owner_user_id)
 
-        db.execute(
-            text("""
-                UPDATE memberships SET role = :role
-                WHERE library_id = :lid AND user_id = :uid
-            """),
-            {"role": role, "lid": library_id, "uid": target_user_id},
-        )
-
-    return LibraryMemberOut(
-        user_handle=seal_user(target["user_id"]),
-        role=role,
-        is_owner=False,
-        created_at=target["created_at"],
-    )
+    return retry_serializable(db, "update_library_member_role", attempt)
 
 
 def remove_library_member(
     db: Session, viewer_id: UUID, library_id: UUID, target_user_id: UUID
 ) -> None:
     """Remove a member. Admin-only; cannot remove owner; default forbidden; idempotent."""
-    with transaction(db):
-        ctx = lock_library_for_member(db, viewer_id, library_id)
-        require_admin(ctx.role)
-        require_non_default(ctx.is_default)
-        require_not_system(ctx.system_key)
 
-        _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+    def attempt() -> None:
+        with transaction(db):
+            ctx = lock_library_for_member(db, viewer_id, library_id)
+            require_admin(ctx.role)
+            require_non_default(ctx.is_default)
+            require_not_system(ctx.system_key)
 
-        if target_user_id == ctx.owner_user_id:
-            raise ForbiddenError(
-                ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
-                "Cannot remove owner; transfer ownership first",
+            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+
+            if target_user_id == ctx.owner_user_id:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
+                    "Cannot remove owner; transfer ownership first",
+                )
+
+            target = db.execute(
+                text("SELECT 1 FROM memberships WHERE library_id = :lid AND user_id = :uid"),
+                {"lid": library_id, "uid": target_user_id},
+            ).fetchone()
+            if target is None:
+                return
+
+            result = db.execute(
+                text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
+                {"lid": library_id, "uid": target_user_id},
+            )
+            assert result.rowcount == 1
+            from nexus.services.artifacts.dossier_types import AudienceUser
+            from nexus.services.artifacts.engine import on_audience_visibility_changed
+
+            on_audience_visibility_changed(
+                db,
+                audience=AudienceUser(user_id=target_user_id),
             )
 
-        target = db.execute(
-            text("SELECT 1 FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-            {"lid": library_id, "uid": target_user_id},
-        ).fetchone()
-        if target is None:
-            return
-
-        db.execute(
-            text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-            {"lid": library_id, "uid": target_user_id},
-        )
-        from nexus.services.artifacts.dossier_types import AudienceUser
-        from nexus.services.artifacts.engine import on_audience_visibility_changed
-
-        on_audience_visibility_changed(
-            db,
-            audience=AudienceUser(user_id=target_user_id),
-        )
+    retry_serializable(db, "remove_library_member", attempt)
 
 
 def transfer_library_ownership(
     db: Session, viewer_id: UUID, library_id: UUID, new_owner_user_id: UUID
 ) -> LibraryOut:
     """Transfer ownership to another member. Owner-only; previous owner stays admin."""
-    with transaction(db):
-        ctx = lock_library_for_member(db, viewer_id, library_id)
-        require_non_default(ctx.is_default)
-        require_not_system(ctx.system_key)
-        if ctx.owner_user_id != viewer_id:
-            raise ForbiddenError(
-                ApiErrorCode.E_OWNER_REQUIRED,
-                "Only the library owner can transfer ownership",
+
+    def attempt() -> LibraryOut:
+        with transaction(db):
+            ctx = lock_library_for_member(db, viewer_id, library_id)
+            require_non_default(ctx.is_default)
+            require_not_system(ctx.system_key)
+            if ctx.owner_user_id != viewer_id:
+                raise ForbiddenError(
+                    ApiErrorCode.E_OWNER_REQUIRED,
+                    "Only the library owner can transfer ownership",
+                )
+
+            _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+
+            if new_owner_user_id == ctx.owner_user_id:
+                return LibraryOut(
+                    id=ctx.library_id,
+                    name=ctx.name,
+                    color=ctx.color,
+                    owner_user_handle=seal_user(ctx.owner_user_id),
+                    is_default=ctx.is_default,
+                    role=ctx.role,
+                    system_key=ctx.system_key,
+                    created_at=ctx.created_at,
+                    updated_at=ctx.updated_at,
+                    **_library_capabilities(
+                        role=ctx.role,
+                        is_default=ctx.is_default,
+                        system_key=ctx.system_key,
+                        viewer_user_id=viewer_id,
+                        owner_user_id=ctx.owner_user_id,
+                    ),
+                )
+
+            target = db.execute(
+                text("SELECT role FROM memberships WHERE library_id = :lid AND user_id = :uid"),
+                {"lid": library_id, "uid": new_owner_user_id},
+            ).fetchone()
+            if target is None:
+                raise ConflictError(
+                    ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID,
+                    "Transfer target must be an existing member",
+                )
+
+            if target[0] != "admin":
+                result = db.execute(
+                    text("""
+                        UPDATE memberships SET role = 'admin'
+                        WHERE library_id = :lid AND user_id = :uid
+                    """),
+                    {"lid": library_id, "uid": new_owner_user_id},
+                )
+                assert result.rowcount == 1
+
+            now = datetime.now(UTC)
+            result = db.execute(
+                text("""
+                    UPDATE libraries SET owner_user_id = :new_owner, updated_at = :now
+                    WHERE id = :lid
+                """),
+                {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
             )
+            assert result.rowcount == 1
 
-        _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
-
-        if new_owner_user_id == ctx.owner_user_id:
             return LibraryOut(
                 id=ctx.library_id,
                 name=ctx.name,
                 color=ctx.color,
-                owner_user_handle=seal_user(ctx.owner_user_id),
+                owner_user_handle=seal_user(new_owner_user_id),
                 is_default=ctx.is_default,
-                role=ctx.role,
-                system_key=ctx.system_key,
                 created_at=ctx.created_at,
-                updated_at=ctx.updated_at,
+                updated_at=now,
+                role="admin",
+                system_key=ctx.system_key,
                 **_library_capabilities(
-                    role=ctx.role,
+                    role="admin",
                     is_default=ctx.is_default,
                     system_key=ctx.system_key,
                     viewer_user_id=viewer_id,
-                    owner_user_id=ctx.owner_user_id,
+                    owner_user_id=new_owner_user_id,
                 ),
             )
 
-        target = db.execute(
-            text("SELECT role FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-            {"lid": library_id, "uid": new_owner_user_id},
-        ).fetchone()
-        if target is None:
-            raise ConflictError(
-                ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID,
-                "Transfer target must be an existing member",
-            )
-
-        if target[0] != "admin":
-            db.execute(
-                text("""
-                    UPDATE memberships SET role = 'admin'
-                    WHERE library_id = :lid AND user_id = :uid
-                """),
-                {"lid": library_id, "uid": new_owner_user_id},
-            )
-
-        now = datetime.now(UTC)
-        db.execute(
-            text("""
-                UPDATE libraries SET owner_user_id = :new_owner, updated_at = :now
-                WHERE id = :lid
-            """),
-            {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
-        )
-
-    return LibraryOut(
-        id=ctx.library_id,
-        name=ctx.name,
-        color=ctx.color,
-        owner_user_handle=seal_user(new_owner_user_id),
-        is_default=ctx.is_default,
-        created_at=ctx.created_at,
-        updated_at=now,
-        role="admin",
-        system_key=ctx.system_key,
-        **_library_capabilities(
-            role="admin",
-            is_default=ctx.is_default,
-            system_key=ctx.system_key,
-            viewer_user_id=viewer_id,
-            owner_user_id=new_owner_user_id,
-        ),
-    )
+    return retry_serializable(db, "transfer_library_ownership", attempt)
 
 
 def find_default_library_id(db: Session, user_id: UUID) -> UUID | None:

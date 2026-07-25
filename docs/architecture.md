@@ -1099,10 +1099,12 @@ predicates in `auth/permissions.py`; the search/object readers read
   appends at most one novel result from a canonical refetch.
 - **Library Dossier** is the Library binding of Universal Dossiers, not a
   Library-owned subsystem. The Library pane publishes Entries in primary
-  content and `Connections | Dossier` in the shared Resource Inspector. Its
-  audience is the Library membership scope; direct entries and expanded
-  Podcast episodes are intersected with audience-visible Media, and freshness
-  follows the binding's typed manifest.
+  content and capability-gated `Members | Connections | Dossier` in the shared
+  Resource Inspector; Members is present only for mutable Libraries the viewer
+  can administer, and Dossier remains default. Its audience is the Library
+  membership scope; direct entries and expanded Podcast episodes are
+  intersected with audience-visible Media, and freshness follows the binding's
+  typed manifest.
 
 ### 8.6 Contributors
 
@@ -1267,7 +1269,9 @@ the driver. New devs frequently look in `page.tsx` for behavior that lives in
   handoff arbitration). Every eligible resource pane publishes one
   `resource-inspector` secondary group through `useResourceInspector`: Media
   (`Contents | Evidence | Dossier`), Conversation
-  (`Context | Forks | Dossier`), and Library/Podcast/Author/Page/Note
+  (`Context | Forks | Dossier`), Library
+  (`Members | Connections | Dossier` when the viewer can administer it, else
+  `Connections | Dossier`), and Podcast/Author/Page/Note
   (`Connections | Dossier`). One visible Companion action opens the same group
   on desktop and mobile; open state, active tab, width, and viewed Dossier
   revision are workspace-local.

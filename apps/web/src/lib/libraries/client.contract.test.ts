@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "@/lib/api/client";
 import {
   decodeMemberLibrariesResponse,
   decodeWritableLibraryDestinationPage,
+  getMemberLibrary,
 } from "./client";
+
+vi.mock("@/lib/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/client")>(
+    "@/lib/api/client",
+  );
+  return { ...actual, apiFetch: vi.fn() };
+});
+
+const apiFetchMock = vi.mocked(apiFetch);
 
 const OWNER_USER_HANDLE =
   "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
@@ -16,6 +27,8 @@ const destination = {
 };
 
 describe("library destination response contract", () => {
+  beforeEach(() => apiFetchMock.mockReset());
+
   it("decodes destination identity, display fields, and an opaque next cursor", () => {
     expect(
       decodeWritableLibraryDestinationPage({
@@ -92,5 +105,48 @@ describe("library destination response contract", () => {
         page: { has_more: false, next_cursor: null },
       }),
     ).toThrow("sealed-handle grammar");
+  });
+
+  it("correlates singleton Library reads with the requested identity", async () => {
+    const library = {
+      id: "library-1",
+      name: "Research",
+      color: null,
+      ownerUserHandle: OWNER_USER_HANDLE,
+      isDefault: false,
+      role: "admin",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+      createdAt: "2026-07-21T12:00:00Z",
+      updatedAt: "2026-07-21T12:30:00Z",
+    };
+    apiFetchMock.mockResolvedValueOnce({ data: library });
+    await expect(getMemberLibrary("library-1")).resolves.toEqual(library);
+    expect(apiFetchMock).toHaveBeenCalledWith("/api/libraries/library-1", {
+      signal: undefined,
+    });
+
+    apiFetchMock.mockResolvedValueOnce({
+      data: { ...library, id: "library-other" },
+    });
+    await expect(getMemberLibrary("library-1")).rejects.toThrow(
+      /does not match requested Library/,
+    );
+
+    apiFetchMock.mockResolvedValueOnce({
+      data: { ...library, canManageMembers: "yes" },
+    });
+    await expect(getMemberLibrary("library-1")).rejects.toThrow(
+      /canManageMembers/,
+    );
+
+    apiFetchMock.mockResolvedValueOnce({ data: library, extra: true });
+    await expect(getMemberLibrary("library-1")).rejects.toThrow(
+      /expected \[data\]/,
+    );
   });
 });

@@ -120,7 +120,7 @@ rebuilt and re-keyed from revision runs to build runs.
 | --- | --- | --- | --- |
 | Media | Reader | Contents when available · Evidence · Dossier | Contents, else Evidence |
 | Conversation | Transcript/composer | Context · Forks · Dossier | Context |
-| Library | Entries | Connections · Dossier | Dossier |
+| Library | Entries | Members when authorized · Connections · Dossier | Dossier |
 | Podcast | Summary and Episodes inline | Connections · Dossier | Dossier |
 | Author | Works inline | Connections · Dossier | Dossier |
 | Page | Content/editor | Connections · Dossier | Dossier |

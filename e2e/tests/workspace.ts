@@ -55,6 +55,7 @@ export interface WorkspaceAttachedSecondaryPaneState {
     | "resource-contents"
     | "resource-evidence"
     | "resource-context"
+    | "resource-members"
     | "resource-connections"
     | "resource-forks"
     | "resource-dossier";

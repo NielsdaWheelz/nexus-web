@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+from nexus.schemas.presence import Presence
 from nexus.services.sealed_handles import UserHandle
 
 DISPLAY_NAME_MAX_LENGTH = 100
@@ -17,8 +18,8 @@ class UserSearchOut(BaseModel):
     """Response schema for a user search result."""
 
     user_handle: UserHandle
-    email: str | None
-    display_name: str | None
+    email: Presence[str]
+    display_name: Presence[str]
 
     model_config = ConfigDict(
         from_attributes=True,

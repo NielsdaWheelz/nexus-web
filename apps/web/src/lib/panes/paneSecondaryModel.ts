@@ -36,7 +36,7 @@ export function isPaneSecondaryRegionId(
     .some((groupId) => paneSecondaryRegionId(primaryPaneId, groupId) === candidateId);
 }
 
-// The six Inspector surfaces. `title` is the VISIBLE tab label (not just an aria
+// The seven Inspector surfaces. `title` is the VISIBLE tab label (not just an aria
 // name); `iconId` selects the tab glyph. Which of these a given pane publishes is
 // decided by the subject's capability + `useResourceInspector`; this registry only
 // owns their identity, label, icon, and group membership.
@@ -46,6 +46,12 @@ export const PANE_SECONDARY_SURFACE_DEFINITIONS = [
     groupId: "resource-inspector",
     title: "Contents",
     iconId: "list-tree",
+  },
+  {
+    id: "resource-members",
+    groupId: "resource-inspector",
+    title: "Members",
+    iconId: "users",
   },
   {
     id: "resource-evidence",

@@ -2,28 +2,29 @@
 
 import {
   useEffect,
+  useId,
   useMemo,
   useState,
   type CompositionEvent,
   type KeyboardEvent,
 } from "react";
 import Input from "@/components/ui/Input";
+import type { UserSearchResult } from "@/lib/users/search";
 import styles from "./PeopleSearchCombobox.module.css";
 
-export interface PeopleSearchResult {
-  userHandle: string;
-  email: string | null;
-  displayName: string | null;
-}
-
-function labelFor(person: PeopleSearchResult): string {
-  return person.displayName ?? person.email ?? person.userHandle;
+function labelFor(person: UserSearchResult): string {
+  return person.displayName.kind === "Present"
+    ? person.displayName.value
+    : person.email.kind === "Present"
+      ? person.email.value
+      : person.userHandle;
 }
 
 export default function PeopleSearchCombobox({
-  id,
   label,
   placeholder,
+  description,
+  status,
   query,
   results,
   searching = false,
@@ -31,23 +32,29 @@ export default function PeopleSearchCombobox({
   onQueryChange,
   onSelect,
 }: {
-  id: string;
   label: string;
   placeholder: string;
+  description?: string;
+  status?: string;
   query: string;
-  results: readonly PeopleSearchResult[];
+  results: readonly UserSearchResult[];
   searching?: boolean;
   disabled?: boolean;
   onQueryChange: (query: string) => void;
-  onSelect: (person: PeopleSearchResult) => void;
+  onSelect: (person: UserSearchResult) => void;
 }) {
+  const reactId = useId();
+  const inputId = `${reactId}-input`;
+  const listboxId = `${reactId}-listbox`;
+  const descriptionId = description ? `${reactId}-description` : undefined;
+  const statusId = status || searching ? `${reactId}-status` : undefined;
   const [open, setOpen] = useState(true);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [composing, setComposing] = useState(false);
   const expanded = !disabled && open && results.length > 0;
   const optionIds = useMemo(
-    () => results.map((_, index) => `${id}-option-${index}`),
-    [id, results],
+    () => results.map((_, index) => `${reactId}-option-${index}`),
+    [reactId, results],
   );
 
   useEffect(() => {
@@ -101,6 +108,7 @@ export default function PeopleSearchCombobox({
   return (
     <div className={styles.root}>
       <Input
+        id={inputId}
         type="search"
         value={query}
         placeholder={placeholder}
@@ -108,7 +116,10 @@ export default function PeopleSearchCombobox({
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={expanded}
-        aria-controls={id}
+        aria-controls={listboxId}
+        aria-describedby={
+          [descriptionId, statusId].filter(Boolean).join(" ") || undefined
+        }
         aria-busy={searching || undefined}
         disabled={disabled}
         aria-activedescendant={
@@ -128,9 +139,18 @@ export default function PeopleSearchCombobox({
           setOpen(true);
         }}
       />
-      {searching ? <span role="status">Searching…</span> : null}
+      {description ? (
+        <span id={descriptionId} className={styles.description}>
+          {description}
+        </span>
+      ) : null}
+      {status || searching ? (
+        <span id={statusId} role="status" className={styles.status}>
+          {status ?? "Searching…"}
+        </span>
+      ) : null}
       {expanded ? (
-        <ul id={id} role="listbox" className={styles.results}>
+        <ul id={listboxId} role="listbox" className={styles.results}>
           {results.map((person, index) => (
             <li
               id={optionIds[index]}
@@ -143,8 +163,9 @@ export default function PeopleSearchCombobox({
               onClick={() => selectIndex(index)}
             >
               <span>{labelFor(person)}</span>
-              {person.displayName && person.email ? (
-                <span>{person.email}</span>
+              {person.displayName.kind === "Present" &&
+              person.email.kind === "Present" ? (
+                <span>{person.email.value}</span>
               ) : null}
             </li>
           ))}

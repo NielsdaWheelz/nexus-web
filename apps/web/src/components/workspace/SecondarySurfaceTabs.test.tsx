@@ -7,6 +7,7 @@ import SecondarySurfaceTabs, {
 
 const surfaces = [
   { id: "resource-contents" as const, body: <div /> },
+  { id: "resource-members" as const, body: <div /> },
   { id: "resource-evidence" as const, body: <div /> },
 ];
 
@@ -22,6 +23,7 @@ describe("SecondarySurfaceTabs", () => {
     );
 
     const contents = screen.getByRole("tab", { name: "Contents" });
+    expect(screen.getByRole("tab", { name: "Members" })).toBeInTheDocument();
     const evidence = screen.getByRole("tab", { name: "Evidence" });
     expect(contents).toHaveAttribute("tabIndex", "-1");
     expect(evidence).toHaveAttribute("tabIndex", "0");

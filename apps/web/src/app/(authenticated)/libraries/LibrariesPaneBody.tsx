@@ -46,27 +46,15 @@ import {
   acceptLibraryInvite,
   declineLibraryInvite,
   fetchViewerLibraryInvites,
-  type ViewerLibraryInvite,
-} from "@/lib/libraries/sharing";
+} from "@/lib/libraries/governance";
+import type {
+  LibraryOut,
+  ViewerLibraryInvitation,
+} from "@/lib/libraries/contract";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import styles from "./page.module.css";
 
-interface Library {
-  id: string;
-  name: string;
-  color: string | null;
-  ownerUserHandle: string;
-  isDefault: boolean;
-  role: string;
-  createdAt: string;
-  updatedAt: string;
-  systemKey: string | null;
-  canRename: boolean;
-  canDelete: boolean;
-  canEditEntries: boolean;
-  canManageMembers: boolean;
-  canTransferOwnership: boolean;
-}
+type Library = LibraryOut;
 
 interface LibrariesSnapshot {
   readonly libraries: readonly Library[];
@@ -95,7 +83,9 @@ export default function LibrariesPaneBody() {
   const [moreError, setMoreError] = useState<FeedbackContent | null>(null);
   const [feedback, setFeedback] = useState<FeedbackContent | null>(null);
   const [invitesRefreshVersion, setInvitesRefreshVersion] = useState(0);
-  const [viewerInvites, setViewerInvites] = useState<ViewerLibraryInvite[]>([]);
+  const [viewerInvites, setViewerInvites] = useState<
+    ViewerLibraryInvitation[]
+  >([]);
   const [busyInvitationHandle, setBusyInvitationHandle] = useState<
     string | null
   >(null);
@@ -119,7 +109,7 @@ export default function LibrariesPaneBody() {
         : { refreshVersion: librariesRefreshVersion },
   });
   const libraries = controller?.libraries ?? [];
-  const viewerInvitesResource = useResource<ViewerLibraryInvite[]>({
+  const viewerInvitesResource = useResource<ViewerLibraryInvitation[]>({
     cacheKey: `viewer-library-invites:${invitesRefreshVersion}`,
     load: fetchViewerLibraryInvites,
   });
@@ -326,7 +316,10 @@ export default function LibrariesPaneBody() {
   }, [clearAllVisitData, settingsLibrary]);
 
   const handleInvitation = useCallback(
-    async (invite: ViewerLibraryInvite, action: "accept" | "decline") => {
+    async (
+      invite: ViewerLibraryInvitation,
+      action: "accept" | "decline",
+    ) => {
       if (busyInvitationHandle !== null) return;
       setBusyInvitationHandle(invite.invitationHandle);
       try {

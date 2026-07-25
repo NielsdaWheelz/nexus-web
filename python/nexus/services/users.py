@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.user import DISPLAY_NAME_MAX_LENGTH, UserProfileOut, UserSearchOut
 from nexus.services.sealed_handles import seal_user
 
@@ -116,6 +117,10 @@ def search_users(db: Session, query: str, viewer_id: UUID, limit: int = 10) -> l
     )
 
     return [
-        UserSearchOut(user_handle=seal_user(row[0]), email=row[1], display_name=row[2])
+        UserSearchOut(
+            user_handle=seal_user(row[0]),
+            email=presence_from_nullable(row[1]),
+            display_name=presence_from_nullable(row[2]),
+        )
         for row in result.fetchall()
     ]

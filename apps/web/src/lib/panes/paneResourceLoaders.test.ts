@@ -37,6 +37,23 @@ describe("Lectern pane resource loader", () => {
 });
 
 describe("Library pane resource loader", () => {
+  const library = {
+    id: "library-1",
+    name: "Research",
+    color: null,
+    ownerUserHandle:
+      "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+    isDefault: false,
+    role: "admin",
+    systemKey: null,
+    canRename: true,
+    canDelete: true,
+    canEditEntries: true,
+    canManageMembers: true,
+    canTransferOwnership: true,
+    createdAt: "2026-07-24T10:00:00Z",
+    updatedAt: "2026-07-24T10:30:00Z",
+  };
   const entry = {
     id: "entry-1",
     kind: "media",
@@ -59,7 +76,6 @@ describe("Library pane resource loader", () => {
   };
 
   it("strictly decodes reading time in the composed initial page", async () => {
-    const library = { id: "library-1" };
     const page = { has_more: false, next_cursor: null };
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
@@ -101,7 +117,7 @@ describe("Library pane resource loader", () => {
     const request: ResourceFetcher = async <P, T>(
       descriptor: ResourceDescriptor<P>,
     ): Promise<T> => {
-      if (descriptor === libraryResource) return { data: { id: "library-1" } } as T;
+      if (descriptor === libraryResource) return { data: library } as T;
       if (descriptor === libraryEntriesResource) {
         const { readingTimeEstimate: _readingTimeEstimate, ...invalid } = entry;
         return {
@@ -117,6 +133,54 @@ describe("Library pane resource loader", () => {
     await expect(loader.load(request, { id: "library-1" })).rejects.toThrow(
       /Invalid Presence/,
     );
+  });
+
+  it("defects before publishing a Library projection with the wrong identity", async () => {
+    const request: ResourceFetcher = async <P, T>(
+      descriptor: ResourceDescriptor<P>,
+    ): Promise<T> => {
+      if (descriptor === libraryResource) {
+        return { data: { ...library, id: "library-other" } } as T;
+      }
+      if (descriptor === libraryEntriesResource) {
+        return {
+          data: [entry],
+          page: { has_more: false, next_cursor: null },
+        } as T;
+      }
+      throw new Error("Unexpected resource descriptor");
+    };
+    const loader = paneResourceLoaders.library;
+    if (!loader) throw new Error("Library loader missing");
+
+    await expect(
+      loader.load(request, { id: "library-1" }),
+    ).rejects.toThrow(/does not match requested Library/);
+  });
+
+  it("defects before publishing a malformed Library projection", async () => {
+    const request: ResourceFetcher = async <P, T>(
+      descriptor: ResourceDescriptor<P>,
+    ): Promise<T> => {
+      if (descriptor === libraryResource) {
+        return {
+          data: { ...library, canManageMembers: "yes" },
+        } as T;
+      }
+      if (descriptor === libraryEntriesResource) {
+        return {
+          data: [entry],
+          page: { has_more: false, next_cursor: null },
+        } as T;
+      }
+      throw new Error("Unexpected resource descriptor");
+    };
+    const loader = paneResourceLoaders.library;
+    if (!loader) throw new Error("Library loader missing");
+
+    await expect(
+      loader.load(request, { id: "library-1" }),
+    ).rejects.toThrow(/canManageMembers/);
   });
 });
 

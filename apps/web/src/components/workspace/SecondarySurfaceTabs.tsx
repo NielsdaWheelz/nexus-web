@@ -2,7 +2,14 @@
 
 import { useRef } from "react";
 import type { ComponentType } from "react";
-import { FileText, GitBranch, Link2, ListTree, Network } from "lucide-react";
+import {
+  FileText,
+  GitBranch,
+  Link2,
+  ListTree,
+  Network,
+  Users,
+} from "lucide-react";
 import type { PaneSecondarySurfacePublication } from "@/lib/panes/panePublications";
 import { getSecondarySurfaceDefinition } from "@/lib/panes/paneSecondaryModel";
 import type {
@@ -20,6 +27,7 @@ const SECONDARY_ICONS: Record<
   "link-2": Link2,
   "list-tree": ListTree,
   network: Network,
+  users: Users,
 };
 
 export function secondarySurfaceTabId(

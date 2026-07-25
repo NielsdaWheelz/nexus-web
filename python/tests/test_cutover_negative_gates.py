@@ -3331,3 +3331,85 @@ def test_reader_selection_input_carries_no_client_quote_text():
     assert field is None, (
         f"ReaderSelectionInput declares a client quote-text field: {field and field.group(0)!r}"
     )
+
+
+# =============================================================================
+# Library Members Companion hard cutover
+# =============================================================================
+
+
+def test_library_members_legacy_frontend_symbols_absent():
+    hits = _grep(
+        r"\bLibraryMemberEditor\b|"
+        r"components/sharing/PeopleSearchCombobox|"
+        r"@/lib/libraries/sharing|"
+        r"\b(?:searchLibraryUsers|searchShareUsers)\b|"
+        r"export\s+type\s+(?:LibraryInvite|ViewerLibraryInvite)\b",
+        _WEB_ROOT,
+    )
+    assert not hits, f"legacy Library membership UI/client survives:\n{_fmt(hits)}"
+
+
+def test_library_members_legacy_files_absent():
+    for rel_path in (
+        "apps/web/src/components/sharing/LibraryMemberEditor.tsx",
+        "apps/web/src/components/sharing/LibraryMemberEditor.module.css",
+        "apps/web/src/components/sharing/LibraryMemberEditor.test.tsx",
+        "apps/web/src/components/sharing/PeopleSearchCombobox.tsx",
+        "apps/web/src/components/sharing/PeopleSearchCombobox.module.css",
+        "apps/web/src/components/sharing/PeopleSearchCombobox.test.tsx",
+        "apps/web/src/lib/libraries/sharing.ts",
+        "apps/web/src/lib/libraries/sharing.test.ts",
+    ):
+        assert not (_REPO_ROOT / rel_path).exists(), f"{rel_path} must be deleted"
+
+
+def test_library_members_normative_docs_have_final_ownership():
+    for rel_path in (
+        "docs/architecture.md",
+        "docs/modules/library.md",
+        "docs/cutovers/resource-inspector-and-universal-dossiers-hard-cutover.md",
+        "docs/cutovers/universal-resource-sharing-hard-cutover.md",
+        "docs/cutovers/library-placement-resource-action-hard-cutover.md",
+    ):
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
+        assert "LibraryMemberEditor" not in text, f"{rel_path} retains the old editor owner"
+        assert "Library Share owns" not in text, f"{rel_path} retains old Share ownership"
+        assert not re.search(
+            r"exactly (?:the )?six canonical surfaces",
+            text,
+            flags=re.IGNORECASE,
+        ), f"{rel_path} retains the old Inspector surface count"
+        assert not re.search(
+            r"Library.*Connections\s*\|\s*Dossier",
+            text,
+            flags=re.IGNORECASE,
+        ), f"{rel_path} retains a stale two-tab Library claim"
+
+
+def test_library_members_capped_array_contract_residue_absent():
+    hits = _grep(
+        r"limit=200[^\n]*(?:members|invites)|"
+        r"(?:members|invites)[^\n]*limit=200|"
+        r"LibraryMemberOut\[\]|"
+        r"LibraryInvitationOut\[\]",
+        _PY_ROOT,
+        _WEB_ROOT,
+    )
+    assert not hits, f"capped Library governance array contract survives:\n{_fmt(hits)}"
+
+
+def test_library_out_structural_decoder_has_one_owner():
+    contract = _WEB_ROOT / "lib" / "libraries" / "contract.ts"
+    assert contract.exists(), "apps/web/src/lib/libraries/contract.ts must own LibraryOut decoding"
+    contract_text = contract.read_text(encoding="utf-8")
+    assert "expectLibraryOutForId" in contract_text
+
+    hits = _grep(
+        r"\bfunction\s+(?:expectLibraryOut|decodeMemberLibrary|decodeLibraryOut)\b",
+        _WEB_ROOT,
+    )
+    unexpected = [
+        hit for hit in hits if not hit.path.endswith("/apps/web/src/lib/libraries/contract.ts")
+    ]
+    assert not unexpected, f"duplicate LibraryOut decoder survives:\n{_fmt(unexpected)}"

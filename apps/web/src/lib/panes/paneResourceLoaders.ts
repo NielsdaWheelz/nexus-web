@@ -22,6 +22,7 @@ import { shouldLoadInitialMediaFragments } from "@/lib/media/documentReadiness";
 import { isAbortError } from "@/lib/errors";
 import { decodeContributorDetail } from "@/lib/contributors/detail";
 import { decodeLibraryReadingTimeEntry } from "@/lib/libraries/readingTime";
+import { expectLibraryOutForId } from "@/lib/libraries/contract";
 import { decodeContributorWorkItem } from "@/lib/contributors/workItem";
 import { expectArray, expectNullableString } from "@/lib/validation";
 import type {
@@ -104,7 +105,11 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
         request<{ id: string }, { data: object[]; page: unknown }>(libraryEntriesResource, params),
       ]);
       return {
-        library: library.data,
+        library: expectLibraryOutForId(
+          library.data,
+          p.id,
+          "Library pane response.data",
+        ),
         entries: entries.data.map(decodeLibraryReadingTimeEntry),
         entriesPage: entries.page,
       };

@@ -234,16 +234,22 @@ def list_library_invites(
     status: Annotated[
         LibraryInvitationStatusValue, Query(description="Filter by invite status")
     ] = "pending",
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
 ) -> dict:
     """List invitations for a library.
 
     Admin/owner only. Ordered by created_at DESC, id DESC.
     """
-    result = library_invitations.list_library_invites(
-        db, viewer.user_id, library_id, status=status, limit=limit
+    result, page = library_invitations.list_library_invites(
+        db,
+        viewer.user_id,
+        library_id,
+        status=status,
+        cursor=cursor,
+        limit=limit,
     )
-    return ok(result, by_alias=True)
+    return ok_page(result, page, by_alias=True)
 
 
 # ---- Members ----
@@ -254,14 +260,21 @@ def list_library_members(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
 ) -> dict:
     """List members of a library.
 
-    Admin-only. Owner first, then admins, then members, then created_at ASC.
+    Admin-only. Ordered by the immutable member user handle identity.
     """
-    result = library_governance.list_library_members(db, viewer.user_id, library_id, limit=limit)
-    return ok(result, by_alias=True)
+    result, page = library_governance.list_library_members(
+        db,
+        viewer.user_id,
+        library_id,
+        cursor=cursor,
+        limit=limit,
+    )
+    return ok_page(result, page, by_alias=True)
 
 
 @router.patch("/libraries/{library_id}/members/{user_handle}")

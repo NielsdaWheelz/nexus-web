@@ -50,14 +50,25 @@ a `resource_grants` row or anonymous public reader. Copying a library URL change
 no access; a non-member remains masked. Default and system libraries are
 copy-only and cannot accept membership changes.
 
-The universal Share modal is the UI owner for non-default library membership:
-it embeds `LibraryMemberEditor`, including invitation lifecycle and ownership
-transfer. `LibrarySettingsDialog` owns name/color settings only. Media and
-podcast placement is a separate top-level `Libraries…` resource relationship
-action backed by `LibraryEntryEditor`; it never appears inside Share. Library
-entries are organization references rather than access-grant provenance. See
+The Library pane's capability-gated **Members** Companion tab is the sole
+non-default membership-governance UI, including invitation lifecycle, roles,
+removal, and ownership transfer. Library Share retains member-only link actions
+and exposes one authorized **Manage members** activation into that tab.
+`LibrarySettingsDialog` owns name/color settings only. Media and podcast
+placement is a separate top-level `Libraries…` resource relationship action
+backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
+are organization references rather than access-grant provenance. See
 [resource-sharing.md](resource-sharing.md) and
 [library-placement-resource-action-hard-cutover.md](../cutovers/library-placement-resource-action-hard-cutover.md).
+
+The admin member and pending-invitation reads return exact
+`{data, page: {nextCursor: Presence<string>}}` envelopes. Members traverse
+immutable `user_id ASC`; invitations traverse the indexed
+`created_at DESC, id DESC` keyset. Their opaque cursors are bound to viewer,
+Library, endpoint, and invitation status. Member, invitation, and user-search
+person fields preserve semantic absence as `Presence`; governance commands
+return fully hydrated projections and use the standard serializable retry
+boundary.
 
 Library entry mutations are commands, not refreshed read models. Successful
 media-placement add/remove, add-podcast, and reorder requests return `204 No
@@ -258,10 +269,12 @@ Both POST and DELETE mutations return `204 No Content`.
 
 ## Library Resource Inspector And Dossier
 
-The Library primary pane owns entries only. One shared Companion action opens
-the pane-local Resource Inspector with `Connections | Dossier`; the Library
-pane owns no feature-specific column, inline generation controls, or
-drawer.
+The Library primary pane owns entries and the route-keyed membership controller.
+One shared Companion action opens the pane-local Resource Inspector with
+capability-gated `Members | Connections | Dossier`; Members is present only for
+mutable Libraries the viewer can administer, and Dossier remains default. The
+same publication drives desktop and mobile; no feature-specific column, modal,
+drawer, or second governance state machine exists.
 
 Library Dossier is one binding of the Universal Dossier engine. Its head is
 keyed by the Library subject and Library audience, so membership is the read and

@@ -23,6 +23,7 @@ describe("paneSecondaryModel", () => {
   });
   it("maps secondary surfaces to their owning groups", () => {
     expect(getSecondaryGroupForSurface("resource-contents")).toBe("resource-inspector");
+    expect(getSecondaryGroupForSurface("resource-members")).toBe("resource-inspector");
     expect(getSecondaryGroupForSurface("resource-evidence")).toBe("resource-inspector");
     expect(getSecondaryGroupForSurface("resource-context")).toBe(
       "resource-inspector",
@@ -44,6 +45,11 @@ describe("paneSecondaryModel", () => {
       title: "Evidence",
       iconId: "link-2",
     });
+    expect(getSecondarySurfaceDefinition("resource-members")).toMatchObject({
+      groupId: "resource-inspector",
+      title: "Members",
+      iconId: "users",
+    });
     expect(getSecondarySurfaceDefinition("resource-forks")).toMatchObject({
       groupId: "resource-inspector",
       title: "Forks",
@@ -51,6 +57,7 @@ describe("paneSecondaryModel", () => {
     });
     expect(getSecondarySurfaceIdsForGroup("resource-inspector")).toEqual([
       "resource-contents",
+      "resource-members",
       "resource-evidence",
       "resource-context",
       "resource-connections",
@@ -91,12 +98,13 @@ describe("paneSecondaryModel", () => {
     });
   });
 
-  it("resource-inspector owns exactly the six canonical surfaces", () => {
+  it("resource-inspector owns exactly the seven canonical surfaces", () => {
     const inspectorSurfaces = PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
       (d) => d.groupId === "resource-inspector",
     );
     expect(inspectorSurfaces.map((d) => d.id)).toEqual([
       "resource-contents",
+      "resource-members",
       "resource-evidence",
       "resource-context",
       "resource-connections",

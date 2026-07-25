@@ -228,7 +228,7 @@ class TestUserSearch:
         )
         data = response.json()["data"]
         assert len(data) >= 1, f"Expected at least 1 result, got {len(data)}"
-        emails = [u["email"] for u in data]
+        emails = [u["email"]["value"] for u in data if u["email"]["kind"] == "Present"]
         assert email_a in emails, f"Expected '{email_a}' in results, got {emails}"
 
     def test_search_users_by_display_name(self, auth_client):
@@ -324,8 +324,34 @@ class TestUserSearch:
         assert len(data) >= 1
         result = next(u for u in data if unseal_user(u["userHandle"]) == user_a)
         assert set(result) == {"userHandle", "email", "displayName"}
-        assert result["email"] == email_a
-        assert result["displayName"] == "FieldsTest"
+        assert result["email"] == {"kind": "Present", "value": email_a}
+        assert result["displayName"] == {"kind": "Present", "value": "FieldsTest"}
+
+    def test_search_users_encodes_nullable_fields_as_presence(self, auth_client):
+        target = create_test_user_id()
+        searcher = create_test_user_id()
+        target_headers = auth_headers(target)
+        auth_client.get("/me", headers=target_headers)
+        auth_client.patch(
+            "/me",
+            json={"display_name": f"PresenceTarget-{target}"},
+            headers=target_headers,
+        )
+
+        response = auth_client.get(
+            f"/users/search?q=PresenceTarget-{target}",
+            headers=auth_headers(searcher),
+        )
+
+        assert response.status_code == 200
+        result = next(
+            row for row in response.json()["data"] if unseal_user(row["userHandle"]) == target
+        )
+        assert result["email"] == {"kind": "Absent"}
+        assert result["displayName"] == {
+            "kind": "Present",
+            "value": f"PresenceTarget-{target}",
+        }
 
 
 # =============================================================================
@@ -364,8 +390,8 @@ class TestMemberResponseEnrichment:
         assert "email" in owner_member, (
             f"Expected 'email' in member response, got keys: {list(owner_member.keys())}"
         )
-        assert owner_member["email"] == owner_email
-        assert owner_member["displayName"] == "OwnerName"
+        assert owner_member["email"] == {"kind": "Present", "value": owner_email}
+        assert owner_member["displayName"] == {"kind": "Present", "value": "OwnerName"}
 
     def test_list_invites_includes_invitee_email(self, auth_client, direct_db):
         """GET /libraries/{id}/invites includes invitee email/display_name."""
@@ -380,6 +406,11 @@ class TestMemberResponseEnrichment:
         # Bootstrap both users
         auth_client.get("/me", headers=owner_headers)
         auth_client.get("/me", headers=invitee_headers)
+        auth_client.patch(
+            "/me",
+            json={"display_name": "Invited Person"},
+            headers=invitee_headers,
+        )
         _enable_sharing(direct_db, owner)
 
         # Create library
@@ -416,7 +447,11 @@ class TestMemberResponseEnrichment:
         assert "inviteeEmail" in inv, (
             f"Expected 'invitee_email' in invite response, got keys: {list(inv.keys())}"
         )
-        assert inv["inviteeEmail"] == invitee_email
+        assert inv["inviteeEmail"] == {"kind": "Present", "value": invitee_email}
+        assert inv["inviteeDisplayName"] == {
+            "kind": "Present",
+            "value": "Invited Person",
+        }
 
 
 # =============================================================================
@@ -438,7 +473,13 @@ class TestInviteByEmail:
 
         # Bootstrap both
         auth_client.get("/me", headers=owner_headers)
-        auth_client.get("/me", headers=auth_headers(invitee, email=invitee_email))
+        invitee_headers = auth_headers(invitee, email=invitee_email)
+        auth_client.get("/me", headers=invitee_headers)
+        auth_client.patch(
+            "/me",
+            json={"display_name": "Email Invitee"},
+            headers=invitee_headers,
+        )
         _enable_sharing(direct_db, owner)
 
         # Create library
@@ -464,6 +505,12 @@ class TestInviteByEmail:
         )
         data = response.json()["data"]
         assert unseal_user(data["inviteeUserHandle"]) == invitee
+        assert data["inviteeEmail"] == {"kind": "Present", "value": invitee_email}
+        assert data["inviteeDisplayName"] == {
+            "kind": "Present",
+            "value": "Email Invitee",
+        }
+        assert data["respondedAt"] == {"kind": "Absent"}
 
     def test_create_invite_by_nonexistent_email_returns_404(self, auth_client):
         """Invite by email for non-existent user returns 404."""

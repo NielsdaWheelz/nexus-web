@@ -316,20 +316,3 @@ export async function deleteShare(handle: string): Promise<void> {
     { method: "DELETE" },
   );
 }
-
-export async function searchShareUsers(
-  query: string,
-  signal?: AbortSignal,
-): Promise<ShareUserProjection[]> {
-  const raw = await apiFetch<unknown>(
-    `/api/users/search?q=${encodeURIComponent(query)}`,
-    { signal },
-  );
-  const envelope = exactRecord(raw, "user search response", ["data"]);
-  if (!Array.isArray(envelope.data)) {
-    throw new ShareContractDefect("user search response.data must be an array");
-  }
-  return envelope.data.map((value, index) =>
-    decodeUser(value, `user search response.data[${index}]`),
-  );
-}

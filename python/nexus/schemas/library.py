@@ -14,6 +14,7 @@ from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
 LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
+LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
 LibraryEntryKind = Literal["media", "podcast"]
 PodcastSubscriptionStatusValue = Literal["active", "unsubscribed"]
 PodcastSyncStatusValue = Literal[
@@ -105,6 +106,16 @@ class LibraryPageInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LibraryGovernancePageInfo(BaseModel):
+    next_cursor: Presence[LibraryGovernanceCursor]
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str
@@ -171,8 +182,8 @@ class LibraryMemberOut(BaseModel):
     user_handle: UserHandle
     role: LibraryRole
     is_owner: bool
-    email: str | None = None
-    display_name: str | None = None
+    email: Presence[str]
+    display_name: Presence[str]
     created_at: datetime
 
     model_config = ConfigDict(
@@ -190,10 +201,10 @@ class LibraryInvitationOut(BaseModel):
     invitee_user_handle: UserHandle
     role: LibraryRole
     status: LibraryInvitationStatusValue
-    invitee_email: str | None = None
-    invitee_display_name: str | None = None
+    invitee_email: Presence[str]
+    invitee_display_name: Presence[str]
     created_at: datetime
-    responded_at: datetime | None
+    responded_at: Presence[datetime]
 
     model_config = ConfigDict(
         from_attributes=True,

@@ -4,7 +4,8 @@
   gap: var(--space-2);
 }
 
-.root > span {
+.description,
+.status {
   color: var(--ink-faint);
   font-size: var(--text-xs);
 }

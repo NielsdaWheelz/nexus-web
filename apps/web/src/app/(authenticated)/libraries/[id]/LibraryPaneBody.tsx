@@ -93,6 +93,7 @@ import {
 import { useConnectionSummaries } from "@/lib/collections/useConnectionSummaries";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
+import LibraryMembersSurface from "@/components/libraries/LibraryMembersSurface";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
@@ -107,6 +108,8 @@ import {
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import type { LibraryOut } from "@/lib/libraries/contract";
+import { useLibraryMembers } from "@/lib/libraries/useLibraryMembers";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import {
   decodeLibraryView,
@@ -145,20 +148,7 @@ const MediaAuthorsEditor = lazy(() =>
   ),
 );
 
-interface Library {
-  id: string;
-  name: string;
-  color: string | null;
-  isDefault: boolean;
-  role: string;
-  ownerUserHandle: string;
-  systemKey: string | null;
-  canRename: boolean;
-  canDelete: boolean;
-  canEditEntries: boolean;
-  canManageMembers: boolean;
-  canTransferOwnership: boolean;
-}
+type Library = LibraryOut;
 
 interface LibraryMediaEntry {
   id: string;
@@ -634,6 +624,38 @@ export default function LibraryPaneBody() {
       ) as Promise<LibraryPaneResource>,
   });
   const currentLibrary = library?.id === id ? library : null;
+  const adoptLibrary = useCallback(
+    (next: LibraryOut | null) => {
+      setLibrary((current) =>
+        next === null
+          ? null
+          : current?.id === next.id || next.id === id
+            ? next
+            : current,
+      );
+    },
+    [id, setLibrary],
+  );
+  const announceLibraryAuthorityLoss = useCallback(
+    (message: string) =>
+      feedback.show({
+        severity: "warning",
+        title: message,
+      }),
+    [feedback],
+  );
+  const membersActive =
+    isPaneActive &&
+    paneRuntime?.secondaryPane?.groupId === "resource-inspector" &&
+    paneRuntime.secondaryPane.visibility === "visible" &&
+    paneRuntime.secondaryPane.activeSurfaceId === "resource-members";
+  const libraryMembersController = useLibraryMembers({
+    libraryId: id,
+    library: currentLibrary,
+    adoptLibrary,
+    membersActive,
+    announceAuthorityLoss: announceLibraryAuthorityLoss,
+  });
   const isDefaultLibrary = currentLibrary?.isDefault === true;
   // Entry mutation (add content, reorder, remove) is hidden for system-protected
   // libraries (e.g. the Oracle Corpus), which report canEditEntries === false.
@@ -1655,10 +1677,25 @@ export default function LibraryPaneBody() {
     ),
     [connectionsComposerController, id, openConnectionRoute],
   );
+  const membersBody = useMemo(
+    () =>
+      libraryMembersController ? (
+        <LibraryMembersSurface controller={libraryMembersController} />
+      ) : null,
+    [libraryMembersController],
+  );
+  const publishMembers =
+    currentLibrary?.canManageMembers === true &&
+    currentLibrary.isDefault === false &&
+    currentLibrary.systemKey === null &&
+    membersBody !== null;
   const { companionAction } = useResourceInspector({
     scheme: "library",
-    handle: id,
-    bodies: { linkedItems: connectionsBody },
+    handle: currentLibrary ? id : null,
+    bodies: {
+      members: publishMembers ? membersBody : undefined,
+      linkedItems: connectionsBody,
+    },
   });
   usePanePrimaryChrome({
     actions: companionAction ? [companionAction] : [],

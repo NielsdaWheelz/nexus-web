@@ -68,6 +68,18 @@ function InspectorOwner() {
   return null;
 }
 
+function DefectiveMembersOwner() {
+  useResourceInspector({
+    scheme: "media",
+    handle: MEDIA_ID,
+    bodies: {
+      members: <div>Members</div>,
+      linkedItems: <div>Evidence</div>,
+    },
+  });
+  return null;
+}
+
 function InspectorVisibilityHarness({
   visibility,
   activeSurfaceId,
@@ -212,6 +224,12 @@ describe("useResourceInspector workspace activation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     controller.getSnapshot.mockReturnValue(initialDossierControllerState());
+  });
+
+  it("defects when a non-LibraryMembership scheme supplies Members", () => {
+    expect(() => render(<DefectiveMembersOwner />)).toThrow(
+      /Members requires LibraryMembership sharing/,
+    );
   });
 
   it("opens an artifact head on the canonical current Dossier", async () => {

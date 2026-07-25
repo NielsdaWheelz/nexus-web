@@ -171,10 +171,16 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
                     inviteeUserHandle: inviteeHandle,
                     role: "member",
                     status: "pending",
-                    inviteeEmail: "invitee@example.test",
-                    inviteeDisplayName: "Invitee",
+                    inviteeEmail: {
+                      kind: "Present",
+                      value: "invitee@example.test",
+                    },
+                    inviteeDisplayName: {
+                      kind: "Present",
+                      value: "Invitee",
+                    },
                     createdAt: "2026-01-02T00:00:00Z",
-                    respondedAt: null,
+                    respondedAt: { kind: "Absent" },
                   },
                 ]
               : [],
@@ -193,10 +199,19 @@ describe("LibrariesPaneBody (AC-4 hydration hit)", () => {
               inviteeUserHandle: inviteeHandle,
               role: "member",
               status: "accepted",
-              inviteeEmail: "invitee@example.test",
-              inviteeDisplayName: "Invitee",
+              inviteeEmail: {
+                kind: "Present",
+                value: "invitee@example.test",
+              },
+              inviteeDisplayName: {
+                kind: "Present",
+                value: "Invitee",
+              },
               createdAt: "2026-01-02T00:00:00Z",
-              respondedAt: "2026-01-03T00:00:00Z",
+              respondedAt: {
+                kind: "Present",
+                value: "2026-01-03T00:00:00Z",
+              },
             },
             membership: {
               libraryId: "22222222-2222-4222-8222-222222222222",

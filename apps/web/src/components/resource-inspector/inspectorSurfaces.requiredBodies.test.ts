@@ -27,4 +27,23 @@ describe("planInspectorSurfaces required capability bodies", () => {
       }),
     ).toThrow(/forks/i);
   });
+
+  it("publishes optional Members before linked items without changing the default", () => {
+    const plan = planInspectorSurfaces({
+      policy: {
+        linkedItems: "ResourceConnections",
+        forks: null,
+        defaultSurfaceOrder: ["Dossier"],
+      },
+      bodies: { members: "Members", linkedItems: "Connections" },
+      dossierBody: "Dossier",
+    });
+
+    expect(plan.surfaces.map((surface) => surface.id)).toEqual([
+      "resource-members",
+      "resource-connections",
+      "resource-dossier",
+    ]);
+    expect(plan.defaultSurfaceId).toBe("resource-dossier");
+  });
 });

@@ -18,7 +18,9 @@ import {
 
 interface ShareUser {
   userHandle: string;
-  email: string | null;
+  email:
+    | { kind: "Absent" }
+    | { kind: "Present"; value: string };
 }
 
 interface ShareRow {
@@ -85,7 +87,11 @@ async function findUser(page: Page, email: string): Promise<ShareUser> {
   );
   expect(response.ok(), await response.text()).toBeTruthy();
   const payload = (await response.json()) as { data: ShareUser[] };
-  const user = payload.data.find((candidate) => candidate.email === email);
+  const user = payload.data.find(
+    (candidate) =>
+      candidate.email.kind === "Present" &&
+      candidate.email.value === email,
+  );
   expect(user, `No exact user-search result for ${email}`).toBeDefined();
   return user!;
 }

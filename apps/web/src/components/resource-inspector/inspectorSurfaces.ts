@@ -2,7 +2,8 @@
 // (A12 role resolution + A13 composition table). Given the subject's typed
 // `ResourceInspectorResourcePolicy` and the route-owned domain bodies the pane
 // supplies, it wires the tab host's publication: Contents (when a Contents body
-// exists) · the single LinkedItems surface (Evidence|Context|Connections) ·
+// exists) · optional Members (Library governance) · the single LinkedItems
+// surface (Evidence|Context|Connections) ·
 // Forks (Conversation only) · the always-published Dossier — in that fixed tab
 // order — and resolves `default_surface_order` (fallback preference, NOT tab
 // order) to the first concrete published surface.
@@ -18,6 +19,8 @@ import type { WorkspaceSecondarySurfaceId } from "@/lib/panes/paneSecondaryModel
 export interface InspectorDomainBodies {
   /** `resource-contents` — published only when the pane supplies it (Media TOC). */
   contents?: ReactNode;
+  /** `resource-members` — an authorized Library governance surface. */
+  members?: ReactNode;
   /** The single LinkedItems body (Evidence | Context | Connections). */
   linkedItems?: ReactNode;
   /** `resource-forks` — Conversation only. */
@@ -70,9 +73,12 @@ export function planInspectorSurfaces(input: {
     throw new Error("Resource Inspector policy requires a Forks body");
   }
 
-  // Fixed tab order (A13): Contents · LinkedItems · Forks · Dossier.
+  // Fixed tab order: Contents · Members · LinkedItems · Forks · Dossier.
   if (bodies.contents != null) {
     surfaces.push({ id: "resource-contents", body: bodies.contents });
+  }
+  if (bodies.members != null) {
+    surfaces.push({ id: "resource-members", body: bodies.members });
   }
   surfaces.push({ id: linkedId, body: bodies.linkedItems });
   if (policy.forks === "ConversationForks") {

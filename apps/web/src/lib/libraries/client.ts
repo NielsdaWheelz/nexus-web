@@ -2,7 +2,13 @@
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { librariesResource } from "@/lib/api/resource";
-import { expectUserHandle } from "@/lib/sharing/wireValidation";
+import {
+  expectLibraryOut,
+  expectLibraryOutEnvelope,
+  expectLibraryOutEnvelopeForId,
+  isLibraryContractDefect,
+  type LibraryOut,
+} from "@/lib/libraries/contract";
 import { isRecord } from "@/lib/validation";
 
 export class LibraryDestinationContractDefect extends Error {
@@ -17,6 +23,7 @@ export class LibraryDestinationContractDefect extends Error {
 export function isLibraryDestinationDefect(error: unknown): boolean {
   return (
     error instanceof LibraryDestinationContractDefect ||
+    isLibraryContractDefect(error) ||
     isSameSystemApiDefect(error) ||
     (!isApiError(error) &&
       !(error instanceof TypeError) &&
@@ -45,22 +52,7 @@ export interface LibraryDestinationPage {
   };
 }
 
-export interface MemberLibrary {
-  id: string;
-  name: string;
-  color: string | null;
-  ownerUserHandle: string;
-  isDefault: boolean;
-  role: "admin" | "member";
-  systemKey: string | null;
-  canRename: boolean;
-  canDelete: boolean;
-  canEditEntries: boolean;
-  canManageMembers: boolean;
-  canTransferOwnership: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+export type MemberLibrary = LibraryOut;
 
 interface MemberLibrariesResponse {
   data: MemberLibrary[];
@@ -132,12 +124,21 @@ export async function createLibrary({
     body: JSON.stringify({ name }),
     signal,
   });
-  if (!isRecord(response) || !isRecord(response.data)) {
-    return invalidDestinationResponse(
-      "create payload must contain a data object",
-    );
-  }
-  return decodeMemberLibrary(response.data, "data");
+  return expectLibraryOutEnvelope(response, "create Library response");
+}
+
+export async function getMemberLibrary(
+  libraryId: string,
+  signal?: AbortSignal,
+): Promise<LibraryOut> {
+  return expectLibraryOutEnvelopeForId(
+    await apiFetch<unknown>(
+      `/api/libraries/${encodeURIComponent(libraryId)}`,
+      { signal },
+    ),
+    libraryId,
+    "get Library response",
+  );
 }
 
 export function decodeMemberLibrariesResponse(raw: unknown): MemberLibrariesResponse {
@@ -156,75 +157,12 @@ export function decodeMemberLibrariesResponse(raw: unknown): MemberLibrariesResp
   }
   return {
     data: raw.data.map((row, index) =>
-      decodeMemberLibrary(row, `data[${index}]`),
+      expectLibraryOut(row, `LibraryOut data[${index}]`),
     ),
     page: {
       has_more: raw.page.has_more,
       next_cursor: raw.page.next_cursor,
     },
-  };
-}
-
-function decodeMemberLibrary(raw: unknown, field: string): MemberLibrary {
-  const keys = [
-    "id",
-    "name",
-    "color",
-    "ownerUserHandle",
-    "isDefault",
-    "role",
-    "systemKey",
-    "canRename",
-    "canDelete",
-    "canEditEntries",
-    "canManageMembers",
-    "canTransferOwnership",
-    "createdAt",
-    "updatedAt",
-  ] as const;
-  if (
-    !isRecord(raw) ||
-    Object.keys(raw).length !== keys.length ||
-    Object.keys(raw).some((key) => !keys.includes(key as (typeof keys)[number]))
-  ) {
-    return invalidDestinationResponse(`${field} is not an exact LibraryOut`);
-  }
-  if (
-    typeof raw.id !== "string" ||
-    typeof raw.name !== "string" ||
-    (raw.color !== null && typeof raw.color !== "string") ||
-    typeof raw.ownerUserHandle !== "string" ||
-    typeof raw.isDefault !== "boolean" ||
-    (raw.role !== "admin" && raw.role !== "member") ||
-    (raw.systemKey !== null && typeof raw.systemKey !== "string") ||
-    typeof raw.canRename !== "boolean" ||
-    typeof raw.canDelete !== "boolean" ||
-    typeof raw.canEditEntries !== "boolean" ||
-    typeof raw.canManageMembers !== "boolean" ||
-    typeof raw.canTransferOwnership !== "boolean" ||
-    typeof raw.createdAt !== "string" ||
-    typeof raw.updatedAt !== "string"
-  ) {
-    return invalidDestinationResponse(`${field} contains invalid LibraryOut fields`);
-  }
-  return {
-    id: raw.id,
-    name: raw.name,
-    color: raw.color,
-    ownerUserHandle: expectUserHandle(
-      raw.ownerUserHandle,
-      `${field}.ownerUserHandle`,
-    ),
-    isDefault: raw.isDefault,
-    role: raw.role,
-    systemKey: raw.systemKey,
-    canRename: raw.canRename,
-    canDelete: raw.canDelete,
-    canEditEntries: raw.canEditEntries,
-    canManageMembers: raw.canManageMembers,
-    canTransferOwnership: raw.canTransferOwnership,
-    createdAt: raw.createdAt,
-    updatedAt: raw.updatedAt,
   };
 }
 

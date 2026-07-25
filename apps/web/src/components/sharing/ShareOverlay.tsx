@@ -1,21 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Send, Share2 } from "lucide-react";
-import LibraryMemberEditor from "@/components/sharing/LibraryMemberEditor";
-import PeopleSearchCombobox from "@/components/sharing/PeopleSearchCombobox";
+import PeopleSearchCombobox from "@/components/users/PeopleSearchCombobox";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import { toFeedback } from "@/components/feedback/Feedback";
+import { isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { getMemberLibrary } from "@/lib/libraries/client";
+import {
+  LibraryContractDefect,
+  isLibraryContractDefect,
+  type LibraryOut,
+} from "@/lib/libraries/contract";
+import { requestOpenInAppPane } from "@/lib/panes/openInAppPane";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   createLinkShare,
   createUserShare,
   deleteShare,
   fetchShareSnapshot,
-  searchShareUsers,
 } from "@/lib/sharing/api";
 import {
   SHARE_MODE_INTRO,
@@ -30,6 +36,11 @@ import type {
   ShareSnapshot,
   ShareUserProjection,
 } from "@/lib/sharing/types";
+import {
+  isUserSearchContractDefect,
+  searchUsers,
+  type UserSearchResult,
+} from "@/lib/users/search";
 import { copyText } from "@/lib/ui/copyText";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import styles from "./ShareOverlay.module.css";
@@ -43,6 +54,12 @@ type LoadState =
   | { kind: "Idle" }
   | { kind: "Loading" }
   | { kind: "Ready"; snapshot: ShareSnapshot }
+  | { kind: "Error"; message: string };
+
+type LibraryCapabilityState =
+  | { kind: "Idle" }
+  | { kind: "Loading" }
+  | { kind: "Ready"; library: LibraryOut }
   | { kind: "Error"; message: string };
 
 function nativeShareAvailable(): boolean {
@@ -61,8 +78,10 @@ function librarySubjectId(snapshot: ShareSnapshot): string {
   const ref = parseResourceRef(snapshot.subject);
   if (!ref || ref.scheme !== "library") {
     // justify-defect: LibraryMembership is valid only for a canonical library
-    // subject; the editor cannot govern any other resource.
-    throw new Error("Library sharing received a non-library subject");
+    // subject; member-management activation cannot target another resource.
+    throw new LibraryContractDefect(
+      "Library sharing received a non-library subject",
+    );
   }
   return ref.id;
 }
@@ -71,7 +90,7 @@ export default function ShareOverlay({ session, onClose }: ShareOverlayProps) {
   const isMobile = useIsMobileViewport();
   const active = session !== null;
   const content = session ? (
-    <SharePanel key={session.key} session={session} />
+    <SharePanel key={session.key} session={session} onClose={onClose} />
   ) : null;
 
   return (
@@ -105,13 +124,22 @@ export default function ShareOverlay({ session, onClose }: ShareOverlayProps) {
   );
 }
 
-function SharePanel({ session }: { session: ShareSession }) {
+function SharePanel({
+  session,
+  onClose,
+}: {
+  session: ShareSession;
+  onClose: () => void;
+}) {
   const { target } = session;
   const [loadState, setLoadState] = useState<LoadState>(
     target.kind === "Route" ? { kind: "Idle" } : { kind: "Loading" },
   );
   const [liveMessage, setLiveMessage] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [libraryCapability, setLibraryCapability] =
+    useState<LibraryCapabilityState>({ kind: "Idle" });
+  const [asyncDefect, setAsyncDefect] = useState<unknown>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -122,6 +150,10 @@ function SharePanel({ session }: { session: ShareSession }) {
         setLoadState({ kind: "Ready", snapshot });
       } catch (error) {
         if (signal?.aborted || handleUnauthenticatedApiError(error)) return;
+        if (isSameSystemApiDefect(error)) {
+          setAsyncDefect(error);
+          return;
+        }
         setLoadState({
           kind: "Error",
           message: toFeedback(error, {
@@ -153,6 +185,55 @@ function SharePanel({ session }: { session: ShareSession }) {
       : snapshot
         ? `${snapshot.subject.slice(0, snapshot.subject.indexOf(":"))} link`
         : "Nexus link";
+  const libraryId = useMemo(
+    () =>
+      snapshot?.sharing === "LibraryMembership"
+        ? librarySubjectId(snapshot)
+        : null,
+    [snapshot],
+  );
+
+  const loadLibraryCapability = useCallback(
+    async (signal?: AbortSignal) => {
+      if (libraryId === null) {
+        setLibraryCapability({ kind: "Idle" });
+        return;
+      }
+      setLibraryCapability({ kind: "Loading" });
+      try {
+        setLibraryCapability({
+          kind: "Ready",
+          library: await getMemberLibrary(libraryId, signal),
+        });
+      } catch (error) {
+        if (signal?.aborted || handleUnauthenticatedApiError(error)) return;
+        if (
+          isLibraryContractDefect(error) ||
+          isSameSystemApiDefect(error)
+        ) {
+          setAsyncDefect(error);
+          return;
+        }
+        setLibraryCapability({
+          kind: "Error",
+          message: toFeedback(error, {
+            fallback: "Member-management access could not be checked.",
+          }).title,
+        });
+      }
+    },
+    [libraryId],
+  );
+
+  useEffect(() => {
+    if (libraryId === null) {
+      setLibraryCapability({ kind: "Idle" });
+      return;
+    }
+    const controller = new AbortController();
+    void loadLibraryCapability(controller.signal);
+    return () => controller.abort();
+  }, [libraryId, loadLibraryCapability]);
 
   const announce = useCallback((message: string) => {
     setActionError(null);
@@ -194,6 +275,24 @@ function SharePanel({ session }: { session: ShareSession }) {
     },
     [reportActionError],
   );
+
+  const handleManageMembers = useCallback(() => {
+    if (!snapshot || snapshot.sharing !== "LibraryMembership") return;
+    const accepted = requestOpenInAppPane(snapshot.authenticatedHref, {
+      secondaryActivation: {
+        kind: "Surface",
+        surfaceId: "resource-members",
+      },
+    });
+    if (accepted) {
+      onClose();
+      return;
+    }
+    setLiveMessage("");
+    setActionError("Members could not be opened. Try again.");
+  }, [onClose, snapshot]);
+
+  if (asyncDefect) throw asyncDefect;
 
   return (
     <div className={styles.panel}>
@@ -261,10 +360,17 @@ function SharePanel({ session }: { session: ShareSession }) {
           onNativeShare={handleNativeShare}
           announce={announce}
           reportError={reportActionError}
+          reportDefect={setAsyncDefect}
         />
       ) : null}
 
-      {snapshot && mode === "LibraryMembership" ? (
+      {snapshot &&
+      mode === "LibraryMembership" &&
+      !(
+        libraryCapability.kind === "Ready" &&
+        (libraryCapability.library.isDefault ||
+          libraryCapability.library.systemKey !== null)
+      ) ? (
         <section
           className={styles.section}
           aria-labelledby="share-library-members"
@@ -272,10 +378,41 @@ function SharePanel({ session }: { session: ShareSession }) {
           <div className={styles.sectionHeading}>
             <div>
               <h3 id="share-library-members">People</h3>
-              <p>People, invitations, roles, and ownership.</p>
+              {libraryCapability.kind === "Ready" &&
+              !libraryCapability.library.isDefault &&
+              libraryCapability.library.systemKey === null ? (
+                <p>
+                  {libraryCapability.library.canManageMembers
+                    ? "Manage people, invitations, roles, and ownership in the Library pane."
+                    : "Members are managed by library admins."}
+                </p>
+              ) : libraryCapability.kind === "Loading" ? (
+                <p role="status">Checking member-management access…</p>
+              ) : null}
             </div>
+            {libraryCapability.kind === "Ready" &&
+            libraryCapability.library.canManageMembers ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleManageMembers}
+              >
+                Manage members
+              </Button>
+            ) : null}
           </div>
-          <LibraryMemberEditor libraryId={librarySubjectId(snapshot)} />
+          {libraryCapability.kind === "Error" ? (
+            <div className={styles.error} role="alert">
+              <span>{libraryCapability.message}</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void loadLibraryCapability()}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -312,6 +449,14 @@ function shareUserLabel(user: ShareUserProjection): string {
   return user.displayName ?? user.email ?? user.userHandle;
 }
 
+function userSearchLabel(user: UserSearchResult): string {
+  return user.displayName.kind === "Present"
+    ? user.displayName.value
+    : user.email.kind === "Present"
+      ? user.email.value
+      : user.userHandle;
+}
+
 function upsertOwnedShare(
   shares: readonly OwnedShare[],
   next: OwnedShare,
@@ -330,6 +475,7 @@ function GrantEditor({
   onNativeShare,
   announce,
   reportError,
+  reportDefect,
 }: {
   snapshot: ShareSnapshot;
   onSnapshotChange: (snapshot: ShareSnapshot) => void;
@@ -337,9 +483,10 @@ function GrantEditor({
   onNativeShare: (href: string, title: string) => Promise<boolean>;
   announce: (message: string) => void;
   reportError: (error: unknown, fallback: string) => void;
+  reportDefect: (error: unknown) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ShareUserProjection[]>([]);
+  const [results, setResults] = useState<UserSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [busyHandle, setBusyHandle] = useState<string | null>(null);
   const [confirmHandle, setConfirmHandle] = useState<string | null>(null);
@@ -370,10 +517,14 @@ function GrantEditor({
     const timer = window.setTimeout(async () => {
       setSearching(true);
       try {
-        const next = await searchShareUsers(trimmed, controller.signal);
+        const next = await searchUsers(trimmed, controller.signal);
         if (searchSequence.current === sequence) setResults(next);
       } catch (error) {
         if (!controller.signal.aborted) {
+          if (isUserSearchContractDefect(error)) {
+            reportDefect(error);
+            return;
+          }
           reportError(error, "People could not be searched.");
         }
       } finally {
@@ -384,9 +535,9 @@ function GrantEditor({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, reportError]);
+  }, [query, reportDefect, reportError]);
 
-  const addUser = async (user: ShareUserProjection) => {
+  const addUser = async (user: UserSearchResult) => {
     if (busyHandle !== null) return;
     setBusyHandle(user.userHandle);
     try {
@@ -403,8 +554,8 @@ function GrantEditor({
       setResults([]);
       announce(
         result.created
-          ? `Shared with ${shareUserLabel(result.share.user)}.`
-          : `${shareUserLabel(result.share.user)} already has this share.`,
+          ? `Shared with ${userSearchLabel(user)}.`
+          : `${userSearchLabel(user)} already has this share.`,
       );
     } catch (error) {
       reportError(error, "Access could not be shared.");
@@ -481,7 +632,6 @@ function GrantEditor({
                 : ""}
             </p>
             <PeopleSearchCombobox
-              id="share-user-results"
               label="Search people to share with"
               placeholder="Search people…"
               query={query}

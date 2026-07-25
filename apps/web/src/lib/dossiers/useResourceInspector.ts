@@ -209,13 +209,22 @@ export function useResourceInspector({
 
   // --- One memoized publication (stable when the pane's bodies are stable) ---
   const contents = bodies.contents;
+  const members = bodies.members;
   const linkedItems = bodies.linkedItems;
   const forks = bodies.forks;
+  if (
+    members != null &&
+    RESOURCE_CAPABILITIES[scheme].sharing !== "LibraryMembership"
+  ) {
+    throw new Error(
+      `Resource Inspector Members requires LibraryMembership sharing: ${scheme}`,
+    );
+  }
   const publication = useMemo<PaneSecondaryPublication | null>(() => {
     if (!policy || !store || dossierBody == null) return null;
     const plan = planInspectorSurfaces({
       policy,
-      bodies: { contents, linkedItems, forks },
+      bodies: { contents, members, linkedItems, forks },
       dossierBody,
     });
     return normalizePaneSecondaryPublication({
@@ -223,7 +232,7 @@ export function useResourceInspector({
       surfaces: plan.surfaces,
       defaultSurfaceId: plan.defaultSurfaceId,
     });
-  }, [policy, store, dossierBody, contents, linkedItems, forks]);
+  }, [policy, store, dossierBody, contents, members, linkedItems, forks]);
   usePaneSecondary(publication);
 
   // --- Companion action ------------------------------------------------------

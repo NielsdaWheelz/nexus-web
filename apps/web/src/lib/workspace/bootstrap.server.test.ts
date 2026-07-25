@@ -318,7 +318,23 @@ describe("loadWorkspaceBootstrap", () => {
 
   it("composes the library detail resource from library and entries paths", async () => {
     requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
-    const library = { id: "lib-1", name: "Seeded Library" };
+    const library = {
+      id: "lib-1",
+      name: "Seeded Library",
+      color: null,
+      ownerUserHandle:
+        "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+      isDefault: false,
+      role: "admin",
+      systemKey: null,
+      canRename: true,
+      canDelete: true,
+      canEditEntries: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+      createdAt: "2026-07-24T10:00:00Z",
+      updatedAt: "2026-07-24T10:30:00Z",
+    };
     const entry = {
       id: "entry-1",
       kind: "media",
@@ -373,6 +389,74 @@ describe("loadWorkspaceBootstrap", () => {
       ],
       entriesPage: { has_more: false, next_cursor: null },
     });
+  });
+
+  it("does not seed a mismatched Library projection into bootstrap state", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/libraries/lib-1": {
+        data: {
+          id: "lib-other",
+          name: "Wrong Library",
+          color: null,
+          ownerUserHandle:
+            "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+          isDefault: false,
+          role: "admin",
+          systemKey: null,
+          canRename: true,
+          canDelete: true,
+          canEditEntries: true,
+          canManageMembers: true,
+          canTransferOwnership: true,
+          createdAt: "2026-07-24T10:00:00Z",
+          updatedAt: "2026-07-24T10:30:00Z",
+        },
+      },
+      "/libraries/lib-1/entries": {
+        data: [],
+        page: { has_more: false, next_cursor: null },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(result.resources).not.toHaveProperty("lib-1");
+  });
+
+  it("does not seed a malformed Library projection into bootstrap state", async () => {
+    requestHeaders.set(REQUEST_PATH_HEADER, "/libraries/lib-1");
+    respondWith({
+      "/me/reader-profile": PROFILE_OK,
+      "/libraries/lib-1": {
+        data: {
+          id: "lib-1",
+          name: "Malformed Library",
+          color: null,
+          ownerUserHandle:
+            "nus1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB",
+          isDefault: false,
+          role: "admin",
+          systemKey: null,
+          canRename: true,
+          canDelete: true,
+          canEditEntries: true,
+          canManageMembers: "yes",
+          canTransferOwnership: true,
+          createdAt: "2026-07-24T10:00:00Z",
+          updatedAt: "2026-07-24T10:30:00Z",
+        },
+      },
+      "/libraries/lib-1/entries": {
+        data: [],
+        page: { has_more: false, next_cursor: null },
+      },
+    });
+
+    const result = await loadWorkspaceBootstrap(false);
+
+    expect(result.resources).not.toHaveProperty("lib-1");
   });
 
   it("normalizes and seeds the note pages resource", async () => {

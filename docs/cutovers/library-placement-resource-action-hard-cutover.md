@@ -48,8 +48,9 @@ Libraries…
 - The overlay remains open for multiple independent toggles.
 - Share for media manages links and resource grants.
 - Share for podcasts copies the Nexus link.
-- Share for a library continues to manage people, invitations, roles, and
-  ownership. `LibraryMemberEditor` remains there.
+- Share for a library retains member-only link actions and one authorized
+  **Manage members** activation; governance lives only in the Library
+  Companion's Members tab.
 - Inbound `/share` capture and destination selection are unchanged.
 
 ## Decisions

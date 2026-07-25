@@ -7,10 +7,10 @@ shim, dual write, or mixed-version support.
 
 ## One-line
 
-One Share surface copies private Nexus links, manages closed-library membership,
-and creates path-revocable user or bearer-link grants for readable media and the
-sharer’s own highlights; anonymous readers receive a dedicated, allowlisted,
-read-only media projection and no private Nexus graph.
+One Share surface copies private Nexus links, activates closed-library
+membership management, and creates path-revocable user or bearer-link grants
+for readable media and the sharer’s own highlights; anonymous readers receive a
+dedicated, allowlisted, read-only media projection and no private Nexus graph.
 
 ## Validation record
 
@@ -61,7 +61,9 @@ This cutover ships:
   never enters a Nexus-controlled HTTP request target;
 - one responsive Share overlay used by pane, row, library, highlight, and
   selection actions;
-- library membership/invitation management moved from Edit Library into Share;
+- library membership/invitation management moved from Edit Library into the
+  Library Members Companion; Share only activates that companion for authorized
+  library admins;
 - library URLs that remain membership-gated and never grant access;
 - media visibility, deletion, teardown, and highlight visibility composed with
   grants;
@@ -138,7 +140,7 @@ library action.
 | Owned highlight | Same grant controls; public/authenticated URL opens parent media focused on exactly this highlight |
 | Bare selection | Materialize through the existing highlight-create command, then open the owned-highlight Share overlay |
 | Non-owned highlight | No highlight Share action; the viewer may share the parent media without the other user’s annotation |
-| Library | Copy member-only link; members, roles, pending invitations, and admin controls; no public-link or X control |
+| Library | Copy member-only link; authorized admins get **Manage members**; ordinary members get an explanation; no membership, public-link, or X controls |
 | Podcast root | Copy authenticated Nexus link and native Share only |
 | Copy-only resource | Copy authenticated Nexus link and native Share only |
 | Internal/non-routeable resource | No Share action |
@@ -1102,19 +1104,19 @@ Library Share:
 
 - all members: Copy link/native Share with “members only”;
 - admins, as reported by the exact `can_manage_members` governance capability:
-  member list, pending invitations, invite search, roles, removal, and
-  revocation;
-- non-admins: current role plus “Membership is managed by library admins”;
+  one **Manage members** action that opens the Library pane's Members Companion
+  tab;
+- non-admins: “Members are managed by library admins”;
 - no Anyone-with-link, public URL, X, or public permission control.
 
 Admin copy states that removal closes only the membership path; a former member
 may retain access through another library or grant, including a media grant they
 created while they could read it.
 
-Library UI uses two deliberately separate state machines and surfaces:
+Library UI uses two deliberately separate domain surfaces:
 
-- `LibraryMemberEditor`: people, roles, invitations, removal, and ownership
-  transfer; it is embedded only by the library Share variant.
+- the route-owned Members Companion controller: people, roles, invitations,
+  removal, and ownership transfer; Share only activates it.
 - `LibraryEntryEditor`: filing an existing media or podcast through
   `library_entries`; the top-level `Libraries…` resource action opens it.
 
@@ -1235,7 +1237,8 @@ Threat model and honest limits:
 - entity-specific user/invitation sealing adapters in their existing service
   owners and focused handle/grant/public/migration tests
 - `apps/web/src/components/sharing/ShareOverlay.tsx` + styles/tests
-- `apps/web/src/components/sharing/LibraryMemberEditor.tsx`
+- the former Share-embedded Library membership editor, superseded by the
+  route-owned Members Companion surface
 - `apps/web/src/lib/sharing/` controller, strict authenticated/public decoders,
   API client, public asset resolver, and tests
 - `apps/web/src/lib/reader/readerTargetHash.ts` + tests
@@ -1290,7 +1293,7 @@ Threat model and honest limits:
   `LibraryPaneBody.tsx`, `LibrariesPaneBody.tsx`,
   `PodcastDetailPaneBody.tsx`, `PodcastEpisodeList.tsx`, and
   `PodcastsPaneBody.tsx`
-- `apps/web/src/lib/libraries/sharing.ts` and touched
+- `apps/web/src/lib/libraries/governance.ts` and touched
   `/app/api/{users,libraries}/**` BFF routes
 - `deploy/hetzner/{deploy.sh,docker-compose.yml,README.md}` for pinned revision
   reporting and gated choreography
@@ -1328,8 +1331,9 @@ Historical migrations and superseded cutover documents remain immutable.
    route-specific security policy.
 4. **Universal overlay:** controller, responsive overlay, pane/row/highlight
    actions, selection create-then-share.
-5. **Library consolidation:** membership-only Share variant;
-   `LibrarySettingsDialog`; keep item placement outside Share.
+5. **Library consolidation:** member-only link Share variant with authorized
+   Members Companion activation; `LibrarySettingsDialog`; keep item placement
+   outside Share.
 6. **Extirpation/acceptance:** negative source gates, focused backend/browser
    tests, real-stack multi-user/public-revocation flow, docs update.
 
@@ -1535,10 +1539,11 @@ not accepted from mocks or unit tests alone.
   media/library/podcast/highlight/launcher actions use central builders; Nexus
   launcher has no `copy-link`; clipboard feedback is truthful; desktop/mobile
   focus and dismissal work.
-- **AC11 — Library UI:** library Share owns `LibraryMemberEditor`, including
-  ownership transfer; media/episode/podcast Share contains no
-  `LibraryEntryEditor` or placement request; Settings owns no member/share
-  state; Default/system libraries expose copy-only behavior.
+- **AC11 — Library UI:** Library Members owns membership governance and
+  ownership transfer; Library Share only links to that Companion tab;
+  media/episode/podcast Share contains no `LibraryEntryEditor` or placement
+  request; Settings owns no member/share state; Default/system libraries expose
+  copy-only behavior.
 - **AC12 — Billing:** new grants/invitations and actor-owned media/podcast filing
   into a library with another member or pending invitation require `can_share`
   through the named commands; idempotent, Default, system, dedupe, repair,
